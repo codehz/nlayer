@@ -1,8 +1,8 @@
 //! Platform-independent core of nlayer.
 //!
-//! Reactive graph, geometry, the style IR, text layout and the Taffy
-//! layout tree are extracted from nsh. The shadow tree and mount batches
-//! follow in the same crate.
+//! Reactive graph, geometry, the style IR, text layout, the Taffy layout
+//! tree and the view shadow tree are extracted from nsh. Text, image,
+//! scroll and input hosts follow in the same crate.
 
 pub mod animation;
 pub mod color;
@@ -14,6 +14,7 @@ pub mod geometry;
 mod grid;
 mod props;
 pub mod reactive;
+mod mount;
 pub mod style;
 mod tailwind;
 mod ops;
@@ -23,5 +24,8 @@ pub use transform::{MAX_TRANSFORMS, TransformOp};
 pub mod transform;
 pub mod text;
 
+pub use core::{ApplyError, Core};
+pub use mount::{MountBatch, MountItem, ViewKind};
+pub use ops::{EventKind, Op, Tag};
 pub use color::{Hsla, Rgba};
 pub use style::Color;

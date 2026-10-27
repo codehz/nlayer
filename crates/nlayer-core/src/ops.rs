@@ -1,11 +1,12 @@
-//! Operations the style IR names before the rest of the op protocol is extracted.
+//! Operations the JS renderer sends the shadow tree.
 //!
 //! `ResizeMode` is copied from `nsh_core::ops`. The `PropEnum` derive arrives
-//! with the element macros.
+//! with the element macros. `Tag`, `EventKind` and `Op` are the view-tree
+//! subset: text, image, scroll and input ops follow with those hosts.
 
 use crate::{
     geometry::{Bounds, Point, Points, Size},
-    style::ObjectPosition,
+    style::{ObjectPosition, Style, StylePatch},
 };
 
 /// Identifier of a node, assigned by the JS renderer.
@@ -15,6 +16,66 @@ pub type NodeId = u32;
 
 /// Id of the surface root view. It exists before any JS runs.
 pub const ROOT_ID: NodeId = 1;
+
+/// Element tag of a host node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tag {
+    /// A container view (`<view>`).
+    View,
+}
+
+impl Tag {
+    /// Parses a host element's name (what `nlayer:rt`'s `element` takes).
+    #[inline]
+    pub fn from_name(name: &str) -> Option<Tag> {
+        match name {
+            "view" => Some(Tag::View),
+            _ => None,
+        }
+    }
+}
+
+/// An event a node can listen to.
+///
+/// Discriminant order is the bit in [`EventMask`]. Append new kinds; do not
+/// reorder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum EventKind {
+    /// A tap / click.
+    Press,
+}
+
+impl EventKind {
+    /// Parses an event's protocol name such as `onPress`.
+    #[inline]
+    pub fn from_prop(name: &str) -> Option<EventKind> {
+        match name {
+            "onPress" => Some(EventKind::Press),
+            _ => None,
+        }
+    }
+
+    /// The protocol name of this event.
+    #[inline]
+    pub const fn prop_name(self) -> &'static str {
+        match self {
+            EventKind::Press => "onPress",
+        }
+    }
+
+    /// The handler prop apps set for this event.
+    #[inline]
+    pub const fn handler_name(self) -> &'static str {
+        self.prop_name()
+    }
+
+    /// Parses a handler prop name such as `onPress`.
+    #[inline]
+    pub fn from_handler(name: &str) -> Option<EventKind> {
+        Self::from_prop(name)
+    }
+}
 
 /// A set of event kinds: one bit per kind, room for 128.
 ///
@@ -33,10 +94,28 @@ impl std::ops::BitOr for EventMask {
 }
 
 impl EventMask {
-    /// The raw bit set.
+    /// Returns true if `event` is in the set.
+    #[inline]
+    pub const fn contains(self, event: EventKind) -> bool {
+        let k = event as usize;
+        self.0[k / 64] & (1 << (k % 64)) != 0
+    }
+
+    /// The raw bit set, indexed by `EventKind as u8`.
     #[inline]
     pub const fn bits(self) -> u128 {
         self.0[0] as u128 | (self.0[1] as u128) << 64
+    }
+
+    /// Adds or removes `event`.
+    #[inline]
+    pub fn set(&mut self, event: EventKind, enabled: bool) {
+        let k = event as usize;
+        if enabled {
+            self.0[k / 64] |= 1 << (k % 64);
+        } else {
+            self.0[k / 64] &= !(1 << (k % 64));
+        }
     }
 
     /// Returns true if no event is set.
@@ -95,4 +174,57 @@ impl ResizeMode {
             size: content,
         }
     }
+}
+
+/// A mutation produced by the JS renderer.
+#[derive(Debug)]
+pub enum Op {
+    /// Creates a detached element node.
+    Create {
+        /// New node id.
+        id: NodeId,
+        /// Element tag.
+        tag: Tag,
+    },
+    /// Replaces the whole style of a node.
+    SetStyle {
+        /// Node id.
+        id: NodeId,
+        /// The new style; boxed because layout styles are large.
+        style: Box<Style>,
+        /// The declarations `style` was built from, applied again over the
+        /// node's class styles. v1 has no class table, so the shadow tree
+        /// applies `style` itself.
+        patch: StylePatch,
+    },
+    /// Enables or disables an event listener on a node.
+    Listen {
+        /// Node id.
+        id: NodeId,
+        /// Event kind.
+        event: EventKind,
+        /// Whether a handler is attached.
+        enabled: bool,
+    },
+    /// Inserts (or moves) `child` into `parent` before `before`, or appends.
+    Insert {
+        /// Parent node id.
+        parent: NodeId,
+        /// Child node id.
+        child: NodeId,
+        /// Sibling to insert before; `None` appends.
+        before: Option<NodeId>,
+    },
+    /// Detaches `child` from `parent`. The child stays alive until released.
+    Remove {
+        /// Parent node id.
+        parent: NodeId,
+        /// Child node id.
+        child: NodeId,
+    },
+    /// The JS node was garbage collected: free the node and its native view.
+    Release {
+        /// Node id.
+        id: NodeId,
+    },
 }
