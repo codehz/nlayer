@@ -12,3 +12,5 @@ Copied files:
 - `crates/nlayer-core/src/reactive.rs`
 - `crates/nlayer-core/src/reactive/tests.rs`
   from `crates/nsh-core/src/reactive.rs` and `reactive/tests.rs`
+- `crates/nlayer-core/src/geometry/` from `crates/nsh-core/src/geometry/`
+  (`Axis` does not derive `PropEnum` yet; that derive arrives with the element macros)

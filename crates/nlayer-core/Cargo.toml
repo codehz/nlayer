@@ -10,3 +10,9 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+serde.workspace = true
+taffy.workspace = true
+
+[dev-dependencies]
+syn = { version = "2", features = ["full", "visit"] }
+rustc-hash.workspace = true

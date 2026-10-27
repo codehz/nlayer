@@ -1,0 +1,2 @@
+# Public API of nlayer-core with bare floats for lengths, angles and fractions,
+# still to migrate to nlayer_core::geometry. This list only shrinks.

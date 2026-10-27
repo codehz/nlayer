@@ -1,0 +1,4 @@
+# Public API of nlayer-core with bare floats that have no unit
+# (geometry::unit_types): one item path per line, then the reason.
+# Entries arrive with the modules they describe. Do not copy nsh's list ahead
+# of those modules: a line for an item that is not in this crate fails the scan.
