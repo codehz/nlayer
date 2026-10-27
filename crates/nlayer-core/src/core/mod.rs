@@ -3809,4 +3809,123 @@ mod tests {
         let batch = c.commit().unwrap();
         assert_eq!(scroll_content(&batch, 2), size_pt(100.0, 60.0));
     }
+
+    #[test]
+    fn a_text_keeps_env_padding_after_leaving_a_span() {
+        let mut c = core();
+        c.set_safe_area(Edges {
+            top: px(20.0),
+            ..Edges::default()
+        });
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Text,
+        })
+        .unwrap();
+        let mut padded = Style::default();
+        padded
+            .set("paddingTop", StyleValue::Str("env(safe-area-inset-top)"))
+            .unwrap();
+        apply_style(&mut c, 2, padded);
+        c.apply(Op::CreateText {
+            id: 3,
+            text: "ab".into(),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        assert_eq!(frame(&batch, 2).size.height, px(36.0));
+
+        // Nested: the layout node goes away. The inset changes while it is a span.
+        c.apply(Op::Create {
+            id: 4,
+            tag: Tag::Text,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 4,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.set_safe_area(Edges {
+            top: px(8.0),
+            ..Edges::default()
+        });
+        c.commit();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        assert_eq!(frame(&batch, 2).size.height, px(24.0));
+    }
+
+    #[test]
+    fn horizontal_rtl_scroll_keeps_safe_area_on_the_physical_left() {
+        let mut c = core();
+        c.set_safe_area(Edges {
+            left: px(20.0),
+            ..Edges::default()
+        });
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Scroll,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Horizontal(true),
+        })
+        .unwrap();
+        let mut scroll = sized(150.0, 50.0);
+        scroll.direction = Some(true);
+        scroll
+            .set(
+                "paddingLeft",
+                StyleValue::Str("env(safe-area-inset-left)"),
+            )
+            .unwrap();
+        apply_style(&mut c, 2, scroll);
+        for id in [3, 4] {
+            c.apply(Op::Create { id, tag: Tag::View }).unwrap();
+            apply_style(&mut c, id, sized(100.0, 50.0));
+            c.apply(Op::Insert {
+                parent: 2,
+                child: id,
+                before: None,
+            })
+            .unwrap();
+        }
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        // End padding after the row is mirrored back to the physical left.
+        assert_eq!(scroll_content(&batch, 2), size_pt(220.0, 50.0));
+        assert_eq!(frame(&batch, 3).origin.x, px(120.0));
+        assert_eq!(frame(&batch, 4).origin.x, px(20.0));
+    }
 }
