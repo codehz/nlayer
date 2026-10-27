@@ -13,7 +13,7 @@ workspace = true
 serde.workspace = true
 taffy.workspace = true
 ordered-float.workspace = true
+rustc-hash.workspace = true
 
 [dev-dependencies]
 syn = { version = "2", features = ["full", "visit"] }
-rustc-hash.workspace = true

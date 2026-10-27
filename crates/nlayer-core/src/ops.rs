@@ -8,6 +8,44 @@ use crate::{
     style::ObjectPosition,
 };
 
+/// Identifier of a node, assigned by the JS renderer.
+///
+/// Ids are small, dense and increasing, so the core indexes them directly.
+pub type NodeId = u32;
+
+/// Id of the surface root view. It exists before any JS runs.
+pub const ROOT_ID: NodeId = 1;
+
+/// A set of event kinds: one bit per kind, room for 128.
+///
+/// Two words, not a `u128`: views keep it in Objective-C ivars, which take
+/// no 16-byte alignment. Copied from `nsh_core::ops`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EventMask([u64; 2]);
+
+impl std::ops::BitOr for EventMask {
+    type Output = EventMask;
+
+    #[inline]
+    fn bitor(self, other: EventMask) -> EventMask {
+        EventMask([self.0[0] | other.0[0], self.0[1] | other.0[1]])
+    }
+}
+
+impl EventMask {
+    /// The raw bit set.
+    #[inline]
+    pub const fn bits(self) -> u128 {
+        self.0[0] as u128 | (self.0[1] as u128) << 64
+    }
+
+    /// Returns true if no event is set.
+    #[inline]
+    pub const fn is_empty(self) -> bool {
+        self.0[0] == 0 && self.0[1] == 0
+    }
+}
+
 /// How an image fits its box.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ResizeMode {

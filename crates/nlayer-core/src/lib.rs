@@ -1,7 +1,7 @@
 //! Platform-independent core of nlayer.
 //!
-//! Reactive graph, geometry and the style IR are extracted from nsh. The
-//! shadow tree and mount batches follow in the same crate.
+//! Reactive graph, geometry, the style IR and text layout are extracted
+//! from nsh. The shadow tree and mount batches follow in the same crate.
 
 pub mod animation;
 pub mod color;
@@ -16,9 +16,10 @@ pub mod style;
 mod tailwind;
 mod ops;
 
-pub use ops::ResizeMode;
+pub use ops::{EventMask, NodeId, ROOT_ID, ResizeMode};
 pub use transform::{MAX_TRANSFORMS, TransformOp};
 pub mod transform;
+pub mod text;
 
 pub use color::{Hsla, Rgba};
 pub use style::Color;

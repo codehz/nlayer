@@ -21,3 +21,5 @@ Copied files:
 - `AnimationProp` names from `nsh_core::animation` (graph not copied)
 - `PointerEvents` from `nsh_core::props`
   `PropEnum` derives are omitted until the element macros exist.
+- `crates/nlayer-core/src/text.rs` from `crates/nsh-core/src/text.rs`
+- `NodeId`, `ROOT_ID`, `EventMask` from `nsh_core::ops`

@@ -49,3 +49,4 @@ transform::Transform::matrix(value)                              # a transform o
 transform::Transform::push(value)                                # a transform operand (any of its kinds' units)
 transform::TransformKind::identity ->                            # a transform operand (any of its kinds' units)
 transform::TransformOp.value                                     # a transform operand (any of its kinds' units)
+text::ResolvedTextStyle.line_height_multiple                     # a multiple of the font's line height
