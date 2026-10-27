@@ -11,6 +11,7 @@
 // by the engine's stand-in, not the browser's fonts.
 
 import { Player } from "./nlayer.js";
+import { createFacade, loadBundle } from "./browser/runtime.js";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -20,6 +21,8 @@ const LEVELS = ["error", "warn", "info", "debug", "debug"];
 
 let wasm = null;
 let player = null;
+let facade = null;
+let releaseBundle = null;
 let depth = 0;
 const queued = [];
 let timer = 0;
@@ -114,6 +117,12 @@ function importsFor(options) {
     env: {
       __nlayer_random_fill: fillRandom,
       __rquickjs_host_now_us: nowUs,
+    },
+    nlayer_browser: {
+      value(op, a, b, c, number) {
+        if (!facade) throw new Error("the browser host was not initialized");
+        return facade.imports.value(op, a, b, c, number);
+      },
     },
     nlayer: {
       nlayer_submit(ptr, len) {
@@ -264,6 +273,23 @@ export async function startPage(root, options = {}) {
   const [width, height] = surfaceSize(root);
   const [top, right, bottom, left] = readInsets(root);
   const keyboard = keyboardInset();
+  if (typeof wasm.nlayer_browser_initialize === "function") {
+    facade = createFacade(wasm, requestPump);
+    enter(() => {
+      wasm.nlayer_browser_initialize();
+      facade.installBoundary();
+      wasm.nlayer_browser_start(width, height);
+      wasm.nlayer_insets(top, right, bottom, left, keyboard);
+      return wasm.nlayer_pump();
+    });
+    releaseBundle = await loadBundle(options.bundle ?? "", {
+      "@nlayer/runtime": facade.runtime,
+      "@nlayer/ui": facade.ui,
+      "nlayer:rt": facade.rt,
+    });
+    enter(() => wasm.nlayer_pump());
+    return;
+  }
   const code = encoder.encode(options.bundle ?? "");
   enter(() =>
     withBytes([code], (p, l) => {
@@ -278,6 +304,12 @@ export async function startPage(root, options = {}) {
 export function stopPage() {
   clearTimeout(timer);
   timer = 0;
+  releaseBundle?.();
+  releaseBundle = null;
+  if (facade) {
+    facade.dispose();
+    facade = null;
+    if (wasm) enter(() => wasm.nlayer_browser_dispose());
+  }
   if (wasm) enter(() => wasm.nlayer_stop());
-  player = null;
 }

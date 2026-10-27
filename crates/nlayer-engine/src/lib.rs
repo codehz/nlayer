@@ -5,15 +5,30 @@
 //! has no thread of its own, so it sends input and calls [`LocalEngine::pump`]
 //! when a timer is due or a fetch finishes. Fetches on wasm are the host's
 //! ([`LocalEngine::start_with_host_fetch`]); the engine's ureq stack does not
-//! build there. Either way one [`nlayer_core::Core`] and one [`nlayer_js::Host`]
-//! apply what JS committed, lay out, and hand one [`MountBatch`] to the
-//! platform through a [`MountSink`]. The platform thread never blocks on
-//! [`Engine`].
+//! build there. Either way one [`nlayer_core::Core`] applies what the app
+//! committed, lays out, and hands one [`MountBatch`] to the platform through
+//! a [`MountSink`]. Feature `js` commits from QuickJS. Feature `browser`
+//! commits ops the page queued and links no QuickJS. The platform thread never
+//! blocks on [`Engine`].
 //!
 //! [`LocalEngine`] follows `nsh_engine::LocalEngine`, cut to this loop: no
 //! component tasks, display frames or posted JS calls.
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(feature = "js", feature = "browser")))]
+compile_error!("nlayer-engine requires feature `js` or `browser`");
+#[cfg(all(feature = "js", feature = "browser"))]
+compile_error!("nlayer-engine features `js` and `browser` cannot be combined");
+
+#[cfg(feature = "browser")]
+mod browser;
+#[cfg(feature = "browser")]
+mod host_types;
+#[cfg(feature = "browser")]
+pub use browser::{Bridge, clear_registration, register};
+#[cfg(feature = "browser")]
+pub use host_types::{EventPayload, HttpRequest, HttpResponse, NetworkRequest, Os};
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "js"))]
 mod net;
 
 use std::{
@@ -28,13 +43,17 @@ use std::{
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread::JoinHandle;
 
+#[cfg(feature = "browser")]
+use browser::Script as Vm;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use nlayer_core::{
     Core, EventKind, MountBatch, NodeId,
     geometry::{Edges, Points, Size},
     text::TextEngine,
 };
-use nlayer_js::Host;
+#[cfg(feature = "js")]
+use nlayer_js::Host as Vm;
+#[cfg(feature = "js")]
 pub use nlayer_js::{EventPayload, HttpRequest, HttpResponse, NetworkRequest, Os};
 
 /// A platform that applies mount batches.
@@ -432,13 +451,14 @@ type ResultSlot = Arc<Mutex<Vec<(u32, Result<HttpResponse, String>)>>>;
 
 /// One engine's state, whoever drives it.
 struct Session<M: TextEngine> {
-    host: Host,
+    host: Vm,
     core: Core<M>,
     sink: Arc<dyn MountSink>,
     results: ResultSlot,
     edits: HashMap<NodeId, u32>,
     /// Wakes the engine's HTTP stack. Wasm has no such stack.
     #[cfg(not(target_arch = "wasm32"))]
+    #[cfg_attr(feature = "browser", allow(dead_code))]
     notify: Wake,
     /// `fetch` waits for the host instead of the engine's HTTP stack.
     host_fetch: bool,
@@ -454,10 +474,16 @@ impl<M: TextEngine> Session<M> {
         host_fetch: bool,
     ) -> Result<Self, EngineError> {
         let core = Core::new(text_engine, config.viewport);
-        let host = Host::new().map_err(|error| EngineError::new(error.message))?;
-        host.set_os(config.os);
-        host.eval_source(&config.bundle)
-            .map_err(|error| EngineError::new(error.message))?;
+        #[cfg(feature = "js")]
+        let host = {
+            let host = nlayer_js::Host::new().map_err(|error| EngineError::new(error.message))?;
+            host.set_os(config.os);
+            host.eval_source(&config.bundle)
+                .map_err(|error| EngineError::new(error.message))?;
+            host
+        };
+        #[cfg(feature = "browser")]
+        let host = browser::Script::start(config.os).map_err(EngineError::new)?;
         #[cfg(target_arch = "wasm32")]
         let _ = notify;
         Ok(Session {
@@ -555,18 +581,18 @@ impl<M: TextEngine> Session<M> {
         }
         // Native: the engine's HTTP stack. Wasm never reaches this; `start`
         // there is the host-fetch engine.
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(all(not(target_arch = "wasm32"), feature = "js"))]
         for request in requests {
             let notify = Arc::clone(&self.notify);
             net::start(request, Arc::clone(&self.results), move || notify());
         }
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(not(all(not(target_arch = "wasm32"), feature = "js")))]
         self.outgoing.append(&mut requests);
     }
 }
 
 /// Hands JS the responses that arrived.
-fn complete_network(host: &Host, results: &ResultSlot) {
+fn complete_network(host: &Vm, results: &ResultSlot) {
     let done = std::mem::take(&mut *results.lock().expect("network results"));
     for (id, result) in done {
         host.complete_network(id, result);

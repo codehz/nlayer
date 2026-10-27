@@ -204,6 +204,25 @@ pub unsafe extern "C" fn nlayer_start(ptr: *const u8, len: usize, width: f32, he
         }
     }
 }
+/// Starts the page-owned script. The page registered it with
+/// [`nlayer_browser_initialize`] first. Returns the delay (ms) until
+/// [`nlayer_pump`] is due, or -1.
+#[cfg(feature = "browser")]
+#[unsafe(no_mangle)]
+pub extern "C" fn nlayer_browser_start(width: f32, height: f32) -> f64 {
+    install_logger();
+    match PageSession::start(String::new(), Size::new(px(width), px(height)), HostPage) {
+        Ok(session) => {
+            let delay = delay_ms(session.deadline());
+            RUNNING.with(|slot| *slot.borrow_mut() = Some(session));
+            delay
+        }
+        Err(error) => {
+            HostPage.report_error(&error.message);
+            -1.0
+        }
+    }
+}
 
 /// Stops the app. A later [`nlayer_start`] runs another.
 #[unsafe(no_mangle)]

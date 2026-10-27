@@ -1,6 +1,6 @@
 [package]
 name = "nlayer-engine"
-description = "One surface's engine: QuickJS, the shadow tree and layout, on its own thread or the caller's."
+description = "One surface's engine: the shadow tree and layout, on its own thread or the caller's. Feature `js` evaluates the app with QuickJS; feature `browser` does not link it."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,9 +9,17 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = ["js"]
+# QuickJS. Native targets, `nlayer test`, and the headless page tests.
+js = ["dep:nlayer-js"]
+# The page evaluates ES modules. The web wasm build uses this and not `js`,
+# so QuickJS is not linked. The two features are mutually exclusive.
+browser = []
+
 [dependencies]
 nlayer-core.workspace = true
-nlayer-js.workspace = true
+nlayer-js = { workspace = true, optional = true }
 crossbeam-channel.workspace = true
 log.workspace = true
 thiserror.workspace = true

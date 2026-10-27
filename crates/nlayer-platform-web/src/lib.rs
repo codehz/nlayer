@@ -1,13 +1,14 @@
 //! The web host.
 //!
-//! The engine (the same QuickJS runtime as the other targets, compiled for
-//! the page) lays a frame out and [`Encoder`] turns it into the JSON
-//! `web/nlayer.js` applies: absolutely positioned elements, one generated
-//! CSS class per distinct style, a border drawn over the children, text as
-//! the core's attributed spans, images, one-axis scroll views and
-//! single-line inputs. [`PageSession`] is that engine on the caller's
-//! thread. On wasm the crate exports it (`nlayer_start`, `nlayer_pump`) and
-//! `web/boot.js` is the page that drives it.
+//! Feature `js` (the default) compiles the same QuickJS runtime as the
+//! other targets into the page. Feature `browser` does not: the page
+//! evaluates the app and this crate only lays frames out. [`Encoder`] turns
+//! a frame into the JSON `web/nlayer.js` applies: absolutely positioned
+//! elements, one generated CSS class per distinct style, a border drawn
+//! over the children, text as the core's attributed spans, images, one-axis
+//! scroll views and single-line inputs. [`PageSession`] is that engine on
+//! the caller's thread. On wasm the crate exports it (`nlayer_start` or
+//! `nlayer_browser_start`, `nlayer_pump`) and `web/boot.js` drives it.
 //!
 //! Extracted from `nsh-platform-web` (`encode.rs`, `text/css.rs`,
 //! `src/lib.rs`, `web/nsh.js`) and cut to that set. Shadows, gradients,
@@ -17,6 +18,8 @@
 //! the attributed spans inside the content box the core measured.
 //! Measurement on the page is the headless stand-in.
 
+#[cfg(all(target_arch = "wasm32", feature = "browser"))]
+mod browser;
 mod encode;
 #[cfg(target_arch = "wasm32")]
 mod ffi;

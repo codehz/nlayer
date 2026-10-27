@@ -12,9 +12,16 @@ crate-type = ["rlib", "cdylib"]
 [lints]
 workspace = true
 
+[features]
+default = ["js"]
+# QuickJS inside the wasm module. The published page does not use this.
+js = ["nlayer-engine/js"]
+# The page evaluates the app. The wasm build uses this instead of `js`.
+browser = ["nlayer-engine/browser"]
+
 [dependencies]
 nlayer-core.workspace = true
-nlayer-engine.workspace = true
+nlayer-engine = { workspace = true, default-features = false }
 rustc-hash.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
