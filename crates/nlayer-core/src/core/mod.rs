@@ -2848,4 +2848,55 @@ mod tests {
             MountItem::ScrollBy { id: 2, dx, .. } if *dx == px(30.0)
         )));
     }
+
+    #[test]
+    fn a_scroll_view_mounts_the_scroll_events_it_listens_to() {
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Scroll,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let kinds = [
+            EventKind::Scroll,
+            EventKind::ScrollEnd,
+            EventKind::ScrollDragStart,
+            EventKind::ScrollDragEnd,
+            EventKind::MomentumStart,
+            EventKind::MomentumEnd,
+        ];
+        for event in kinds {
+            c.apply(Op::Listen {
+                id: 2,
+                event,
+                enabled: true,
+            })
+            .unwrap();
+        }
+        let batch = c.commit().unwrap();
+        let events = batch
+            .items
+            .iter()
+            .find_map(|item| match item {
+                MountItem::Events { id: 2, events } => Some(*events),
+                _ => None,
+            })
+            .expect("scroll events");
+        for event in kinds {
+            assert!(events.contains(event));
+        }
+        assert!(!events.contains(EventKind::Press));
+        assert_eq!(EventKind::from_prop("onScroll"), Some(EventKind::Scroll));
+        assert_eq!(
+            EventKind::from_prop("onScrollDragEnd"),
+            Some(EventKind::ScrollDragEnd)
+        );
+        assert_eq!(EventKind::MomentumEnd.prop_name(), "onMomentumEnd");
+    }
 }

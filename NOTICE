@@ -27,7 +27,8 @@ Copied files:
 - `Tag`, `EventKind`, `Op`, `Prop`, `Command`, `ImageSource`, `ImageScales` from `nsh_core::ops`
   (text and scroll ops included; input ops are not)
 - `crates/nlayer-core/src/core/mod.rs` from `crates/nsh-core/src/core/mod.rs` (view, text, image and scroll apply, commit and frame rounding)
-- `Tag::Scroll`, `Prop::Horizontal`, `Command::ScrollTo`, `MountItem::ScrollConfig` /
-  `ScrollContent` / `ScrollBy` and the scroll path in `core` from `nsh_core`
-  (one axis; refresh, zoom, paging, snap and scrollbar props are not copied)
+- `Tag::Scroll`, `Prop::Horizontal`, `Command::ScrollTo`, scroll `EventKind`s,
+  `MountItem::ScrollConfig` / `ScrollContent` / `ScrollBy` and the scroll path
+  in `core` from `nsh_core` (one axis; refresh, zoom, paging, snap and scrollbar
+  props are not copied)
 - `NodeId`, `ROOT_ID`, `EventMask` from `nsh_core::ops`

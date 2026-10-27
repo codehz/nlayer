@@ -56,6 +56,18 @@ impl Tag {
 pub enum EventKind {
     /// A tap / click.
     Press,
+    /// A scroll view moved, at most once per frame.
+    Scroll,
+    /// Scrolling came to rest.
+    ScrollEnd,
+    /// The user started dragging a scroll view.
+    ScrollDragStart,
+    /// The user let go of a scroll view.
+    ScrollDragEnd,
+    /// A scroll view started gliding after a fling.
+    MomentumStart,
+    /// A scroll view stopped gliding.
+    MomentumEnd,
 }
 
 impl EventKind {
@@ -64,6 +76,12 @@ impl EventKind {
     pub fn from_prop(name: &str) -> Option<EventKind> {
         match name {
             "onPress" => Some(EventKind::Press),
+            "onScroll" => Some(EventKind::Scroll),
+            "onScrollEnd" => Some(EventKind::ScrollEnd),
+            "onScrollDragStart" => Some(EventKind::ScrollDragStart),
+            "onScrollDragEnd" => Some(EventKind::ScrollDragEnd),
+            "onMomentumStart" => Some(EventKind::MomentumStart),
+            "onMomentumEnd" => Some(EventKind::MomentumEnd),
             _ => None,
         }
     }
@@ -73,6 +91,12 @@ impl EventKind {
     pub const fn prop_name(self) -> &'static str {
         match self {
             EventKind::Press => "onPress",
+            EventKind::Scroll => "onScroll",
+            EventKind::ScrollEnd => "onScrollEnd",
+            EventKind::ScrollDragStart => "onScrollDragStart",
+            EventKind::ScrollDragEnd => "onScrollDragEnd",
+            EventKind::MomentumStart => "onMomentumStart",
+            EventKind::MomentumEnd => "onMomentumEnd",
         }
     }
 }
