@@ -32,3 +32,10 @@ Copied files:
   in `core` from `nsh_core` (one axis; refresh, zoom, paging, snap and scrollbar
   props are not copied)
 - `NodeId`, `ROOT_ID`, `EventMask` from `nsh_core::ops`
+- `Tag::Input`, `EventKind::Change`, `KeyboardType`, `Prop::Value` /
+  `Placeholder` / `Secure` / `Keyboard` / `Disabled` from `nsh_core::ops`
+  (single-line only: no multiline, submit, accessory or IME events)
+- `InputConfig`, `MountItem::Input` / `InputValue` / `InputContent` and
+  `ViewKind::Input` from `nsh_core::mount` (the same cut)
+- the input path in `core` (`InputState`, `measure_input`, `input_changed`)
+  from `nsh_core::core` (one line; content-size events are not copied)

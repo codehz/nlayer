@@ -1,8 +1,8 @@
 //! Platform-independent core of nlayer.
 //!
 //! Reactive graph, geometry, the style IR, text layout and the shadow tree
-//! (views, text, images and scroll views) are extracted from nsh. The input
-//! host follows in the same crate.
+//! (views, text, images, scroll views and single-line inputs) are extracted
+//! from nsh.
 
 pub mod animation;
 pub mod color;
@@ -26,6 +26,8 @@ pub mod transform;
 
 pub use color::{Hsla, Rgba};
 pub use core::{ApplyError, Core};
-pub use mount::{MountBatch, MountItem, ViewKind};
-pub use ops::{Command, EventKind, IMAGE_SCALES, ImageScales, ImageSource, Op, Prop, Tag};
+pub use mount::{InputConfig, MountBatch, MountItem, ViewKind};
+pub use ops::{
+    Command, EventKind, IMAGE_SCALES, ImageScales, ImageSource, KeyboardType, Op, Prop, Tag,
+};
 pub use style::Color;

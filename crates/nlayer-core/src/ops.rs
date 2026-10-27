@@ -3,7 +3,8 @@
 //! `ResizeMode`, `ImageSource` and `ImageScales` are copied from
 //! `nsh_core::ops`. The `PropEnum` derive arrives with the element macros.
 //! Scroll ops are the axis lock only: no refresh, zoom or paging. `data:`
-//! image bytes are not part of v1. Input ops follow with that host.
+//! image bytes are not part of v1. Input is a single line: `value`,
+//! `placeholder`, `disabled`, `secureTextEntry` and `keyboardType`.
 
 use std::sync::Arc;
 
@@ -32,6 +33,8 @@ pub enum Tag {
     /// A scroll view (`<scroll>`). One axis: vertical, or horizontal with
     /// [`Prop::Horizontal`].
     Scroll,
+    /// A single-line text field (`<input>`).
+    Input,
 }
 impl Tag {
     /// Parses a host element's name (what `nlayer:rt`'s `element` takes).
@@ -42,6 +45,7 @@ impl Tag {
             "text" => Some(Tag::Text),
             "image" => Some(Tag::Image),
             "scroll" => Some(Tag::Scroll),
+            "input" => Some(Tag::Input),
             _ => None,
         }
     }
@@ -68,6 +72,8 @@ pub enum EventKind {
     MomentumStart,
     /// A scroll view stopped gliding.
     MomentumEnd,
+    /// The user edited an input (`onChange`).
+    Change,
 }
 
 impl EventKind {
@@ -82,6 +88,7 @@ impl EventKind {
             "onScrollDragEnd" => Some(EventKind::ScrollDragEnd),
             "onMomentumStart" => Some(EventKind::MomentumStart),
             "onMomentumEnd" => Some(EventKind::MomentumEnd),
+            "onChange" => Some(EventKind::Change),
             _ => None,
         }
     }
@@ -97,6 +104,7 @@ impl EventKind {
             EventKind::ScrollDragEnd => "onScrollDragEnd",
             EventKind::MomentumStart => "onMomentumStart",
             EventKind::MomentumEnd => "onMomentumEnd",
+            EventKind::Change => "onChange",
         }
     }
 }
@@ -319,6 +327,34 @@ impl FromIterator<f32> for ImageScales {
     }
 }
 
+/// Keyboard layout of a single-line input (`keyboardType`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeyboardType {
+    /// Full keyboard (`text`).
+    #[default]
+    Text,
+    /// E-mail addresses (`email`).
+    Email,
+    /// Numbers (`number`).
+    Number,
+    /// Phone numbers (`phone`).
+    Phone,
+}
+
+impl KeyboardType {
+    /// Parses a `keyboardType` value.
+    #[inline]
+    pub fn from_name(name: &str) -> Option<KeyboardType> {
+        match name {
+            "text" => Some(KeyboardType::Text),
+            "email" => Some(KeyboardType::Email),
+            "number" => Some(KeyboardType::Number),
+            "phone" => Some(KeyboardType::Phone),
+            _ => None,
+        }
+    }
+}
+
 /// A non-style property of a host node.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Prop {
@@ -326,6 +362,16 @@ pub enum Prop {
     Source(Option<ImageSource>),
     /// `horizontal`: the scroll view scrolls along x instead of y.
     Horizontal(bool),
+    /// `value`: the text of an input, controlled by JS.
+    Value(String),
+    /// `placeholder`: shown while an input is empty.
+    Placeholder(String),
+    /// `secureTextEntry`: the text is hidden (passwords).
+    Secure(bool),
+    /// `keyboardType`.
+    Keyboard(KeyboardType),
+    /// `disabled`: the input ignores edits.
+    Disabled(bool),
 }
 
 /// A mutation produced by the JS renderer.

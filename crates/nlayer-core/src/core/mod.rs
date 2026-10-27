@@ -1,9 +1,9 @@
 //! Shadow tree.
 //!
-//! Apply, commit and frame emission for views, text, images and scroll
-//! views, extracted from `nsh_core::core` and cut to those hosts. Input
-//! follows in this module; it is not stubbed here. Inline views inside
-//! text, text selection and links are not part of this slice.
+//! Apply, commit and frame emission for views, text, images, scroll views
+//! and single-line inputs, extracted from `nsh_core::core` and cut to those
+//! hosts. Inline views inside text, text selection and links are not part
+//! of this slice.
 
 mod layout_tree;
 
@@ -15,7 +15,7 @@ use layout_tree::LayoutTree;
 
 use crate::{
     geometry::{Bounds, Percentage, Points, Size, rect},
-    mount::{MountBatch, MountItem, ViewKind},
+    mount::{InputConfig, MountBatch, MountItem, ViewKind},
     ops::{Command, EventMask, ImageSource, NodeId, Op, Prop, ROOT_ID, ResizeMode, Tag},
     style::{self, EllipsizeMode, Style, TextAlign, TextStyle, ViewStyle},
     text::{AttributedText, MeasureCache, ResolvedTextStyle, TextEngine, TextLayout},
@@ -41,9 +41,13 @@ mod dirty {
     pub(super) const IMAGE: u32 = 1 << 4;
     /// Emit [`crate::MountItem::ScrollConfig`].
     pub(super) const SCROLL: u32 = 1 << 5;
+    /// Emit [`crate::MountItem::Input`].
+    pub(super) const INPUT: u32 = 1 << 6;
+    /// Emit [`crate::MountItem::InputValue`].
+    pub(super) const INPUT_VALUE: u32 = 1 << 7;
 }
 
-/// Host kind. Input joins this when its path is copied.
+/// Host kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
     View,
@@ -54,6 +58,8 @@ enum Kind {
     Image,
     /// Scrolls on one axis ([`ScrollState::horizontal`]).
     Scroll,
+    /// A single-line text field.
+    Input,
 }
 
 impl Kind {
@@ -67,6 +73,7 @@ impl Kind {
             Tag::Text => Kind::Text,
             Tag::Image => Kind::Image,
             Tag::Scroll => Kind::Scroll,
+            Tag::Input => Kind::Input,
         }
     }
 
@@ -76,6 +83,7 @@ impl Kind {
             Kind::Text => ViewKind::Text,
             Kind::Image => ViewKind::Image,
             Kind::Scroll => ViewKind::Scroll,
+            Kind::Input => ViewKind::Input,
             // Raw text is never created as a native view.
             Kind::RawText => ViewKind::View,
         }
@@ -137,6 +145,32 @@ impl Default for ScrollState {
     }
 }
 
+/// A single-line input's text and the configuration last sent.
+#[derive(Debug)]
+struct InputState {
+    value: String,
+    /// Edits reported by the platform.
+    count: u32,
+    /// Everything but the text style, which comes from the node's style.
+    config: InputConfig,
+    /// Last content box sent to the platform.
+    content: Option<Bounds<Points>>,
+    /// The input is measured with its placeholder (its value is empty).
+    placeholder_measured: bool,
+}
+
+impl Default for InputState {
+    fn default() -> Self {
+        Self {
+            value: String::new(),
+            count: 0,
+            config: InputConfig::default(),
+            content: None,
+            placeholder_measured: false,
+        }
+    }
+}
+
 struct Node {
     id: NodeId,
     kind: Kind,
@@ -166,6 +200,8 @@ struct Node {
     image: Option<Option<ImageSource>>,
     /// Present exactly for [`Kind::Scroll`].
     scroll: Option<Box<ScrollState>>,
+    /// Present exactly for [`Kind::Input`].
+    input: Option<Box<InputState>>,
     /// `zIndex`: native views are ordered by it (stable) among siblings.
     z_index: i32,
     /// Laid out right to left (the resolved `direction`).
@@ -201,6 +237,7 @@ impl Node {
             object_fit: None,
             image: matches!(kind, Kind::Image).then_some(None),
             scroll: matches!(kind, Kind::Scroll).then(Box::default),
+            input: matches!(kind, Kind::Input).then(Box::default),
             z_index: 0,
             rtl: false,
             direction: None,
@@ -248,7 +285,8 @@ impl<P> TextContext<P> {
     }
 }
 
-/// Measured leaves: text blocks and images with a known natural size.
+/// Measured leaves: text blocks, single-line inputs and images with a known
+/// natural size.
 enum LeafContext<P> {
     Text(TextContext<P>),
     Image(Option<Size<Points>>),
@@ -335,6 +373,21 @@ impl<M: TextEngine> Core<M> {
         let old = self.pixel_ratio;
         self.pixel_ratio = pixel_ratio;
         self.repick_images(old, pixel_ratio);
+    }
+
+    /// The user edited input `id` (before JS sees the edit): keeps the text
+    /// for layout and for stale-value detection.
+    pub fn input_changed(&mut self, id: NodeId, text: &str, count: u32) {
+        let Ok(key) = self.key(id) else { return };
+        let Some(input) = self.nodes[key as usize].input.as_mut() else {
+            return;
+        };
+        input.count = count;
+        if input.value != text {
+            input.value.clear();
+            input.value.push_str(text);
+            self.measure_input(key);
+        }
     }
 
     /// Applies one op from JS.
@@ -452,7 +505,7 @@ impl<M: TextEngine> Core<M> {
             Kind::Image => self
                 .layout
                 .new_leaf_with_context(layout_style, LeafContext::Image(None)),
-            Kind::Text => self.layout.new_leaf_with_context(
+            Kind::Text | Kind::Input => self.layout.new_leaf_with_context(
                 layout_style,
                 LeafContext::Text(TextContext::new(Arc::default())),
             ),
@@ -470,6 +523,9 @@ impl<M: TextEngine> Core<M> {
         }
         if kind == Kind::Scroll {
             self.sync_scroll_style(key);
+        }
+        if kind == Kind::Input {
+            self.measure_input(key);
         }
         Ok(())
     }
@@ -548,6 +604,10 @@ impl<M: TextEngine> Core<M> {
         if text_changed || flipped {
             match self.nodes[key as usize].kind {
                 Kind::Text => self.mark_text_block(key),
+                Kind::Input => {
+                    self.measure_input(key);
+                    self.mark(key, dirty::INPUT);
+                }
                 _ if text_changed => self.mark_inheriting_text(key),
                 _ => {}
             }
@@ -592,6 +652,45 @@ impl<M: TextEngine> Core<M> {
                     self.mark(key, dirty::SCROLL);
                     self.sync_scroll_style(key);
                 }
+            }
+            Prop::Value(value) => {
+                let Some(input) = self.nodes[key as usize].input.as_mut() else {
+                    return Ok(());
+                };
+                if input.value != value {
+                    input.value = value;
+                    self.mark(key, dirty::INPUT_VALUE);
+                    self.measure_input(key);
+                }
+            }
+            Prop::Placeholder(text) => {
+                let Some(input) = self.nodes[key as usize].input.as_mut() else {
+                    return Ok(());
+                };
+                input.config.placeholder = text;
+                self.mark(key, dirty::INPUT);
+                self.measure_input(key);
+            }
+            Prop::Secure(secure) => {
+                let Some(input) = self.nodes[key as usize].input.as_mut() else {
+                    return Ok(());
+                };
+                input.config.secure = secure;
+                self.mark(key, dirty::INPUT);
+            }
+            Prop::Keyboard(keyboard) => {
+                let Some(input) = self.nodes[key as usize].input.as_mut() else {
+                    return Ok(());
+                };
+                input.config.keyboard = keyboard;
+                self.mark(key, dirty::INPUT);
+            }
+            Prop::Disabled(disabled) => {
+                let Some(input) = self.nodes[key as usize].input.as_mut() else {
+                    return Ok(());
+                };
+                input.config.disabled = disabled;
+                self.mark(key, dirty::INPUT);
             }
         }
         Ok(())
@@ -853,6 +952,13 @@ impl<M: TextEngine> Core<M> {
             node.scroll.as_mut().expect("scroll").content = None;
             flags |= dirty::SCROLL;
         }
+        if let Some(input) = node.input.as_mut() {
+            input.content = None;
+            flags |= dirty::INPUT;
+            if !input.value.is_empty() {
+                flags |= dirty::INPUT_VALUE;
+            }
+        }
         self.mount.push(MountItem::Create {
             id,
             kind: kind.view_kind(),
@@ -944,6 +1050,9 @@ impl<M: TextEngine> Core<M> {
             }
             if flags & dirty::TEXT_MOUNT != 0 {
                 self.queue_text(key);
+            }
+            if flags & (dirty::INPUT | dirty::INPUT_VALUE) != 0 {
+                self.emit_input(key, id, flags);
             }
         }
     }
@@ -1126,6 +1235,18 @@ impl<M: TextEngine> Core<M> {
             }
         }
         self.set_frame(key, frame);
+        if self.nodes[key as usize].kind == Kind::Input {
+            let content = content_box(&l);
+            let node = &mut self.nodes[key as usize];
+            let input = node.input.as_mut().expect("input state");
+            if input.content != Some(content) {
+                input.content = Some(content);
+                self.mount.push(MountItem::InputContent {
+                    id: node.id,
+                    content,
+                });
+            }
+        }
         if self.nodes[key as usize].kind == Kind::Scroll {
             // Scrollable extent: the overflow rectangle is measured from the
             // padding box origin and stops at the children's border boxes, so
@@ -1207,6 +1328,10 @@ impl<M: TextEngine> Core<M> {
         if kind == Kind::Text {
             self.mark_text_block(key);
         }
+        if kind == Kind::Input {
+            self.measure_input(key);
+            self.mark(key, dirty::INPUT);
+        }
     }
 
     /// Marks the text block containing `key` (or `key` itself) for rebuild.
@@ -1232,9 +1357,103 @@ impl<M: TextEngine> Core<M> {
         while let Some(k) = stack.pop() {
             match self.nodes[k as usize].kind {
                 Kind::Text => self.mark_text_block(k),
+                Kind::Input => {
+                    self.measure_input(k);
+                    self.mark(k, dirty::INPUT);
+                }
                 Kind::RawText => {}
                 _ => stack.extend_from_slice(&self.nodes[k as usize].children),
             }
+        }
+    }
+
+    /// Rebuilds the text an input is measured with: its value, else its
+    /// placeholder, else an empty line.
+    fn measure_input(&mut self, key: Key) {
+        let node = &self.nodes[key as usize];
+        let (Some(input), Some(layout)) = (&node.input, node.layout) else {
+            return;
+        };
+        let placeholder = input.value.is_empty() && !input.config.placeholder.is_empty();
+        let text = self.input_text(
+            key,
+            if placeholder {
+                &input.config.placeholder
+            } else {
+                &input.value
+            },
+        );
+        let cx = self.text_cx(layout);
+        let same = cx.text.layout_eq(&text);
+        let input = self.nodes[key as usize]
+            .input
+            .as_mut()
+            .expect("input state");
+        // A value that reads as the placeholder measures the same, but
+        // it is not the placeholder: laid out again so the two stay distinct.
+        if same && input.placeholder_measured == placeholder {
+            return;
+        }
+        input.placeholder_measured = placeholder;
+        if !same {
+            *self.text_cx(layout) = TextContext::new(Arc::new(text));
+        }
+        self.layout.mark_dirty(layout);
+        self.needs_layout = true;
+    }
+
+    /// `content` in the text style of input `key`, as it is measured.
+    /// A single line: `max_lines` is 1, and an empty string still takes a
+    /// line.
+    fn input_text(&self, key: Key, content: &str) -> AttributedText {
+        let node = &self.nodes[key as usize];
+        let mut text = AttributedText {
+            max_lines: 1,
+            ..AttributedText::default()
+        };
+        let style = self.inherited_text_style(key).inherit(&node.text_style);
+        text.push(content, style);
+        if content.is_empty() {
+            text.push("\u{200b}", style);
+        }
+        text
+    }
+
+    fn emit_input(&mut self, key: Key, id: NodeId, flags: u32) {
+        let text_style = self.nodes[key as usize].text_style;
+        let rtl = self.nodes[key as usize].rtl;
+        let style = self.inherited_text_style(key).inherit(&text_style);
+        let align = directed_align(
+            text_style.text_align.unwrap_or_default(),
+            rtl && !text_style.text_align_physical,
+        );
+        let writing = text_style.writing_direction.unwrap_or(rtl);
+        let config = (flags & dirty::INPUT != 0).then(|| {
+            let input = self.nodes[key as usize]
+                .input
+                .as_ref()
+                .expect("input state");
+            let mut config = input.config.clone();
+            config.style = style;
+            config.align = align;
+            config.rtl = writing;
+            config
+        });
+        let value = (flags & dirty::INPUT_VALUE != 0).then(|| {
+            let input = self.nodes[key as usize]
+                .input
+                .as_ref()
+                .expect("input state");
+            (input.value.clone(), input.count)
+        });
+        if let Some(config) = config {
+            self.mount.push(MountItem::Input {
+                id,
+                config: Box::new(config),
+            });
+        }
+        if let Some((text, count)) = value {
+            self.mount.push(MountItem::InputValue { id, text, count });
         }
     }
 
@@ -1795,7 +2014,7 @@ mod tests {
     use super::*;
     use crate::{
         geometry::{px, size, size_pt},
-        ops::{EventKind, ImageScales, ImageSource, Prop, ResizeMode},
+        ops::{EventKind, ImageScales, ImageSource, KeyboardType, Prop, ResizeMode},
         style::{StylePatch, StyleValue},
         text::{AttributedText, TextEngine, TextLayout},
     };
@@ -2898,5 +3117,217 @@ mod tests {
             Some(EventKind::ScrollDragEnd)
         );
         assert_eq!(EventKind::MomentumEnd.prop_name(), "onMomentumEnd");
+    }
+
+    #[test]
+    fn an_input_measures_its_placeholder_and_reports_its_content_box() {
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Input,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Placeholder("Name".into()),
+        })
+        .unwrap();
+        let mut padded = Style::default();
+        padded.set("padding", StyleValue::Number(6.0)).unwrap();
+        apply_style(&mut c, 2, padded);
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        // One line (16pt) plus padding, stretched across the root.
+        assert_eq!(frame(&batch, 2).size.height, px(28.0));
+        assert!(batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::Input { id: 2, config }
+                if config.placeholder == "Name"
+                    && !config.secure
+                    && !config.disabled
+                    && config.keyboard == KeyboardType::Text
+        )));
+        assert!(batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::InputContent { id: 2, content }
+                if *content == crate::geometry::rect(6.0, 6.0, 88.0, 16.0)
+        )));
+        // No text yet: nothing to send.
+        assert!(
+            !batch
+                .items
+                .iter()
+                .any(|item| matches!(item, MountItem::InputValue { .. }))
+        );
+        assert_eq!(Tag::from_name("input"), Some(Tag::Input));
+    }
+
+    #[test]
+    fn an_empty_input_is_one_line_tall() {
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Input,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        assert_eq!(frame(&c.commit().unwrap(), 2).size, size_pt(100.0, 16.0));
+    }
+
+    #[test]
+    fn input_values_from_js_and_native_edits() {
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Input,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Placeholder("Name".into()),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.commit().unwrap();
+        // The user types; JS echoes the same text: nothing goes back.
+        c.input_changed(2, "ab", 2);
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Value("ab".into()),
+        })
+        .unwrap();
+        assert!(c.commit().is_none());
+        // JS transforms the text: it is sent with the edit count it is based on.
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Value("AB".into()),
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        assert!(batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::InputValue { id: 2, text, count: 2 } if text == "AB"
+        )));
+    }
+
+    #[test]
+    fn an_input_mounts_secure_keyboard_disabled_and_inherited_style() {
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::View,
+        })
+        .unwrap();
+        let mut parent = Style::default();
+        parent.set("color", StyleValue::Str("#00ff00")).unwrap();
+        apply_style(&mut c, 2, parent);
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::Input,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 3,
+            prop: Prop::Secure(true),
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 3,
+            prop: Prop::Keyboard(KeyboardType::Email),
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 3,
+            prop: Prop::Disabled(true),
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 3,
+            prop: Prop::Value("secret".into()),
+        })
+        .unwrap();
+        c.apply(Op::Listen {
+            id: 3,
+            event: EventKind::Change,
+            enabled: true,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        let config = batch
+            .items
+            .iter()
+            .rev()
+            .find_map(|item| match item {
+                MountItem::Input { id: 3, config } => Some(config),
+                _ => None,
+            })
+            .expect("input config");
+        assert!(config.secure);
+        assert!(config.disabled);
+        assert_eq!(config.keyboard, KeyboardType::Email);
+        assert_eq!(config.style.color, crate::Color::parse("#00ff00").unwrap());
+        assert!(batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::InputValue { id: 3, text, count: 0 } if text == "secret"
+        )));
+        let events = batch
+            .items
+            .iter()
+            .find_map(|item| match item {
+                MountItem::Events { id: 3, events } => Some(*events),
+                _ => None,
+            })
+            .expect("input events");
+        assert!(events.contains(EventKind::Change));
+        assert_eq!(EventKind::from_prop("onChange"), Some(EventKind::Change));
+        assert_eq!(EventKind::Change.prop_name(), "onChange");
+        assert_eq!(KeyboardType::from_name("phone"), Some(KeyboardType::Phone));
+        assert_eq!(KeyboardType::from_name("url"), None);
+
+        let mut own = Style::default();
+        own.set("color", StyleValue::Str("#ff0000")).unwrap();
+        own.set("textAlign", StyleValue::Str("center")).unwrap();
+        own.direction = Some(true);
+        apply_style(&mut c, 3, own);
+        let batch = c.commit().unwrap();
+        let config = batch
+            .items
+            .iter()
+            .rev()
+            .find_map(|item| match item {
+                MountItem::Input { id: 3, config } => Some(config),
+                _ => None,
+            })
+            .expect("restyled input");
+        assert_eq!(config.style.color, crate::Color::parse("#ff0000").unwrap());
+        assert_eq!(config.align, crate::style::TextAlign::Center);
+        assert!(config.rtl);
     }
 }

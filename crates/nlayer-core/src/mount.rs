@@ -1,15 +1,15 @@
 //! Instructions a platform applies to native views.
 //!
-//! Extracted from `nsh_core::mount`, cut to views, text, images and scroll
-//! views. Input items follow with that host.
+//! Extracted from `nsh_core::mount`, cut to views, text, images, scroll
+//! views and single-line inputs.
 
 use std::sync::Arc;
 
 use crate::{
     geometry::{Bounds, Points, Size},
-    ops::{Command, EventMask, ImageSource, NodeId, ResizeMode},
-    style::ViewStyle,
-    text::{AttributedText, TextLayout},
+    ops::{Command, EventMask, ImageSource, KeyboardType, NodeId, ResizeMode},
+    style::{TextAlign, ViewStyle},
+    text::{AttributedText, ResolvedTextStyle, TextLayout},
 };
 
 /// Kind of native view to create.
@@ -23,6 +23,8 @@ pub enum ViewKind {
     Image,
     /// A scroll view. It scrolls on one axis ([`MountItem::ScrollConfig`]).
     Scroll,
+    /// A single-line text field ([`MountItem::Input`]).
+    Input,
 }
 
 /// One instruction for the platform backend.
@@ -126,6 +128,31 @@ pub enum MountItem {
         /// Vertical shift.
         dy: Points,
     },
+    /// Configure a single-line text field. The text itself is
+    /// [`MountItem::InputValue`].
+    Input {
+        /// Input view.
+        id: NodeId,
+        /// The configuration; boxed because it carries the text style.
+        config: Box<InputConfig>,
+    },
+    /// Set the text of an input (from JS). `count` is how many edits the
+    /// platform has reported: a value based on an older edit is stale.
+    InputValue {
+        /// Input view.
+        id: NodeId,
+        /// The text.
+        text: String,
+        /// Edits reported so far.
+        count: u32,
+    },
+    /// Where the text of an input goes (inside padding and border).
+    InputContent {
+        /// Input view.
+        id: NodeId,
+        /// Content box relative to the view.
+        content: Bounds<Points>,
+    },
     /// An imperative call (`scrollTo`).
     Command {
         /// View.
@@ -133,6 +160,42 @@ pub enum MountItem {
         /// The call.
         command: Command,
     },
+}
+
+/// Everything about a single-line input except its text.
+///
+/// Copied from `nsh_core::mount::InputConfig` and cut to the v1 fields:
+/// one line, no accessory, no submit behavior.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InputConfig {
+    /// Font and color of the text.
+    pub style: ResolvedTextStyle,
+    /// Alignment of the text.
+    pub align: TextAlign,
+    /// Shown while the text is empty.
+    pub placeholder: String,
+    /// Hide the characters (passwords).
+    pub secure: bool,
+    /// Keyboard layout.
+    pub keyboard: KeyboardType,
+    /// The user cannot edit the text.
+    pub disabled: bool,
+    /// The text runs right to left.
+    pub rtl: bool,
+}
+
+impl Default for InputConfig {
+    fn default() -> Self {
+        Self {
+            style: ResolvedTextStyle::default(),
+            align: TextAlign::Auto,
+            placeholder: String::new(),
+            secure: false,
+            keyboard: KeyboardType::Text,
+            disabled: false,
+            rtl: false,
+        }
+    }
 }
 
 /// All mount items produced by one commit.
