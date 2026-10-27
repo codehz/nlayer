@@ -56,9 +56,13 @@ test("the page graph and a text mount do not need QuickJS", async () => {
 
   wasm.nlayer_browser_start(320, 480);
   facade.runtime.mount(() => {
+    const view = facade.rt.element("view");
+    facade.rt.prop(view, "style", { padding: 16 });
+    facade.rt.prop(view, "onPress", () => {});
     const text = facade.rt.element("text");
     facade.rt.append(text, facade.rt.text("hello"));
-    return text;
+    facade.rt.append(view, text);
+    return view;
   });
   wasm.nlayer_pump();
   assert.ok(frames.length > 0, "a frame was submitted");

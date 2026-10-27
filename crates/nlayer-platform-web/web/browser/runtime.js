@@ -143,10 +143,10 @@ export function createFacade(wasm, requestPump) {
       if (!table) handlers.set(id, (table = new Map()));
       if (typeof value === "function") table.set(name, value);
       else table.delete(name);
-      call(305, id, name, typeof value === "function");
+      call(305, target, name, typeof value === "function");
       return;
     }
-    call(303, id, name, value);
+    call(303, target, name, value);
   }
 
   function show(parent, value, shown, marker) {
