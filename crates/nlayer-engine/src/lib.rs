@@ -30,7 +30,7 @@ use nlayer_core::{
     text::TextEngine,
 };
 use nlayer_js::Host;
-pub use nlayer_js::{EventPayload, Os};
+pub use nlayer_js::{EventPayload, HttpRequest, HttpResponse, NetworkRequest, Os};
 
 /// A platform that applies mount batches.
 pub trait MountSink: Send + Sync + 'static {
@@ -251,11 +251,35 @@ impl LocalNotify {
 impl<M: TextEngine> LocalEngine<M> {
     /// Loads the app and lays out its first frame before returning.
     /// `wake` runs when a fetch finishes and no pump is draining the queue.
+    /// Fetches run on the engine's HTTP stack.
     pub fn start(
         config: EngineConfig,
         text_engine: M,
         sink: Arc<dyn MountSink>,
         wake: Wake,
+    ) -> Result<Self, EngineError> {
+        Self::open(config, text_engine, sink, wake, false)
+    }
+
+    /// [`start`](Self::start), but `fetch` is not sent: the host takes each
+    /// request with [`take_fetches`](Self::take_fetches) and answers it with
+    /// [`complete_fetch`](Self::complete_fetch). The page does this; the
+    /// browser's `fetch` is the stack, and ureq does not build for wasm.
+    pub fn start_with_host_fetch(
+        config: EngineConfig,
+        text_engine: M,
+        sink: Arc<dyn MountSink>,
+        wake: Wake,
+    ) -> Result<Self, EngineError> {
+        Self::open(config, text_engine, sink, wake, true)
+    }
+
+    fn open(
+        config: EngineConfig,
+        text_engine: M,
+        sink: Arc<dyn MountSink>,
+        wake: Wake,
+        host_fetch: bool,
     ) -> Result<Self, EngineError> {
         let (tx, rx) = unbounded();
         let notify = Arc::new(LocalNotify::new(tx.clone(), wake));
@@ -263,7 +287,7 @@ impl<M: TextEngine> LocalEngine<M> {
             let notify = Arc::clone(&notify);
             Arc::new(move || notify.wake())
         };
-        let mut session = Session::open(config, text_engine, sink, hook)?;
+        let mut session = Session::open(config, text_engine, sink, hook, host_fetch)?;
         session.commit();
         Ok(LocalEngine {
             session,
@@ -282,6 +306,24 @@ impl<M: TextEngine> LocalEngine<M> {
     /// How long until the next timer (`None`: only input and [`Wake`]).
     pub fn deadline(&self) -> Option<Duration> {
         self.session.next_timer()
+    }
+
+    /// The fetches queued since the last call. Empty unless this engine was
+    /// started with [`start_with_host_fetch`](Self::start_with_host_fetch).
+    pub fn take_fetches(&mut self) -> Vec<NetworkRequest> {
+        std::mem::take(&mut self.session.outgoing)
+    }
+
+    /// Answers a fetch from [`take_fetches`](Self::take_fetches). Call it
+    /// outside [`pump`](Self::pump); it wakes the host the same way a
+    /// finished request does.
+    pub fn complete_fetch(&self, id: u32, result: Result<HttpResponse, String>) {
+        self.session
+            .results
+            .lock()
+            .expect("network results")
+            .push((id, result));
+        self.notify.wake();
     }
 
     /// Handles the input sent since the last call, runs the timers that are
@@ -340,7 +382,7 @@ fn run<M, F>(
     let notify: Wake = Arc::new(move || {
         let _ = wake.send(Message::NetworkDone);
     });
-    let mut session = match Session::open(config, text_engine(), sink, notify) {
+    let mut session = match Session::open(config, text_engine(), sink, notify, false) {
         Ok(session) => session,
         Err(error) => {
             let _ = ready.send(Err(error));
@@ -373,6 +415,9 @@ struct Session<M: TextEngine> {
     results: net::ResultSlot,
     edits: HashMap<NodeId, u32>,
     notify: Wake,
+    /// `fetch` waits for the host instead of the engine's HTTP stack.
+    host_fetch: bool,
+    outgoing: Vec<NetworkRequest>,
 }
 
 impl<M: TextEngine> Session<M> {
@@ -381,6 +426,7 @@ impl<M: TextEngine> Session<M> {
         text_engine: M,
         sink: Arc<dyn MountSink>,
         notify: Wake,
+        host_fetch: bool,
     ) -> Result<Self, EngineError> {
         let core = Core::new(text_engine, config.viewport);
         let host = Host::new().map_err(|error| EngineError::new(error.message))?;
@@ -394,6 +440,8 @@ impl<M: TextEngine> Session<M> {
             results: Arc::default(),
             edits: HashMap::new(),
             notify,
+            host_fetch,
+            outgoing: Vec::new(),
         })
     }
 
@@ -470,6 +518,10 @@ impl<M: TextEngine> Session<M> {
         }
         let mut requests = Vec::new();
         self.host.take_network(&mut requests);
+        if self.host_fetch {
+            self.outgoing.append(&mut requests);
+            return;
+        }
         for request in requests {
             let notify = Arc::clone(&self.notify);
             net::start(request, Arc::clone(&self.results), move || notify());
