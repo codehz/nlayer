@@ -3,7 +3,7 @@
 //! [content-start] 2fr [content-end full-end]`), placements
 //! (`span 2 / span 2`, `1 / -1`, `content-start / full-end`, `span col`)
 //! and `grid-auto-flow`.
-#![allow(dead_code)] // called from style once the class table lands; some helpers wait
+#![allow(dead_code)] // style already parses templates and placements; some helpers wait on the class table, which is later
 
 use taffy::{
     GridAutoFlow, GridPlacement, GridTemplateComponent, GridTemplateRepetition, Line,

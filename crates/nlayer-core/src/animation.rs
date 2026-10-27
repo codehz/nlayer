@@ -1,7 +1,7 @@
 //! Animation prop names stored on a [`crate::style::Style`].
 //!
-//! The animation graph itself is not in v1. These are the identifiers the
-//! extracted style IR already records, copied from `nsh_core::animation`.
+//! The animation graph is later, not in v1. These names stay so the
+//! extracted style IR still type-checks; v1 does not expose them.
 
 /// Identifier of an animation node, assigned by JS.
 pub type NodeId = u32;

@@ -1,8 +1,8 @@
 //! The class side-channel a [`crate::style::Style`] fills.
 //!
-//! v1 does not parse Tailwind utilities. `ClassProps` and `Space` are the
-//! fields the extracted style IR already writes, copied from
-//! `nsh_core::tailwind`. The utility table stays in nsh.
+//! v1 does not parse Tailwind utilities; the table is later, and the
+//! parser stays empty. `ClassProps` and `Space` are the fields the
+//! extracted style IR already writes, copied from `nsh_core::tailwind`.
 #![allow(dead_code)]
 
 use crate::{
