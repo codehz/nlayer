@@ -29,9 +29,11 @@ native-layer（crate、CLI、JS 模块都叫 `nlayer`）是一个 TSX 应用在 
 
 搬：reactive 图、JSX lowering（`element` / `insert` / `spread` / `cond` / `each`）、mount batch、引擎线程、Taffy 布局和 nsh/RN 默认值、web / iOS / Android 上 `View` / `Text` / `Image` / `Scroll` / 单行 `Input` 的宿主路径、WinterTC 最小集加 `fetch`。
 
-不搬：`nsh-base`、Tailwind 表、桌面后端、GPUI、Node catalog、HMR、签名、嵌入 ABI、Rust app 模板、shader、canvas、list、动画图。`ops.rs` 按 v1 协议裁，不整文件拷。`nsh-macros` 只在元素解码真正需要时搬 `PropEnum`，不搬 `assets` / `native_module`。
+不搬：`nsh-base`、Tailwind 表、桌面后端、GPUI、Node catalog、HMR、签名、嵌入 ABI、Rust app 模板、shader、canvas、list、动画图。拷的时候就裁，不要整文件进来再删。`ops.rs` 按 v1 协议裁。`nsh-macros` 只在元素解码真正需要时搬 `PropEnum`，不搬 `assets` / `native_module`。
 
-缺的依赖是缺的。用最小的真实类型把已拷文件编译过去可以，用整子系统去填一个字段不行。
+每搬一个文件，在 `NOTICE` 写上来源路径。拷来的文件保留 Apache-2.0 声明；新仓库也是 Apache-2.0，不另起许可证。
+
+缺的依赖是缺的。用最小的真实类型把已拷文件编译过去可以，用整子系统去填一个字段不行。`todo!()`、空函数、未接入的桩不算搬完。
 
 ## 已定的产品面
 
@@ -58,6 +60,6 @@ native-layer（crate、CLI、JS 模块都叫 `nlayer`）是一个 TSX 应用在 
 ## 改代码时
 
 - 先读这份文件，再读要改的模块的 `//!`。
-- 一个提交做完一个能测的切片。不把后置能力混进当前切片。
-- 当前切片的验证是 `cargo test -p nlayer-core`。新 crate 落地后，验证改成那个 crate 的测试，不要用空测试代替。
+- 一个提交是一个做完的切片：行为能跑，测试是绿的，没有 `todo!()`、空实现或「先留着」的桩。红的树不提交。
+- 现在的验证是 `cargo test -p nlayer-core`。`nlayer test` 落地之后，动到 TSX、引擎或宿主的切片还要它是绿的。不要用空测试代替。
 - 拷来的文件保留行为。改名和裁掉 v1 不用的入口可以，重写算法不行。
