@@ -92,3 +92,5 @@ Copied files:
   frames, classes, border overlay, scroll spacer, single-line field)
 - `URL` / `URLSearchParams` behavior from `crates/nsh-js/src/web/url.rs`
   (bound on this host's classes; nsh's web class layer is not copied)
+- `crates/nlayer-js/src/random.rs` from `crates/nsh-js/src/standard/random.rs`
+  (the wasm custom getrandom hook; the page fills `__nlayer_random_fill`)

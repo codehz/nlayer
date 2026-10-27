@@ -1,0 +1,4 @@
+# The wasm engine has no OS entropy. `nlayer-js` supplies getrandom's custom
+# backend, and the page fills it (`__nlayer_random_fill`).
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", 'getrandom_backend="custom"']

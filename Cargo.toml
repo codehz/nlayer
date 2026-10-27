@@ -12,6 +12,7 @@ publish = false
 missing_docs = "warn"
 unreachable_pub = "deny"
 private_interfaces = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(getrandom_backend, values("custom"))'] }
 
 [workspace.dependencies]
 nlayer-core = { version = "0.1.0", path = "crates/nlayer-core" }

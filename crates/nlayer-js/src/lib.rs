@@ -12,6 +12,8 @@ mod error;
 mod modules;
 mod net;
 mod protocol;
+#[cfg(all(target_arch = "wasm32", getrandom_backend = "custom"))]
+mod random;
 mod reactive;
 mod standard;
 mod state;
