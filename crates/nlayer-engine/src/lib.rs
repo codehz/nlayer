@@ -108,8 +108,8 @@ enum Message {
     KeyboardInset(Points),
     /// A request finished (its result is in the engine's slot).
     NetworkDone,
-    /// The engine thread was asked to exit. Never sent on wasm.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    /// The engine thread was asked to exit.
+    #[cfg(not(target_arch = "wasm32"))]
     Stop,
 }
 
@@ -437,7 +437,8 @@ struct Session<M: TextEngine> {
     sink: Arc<dyn MountSink>,
     results: ResultSlot,
     edits: HashMap<NodeId, u32>,
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    /// Wakes the engine's HTTP stack. Wasm has no such stack.
+    #[cfg(not(target_arch = "wasm32"))]
     notify: Wake,
     /// `fetch` waits for the host instead of the engine's HTTP stack.
     host_fetch: bool,
@@ -457,12 +458,15 @@ impl<M: TextEngine> Session<M> {
         host.set_os(config.os);
         host.eval_source(&config.bundle)
             .map_err(|error| EngineError::new(error.message))?;
+        #[cfg(target_arch = "wasm32")]
+        let _ = notify;
         Ok(Session {
             host,
             core,
             sink,
             results: Arc::default(),
             edits: HashMap::new(),
+            #[cfg(not(target_arch = "wasm32"))]
             notify,
             host_fetch,
             outgoing: Vec::new(),
@@ -521,6 +525,7 @@ impl<M: TextEngine> Session<M> {
             Message::SafeArea(insets) => self.core.set_safe_area(insets),
             Message::KeyboardInset(height) => self.core.set_keyboard_inset(height),
             Message::NetworkDone => {}
+            #[cfg(not(target_arch = "wasm32"))]
             Message::Stop => return false,
         }
         true
