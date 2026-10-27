@@ -3,10 +3,10 @@
 use std::{path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand};
-use nlayer_cli::{BuildOptions, TestOptions, build, test};
+use nlayer_cli::{BuildOptions, InitOptions, TestOptions, build, init, test};
 
 #[derive(Parser)]
-#[command(name = "nlayer", about = "Build and test nlayer apps")]
+#[command(name = "nlayer", about = "Create, build and test nlayer apps")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -34,6 +34,12 @@ enum Command {
         /// Run only tests whose name contains this.
         #[arg(long)]
         filter: Option<String>,
+    },
+    /// Create a TSX app: `App.tsx`, its test, `tsconfig.json` and the editor's declarations.
+    Init {
+        /// The app directory (default: the current one).
+        #[arg(default_value = ".")]
+        dir: PathBuf,
     },
 }
 
@@ -63,6 +69,16 @@ fn main() -> ExitCode {
                 } else {
                     ExitCode::FAILURE
                 }
+            }
+            Err(err) => {
+                eprintln!("{err}");
+                ExitCode::FAILURE
+            }
+        },
+        Command::Init { dir } => match init(&InitOptions { dir }) {
+            Ok(report) => {
+                print!("{report}");
+                ExitCode::SUCCESS
             }
             Err(err) => {
                 eprintln!("{err}");

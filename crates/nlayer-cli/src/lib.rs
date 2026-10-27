@@ -1,12 +1,15 @@
-//! `nlayer build` writes one app's bundle, its source map, the images it
-//! imports and the TypeScript declarations. `nlayer test` runs the app's
+//! `nlayer init` creates a TSX app. `nlayer build` writes its bundle, source
+//! map, imported images and TypeScript declarations. `nlayer test` runs its
 //! test files headless.
+
+mod init;
 
 use std::{
     fs,
     path::{Path, PathBuf},
 };
 
+pub use init::{InitError, InitOptions, InitReport, init};
 use nlayer_bundler::{BundleError, BundleOptions, bundle};
 
 /// What to build and where to write it.
