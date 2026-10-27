@@ -17,6 +17,51 @@ use crate::{dom::Dom, reactive::Graph};
 pub(crate) struct State {
     pub(crate) graph: Graph,
     pub(crate) dom: Dom,
+    /// When the VM started, for `performance.now`.
+    pub(crate) started: std::time::Instant,
+    /// The timers the engine's loop waits on.
+    pub(crate) timers: Timers,
+}
+
+/// Timers, by the id JS gave them and the instant they are due.
+#[derive(Default)]
+pub(crate) struct Timers {
+    due: std::collections::BTreeMap<(std::time::Instant, u32), ()>,
+}
+
+impl Timers {
+    /// Makes timer `id` due after `ms` milliseconds (again).
+    pub(crate) fn set(&mut self, id: u32, ms: f64) {
+        self.clear(id);
+        let at = std::time::Instant::now() + std::time::Duration::from_secs_f64(ms / 1000.0);
+        self.due.insert((at, id), ());
+    }
+
+    /// Forgets timer `id`.
+    pub(crate) fn clear(&mut self, id: u32) {
+        self.due.retain(|&(_, at), ()| at != id);
+    }
+
+    /// How long until the first timer is due.
+    pub(crate) fn next(&self) -> Option<std::time::Duration> {
+        let (&(at, _), ()) = self.due.first_key_value()?;
+        Some(at.saturating_duration_since(std::time::Instant::now()))
+    }
+
+    /// The ids due now, removed from the queue (they reschedule themselves
+    /// when they repeat).
+    pub(crate) fn run_due(&mut self) -> Vec<u32> {
+        let now = std::time::Instant::now();
+        let mut ids = Vec::new();
+        while let Some((&(at, id), ())) = self.due.first_key_value() {
+            if at > now {
+                break;
+            }
+            self.due.remove(&(at, id));
+            ids.push(id);
+        }
+        ids
+    }
 }
 
 thread_local! {
@@ -47,7 +92,12 @@ pub(crate) fn install(cx: &Ctx<'_>) {
         let rt = qjs::JS_GetRuntime(raw);
         let graph = crate::reactive::new_graph(raw);
         let dom = crate::dom::new();
-        let state = Box::into_raw(Box::new(State { graph, dom }));
+        let state = Box::into_raw(Box::new(State {
+            graph,
+            dom,
+            started: crate::standard::started(),
+            timers: crate::state::Timers::default(),
+        }));
         qjs::JS_SetContextOpaque(raw, state as *mut c_void);
         STATES.with(|m| m.borrow_mut().insert(rt as usize, state as usize));
     }

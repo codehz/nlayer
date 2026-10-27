@@ -15,6 +15,12 @@ log.workspace = true
 rustc-hash.workspace = true
 thiserror.workspace = true
 rquickjs.workspace = true
+quickjs-stdlib.workspace = true
+base64 = "0.22"
+getrandom = "0.3"
 
 [dev-dependencies]
 rquickjs.workspace = true
+quickjs-stdlib.workspace = true
+base64 = "0.22"
+getrandom = "0.3"

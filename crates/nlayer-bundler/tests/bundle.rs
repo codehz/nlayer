@@ -14,6 +14,15 @@ fn app(name: &str, files: &[(&str, &str)]) -> PathBuf {
     dir
 }
 
+/// A `w`×`h` PNG header: all the image size reader looks at.
+fn png(w: u32, h: u32) -> Vec<u8> {
+    let mut out = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+    out.extend(w.to_be_bytes());
+    out.extend(h.to_be_bytes());
+    out.extend([8, 6, 0, 0, 0, 0, 0, 0, 0]);
+    out
+}
+
 #[test]
 fn the_entrys_modules_are_bundled() {
     let dir = app(
@@ -94,4 +103,75 @@ fn a_node_builtin_is_refused_by_name() {
         "{}",
         error.plain
     );
+}
+
+#[test]
+fn an_imported_image_is_an_asset_descriptor() {
+    let dir = app(
+        "image",
+        &[(
+            "App.tsx",
+            r#"
+import { mount, Image } from "@nlayer";
+import icon from "./img/icon.png";
+
+function App() {
+    return <Image src={icon} />;
+}
+mount(App);
+"#,
+        )],
+    );
+    std::fs::create_dir_all(dir.join("img")).unwrap();
+    std::fs::write(dir.join("img/icon.png"), png(20, 10)).unwrap();
+    std::fs::write(dir.join("img/icon@2x.png"), png(40, 20)).unwrap();
+    let out = bundle(&BundleOptions {
+        entry: dir.join("App.tsx"),
+        minify: false,
+    })
+    .expect("it bundles");
+    assert!(out.code.contains("asset:/img/icon.png"), "{}", out.code);
+    assert!(out.code.contains("scales: [1, 2]"), "{}", out.code);
+    assert_eq!(
+        out.assets,
+        [PathBuf::from("img/icon.png"), PathBuf::from("img/icon@2x.png")]
+    );
+    let host = nlayer_js::Host::new().unwrap();
+    host.eval_source(&out.code).expect("the bundle runs");
+    let mut ops = Vec::new();
+    host.take_ops(&mut ops);
+    let image = ops.iter().find_map(|op| match op {
+        nlayer_core::Op::SetProp {
+            prop: nlayer_core::Prop::Source(Some(source)),
+            ..
+        } => Some(source),
+        _ => None,
+    });
+    let image = image.expect("the image's source");
+    assert_eq!(&*image.uri, "asset:/img/icon.png");
+    assert_eq!(
+        image.size,
+        Some(nlayer_core::geometry::Size::new(
+            nlayer_core::geometry::Points(20.0),
+            nlayer_core::geometry::Points(10.0)
+        ))
+    );
+}
+
+#[test]
+fn an_svg_is_refused_as_later() {
+    let dir = app(
+        "svg",
+        &[(
+            "App.tsx",
+            "import icon from './icon.svg';\nexport const a = icon;\n",
+        )],
+    );
+    std::fs::write(dir.join("icon.svg"), "<svg/>").unwrap();
+    let error = bundle(&BundleOptions {
+        entry: dir.join("App.tsx"),
+        minify: false,
+    })
+    .expect_err("SVG is not v1");
+    assert!(error.plain.contains("not part of v1"), "{}", error.plain);
 }

@@ -10,9 +10,13 @@ mod error;
 mod modules;
 mod protocol;
 mod reactive;
+mod standard;
 mod state;
 
+use std::time::Duration;
+
 use nlayer_core::{EventKind, NodeId, Op};
+use rquickjs::qjs;
 use rquickjs::{CatchResultExt, Context, Module, Persistent, Promise, Runtime};
 
 pub use crate::error::JsError;
@@ -45,6 +49,7 @@ impl Host {
         let installed = cx.with(|cx| -> Result<(), JsError> {
             state::install(&cx);
             dom::install(&cx);
+            standard::install(&cx);
             Ok(())
         });
         installed?;
@@ -86,6 +91,58 @@ impl Host {
                 .with(|cx| JsError::from_engine(&cx, rquickjs::Error::Exception));
             log::error!("{}", error.message);
         }
+        self.run_jobs();
+    }
+
+    /// How long until the first timer is due (`None`: none waits).
+    pub fn next_timer(&self) -> Option<Duration> {
+        self.cx.with(|cx| {
+            // SAFETY: the live state.
+            unsafe { (*state::state(cx.as_raw().as_ptr())).timers.next() }
+        })
+    }
+
+    /// Runs the timers due now.
+    pub fn run_due_timers(&self) {
+        let due = self.cx.with(|cx| {
+            // SAFETY: the live state.
+            unsafe { (*state::state(cx.as_raw().as_ptr())).timers.run_due() }
+        });
+        if due.is_empty() {
+            return;
+        }
+        self.cx.with(|cx| {
+            let raw = cx.as_raw().as_ptr();
+            // SAFETY: the globals the prelude made; each call's exception is
+            // reported and cleared.
+            unsafe {
+                let global = qjs::JS_GetGlobalObject(raw);
+                let fire = qjs::JS_GetPropertyStr(raw, global, c"__nlayerFireTimer".as_ptr());
+                if qjs::JS_IsFunction(raw, fire) {
+                    for id in due {
+                        let mut args = [qjs::JS_NewFloat64(id as f64)];
+                        let r = qjs::JS_Call(raw, fire, qjs::JS_UNDEFINED, 1, args.as_mut_ptr());
+                        if qjs::JS_IsException(r) {
+                            let e = qjs::JS_GetException(raw);
+                            let text = qjs::JS_ToCStringLen(raw, std::ptr::null_mut(), e);
+                            if !text.is_null() {
+                                log::error!(
+                                    "timer: {}",
+                                    std::ffi::CStr::from_ptr(text).to_string_lossy()
+                                );
+                                qjs::JS_FreeCString(raw, text);
+                            }
+                            qjs::JS_FreeValue(raw, e);
+                        } else {
+                            qjs::JS_FreeValue(raw, r);
+                        }
+                        qjs::JS_FreeValue(raw, args[0]);
+                    }
+                }
+                qjs::JS_FreeValue(raw, fire);
+                qjs::JS_FreeValue(raw, global);
+            }
+        });
         self.run_jobs();
     }
 

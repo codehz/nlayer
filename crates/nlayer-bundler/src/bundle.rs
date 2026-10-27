@@ -68,6 +68,9 @@ impl BundleError {
 pub struct Bundle {
     /// The bundle: an ES module importing the native modules.
     pub code: String,
+    /// Asset files the app imports, relative to the entry directory
+    /// (`asset:/<path>` URIs refer to them).
+    pub assets: Vec<PathBuf>,
     /// Source and configuration files read by the build, as absolute paths.
     pub watch_files: Vec<PathBuf>,
     /// Wall time spent bundling, in milliseconds.
@@ -93,6 +96,11 @@ pub async fn bundle_async(options: &BundleOptions) -> Result<Bundle, BundleError
         .ok_or_else(|| BundleError::other("entry has no parent directory"))?
         .to_path_buf();
     let plugin_error = Arc::new(Mutex::new(None));
+    let assets = Arc::new(Mutex::new(Vec::new()));
+    let cwd_root = entry
+        .parent()
+        .ok_or_else(|| BundleError::other("entry has no parent directory"))?
+        .to_path_buf();
     let bundler_options = BundlerOptions {
         input: Some(vec![InputItem {
             import: entry.to_string_lossy().into_owned(),
@@ -115,9 +123,10 @@ pub async fn bundle_async(options: &BundleOptions) -> Result<Bundle, BundleError
         bundler_options,
         vec![rolldown::plugin::Pluginable::new_shared(
             plugin::NlayerPlugin {
-                root: entry.parent().unwrap_or(&entry).to_path_buf(),
+                root: cwd_root.clone(),
                 error: plugin_error.clone(),
                 modules: Arc::new(NativeModules::new()),
+                assets: assets.clone(),
             },
         )],
     )
@@ -140,6 +149,12 @@ pub async fn bundle_async(options: &BundleOptions) -> Result<Bundle, BundleError
         }
     }
     let code = code.ok_or_else(|| BundleError::other("bundle produced no entry chunk"))?;
+    let mut assets: Vec<PathBuf> = std::mem::take(&mut *assets.lock().expect("assets lock"))
+        .into_iter()
+        .filter_map(|p| p.strip_prefix(&cwd_root).ok().map(PathBuf::from))
+        .collect();
+    assets.sort();
+    assets.dedup();
     let mut watch_files: Vec<PathBuf> = bundler
         .watch_files()
         .iter()
@@ -150,6 +165,7 @@ pub async fn bundle_async(options: &BundleOptions) -> Result<Bundle, BundleError
     watch_files.dedup();
     Ok(Bundle {
         code,
+        assets,
         watch_files,
         elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
     })

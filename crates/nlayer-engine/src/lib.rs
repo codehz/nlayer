@@ -6,7 +6,7 @@
 //! [`MountBatch`] to the platform through a [`MountSink`]. The platform
 //! thread never blocks on the engine.
 
-use std::{collections::HashMap, sync::Arc, thread::JoinHandle};
+use std::{collections::HashMap, sync::Arc, thread::JoinHandle, time::Duration};
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use nlayer_core::{
@@ -204,7 +204,17 @@ fn run<M, F>(
         return;
     }
     let mut edits: HashMap<NodeId, u32> = HashMap::new();
-    while let Ok(message) = rx.recv() {
+    loop {
+        let wait = host.next_timer().unwrap_or(Duration::from_secs(3600));
+        let message = match rx.recv_timeout(wait) {
+            Ok(message) => message,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                host.run_due_timers();
+                pump(&host, &mut core, &*sink);
+                continue;
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+        };
         match message {
             Message::Event { id, event, payload } => host.dispatch_event(id, event, &payload),
             Message::Input { id, text } => {
@@ -218,6 +228,7 @@ fn run<M, F>(
             Message::KeyboardInset(height) => core.set_keyboard_inset(height),
             Message::Stop => break,
         }
+        host.run_due_timers();
         pump(&host, &mut core, &*sink);
     }
 }

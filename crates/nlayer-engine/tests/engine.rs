@@ -181,3 +181,48 @@ mount(App);
     assert_eq!(texts(&batch), ["count: 7"]);
     engine.stop();
 }
+
+/// Timers run on the engine's clock: a `setTimeout` makes a later frame,
+/// and an interval can stop itself.
+#[test]
+fn timers_make_later_frames() {
+    const TIMED: &str = r#"
+import { mount, signal } from "@nlayer";
+import { element, append, insert, text } from "nlayer:rt";
+
+const count = signal(0);
+setTimeout(() => count.set(count() + 1), 20);
+const interval = setInterval(() => {
+    count.set(count() + 1);
+    if (count() >= 3) clearInterval(interval);
+}, 10);
+function App() {
+    const view = element("view");
+    const block = element("text");
+    insert(block, () => String(count()));
+    append(view, block);
+    return view;
+}
+mount(App);
+"#;
+    let (tx, rx) = unbounded();
+    let engine = Engine::start(
+        EngineConfig::new(TIMED, Size::new(px(390.0), px(844.0))),
+        || ApproxTextEngine,
+        Arc::new(Sink { tx }),
+    )
+    .unwrap();
+    assert_eq!(texts(&frame(&rx)), ["0"]);
+    assert!(
+        rx.recv_timeout(Duration::from_secs(2)).is_ok(),
+        "a timer frame"
+    );
+    // The last frame shows 3, and no timer runs after the interval cleared.
+    let mut last = None;
+    while let Ok(batch) = rx.recv_timeout(Duration::from_millis(300)) {
+        last = Some(batch);
+    }
+    let last = last.unwrap_or_else(|| panic!("a frame"));
+    assert_eq!(texts(&last), ["3"]);
+    engine.stop();
+}

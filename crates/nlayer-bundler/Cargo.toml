@@ -10,13 +10,19 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+nlayer-core.workspace = true
 nlayer-js.workspace = true
 oxc = { version = "=0.153.0", features = ["transformer", "codegen", "semantic", "ast_visit"] }
 log.workspace = true
 serde_json.workspace = true
 anyhow = "1"
+imagesize = "0.15"
 dunce = "1"
 rolldown = "=1.2.13"
 rolldown_common = "=1.2.13"
 rolldown_error = "=1.2.13"
 tokio = { version = "1", default-features = false }
+
+[dev-dependencies]
+nlayer-core.workspace = true
+nlayer-js.workspace = true
