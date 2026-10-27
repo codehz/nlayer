@@ -2,8 +2,9 @@
 //!
 //! Apply, commit and frame emission for views, text, images, scroll views
 //! and single-line inputs, extracted from `nsh_core::core` and cut to those
-//! hosts. Inline views inside text, text selection and links are not part
-//! of this slice.
+//! hosts. `env()` on padding and margin follows the surface safe area and
+//! the keyboard inset. Inline views inside text, text selection and links
+//! are not part of this slice.
 
 mod layout_tree;
 
@@ -13,11 +14,13 @@ use taffy::{AvailableSpace, Layout, Position, Style as TaffyStyle};
 
 use layout_tree::LayoutTree;
 
+use rustc_hash::FxHashSet;
+
 use crate::{
-    geometry::{Bounds, Percentage, Points, Size, rect},
+    geometry::{Bounds, Edges, Percentage, Points, Size, rect},
     mount::{InputConfig, MountBatch, MountItem, ViewKind},
     ops::{Command, EventMask, ImageSource, NodeId, Op, Prop, ROOT_ID, ResizeMode, Tag},
-    style::{self, EllipsizeMode, Style, TextAlign, TextStyle, ViewStyle},
+    style::{self, EllipsizeMode, EnvEdges, Style, TextAlign, TextStyle, ViewStyle},
     text::{AttributedText, MeasureCache, ResolvedTextStyle, TextEngine, TextLayout},
 };
 
@@ -208,6 +211,9 @@ struct Node {
     rtl: bool,
     /// `direction`: `None` inherits.
     direction: Option<bool>,
+    /// `env()` terms of the padding and margin, and the insets last added
+    /// to the authored lengths (padding, then margin).
+    env: Option<Box<(EnvEdges, [Edges<Points>; 2])>>,
     /// The native view exists.
     created: bool,
     /// Last frame sent to the platform.
@@ -216,7 +222,6 @@ struct Node {
     queued: bool,
     text_queued: bool,
 }
-
 impl Node {
     fn new(id: NodeId, kind: Kind) -> Self {
         Self {
@@ -241,6 +246,7 @@ impl Node {
             z_index: 0,
             rtl: false,
             direction: None,
+            env: None,
             created: false,
             frame: Bounds::default(),
             dirty: 0,
@@ -313,6 +319,14 @@ pub struct Core<M: TextEngine> {
     needs_layout: bool,
     /// Device pixels per point. Bundled image variants are picked from it.
     pixel_ratio: f32,
+    /// Safe-area insets of the surface. `env(safe-area-inset-*)` on
+    /// padding and margin reads them.
+    safe_area: Edges<Points>,
+    /// Software keyboard height over the surface. `env(keyboard-inset-height)`
+    /// reads it; negative values count as zero.
+    keyboard_inset: Points,
+    /// Nodes whose padding or margin uses `env()`.
+    env_styled: FxHashSet<NodeId>,
 }
 
 impl<M: TextEngine> Core<M> {
@@ -344,6 +358,9 @@ impl<M: TextEngine> Core<M> {
             pending_text: Vec::new(),
             needs_layout: true,
             pixel_ratio: 1.0,
+            safe_area: Edges::default(),
+            keyboard_inset: Points::ZERO,
+            env_styled: FxHashSet::default(),
         }
     }
 
@@ -373,6 +390,26 @@ impl<M: TextEngine> Core<M> {
         let old = self.pixel_ratio;
         self.pixel_ratio = pixel_ratio;
         self.repick_images(old, pixel_ratio);
+    }
+
+    /// Safe-area insets of the surface. Padding and margin that name
+    /// `env(safe-area-inset-*)` follow them. One surface: v1 has no
+    /// per-screen insets.
+    pub fn set_safe_area(&mut self, insets: Edges<Points>) {
+        if self.safe_area != insets {
+            self.safe_area = insets;
+            self.sync_env();
+        }
+    }
+
+    /// Height of the software keyboard over the surface.
+    /// `env(keyboard-inset-height)` on padding and margin follows it.
+    /// Layout updates at once; v1 does not animate with the keyboard.
+    pub fn set_keyboard_inset(&mut self, height: Points) {
+        if self.keyboard_inset != height {
+            self.keyboard_inset = height;
+            self.sync_env();
+        }
     }
 
     /// The user edited input `id` (before JS sees the edit): keeps the text
@@ -551,6 +588,8 @@ impl<M: TextEngine> Core<M> {
         let flipped = self.nodes[key as usize].rtl != rtl;
         style::resolve_normal_alignment(&mut layout);
         style::apply_direction(&mut layout, &mut view, &logical, rtl);
+        let env_edges = pending.env;
+        let applied = (!env_edges.is_empty()).then(|| self.env_insets(&env_edges));
         let node = &mut self.nodes[key as usize];
         let span_background_changed = node.inline
             && node.kind == Kind::Text
@@ -582,13 +621,31 @@ impl<M: TextEngine> Core<M> {
         };
         layout.overflow = taffy::Point { x: clip, y: clip };
         let kind = node.kind;
+        let id = node.id;
+        match applied {
+            Some(applied) => node.env = Some(Box::new((env_edges, applied))),
+            None => {
+                node.env = None;
+            }
+        }
+        let tracked = applied.is_some();
+        if tracked {
+            self.env_styled.insert(id);
+        } else {
+            self.env_styled.remove(&id);
+        }
         if kind == Kind::Text || kind == Kind::Scroll {
-            node.base_layout = Some(Box::new(layout.clone()));
+            self.nodes[key as usize].base_layout = Some(Box::new(layout.clone()));
         }
         if kind == Kind::Scroll {
-            // The scroll axis overrides the authored overflow.
+            // The scroll axis overrides the authored overflow. `env()` is
+            // added there, on the physical edges, before a right-to-left
+            // row swaps padding.
             self.sync_scroll_style(key);
-        } else if let Some(l) = node.layout {
+        } else if let Some(l) = self.nodes[key as usize].layout {
+            if let Some((_, applied)) = self.nodes[key as usize].env.as_deref() {
+                add_insets(&mut layout, applied[0], applied[1]);
+            }
             self.layout.set_style(l, layout);
             self.needs_layout = true;
         }
@@ -832,6 +889,7 @@ impl<M: TextEngine> Core<M> {
         }
         let node = self.nodes.remove(key as usize);
         self.slots[id as usize] = 0;
+        self.env_styled.remove(&id);
         for &c in &node.children {
             if let Some(child) = self.nodes.get_mut(c as usize) {
                 child.parent = NO_KEY;
@@ -914,11 +972,18 @@ impl<M: TextEngine> Core<M> {
                 self.mount.push(MountItem::Delete { id: node.id });
             }
         } else {
-            let style = node.base_layout.as_deref().cloned().unwrap_or_default();
+            let mut style = self.nodes[key as usize]
+                .base_layout
+                .as_deref()
+                .cloned()
+                .unwrap_or_default();
+            if let Some((_, applied)) = self.nodes[key as usize].env.as_deref() {
+                add_insets(&mut style, applied[0], applied[1]);
+            }
             let cx = LeafContext::Text(TextContext::new(Arc::default()));
             let layout = self.layout.new_leaf_with_context(style, cx);
             self.layout.set_tag(layout, key);
-            node.layout = Some(layout);
+            self.nodes[key as usize].layout = Some(layout);
             self.mark(key, dirty::TEXT_BUILD);
         }
     }
@@ -1248,15 +1313,16 @@ impl<M: TextEngine> Core<M> {
             }
         }
         if self.nodes[key as usize].kind == Kind::Scroll {
-            // Scrollable extent: the overflow rectangle is measured from the
-            // padding box origin and stops at the children's border boxes, so
-            // add the leading border and trailing padding.
+            // Scrollable extent. Taffy 0.15 already adds a scroll container's
+            // end padding to `scrollable_overflow_rect`: the rect is measured
+            // from the padding edge, stops at the children's border boxes,
+            // then grows by that padding. Adding it again made the content
+            // long by the padding (a safe-area `env()` included). The leading
+            // border is still outside the rect.
             let o = l.scrollable_overflow_rect;
             let size = crate::geometry::size_pt(
-                l.size.width.max(l.border.left + o.right + l.padding.right),
-                l.size
-                    .height
-                    .max(l.border.top + o.bottom + l.padding.bottom),
+                l.size.width.max(l.border.left + o.right),
+                l.size.height.max(l.border.top + o.bottom),
             );
             self.set_scroll_content(key, size);
         }
@@ -1866,6 +1932,59 @@ fn root_style(viewport: Size<Points>) -> TaffyStyle {
     style
 }
 
+/// What `env` comes to now: the surface safe area and the keyboard height.
+/// Left and right stay physical.
+fn env_value(safe: Edges<Points>, keyboard: Points, var: style::EnvVar) -> Points {
+    use style::EnvVar;
+    match var {
+        EnvVar::KeyboardInsetHeight => keyboard.max(Points::ZERO),
+        EnvVar::SafeAreaInsetTop => safe.top,
+        EnvVar::SafeAreaInsetRight => safe.right,
+        EnvVar::SafeAreaInsetBottom => safe.bottom,
+        EnvVar::SafeAreaInsetLeft => safe.left,
+    }
+}
+
+/// Adds point insets to padding and margin lengths. Percentages and `auto`
+/// margins cannot take an addition, as in nsh.
+fn add_insets(layout: &mut TaffyStyle, padding: Edges<Points>, margin: Edges<Points>) {
+    let add_pad = |p: &mut taffy::LengthPercentage, d: f32| {
+        if d == 0.0 {
+            return;
+        }
+        if let taffy::style::ExpandedLengthPercentage::Length(v) = p.expand() {
+            *p = taffy::LengthPercentage::length(v + d);
+        }
+    };
+    add_pad(&mut layout.padding.top, padding.top.0);
+    add_pad(&mut layout.padding.right, padding.right.0);
+    add_pad(&mut layout.padding.bottom, padding.bottom.0);
+    add_pad(&mut layout.padding.left, padding.left.0);
+    let add_margin = |m: &mut taffy::LengthPercentageAuto, d: f32| {
+        if d == 0.0 {
+            return;
+        }
+        if let taffy::style::ExpandedLengthPercentageAuto::Length(v) = m.expand() {
+            *m = taffy::LengthPercentageAuto::length(v + d);
+        }
+    };
+    add_margin(&mut layout.margin.top, margin.top.0);
+    add_margin(&mut layout.margin.right, margin.right.0);
+    add_margin(&mut layout.margin.bottom, margin.bottom.0);
+    add_margin(&mut layout.margin.left, margin.left.0);
+}
+
+/// Replaces insets `was` with `now` on a style that already has `was` added.
+fn shift_insets(layout: &mut TaffyStyle, was: [Edges<Points>; 2], now: [Edges<Points>; 2]) {
+    let delta = |now: Edges<Points>, was: Edges<Points>| Edges {
+        top: now.top - was.top,
+        right: now.right - was.right,
+        bottom: now.bottom - was.bottom,
+        left: now.left - was.left,
+    };
+    add_insets(layout, delta(now[0], was[0]), delta(now[1], was[1]));
+}
+
 /// Taffy's rounding of a coordinate.
 fn round(value: f32) -> f32 {
     (value + 0.5).floor()
@@ -1915,16 +2034,23 @@ impl<M: TextEngine> Core<M> {
     /// [`Core::emit_frames_in`] mirrors the children: a right-to-left row would
     /// overflow to negative offsets.
     fn sync_scroll_style(&mut self, key: Key) {
-        let node = &self.nodes[key as usize];
-        let (Some(layout), Some(base)) = (node.layout, node.base_layout.as_deref()) else {
-            return;
+        let (layout, mut style, horizontal, rtl) = {
+            let node = &self.nodes[key as usize];
+            let (Some(layout), Some(base)) = (node.layout, node.base_layout.as_deref()) else {
+                return;
+            };
+            let horizontal = node.scroll.as_ref().is_some_and(|scroll| scroll.horizontal);
+            (layout, base.clone(), horizontal, node.rtl)
         };
-        let mut style = base.clone();
-        let horizontal = node.scroll.as_ref().is_some_and(|scroll| scroll.horizontal);
+        // On the physical edges, then swapped with the padding when a
+        // right-to-left row is laid out left to right.
+        if let Some((_, applied)) = self.nodes[key as usize].env.as_deref() {
+            add_insets(&mut style, applied[0], applied[1]);
+        }
         if horizontal {
             style.flex_direction = taffy::FlexDirection::Row;
             style.overflow.x = taffy::Overflow::Scroll;
-            if node.rtl {
+            if rtl {
                 mem::swap(&mut style.padding.left, &mut style.padding.right);
                 mem::swap(&mut style.border.left, &mut style.border.right);
                 style.direction = taffy::Direction::Ltr;
@@ -2001,6 +2127,67 @@ impl<M: TextEngine> Core<M> {
                 }
                 Some(_) => {}
             }
+        }
+    }
+}
+
+impl<M: TextEngine> Core<M> {
+    fn env_insets(&self, env: &EnvEdges) -> [Edges<Points>; 2] {
+        let edges = |vars: &[Option<style::EnvVar>; 4]| Edges {
+            top: vars[0].map_or(Points::ZERO, |var| {
+                env_value(self.safe_area, self.keyboard_inset, var)
+            }),
+            right: vars[1].map_or(Points::ZERO, |var| {
+                env_value(self.safe_area, self.keyboard_inset, var)
+            }),
+            bottom: vars[2].map_or(Points::ZERO, |var| {
+                env_value(self.safe_area, self.keyboard_inset, var)
+            }),
+            left: vars[3].map_or(Points::ZERO, |var| {
+                env_value(self.safe_area, self.keyboard_inset, var)
+            }),
+        };
+        [edges(&env.padding), edges(&env.margin)]
+    }
+
+    /// Restyles nodes whose `env()` terms changed value. Nothing to do
+    /// without such nodes. No layout animation: v1 applies the keyboard
+    /// inset on the next commit.
+    fn sync_env(&mut self) {
+        if self.env_styled.is_empty() {
+            return;
+        }
+        let ids: Vec<NodeId> = self.env_styled.iter().copied().collect();
+        let mut stale = Vec::new();
+        for id in ids {
+            let Ok(key) = self.key(id) else {
+                stale.push(id);
+                continue;
+            };
+            let Some(env) = self.nodes[key as usize].env.as_deref().map(|(env, _)| *env) else {
+                stale.push(id);
+                continue;
+            };
+            let now = self.env_insets(&env);
+            let was = self.nodes[key as usize].env.as_ref().expect("env").1;
+            if now == was {
+                continue;
+            }
+            self.nodes[key as usize].env.as_mut().expect("env").1 = now;
+            if self.nodes[key as usize].kind == Kind::Scroll {
+                self.sync_scroll_style(key);
+                continue;
+            }
+            let Some(layout) = self.nodes[key as usize].layout else {
+                continue;
+            };
+            let mut style = self.layout.style(layout).clone();
+            shift_insets(&mut style, was, now);
+            self.layout.set_style(layout, style);
+            self.needs_layout = true;
+        }
+        for id in stale {
+            self.env_styled.remove(&id);
         }
     }
 }
@@ -3382,5 +3569,244 @@ mod tests {
         assert_eq!(config.style.color, crate::Color::parse("#ff0000").unwrap());
         assert_eq!(config.align, crate::style::TextAlign::Center);
         assert!(config.rtl);
+    }
+
+    #[test]
+    fn keyboard_inset_pads_and_stops_when_the_term_is_replaced() {
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::View,
+        })
+        .unwrap();
+        let mut box_style = Style::default();
+        box_style.set("height", StyleValue::Number(100.0)).unwrap();
+        box_style
+            .set(
+                "paddingBottom",
+                StyleValue::Str("env(keyboard-inset-height)"),
+            )
+            .unwrap();
+        apply_style(&mut c, 2, box_style);
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::View,
+        })
+        .unwrap();
+        let mut child = Style::default();
+        child.set("flex", StyleValue::Number(1.0)).unwrap();
+        apply_style(&mut c, 3, child);
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        assert_eq!(frame(&batch, 3).size.height, px(100.0));
+
+        c.set_keyboard_inset(px(40.0));
+        let batch = c.commit().unwrap();
+        assert_eq!(frame(&batch, 3).size.height, px(60.0));
+
+        // A negative height is hidden.
+        c.set_keyboard_inset(px(-8.0));
+        let batch = c.commit().unwrap();
+        assert_eq!(frame(&batch, 3).size.height, px(100.0));
+
+        c.set_keyboard_inset(px(40.0));
+        c.commit().unwrap();
+        let mut plain = Style::default();
+        plain.set("height", StyleValue::Number(100.0)).unwrap();
+        plain
+            .set("paddingBottom", StyleValue::Number(10.0))
+            .unwrap();
+        apply_style(&mut c, 2, plain);
+        let batch = c.commit().unwrap();
+        assert_eq!(frame(&batch, 3).size.height, px(90.0));
+        c.set_keyboard_inset(Points::ZERO);
+        assert!(c.commit().is_none());
+    }
+
+    #[test]
+    fn safe_area_and_calc_add_to_padding_and_margin() {
+        let mut c = core();
+        c.set_safe_area(Edges {
+            top: px(20.0),
+            right: px(4.0),
+            bottom: px(34.0),
+            left: px(12.0),
+        });
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::View,
+        })
+        .unwrap();
+        let mut padded = Style::default();
+        padded
+            .set(
+                "paddingTop",
+                StyleValue::Str("calc(env(safe-area-inset-top) + 8px)"),
+            )
+            .unwrap();
+        padded
+            .set(
+                "paddingBottom",
+                StyleValue::Str("env(safe-area-inset-bottom)"),
+            )
+            .unwrap();
+        padded
+            .set(
+                "marginLeft",
+                StyleValue::Str("calc(0.5rem + env(safe-area-inset-left))"),
+            )
+            .unwrap();
+        apply_style(&mut c, 2, padded);
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::View,
+        })
+        .unwrap();
+        apply_style(&mut c, 3, sized(10.0, 10.0));
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 4,
+            tag: Tag::View,
+        })
+        .unwrap();
+        apply_style(&mut c, 4, sized(10.0, 10.0));
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        // 8 + 20 top, 34 bottom, around a 10pt child. Margin left is 8 + 12.
+        assert_eq!(frame(&batch, 2).size.height, px(72.0));
+        assert_eq!(frame(&batch, 2).origin.x, px(20.0));
+        assert_eq!(frame(&batch, 4).origin.y, px(72.0));
+
+        c.set_safe_area(Edges {
+            top: Points::ZERO,
+            bottom: px(34.0),
+            left: px(12.0),
+            ..Edges::default()
+        });
+        let batch = c.commit().unwrap();
+        assert_eq!(frame(&batch, 2).size.height, px(52.0));
+        assert_eq!(frame(&batch, 4).origin.y, px(52.0));
+    }
+
+    #[test]
+    fn scroll_padding_follows_the_safe_area() {
+        let mut c = core();
+        c.set_safe_area(Edges {
+            top: px(20.0),
+            ..Edges::default()
+        });
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Scroll,
+        })
+        .unwrap();
+        let mut scroll = sized(100.0, 80.0);
+        scroll
+            .set("paddingTop", StyleValue::Str("env(safe-area-inset-top)"))
+            .unwrap();
+        apply_style(&mut c, 2, scroll);
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::View,
+        })
+        .unwrap();
+        apply_style(&mut c, 3, sized(100.0, 50.0));
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        assert_eq!(frame(&batch, 3).origin.y, px(20.0));
+
+        c.set_safe_area(Edges {
+            top: px(8.0),
+            ..Edges::default()
+        });
+        let batch = c.commit().unwrap();
+        assert_eq!(frame(&batch, 3).origin.y, px(8.0));
+    }
+
+    #[test]
+    fn scroll_content_follows_safe_area_padding() {
+        let mut c = core();
+        c.set_safe_area(Edges {
+            bottom: px(34.0),
+            ..Edges::default()
+        });
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Scroll,
+        })
+        .unwrap();
+        let mut scroll = sized(100.0, 40.0);
+        scroll
+            .set(
+                "paddingBottom",
+                StyleValue::Str("env(safe-area-inset-bottom)"),
+            )
+            .unwrap();
+        apply_style(&mut c, 2, scroll);
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::View,
+        })
+        .unwrap();
+        apply_style(&mut c, 3, sized(100.0, 50.0));
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        assert_eq!(scroll_content(&batch, 2), size_pt(100.0, 84.0));
+
+        c.set_safe_area(Edges {
+            bottom: px(10.0),
+            ..Edges::default()
+        });
+        let batch = c.commit().unwrap();
+        assert_eq!(scroll_content(&batch, 2), size_pt(100.0, 60.0));
     }
 }

@@ -39,3 +39,6 @@ Copied files:
   `ViewKind::Input` from `nsh_core::mount` (the same cut)
 - the input path in `core` (`InputState`, `measure_input`, `input_changed`)
   from `nsh_core::core` (one line; content-size events are not copied)
+- safe-area and keyboard `env()` on padding and margin in `core`
+  (`Core::set_safe_area`, `Core::set_keyboard_inset`) from `nsh_core::core`
+  (one surface; no per-screen insets and no keyboard layout animation)
