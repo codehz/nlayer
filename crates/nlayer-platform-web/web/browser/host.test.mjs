@@ -37,7 +37,6 @@ test("the page graph and a text mount do not need QuickJS", async () => {
         throw new Error(text);
       },
       nlayer_log: () => {},
-      nlayer_fetch: () => {},
     },
   };
   const instance = await WebAssembly.instantiate(module, imports);

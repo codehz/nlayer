@@ -13,7 +13,7 @@ use nlayer_core::{
     geometry::{Points, Size, px},
     text::ApproxTextEngine,
 };
-use nlayer_engine::{EngineConfig, EventPayload, HttpResponse, LocalEngine, MountSink, Wake};
+use nlayer_engine::{EngineConfig, EventPayload, LocalEngine, MountSink, Wake};
 
 /// The counter: a press increments a signal a text shows.
 const BUNDLE: &str = r#"
@@ -265,52 +265,4 @@ mount(App);
         engine.pump();
     }
     assert!(saw, "the response reaches the text");
-}
-
-#[test]
-fn the_host_answers_a_fetch() {
-    let bundle = r#"
-import { mount, signal } from "@nlayer/runtime";
-import { element, insert } from "nlayer:rt";
-
-const shown = signal("loading");
-fetch("https://example.test/data")
-    .then((response) => response.json())
-    .then((body) => shown.set(body.message))
-    .catch((error) => shown.set("error " + error.message));
-function App() {
-    const block = element("text");
-    insert(block, () => shown());
-    return block;
-}
-mount(App);
-"#;
-    let (tx, rx) = unbounded();
-    let mut engine = LocalEngine::start_with_host_fetch(
-        EngineConfig::new(bundle, Size::new(px(390.0), px(844.0))),
-        ApproxTextEngine,
-        Arc::new(Sink { tx }),
-        Arc::new(|| {}),
-    )
-    .expect("the engine starts");
-    let first = rx.try_recv().expect("the first frame");
-    assert_eq!(texts(&first), ["loading"]);
-    let fetches = engine.take_fetches();
-    assert_eq!(fetches.len(), 1);
-    assert_eq!(fetches[0].request.method, "GET");
-    assert_eq!(fetches[0].request.url, "https://example.test/data");
-    engine.complete_fetch(
-        fetches[0].id,
-        Ok(HttpResponse {
-            status: 200,
-            status_text: "OK".to_owned(),
-            url: fetches[0].request.url.clone(),
-            redirected: false,
-            headers: vec![("content-type".to_owned(), "application/json".to_owned())],
-            body: br#"{"message":"hello"}"#.to_vec(),
-        }),
-    );
-    engine.pump();
-    let second = rx.try_recv().expect("the response frame");
-    assert_eq!(texts(&second), ["hello"]);
 }

@@ -25,7 +25,6 @@ nlayer-engine = { workspace = true, default-features = false, features = ["js"] 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 nlayer-engine = { workspace = true, default-features = false, features = ["browser"] }
 log.workspace = true
-serde_json.workspace = true
 
 [dev-dependencies]
 nlayer-engine = { workspace = true, default-features = false, features = ["js"] }

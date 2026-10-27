@@ -2,8 +2,9 @@
 //!
 //! [`PageSession`] loads the bundle, lays out with the headless text
 //! stand-in and hands each frame to the page as the JSON [`Encoder`]
-//! writes. The page applies it (`web/nlayer.js`), answers `fetch` and
-//! reports presses, typing, scrolling, resizes and insets. Measurement
+//! writes. The page applies it (`web/nlayer.js`) and reports presses,
+//! typing, scrolling, resizes and insets. The app's `fetch` is the page's.
+//! Measurement
 //! is [`ApproxTextEngine`] (the same stand-in as `nlayer test`); the
 //! browser wraps the attributed spans in the box it produced. Glyph
 //! measurement, hot reload and bytecode are not here. The wasm exports
@@ -24,46 +25,37 @@ use nlayer_core::{
     geometry::{Edges, Points, Size},
     text::ApproxTextEngine,
 };
-use nlayer_engine::{
-    EngineConfig, EngineError, EventPayload, HttpResponse, LocalEngine, MountSink, NetworkRequest,
-    Wake,
-};
+use nlayer_engine::{EngineConfig, EngineError, EventPayload, LocalEngine, MountSink, Wake};
 
 use crate::Encoder;
 
 /// What the page does for the running surface.
 ///
 /// Called on the engine's thread, which on wasm is the page's. `submit`
-/// and `fetch` run inside a pump or [`PageSession::start`] and must not
-/// call back into the session: the DOM mounter applies a batch and the
-/// page starts a `fetch`, then returns. [`Page::request_pump`] only
-/// schedules a later [`PageSession::pump`].
+/// runs inside a pump or [`PageSession::start`] and must not call back into
+/// the session: the DOM mounter applies a batch, then returns.
+/// [`Page::request_pump`] only schedules a later [`PageSession::pump`].
 pub trait Page: Send + Sync + 'static {
     /// One encoded mount batch (a JSON array).
     fn submit(&self, json: &str);
 
-    /// A fetch finished outside a pump, or a pump left a message queued.
+    /// A fetch finished outside a pump (QuickJS host), or a pump left a
+    /// message queued.
     /// Schedule [`PageSession::pump`]; do not call it from here.
     fn request_pump(&self);
 
     /// The app failed outside a handler, or a frame could not be applied.
     fn report_error(&self, message: &str);
-
-    /// A `fetch` the app started. Copy what is needed and return; answer
-    /// later with [`PageSession::complete_fetch`].
-    fn fetch(&self, request: &NetworkRequest);
 }
 
 /// The engine of one page, driven by the page.
 pub struct PageSession {
     engine: LocalEngine<ApproxTextEngine>,
-    page: Arc<dyn Page>,
 }
 
 impl PageSession {
     /// Loads `bundle` and lays out the first frame before returning.
-    /// Fetches the bundle started are handed to [`Page::fetch`] before
-    /// this returns.
+    /// On wasm `bundle` is empty: the page evaluates the app.
     pub fn start(
         bundle: impl Into<String>,
         viewport: Size<Points>,
@@ -76,28 +68,24 @@ impl PageSession {
         });
         let wake_page = Arc::clone(&page);
         let wake: Wake = Arc::new(move || wake_page.request_pump());
-        let engine = LocalEngine::start_with_host_fetch(
+        let engine = LocalEngine::start(
             EngineConfig::new(bundle, viewport).with_os(nlayer_engine::Os::Web),
             ApproxTextEngine,
             sink,
             wake,
         )?;
-        let mut session = PageSession { engine, page };
-        session.dispatch_fetches();
-        Ok(session)
+        Ok(PageSession { engine })
     }
 
-    /// How long until the next timer (`None`: only input and a finished fetch).
+    /// How long until the next timer (`None`: only input, and a finished fetch on the QuickJS host).
     pub fn deadline(&self) -> Option<Duration> {
         self.engine.deadline()
     }
 
-    /// Applies the input queued since the last call, runs due timers and
-    /// hands over fetches the app started. Returns when to call again.
+    /// Applies the input queued since the last call and runs due timers.
+    /// Returns when to call again.
     pub fn pump(&mut self) -> Option<Duration> {
-        let next = self.engine.pump();
-        self.dispatch_fetches();
-        next
+        self.engine.pump()
     }
 
     /// A click on view `id` (`onPress`). Applied at the next [`pump`](Self::pump).
@@ -131,18 +119,6 @@ impl PageSession {
         let control = self.engine.control();
         control.set_safe_area(safe_area);
         control.set_keyboard_inset(keyboard);
-    }
-
-    /// Answers a request from [`Page::fetch`]. Wakes the page; pump
-    /// outside this call.
-    pub fn complete_fetch(&self, id: u32, result: Result<HttpResponse, String>) {
-        self.engine.complete_fetch(id, result);
-    }
-
-    fn dispatch_fetches(&mut self) {
-        for request in self.engine.take_fetches() {
-            self.page.fetch(&request);
-        }
     }
 }
 

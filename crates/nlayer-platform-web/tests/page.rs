@@ -1,4 +1,4 @@
-//! The page's engine: frames as the mounter's JSON, input, insets and fetch.
+//! The page's engine: frames as the mounter's JSON, input and insets.
 
 use std::{
     process::Command,
@@ -9,12 +9,10 @@ use std::{
 };
 
 use nlayer_core::geometry::{Edges, Size, px};
-use nlayer_engine::HttpResponse;
 use nlayer_platform_web::{Page, PageSession};
 
 struct Record {
     batches: std::sync::Mutex<Vec<String>>,
-    fetches: std::sync::Mutex<Vec<nlayer_engine::NetworkRequest>>,
     pumps: AtomicUsize,
 }
 
@@ -35,14 +33,6 @@ impl Page for Share {
 
     fn report_error(&self, message: &str) {
         panic!("the page reported {message}");
-    }
-
-    fn fetch(&self, request: &nlayer_engine::NetworkRequest) {
-        self.0
-            .fetches
-            .lock()
-            .expect("fetches")
-            .push(request.clone());
     }
 }
 
@@ -105,7 +95,6 @@ mount(App);
 "#;
     let record = Arc::new(Record {
         batches: Default::default(),
-        fetches: Default::default(),
         pumps: AtomicUsize::new(0),
     });
     let mut page = session(bundle, &record);
@@ -146,7 +135,6 @@ mount(App);
 "#;
     let record = Arc::new(Record {
         batches: Default::default(),
-        fetches: Default::default(),
         pumps: AtomicUsize::new(0),
     });
     let mut page = session(bundle, &record);
@@ -181,59 +169,9 @@ mount(App);
 }
 
 #[test]
-fn the_page_answers_fetch() {
-    let bundle = r#"
-import { mount, signal } from "@nlayer/runtime";
-import { element, insert } from "nlayer:rt";
-
-const shown = signal("loading");
-fetch("https://example.test/data")
-    .then((response) => response.json())
-    .then((body) => shown.set(body.message))
-    .catch((error) => shown.set("error " + error.message));
-function App() {
-    const block = element("text");
-    insert(block, () => shown());
-    return block;
-}
-mount(App);
-"#;
-    let record = Arc::new(Record {
-        batches: Default::default(),
-        fetches: Default::default(),
-        pumps: AtomicUsize::new(0),
-    });
-    let mut page = session(bundle, &record);
-    assert_eq!(texts_of(&last_batch(&record)), ["loading"]);
-    let fetches = record.fetches.lock().expect("fetches").clone();
-    assert_eq!(fetches.len(), 1);
-    assert_eq!(fetches[0].request.method, "GET");
-    assert_eq!(fetches[0].request.url, "https://example.test/data");
-    assert!(fetches[0].request.follow_redirects);
-    page.complete_fetch(
-        fetches[0].id,
-        Ok(HttpResponse {
-            status: 200,
-            status_text: "OK".to_owned(),
-            url: fetches[0].request.url.clone(),
-            redirected: false,
-            headers: vec![("content-type".to_owned(), "application/json".to_owned())],
-            body: br#"{"message":"hello"}"#.to_vec(),
-        }),
-    );
-    assert!(
-        record.pumps.load(Ordering::SeqCst) >= 1,
-        "a finished fetch wakes the page"
-    );
-    page.pump();
-    assert_eq!(texts_of(&last_batch(&record)), ["hello"]);
-}
-
-#[test]
 fn a_bundle_that_throws_fails_to_start() {
     let record = Arc::new(Record {
         batches: Default::default(),
-        fetches: Default::default(),
         pumps: AtomicUsize::new(0),
     });
     let error = PageSession::start(
@@ -263,7 +201,6 @@ mount(App);
 "#;
     let record = Arc::new(Record {
         batches: Default::default(),
-        fetches: Default::default(),
         pumps: AtomicUsize::new(0),
     });
     let mut page = session(bundle, &record);

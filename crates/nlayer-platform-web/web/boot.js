@@ -5,8 +5,8 @@
 // The page's side of the wasm engine. The module does not link QuickJS:
 // this file evaluates the app (`browser/runtime.js`) and the module lays
 // out frames. Instantiate the module, apply mount JSON with `Player`,
-// answer `fetch` with the browser's, and report press, input, scroll,
-// resize, safe area and the keyboard inset. A call into the module never
+// and report press, input, scroll, resize, safe area and the keyboard
+// inset. The app's `fetch` is the page's. A call into the module never
 // re-enters it: DOM events that fire while a batch is applied (a scroll
 // view set to an offset) wait until the call returns. Text is measured
 // by the engine's stand-in, not the browser's fonts.
@@ -118,46 +118,6 @@ function importsFor(options) {
         const name = LEVELS[level] ?? "log";
         (console[name] ?? console.log).call(console, message);
         options.onLog?.(name, message);
-      },
-      nlayer_fetch(id, mp, ml, up, ul, hp, hl, bp, bl, hasBody, follow) {
-        const method = text(mp, ml);
-        const url = text(up, ul);
-        const pairs = JSON.parse(text(hp, hl) || "[]");
-        const headers = new Headers();
-        for (const [name, value] of pairs) headers.append(name, value);
-        const body = hasBody ? new Uint8Array(memory(), bp, bl).slice() : undefined;
-        fetch(url, {
-          method,
-          headers,
-          body: body?.length ? body : undefined,
-          redirect: follow ? "follow" : "manual",
-        }).then(
-          async (response) => {
-            const bytes = new Uint8Array(await response.arrayBuffer());
-            const list = [];
-            response.headers.forEach((value, name) => list.push([name, value]));
-            const parts = [
-              encoder.encode(response.statusText),
-              encoder.encode(response.url || url),
-              encoder.encode(JSON.stringify(list)),
-              bytes,
-            ];
-            enter(() =>
-              withBytes(parts, (sp, sl, rp, rl, jp, jl, dp, dl) => {
-                wasm.nlayer_fetch_done(id, 1, response.status, sp, sl, rp, rl, response.redirected ? 1 : 0, jp, jl, dp, dl);
-                return undefined;
-              }),
-            );
-          },
-          (error) => {
-            enter(() =>
-              withBytes([encoder.encode(String(error?.message ?? error))], (p, l) => {
-                wasm.nlayer_fetch_done(id, 0, 0, p, l, 0, 0, 0, 0, 0, 0, 0);
-                return undefined;
-              }),
-            );
-          },
-        );
       },
     },
   };

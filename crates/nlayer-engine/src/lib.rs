@@ -3,9 +3,9 @@
 //! [`Engine`] runs it on a dedicated thread (native targets). [`LocalEngine`]
 //! runs it on the caller's thread, which is the only engine on wasm: the page
 //! has no thread of its own, so it sends input and calls [`LocalEngine::pump`]
-//! when a timer is due or a fetch finishes. Fetches on wasm are the host's
-//! ([`LocalEngine::start_with_host_fetch`]); the engine's ureq stack does not
-//! build there. Either way one [`nlayer_core::Core`] applies what the app
+//! when a timer is due or, on the QuickJS host, a fetch finishes. The browser
+//! host does not run `fetch` (the page's does). ureq is that host's HTTP stack
+//! and does not build for wasm. Either way one [`nlayer_core::Core`] applies what the app
 //! committed, lays out, and hands one [`MountBatch`] to the platform through
 //! a [`MountSink`]. Feature `js` commits from QuickJS. Feature `browser`
 //! commits ops the page queued and links no QuickJS. The platform thread never
@@ -26,7 +26,7 @@ mod host_types;
 #[cfg(feature = "browser")]
 pub use browser::{Bridge, clear_registration, register};
 #[cfg(feature = "browser")]
-pub use host_types::{EventPayload, HttpRequest, HttpResponse, NetworkRequest, Os};
+pub use host_types::{EventPayload, Os};
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "js"))]
 mod net;
@@ -280,35 +280,15 @@ impl LocalNotify {
 impl<M: TextEngine> LocalEngine<M> {
     /// Loads the app and lays out its first frame before returning.
     /// `wake` runs when a fetch finishes and no pump is draining the queue.
-    /// Fetches run on the engine's HTTP stack. On wasm this is
-    /// [`start_with_host_fetch`](Self::start_with_host_fetch): ureq does not
-    /// build there, so the host answers `fetch`.
+    /// On the QuickJS host, fetches run on ureq. The browser host queues
+    /// none: the page's `fetch` is the browser's.
     pub fn start(
         config: EngineConfig,
         text_engine: M,
         sink: Arc<dyn MountSink>,
         wake: Wake,
     ) -> Result<Self, EngineError> {
-        Self::open(
-            config,
-            text_engine,
-            sink,
-            wake,
-            cfg!(target_arch = "wasm32"),
-        )
-    }
-
-    /// [`start`](Self::start), but `fetch` is not sent: the host takes each
-    /// request with [`take_fetches`](Self::take_fetches) and answers it with
-    /// [`complete_fetch`](Self::complete_fetch). The page does this; the
-    /// browser's `fetch` is the stack, and ureq does not build for wasm.
-    pub fn start_with_host_fetch(
-        config: EngineConfig,
-        text_engine: M,
-        sink: Arc<dyn MountSink>,
-        wake: Wake,
-    ) -> Result<Self, EngineError> {
-        Self::open(config, text_engine, sink, wake, true)
+        Self::open(config, text_engine, sink, wake)
     }
 
     fn open(
@@ -316,7 +296,6 @@ impl<M: TextEngine> LocalEngine<M> {
         text_engine: M,
         sink: Arc<dyn MountSink>,
         wake: Wake,
-        host_fetch: bool,
     ) -> Result<Self, EngineError> {
         let (tx, rx) = unbounded();
         let notify = Arc::new(LocalNotify::new(tx.clone(), wake));
@@ -324,7 +303,7 @@ impl<M: TextEngine> LocalEngine<M> {
             let notify = Arc::clone(&notify);
             Arc::new(move || notify.wake())
         };
-        let mut session = Session::open(config, text_engine, sink, hook, host_fetch)?;
+        let mut session = Session::open(config, text_engine, sink, hook)?;
         session.commit();
         Ok(LocalEngine {
             session,
@@ -343,24 +322,6 @@ impl<M: TextEngine> LocalEngine<M> {
     /// How long until the next timer (`None`: only input and [`Wake`]).
     pub fn deadline(&self) -> Option<Duration> {
         self.session.next_timer()
-    }
-
-    /// The fetches queued since the last call. Empty unless this engine was
-    /// started with [`start_with_host_fetch`](Self::start_with_host_fetch).
-    pub fn take_fetches(&mut self) -> Vec<NetworkRequest> {
-        std::mem::take(&mut self.session.outgoing)
-    }
-
-    /// Answers a fetch from [`take_fetches`](Self::take_fetches). Call it
-    /// outside [`pump`](Self::pump); it wakes the host the same way a
-    /// finished request does.
-    pub fn complete_fetch(&self, id: u32, result: Result<HttpResponse, String>) {
-        self.session
-            .results
-            .lock()
-            .expect("network results")
-            .push((id, result));
-        self.notify.wake();
     }
 
     /// Handles the input sent since the last call, runs the timers that are
@@ -421,7 +382,7 @@ fn run<M, F>(
     let notify: Wake = Arc::new(move || {
         let _ = wake.send(Message::NetworkDone);
     });
-    let mut session = match Session::open(config, text_engine(), sink, notify, false) {
+    let mut session = match Session::open(config, text_engine(), sink, notify) {
         Ok(session) => session,
         Err(error) => {
             let _ = ready.send(Err(error));
@@ -447,6 +408,7 @@ fn run<M, F>(
 }
 
 /// A request's result, waiting until the engine applies it.
+#[cfg(all(not(target_arch = "wasm32"), feature = "js"))]
 type ResultSlot = Arc<Mutex<Vec<(u32, Result<HttpResponse, String>)>>>;
 
 /// One engine's state, whoever drives it.
@@ -454,15 +416,13 @@ struct Session<M: TextEngine> {
     host: Vm,
     core: Core<M>,
     sink: Arc<dyn MountSink>,
+    #[cfg(all(not(target_arch = "wasm32"), feature = "js"))]
     results: ResultSlot,
     edits: HashMap<NodeId, u32>,
-    /// Wakes the engine's HTTP stack. Wasm has no such stack.
+    /// Wakes the engine's HTTP stack. The browser host has none.
     #[cfg(not(target_arch = "wasm32"))]
     #[cfg_attr(feature = "browser", allow(dead_code))]
     notify: Wake,
-    /// `fetch` waits for the host instead of the engine's HTTP stack.
-    host_fetch: bool,
-    outgoing: Vec<NetworkRequest>,
 }
 
 impl<M: TextEngine> Session<M> {
@@ -471,7 +431,6 @@ impl<M: TextEngine> Session<M> {
         text_engine: M,
         sink: Arc<dyn MountSink>,
         notify: Wake,
-        host_fetch: bool,
     ) -> Result<Self, EngineError> {
         let core = Core::new(text_engine, config.viewport);
         #[cfg(feature = "js")]
@@ -490,12 +449,11 @@ impl<M: TextEngine> Session<M> {
             host,
             core,
             sink,
+            #[cfg(all(not(target_arch = "wasm32"), feature = "js"))]
             results: Arc::default(),
             edits: HashMap::new(),
             #[cfg(not(target_arch = "wasm32"))]
             notify,
-            host_fetch,
-            outgoing: Vec::new(),
         })
     }
 
@@ -507,6 +465,7 @@ impl<M: TextEngine> Session<M> {
     /// The thread engine's path; wasm commits through [`on_burst`](Self::on_burst).
     #[cfg(not(target_arch = "wasm32"))]
     fn on_message(&mut self, message: Message) -> bool {
+        #[cfg(feature = "js")]
         complete_network(&self.host, &self.results);
         if !self.apply(message) {
             return false;
@@ -524,6 +483,7 @@ impl<M: TextEngine> Session<M> {
 
     /// One burst of input, then one frame. `false`: the engine was stopped.
     fn on_burst(&mut self, messages: Vec<Message>) -> bool {
+        #[cfg(all(not(target_arch = "wasm32"), feature = "js"))]
         complete_network(&self.host, &self.results);
         for message in messages {
             if !self.apply(message) {
@@ -573,25 +533,20 @@ impl<M: TextEngine> Session<M> {
         if let Some(batch) = self.core.commit() {
             self.sink.submit(batch);
         }
-        let mut requests = Vec::new();
-        self.host.take_network(&mut requests);
-        if self.host_fetch {
-            self.outgoing.append(&mut requests);
-            return;
-        }
-        // Native: the engine's HTTP stack. Wasm never reaches this; `start`
-        // there is the host-fetch engine.
         #[cfg(all(not(target_arch = "wasm32"), feature = "js"))]
-        for request in requests {
-            let notify = Arc::clone(&self.notify);
-            net::start(request, Arc::clone(&self.results), move || notify());
+        {
+            let mut requests = Vec::new();
+            self.host.take_network(&mut requests);
+            for request in requests {
+                let notify = Arc::clone(&self.notify);
+                net::start(request, Arc::clone(&self.results), move || notify());
+            }
         }
-        #[cfg(not(all(not(target_arch = "wasm32"), feature = "js")))]
-        self.outgoing.append(&mut requests);
     }
 }
 
 /// Hands JS the responses that arrived.
+#[cfg(all(not(target_arch = "wasm32"), feature = "js"))]
 fn complete_network(host: &Vm, results: &ResultSlot) {
     let done = std::mem::take(&mut *results.lock().expect("network results"));
     for (id, result) in done {

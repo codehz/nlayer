@@ -6,7 +6,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use nlayer_core::{EventKind, NodeId, Op};
 
-use crate::host_types::{EventPayload, HttpResponse, NetworkRequest, Os};
+use crate::host_types::{EventPayload, Os};
 
 /// What the page's runtime does for one engine turn.
 pub trait Bridge {
@@ -65,12 +65,4 @@ impl Script {
     }
 
     pub(crate) fn run_due_timers(&self) {}
-
-    pub(crate) fn take_network(&self, out: &mut Vec<NetworkRequest>) {
-        let _ = out;
-    }
-
-    pub(crate) fn complete_network(&self, id: u32, result: Result<HttpResponse, String>) {
-        let _ = (id, result);
-    }
 }

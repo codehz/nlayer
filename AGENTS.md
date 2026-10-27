@@ -31,7 +31,7 @@ v1 不做。做到那一层再搬，不留钩子。
 - Shader
 - 不提供 Node 内建，也不提供 CJS / `require` 兼容层：`buffer` / `fs` / `process` / `path` / `net` / `os` / `zlib`、streams。不为了跑 npm 包加 shim
 - 内置 tsc。构建不需要 Node
-- capability grant。`fetch` 任意 URL，不经 grant
+- capability grant。`fetch` 任意 URL，不经 grant。nsh 的 web `fetch` 经 wasm 交回页面再发，是为了这条 grant；这里没有 grant，不要把那条桥搬回来
 
 ### 不预承诺
 
@@ -51,7 +51,7 @@ v1 不做。不写后期做不做，也不写后期方案。
 
 搬：reactive 图、JSX lowering（`element` / `insert` / `spread` / `cond` / `each`）、mount batch、引擎线程、Taffy 布局（含 grid）和 nsh/RN 默认值、web / iOS / Android 上 `View` / `Text` / `Image` / `Scroll` / 单行 `Input` 的宿主路径、静态 transform、WinterTC 最小集加 `fetch`。
 
-不搬：`nsh-base`、Tailwind 表、桌面后端、GPUI、Node catalog、HMR、签名、嵌入 ABI、Rust app 模板、shader、canvas、list、动画图。这是现在的裁剪，不是上面三档的替代。拷的时候就裁，不要整文件进来再删。`ops.rs` 按 v1 协议裁。`nsh-macros` 只在元素解码真正需要时搬 `PropEnum`。`assets`、`native_module`、`#[component]` 不搬，也不是后期目标。
+不搬：`nsh-base`、Tailwind 表、桌面后端、GPUI、Node catalog、HMR、签名、嵌入 ABI、Rust app 模板、shader、canvas、list、动画图，以及 web 的 fetch 宿主桥。这是现在的裁剪，不是上面三档的替代。拷的时候就裁，不要整文件进来再删。`ops.rs` 按 v1 协议裁。`nsh-macros` 只在元素解码真正需要时搬 `PropEnum`。`assets`、`native_module`、`#[component]` 不搬，也不是后期目标。
 
 每搬一个文件，在 `NOTICE` 写上来源路径。拷来的文件保留 Apache-2.0 声明；新仓库也是 Apache-2.0，不另起许可证。
 
@@ -65,9 +65,9 @@ v1 不做。不写后期做不做，也不写后期方案。
 - 样式：Taffy。未写 `display` 为纵向 flex，`flexShrink` 为 0，无 `min-width: auto`。公开子集是白名单：盒模型、flex、relative/absolute、尺寸、margin/padding（含 `env()`）、纯色背景、border、radius、opacity、overflow、zIndex、列出的文本样式、`objectFit`、静态 transform（`transform` / `translate` / `rotate` / `scale` / `transformOrigin`）、grid（`display: "grid"`、`gridTemplateColumns` / `gridTemplateRows`、`gridAutoColumns` / `gridAutoRows`、`gridAutoFlow`、`gridColumn` / `gridRow` 及其 `Start` / `End`，含 line names）。`activeStyle` / `hoverStyle` / `focusStyle` 进协议，由平台应用。白名单外的 key，不管 IR 里有没有、apply 接没接，都在终端报错且不生效，不进 mount 协议或 JS 模块。任何 `class` 同样报错且不生效，不拆引擎。
 - 滚动：原生，两轴。v1 无刷新、缩放、分页（以后要做，不留）。
 - 图片：打包 `import` 加 `http(s)`。v1 是 PNG / JPEG / WebP（SVG、GIF 以后要做）。系统字体（自定义字体不预承诺）。
-- 平台 API：`console`、timers、`queueMicrotask`、`URL` / `URLSearchParams`、`TextEncoder` / `TextDecoder`、`AbortController`、`atob` / `btoa`、`performance.now`、`crypto.getRandomValues`、`fetch` / `Request` / `Response` / `Headers`。body 只有 text / json / arrayBuffer / blob。`Blob` 只作为这个结果类型。`crypto.subtle` 是缺的，不是空桩（以后要做）。`fetch` 任意 URL，跟随重定向，认 `AbortSignal`。v1 不带 cookie（以后要做）。无 capability grant（永久）。
+- 平台 API：`console`、timers、`queueMicrotask`、`URL` / `URLSearchParams`、`TextEncoder` / `TextDecoder`、`AbortController`、`atob` / `btoa`、`performance.now`、`crypto.getRandomValues`、`fetch` / `Request` / `Response` / `Headers`。body 只有 text / json / arrayBuffer / blob。`Blob` 只作为这个结果类型。`crypto.subtle` 是缺的，不是空桩（以后要做）。`fetch` 任意 URL，跟随重定向，认 `AbortSignal`。v1 不带 cookie（以后要做）。无 capability grant（永久）。QuickJS 宿主（iOS、Android、`nlayer test`）由引擎发请求。Web 上应用在页面里跑，`fetch` 就是浏览器的，不进 wasm
 - UI 环境留在 `@nlayer/ui`：`platform.os` 为 `web` | `ios` | `android`，safe area，keyboard inset。只通过 `env()` 进入 padding/margin。
-- 运行：iOS、Android 和 `nlayer test` 用 QuickJS。Web 不把 QuickJS 打进 wasm：页面执行应用的 ES module，wasm 只跑 reactive 图、布局和 mount batch，DOM 由页面挂。引擎线程产出 batch，平台主线程挂原生视图。`run` 监视 TSX 和资源，重建后重启引擎，状态丢掉。编译失败只打在终端，上一份成功的引擎继续跑。v1 无 HMR（以后要做）；监视重建、重启、丢状态仍是 v1。
+- 运行：iOS、Android 和 `nlayer test` 用 QuickJS。Web 不把 QuickJS 打进 wasm：页面执行应用的 ES module，wasm 只跑 reactive 图、布局和 mount batch，DOM 由页面挂。应用的 `fetch` 留在页面，不经引擎。引擎线程产出 batch，平台主线程挂原生视图。`run` 监视 TSX 和资源，重建后重启引擎，状态丢掉。编译失败只打在终端，上一份成功的引擎继续跑。v1 无 HMR（以后要做）；监视重建、重启、丢状态仍是 v1。
 - 测试：headless 跑 TSX。文本度量用确定性替身。v1 不对齐真机像素；像素对齐断言和三端 UI 自动化以后要做。
 - 底线：iOS 15+，Android API 28+。`run` 用模拟器或浏览器，不重装 App。构建不需要 Node。`build` 写出 bundle、类型和 source map。
 
