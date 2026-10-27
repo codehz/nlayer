@@ -1,0 +1,288 @@
+//! `fetch` end to end: a local server, the engine's HTTP, the JS response.
+
+use std::{
+    io::{BufRead, BufReader, Read, Write},
+    net::{TcpListener, TcpStream},
+    sync::Arc,
+    time::Duration,
+};
+
+use crossbeam_channel::{Receiver, unbounded};
+use nlayer_core::{
+    MountBatch, MountItem,
+    geometry::{Size, px},
+    text::ApproxTextEngine,
+};
+use nlayer_engine::{Engine, EngineConfig, MountSink};
+
+/// A local HTTP server: `handle` gets each connection with its request line
+/// and headers already read. Returns the base URL.
+fn serve(
+    handle: impl Fn(&mut BufReader<TcpStream>, &str, &[(String, String)]) + Send + 'static,
+) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(stream) = stream else { return };
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            if reader.read_line(&mut line).is_err() {
+                continue;
+            }
+            let mut headers = Vec::new();
+            loop {
+                let mut header = String::new();
+                reader.read_line(&mut header).expect("header");
+                let header = header.trim_end();
+                if header.is_empty() {
+                    break;
+                }
+                let (name, value) = header.split_once(':').expect("header line");
+                headers.push((name.trim().to_ascii_lowercase(), value.trim().to_owned()));
+            }
+            handle(&mut reader, line.trim_end(), &headers);
+        }
+    });
+    format!("http://127.0.0.1:{port}")
+}
+
+fn reply(stream: &mut BufReader<TcpStream>, status: &str, content_type: &str, body: &str) {
+    let response = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream
+        .get_mut()
+        .write_all(response.as_bytes())
+        .expect("write");
+}
+
+struct Sink {
+    tx: crossbeam_channel::Sender<MountBatch>,
+}
+
+impl MountSink for Sink {
+    fn submit(&self, batch: MountBatch) {
+        let _ = self.tx.send(batch);
+    }
+}
+
+fn run(source: String) -> (Engine, Receiver<MountBatch>) {
+    let bundle = nlayer_bundler::compile_module("App.tsx", &source).expect("it compiles");
+    let (tx, rx) = unbounded();
+    let engine = Engine::start(
+        EngineConfig::new(bundle, Size::new(px(390.0), px(844.0))),
+        || ApproxTextEngine,
+        Arc::new(Sink { tx }),
+    )
+    .expect("the app starts");
+    (engine, rx)
+}
+
+fn texts(batch: &MountBatch) -> Vec<String> {
+    batch
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            MountItem::Text { text, .. } => Some(text.text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn wait_for(rx: &Receiver<MountBatch>, text: &str) -> bool {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while let Some(left) = deadline.checked_duration_since(std::time::Instant::now()) {
+        let Ok(batch) = rx.recv_timeout(left) else {
+            return false;
+        };
+        if texts(&batch).iter().any(|t| t == text) {
+            return true;
+        }
+    }
+    false
+}
+
+#[test]
+fn fetch_reads_json_and_headers() {
+    let base = serve(|stream, line, _headers| {
+        assert!(line.starts_with("GET /data "), "{line}");
+        reply(
+            stream,
+            "200 OK",
+            "application/json",
+            r#"{"message":"hello","n":3}"#,
+        );
+    });
+    let bundle = format!(
+        r#"
+import {{ mount, signal, Text }} from "@nlayer";
+
+function App() {{
+    const shown = signal("loading");
+    fetch("{base}/data")
+        .then((response) => {{
+            if (!response.ok) throw new Error(String(response.status));
+            const type = response.headers.get("content-type");
+            return response.json().then((body) => `${{body.message}} ${{body.n}} ${{type}}`);
+        }})
+        .then((text) => shown.set(text))
+        .catch((error) => shown.set(`error ${{error.message}}`));
+    return <Text>{{shown()}}</Text>;
+}}
+mount(App);
+"#
+    );
+    let (engine, rx) = run(bundle);
+    let first = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(texts(&first), ["loading"]);
+    assert!(
+        wait_for(&rx, "hello 3 application/json"),
+        "the response reaches the text"
+    );
+    engine.stop();
+}
+
+#[test]
+fn fetch_posts_a_body_and_reports_the_status() {
+    let base = serve(|stream, line, headers| {
+        assert!(line.starts_with("POST /echo "), "{line}");
+        let length: usize = headers
+            .iter()
+            .find(|(name, _)| name == "content-length")
+            .and_then(|(_, value)| value.parse().ok())
+            .unwrap_or(0);
+        let mut body = vec![0; length];
+        stream.read_exact(&mut body).unwrap();
+        let body = String::from_utf8(body).unwrap();
+        assert_eq!(body, "ping");
+        reply(stream, "201 Created", "text/plain", "pong");
+    });
+    let bundle = format!(
+        r#"
+import {{ mount, signal, Text }} from "@nlayer";
+
+function App() {{
+    const shown = signal("loading");
+    fetch("{base}/echo", {{
+        method: "post",
+        body: "ping",
+        headers: {{ "x-test": "1" }},
+    }})
+        .then((response) => response.text().then((body) => `${{response.status}} ${{body}}`))
+        .then((text) => shown.set(text))
+        .catch((error) => shown.set(`error ${{error.message}}`));
+    return <Text>{{shown()}}</Text>;
+}}
+mount(App);
+"#
+    );
+    let (engine, rx) = run(bundle);
+    rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(wait_for(&rx, "201 pong"), "the response reaches the text");
+    engine.stop();
+}
+
+#[test]
+fn aborting_rejects_the_fetch() {
+    let base = serve(|stream, line, _headers| {
+        // Slow enough for the abort to win.
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(line.starts_with("GET /slow "), "{line}");
+        reply(stream, "200 OK", "text/plain", "late");
+    });
+    let bundle = format!(
+        r#"
+import {{ mount, signal, Text }} from "@nlayer";
+
+function App() {{
+    const shown = signal("loading");
+    const controller = new AbortController();
+    fetch("{base}/slow", {{ signal: controller.signal }})
+        .then((response) => response.text())
+        .then((text) => shown.set(text))
+        .catch((error) => shown.set(error.name));
+    controller.abort();
+    return <Text>{{shown()}}</Text>;
+}}
+mount(App);
+"#
+    );
+    let (engine, rx) = run(bundle);
+    let first = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    // The abort lands before the first frame: the rejection runs as a
+    // microtask of the turn that mounted the app.
+    assert!(
+        texts(&first).iter().any(|text| text == "AbortError") || wait_for(&rx, "AbortError"),
+        "{:?}",
+        texts(&first)
+    );
+    engine.stop();
+}
+
+#[test]
+fn a_failed_connection_rejects_the_fetch() {
+    // Nothing listens on port 1.
+    let bundle = r#"
+import { mount, signal, Text } from "@nlayer";
+
+function App() {
+    const shown = signal("loading");
+    fetch("http://127.0.0.1:1/none")
+        .then(() => shown.set("ok"))
+        .catch((error) => shown.set(`error ${error.name} ${error.message}`));
+    return <Text>{shown()}</Text>;
+}
+mount(App);
+"#;
+    let (engine, rx) = run(bundle.to_owned());
+    rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let got = rx.recv_timeout(Duration::from_secs(5)).expect("a frame");
+    let texts = texts(&got);
+    assert!(
+        texts.iter().any(|t| t.starts_with("error TypeError ")),
+        "{texts:?}"
+    );
+    engine.stop();
+}
+
+#[test]
+fn fetch_reads_bytes_and_blobs() {
+    let base = serve(|stream, line, _headers| {
+        assert!(line.starts_with("GET /bytes "), "{line}");
+        let body = "%PDF-1.4\u{0}binary";
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream.get_mut().write_all(response.as_bytes()).unwrap();
+    });
+    let bundle = format!(
+        r#"
+import {{ mount, signal, Text }} from "@nlayer";
+
+function App() {{
+    const shown = signal("loading");
+    fetch("{base}/bytes")
+        .then(async (response) => {{
+            const bytes = await response.arrayBuffer();
+            const blob = new Blob([bytes], {{ type: "application/octet-stream" }});
+            return `${{bytes.byteLength}} ${{blob.size}} ${{blob.type}} ${{await blob.text()}}`;
+        }})
+        .then((text) => shown.set(text))
+        .catch((error) => shown.set(`error ${{error.message}}`));
+    return <Text>{{shown()}}</Text>;
+}}
+mount(App);
+"#
+    );
+    let (engine, rx) = run(bundle);
+    rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(
+        wait_for(&rx, "15 15 application/octet-stream %PDF-1.4\u{0}binary"),
+        "the bytes and the blob"
+    );
+    engine.stop();
+}

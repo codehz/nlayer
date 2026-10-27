@@ -70,3 +70,8 @@ Copied files:
 - `crates/nlayer-bundler/src/plugin.rs` from `crates/nsh-bundler/src/plugin.rs`
   (resolve, load and transform: native modules external, app modules
   compiled; image, font, SVG and split handling are not copied)
+- `crates/nlayer-js/src/net.rs` from `crates/nsh-core/src/platform.rs`
+  (`HttpRequest` / `HttpHead`, cut to whole bodies and no streams)
+- `crates/nlayer-engine/src/net.rs` from `crates/nsh-engine/src/net.rs`
+  (ureq with rustls, whole bodies; streaming, pause and cancellation are
+  not copied)

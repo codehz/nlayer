@@ -8,6 +8,7 @@
 mod dom;
 mod error;
 mod modules;
+mod net;
 mod protocol;
 mod reactive;
 mod standard;
@@ -21,6 +22,7 @@ use rquickjs::{CatchResultExt, Context, Module, Persistent, Promise, Runtime};
 
 pub use crate::error::JsError;
 pub use crate::modules::native_module_exports;
+pub use crate::net::{HttpRequest, HttpResponse, NetworkRequest};
 
 /// What a native view reports to JS with an event.
 #[derive(Debug, Clone, PartialEq)]
@@ -91,6 +93,64 @@ impl Host {
                 .with(|cx| JsError::from_engine(&cx, rquickjs::Error::Exception));
             log::error!("{}", error.message);
         }
+        self.run_jobs();
+    }
+
+    /// Moves the requests `fetch` queued into `out`.
+    pub fn take_network(&self, out: &mut Vec<NetworkRequest>) {
+        self.cx.with(|cx| {
+            // SAFETY: the live state.
+            unsafe { (*state::state(cx.as_raw().as_ptr())).net.take(out) }
+        });
+    }
+
+    /// Hands request `id` its response, resolving the promise JS made.
+    pub fn complete_network(&self, id: u32, result: Result<HttpResponse, String>) {
+        self.cx.with(|cx| {
+            let raw = cx.as_raw().as_ptr();
+            // SAFETY: the globals the prelude made; the response object is
+            // new and taken by the call.
+            unsafe {
+                let global = qjs::JS_GetGlobalObject(raw);
+                let done = qjs::JS_GetPropertyStr(raw, global, c"__nlayerFetchDone".as_ptr());
+                if !qjs::JS_IsFunction(raw, done) {
+                    qjs::JS_FreeValue(raw, done);
+                    qjs::JS_FreeValue(raw, global);
+                    return;
+                }
+                let error = match &result {
+                    Ok(_) => qjs::JS_NULL,
+                    Err(message) => {
+                        qjs::JS_NewStringLen(raw, message.as_ptr().cast(), message.len() as _)
+                    }
+                };
+                let response = match result {
+                    Ok(response) => network_response(raw, &response),
+                    Err(_) => qjs::JS_NULL,
+                };
+                let mut args = [qjs::JS_NewFloat64(id as f64), error, response];
+                let r = qjs::JS_Call(raw, done, qjs::JS_UNDEFINED, 3, args.as_mut_ptr());
+                if qjs::JS_IsException(r) {
+                    let e = qjs::JS_GetException(raw);
+                    let text = qjs::JS_ToCStringLen(raw, std::ptr::null_mut(), e);
+                    if !text.is_null() {
+                        log::error!(
+                            "fetch: {}",
+                            std::ffi::CStr::from_ptr(text).to_string_lossy()
+                        );
+                        qjs::JS_FreeCString(raw, text);
+                    }
+                    qjs::JS_FreeValue(raw, e);
+                } else {
+                    qjs::JS_FreeValue(raw, r);
+                }
+                for value in args {
+                    qjs::JS_FreeValue(raw, value);
+                }
+                qjs::JS_FreeValue(raw, done);
+                qjs::JS_FreeValue(raw, global);
+            }
+        });
         self.run_jobs();
     }
 
@@ -178,5 +238,47 @@ impl Host {
 impl Drop for Host {
     fn drop(&mut self) {
         self.cx.with(|cx| state::uninstall(&cx));
+    }
+}
+
+/// The JS object `__nlayerFetchDone` reads a response from (owned).
+fn network_response(raw: *mut qjs::JSContext, response: &HttpResponse) -> qjs::JSValue {
+    // SAFETY: new values the object takes; every intermediate is freed.
+    unsafe {
+        let object = qjs::JS_NewObject(raw);
+        let string = |text: &str| qjs::JS_NewStringLen(raw, text.as_ptr().cast(), text.len() as _);
+        qjs::JS_SetPropertyStr(
+            raw,
+            object,
+            c"status".as_ptr(),
+            qjs::JS_NewFloat64(response.status as f64),
+        );
+        qjs::JS_SetPropertyStr(
+            raw,
+            object,
+            c"statusText".as_ptr(),
+            string(&response.status_text),
+        );
+        qjs::JS_SetPropertyStr(raw, object, c"url".as_ptr(), string(&response.url));
+        qjs::JS_SetPropertyStr(
+            raw,
+            object,
+            c"redirected".as_ptr(),
+            if response.redirected {
+                qjs::JS_TRUE
+            } else {
+                qjs::JS_FALSE
+            },
+        );
+        let headers = qjs::JS_NewArray(raw);
+        for (i, (name, value)) in response.headers.iter().enumerate() {
+            let mut pair = [string(name), string(value)];
+            let entry = qjs::JS_NewArrayFrom(raw, 2, pair.as_mut_ptr());
+            qjs::JS_SetPropertyUint32(raw, headers, i as u32, entry);
+        }
+        qjs::JS_SetPropertyStr(raw, object, c"headers".as_ptr(), headers);
+        let body = qjs::JS_NewUint8ArrayCopy(raw, response.body.as_ptr(), response.body.len() as _);
+        qjs::JS_SetPropertyStr(raw, object, c"body".as_ptr(), body);
+        object
     }
 }

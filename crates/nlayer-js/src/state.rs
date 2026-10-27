@@ -21,6 +21,8 @@ pub(crate) struct State {
     pub(crate) started: std::time::Instant,
     /// The timers the engine's loop waits on.
     pub(crate) timers: Timers,
+    /// The requests `fetch` queued for the engine.
+    pub(crate) net: crate::net::Queue,
 }
 
 /// Timers, by the id JS gave them and the instant they are due.
@@ -97,6 +99,7 @@ pub(crate) fn install(cx: &Ctx<'_>) {
             dom,
             started: crate::standard::started(),
             timers: crate::state::Timers::default(),
+            net: crate::net::Queue::default(),
         }));
         qjs::JS_SetContextOpaque(raw, state as *mut c_void);
         STATES.with(|m| m.borrow_mut().insert(rt as usize, state as usize));

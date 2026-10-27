@@ -10,12 +10,12 @@ use std::{
 use oxc::span::SourceType;
 use rolldown::{
     ModuleType,
+    plugin::HookLoadOutput,
     plugin::{
         HookLoadArgs, HookLoadReturn, HookResolveIdArgs, HookResolveIdOutput, HookResolveIdReturn,
         HookTransformArgs, HookTransformOutput, HookTransformReturn, HookUsage, Plugin,
         PluginContext, SharedTransformPluginContext,
     },
-    plugin::HookLoadOutput,
 };
 
 use crate::compile::{NativeModules, compile_native};

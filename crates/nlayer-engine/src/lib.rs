@@ -6,6 +6,8 @@
 //! [`MountBatch`] to the platform through a [`MountSink`]. The platform
 //! thread never blocks on the engine.
 
+mod net;
+
 use std::{collections::HashMap, sync::Arc, thread::JoinHandle, time::Duration};
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
@@ -77,6 +79,8 @@ enum Message {
     Resize(Size<Points>),
     SafeArea(Edges<Points>),
     KeyboardInset(Points),
+    /// A request finished (its result is in the engine's slot).
+    NetworkDone,
     Stop,
 }
 
@@ -138,9 +142,10 @@ impl Engine {
     {
         let (tx, rx) = unbounded();
         let (ready_tx, ready_rx) = unbounded();
+        let wake = tx.clone();
         let thread = std::thread::Builder::new()
             .name("nlayer-engine".to_owned())
-            .spawn(move || run(config, text_engine, sink, rx, ready_tx))
+            .spawn(move || run(config, text_engine, sink, rx, wake, ready_tx))
             .map_err(|e| EngineError::new(format!("could not start the engine thread: {e}")))?;
         match ready_rx.recv() {
             Ok(Ok(())) => Ok(Engine {
@@ -182,6 +187,7 @@ fn run<M, F>(
     text_engine: F,
     sink: Arc<dyn MountSink>,
     rx: Receiver<Message>,
+    wake: Sender<Message>,
     ready: Ready,
 ) where
     M: TextEngine + 'static,
@@ -199,7 +205,8 @@ fn run<M, F>(
         let _ = ready.send(Err(EngineError::new(e.message)));
         return;
     }
-    pump(&host, &mut core, &*sink);
+    let results: net::ResultSlot = Arc::default();
+    pump(&host, &mut core, &*sink, &results, &wake);
     if ready.send(Ok(())).is_err() {
         return;
     }
@@ -210,11 +217,12 @@ fn run<M, F>(
             Ok(message) => message,
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
                 host.run_due_timers();
-                pump(&host, &mut core, &*sink);
+                pump(&host, &mut core, &*sink, &results, &wake);
                 continue;
             }
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
         };
+        complete_network(&host, &results);
         match message {
             Message::Event { id, event, payload } => host.dispatch_event(id, event, &payload),
             Message::Input { id, text } => {
@@ -226,15 +234,30 @@ fn run<M, F>(
             Message::Resize(size) => core.set_viewport(size),
             Message::SafeArea(insets) => core.set_safe_area(insets),
             Message::KeyboardInset(height) => core.set_keyboard_inset(height),
+            Message::NetworkDone => {}
             Message::Stop => break,
         }
         host.run_due_timers();
-        pump(&host, &mut core, &*sink);
+        pump(&host, &mut core, &*sink, &results, &wake);
+    }
+}
+
+/// Hands JS the responses that arrived.
+fn complete_network(host: &Host, results: &net::ResultSlot) {
+    let done = std::mem::take(&mut *results.lock().expect("network results"));
+    for (id, result) in done {
+        host.complete_network(id, result);
     }
 }
 
 /// Applies what JS queued, lays out, and hands the frame to the platform.
-fn pump<M: TextEngine>(host: &Host, core: &mut Core<M>, sink: &dyn MountSink) {
+fn pump<M: TextEngine>(
+    host: &Host,
+    core: &mut Core<M>,
+    sink: &dyn MountSink,
+    results: &net::ResultSlot,
+    wake: &Sender<Message>,
+) {
     let mut ops = Vec::new();
     host.take_ops(&mut ops);
     for op in ops {
@@ -248,5 +271,13 @@ fn pump<M: TextEngine>(host: &Host, core: &mut Core<M>, sink: &dyn MountSink) {
     }
     if let Some(batch) = core.commit() {
         sink.submit(batch);
+    }
+    let mut requests = Vec::new();
+    host.take_network(&mut requests);
+    for request in requests {
+        let wake = wake.clone();
+        net::start(request, results.clone(), move || {
+            let _ = wake.send(Message::NetworkDone);
+        });
     }
 }

@@ -134,7 +134,10 @@ mount(App);
     assert!(out.code.contains("scales: [1, 2]"), "{}", out.code);
     assert_eq!(
         out.assets,
-        [PathBuf::from("img/icon.png"), PathBuf::from("img/icon@2x.png")]
+        [
+            PathBuf::from("img/icon.png"),
+            PathBuf::from("img/icon@2x.png")
+        ]
     );
     let host = nlayer_js::Host::new().unwrap();
     host.eval_source(&out.code).expect("the bundle runs");

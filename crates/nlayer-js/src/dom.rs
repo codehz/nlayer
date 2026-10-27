@@ -218,11 +218,14 @@ fn to_string(cx: *mut JsContext, v: JsValue) -> Option<String> {
         if qjs::JS_IsException(s) {
             return None;
         }
-        let c = qjs::JS_ToCStringLen(cx, ptr::null_mut(), s);
+        let mut len = 0usize;
+        let c = qjs::JS_ToCStringLen(cx, &mut len, s);
         if c.is_null() {
             return None;
         }
-        let out = CStr::from_ptr(c).to_string_lossy().into_owned();
+        // By length: a string may hold NUL.
+        let out =
+            String::from_utf8_lossy(std::slice::from_raw_parts(c.cast::<u8>(), len)).into_owned();
         qjs::JS_FreeCString(cx, c);
         qjs::JS_FreeValue(cx, s);
         Some(out)

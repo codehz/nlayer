@@ -2,8 +2,9 @@
 //! timers, `URL` / `URLSearchParams`, `TextEncoder` / `TextDecoder`,
 //! `atob` / `btoa`, `performance.now` and `crypto.getRandomValues`.
 //!
-//! `fetch` / `Request` / `Response` / `Headers` and `AbortController` are
-//! the next slice (they need the engine's network handoff).
+//! `fetch` (with `Request`, `Response`, `Headers`, `Blob` and
+//! `AbortController`) queues requests for the engine's HTTP stack and
+//! resolves their promises here.
 
 use std::ffi::CStr;
 use std::time::Instant;
@@ -90,6 +91,270 @@ const PRELUDE: &str = r#"
     Object.defineProperty(globalThis, "clearTimeout", { value: clearTimeout, writable: true, configurable: true });
     Object.defineProperty(globalThis, "clearInterval", { value: clearTimeout, writable: true, configurable: true });
     Object.defineProperty(globalThis, "__nlayerFireTimer", { value: __nlayerFireTimer, writable: false, configurable: false });
+
+    // --- fetch, Request, Response, Headers, Blob and AbortController ---
+
+    function Headers(init) {
+        this._pairs = [];
+        if (init instanceof Headers) {
+            for (var i = 0; i < init._pairs.length; i++) {
+                this._pairs.push([init._pairs[i][0], init._pairs[i][1]]);
+            }
+        } else if (Array.isArray(init)) {
+            for (var j = 0; j < init.length; j++) this.append(init[j][0], init[j][1]);
+        } else if (init) {
+            var names = Object.keys(init);
+            for (var k = 0; k < names.length; k++) this.append(names[k], init[names[k]]);
+        }
+    }
+    Headers.prototype.append = function (name, value) {
+        this._pairs.push([String(name).toLowerCase(), String(value)]);
+    };
+    Headers.prototype.set = function (name, value) {
+        var key = String(name).toLowerCase();
+        this.delete(key);
+        this.append(key, value);
+    };
+    Headers.prototype.get = function (name) {
+        var key = String(name).toLowerCase();
+        var found = null;
+        for (var i = 0; i < this._pairs.length; i++) {
+            if (this._pairs[i][0] !== key) continue;
+            found = found === null ? this._pairs[i][1] : found + ", " + this._pairs[i][1];
+        }
+        return found;
+    };
+    Headers.prototype.has = function (name) {
+        var key = String(name).toLowerCase();
+        return this._pairs.some(function (pair) { return pair[0] === key; });
+    };
+    Headers.prototype.delete = function (name) {
+        var key = String(name).toLowerCase();
+        this._pairs = this._pairs.filter(function (pair) { return pair[0] !== key; });
+    };
+    Headers.prototype.forEach = function (callback, thisArg) {
+        var seen = new Set();
+        for (var i = 0; i < this._pairs.length; i++) {
+            var key = this._pairs[i][0];
+            if (seen.has(key)) continue;
+            seen.add(key);
+            callback.call(thisArg, this.get(key), key, this);
+        }
+    };
+    Headers.prototype.entries = function () {
+        var self = this;
+        var seen = new Set();
+        var keys = [];
+        for (var i = 0; i < this._pairs.length; i++) {
+            var key = this._pairs[i][0];
+            if (!seen.has(key)) { seen.add(key); keys.push(key); }
+        }
+        var at = 0;
+        return {
+            next: function () {
+                if (at >= keys.length) return { done: true, value: undefined };
+                var key = keys[at++];
+                return { done: false, value: [key, self.get(key)] };
+            },
+        };
+    };
+
+    function bytesOf(part) {
+        if (part === undefined || part === null) return new Uint8Array(0);
+        if (typeof part === "string") return new TextEncoder().encode(part);
+        if (part instanceof Blob) return part._bytes;
+        if (part instanceof ArrayBuffer) return new Uint8Array(part.slice(0));
+        if (ArrayBuffer.isView(part)) {
+            return new Uint8Array(part.buffer.slice(part.byteOffset, part.byteOffset + part.byteLength));
+        }
+        throw new TypeError("a body is a string, a Blob, an ArrayBuffer or a typed array");
+    }
+    function concatBytes(parts) {
+        var total = 0;
+        for (var i = 0; i < parts.length; i++) total += parts[i].length;
+        var out = new Uint8Array(total);
+        var at = 0;
+        for (var j = 0; j < parts.length; j++) {
+            out.set(parts[j], at);
+            at += parts[j].length;
+        }
+        return out;
+    }
+
+    function Blob(parts, options) {
+        this._bytes = concatBytes((parts || []).map(bytesOf));
+        this.size = this._bytes.length;
+        this.type = options && options.type ? String(options.type).toLowerCase() : "";
+    }
+    Blob.prototype.arrayBuffer = function () {
+        return Promise.resolve(this._bytes.buffer.slice(this._bytes.byteOffset, this._bytes.byteOffset + this._bytes.byteLength));
+    };
+    Blob.prototype.text = function () {
+        return Promise.resolve(new TextDecoder().decode(this._bytes));
+    };
+
+    function abortError() {
+        var error = new Error("This operation was aborted");
+        error.name = "AbortError";
+        return error;
+    }
+
+    function AbortSignal() {
+        this.aborted = false;
+        this.reason = undefined;
+        this._listeners = [];
+        this.onabort = null;
+    }
+    AbortSignal.prototype.addEventListener = function (type, listener) {
+        if (type === "abort" && typeof listener === "function") this._listeners.push(listener);
+    };
+    AbortSignal.prototype.removeEventListener = function (type, listener) {
+        if (type !== "abort") return;
+        var at = this._listeners.indexOf(listener);
+        if (at >= 0) this._listeners.splice(at, 1);
+    };
+    AbortSignal.prototype._abort = function (reason) {
+        if (this.aborted) return;
+        this.aborted = true;
+        this.reason = reason === undefined ? abortError() : reason;
+        var listeners = this._listeners.slice();
+        this._listeners.length = 0;
+        for (var i = 0; i < listeners.length; i++) listeners[i].call(this, { type: "abort", target: this });
+        if (typeof this.onabort === "function") this.onabort({ type: "abort", target: this });
+    };
+    function AbortController() {
+        this.signal = new AbortSignal();
+    }
+    AbortController.prototype.abort = function (reason) {
+        this.signal._abort(reason);
+    };
+
+    function Request(input, init) {
+        init = init || {};
+        if (input instanceof Request) {
+            this.url = input.url;
+            this.method = input.method;
+            this.headers = new Headers(input.headers);
+            this._body = input._body;
+            this.follow = input.follow;
+            this.signal = init.signal || input.signal;
+        } else {
+            this.url = String(input);
+            this.method = String(init.method || "GET").toUpperCase();
+            this.headers = new Headers(init.headers);
+            this._body = (init.body === undefined || init.body === null) ? null : bytesOf(init.body);
+            this.follow = init.redirect !== "manual";
+            this.signal = init.signal || null;
+        }
+    }
+
+    function Response(init) {
+        if (init && init.status !== undefined) {
+            this.status = init.status;
+            this.statusText = init.statusText || "";
+            this.url = init.url || "";
+            this.redirected = !!init.redirected;
+            this.headers = init.headers instanceof Headers ? init.headers : new Headers(init.headers);
+            this._body = init.body || new Uint8Array(0);
+            this.ok = this.status >= 200 && this.status < 300;
+        } else {
+            this.status = 200;
+            this.statusText = "";
+            this.url = "";
+            this.redirected = false;
+            this.headers = new Headers();
+            this._body = bytesOf(init);
+            this.ok = true;
+        }
+    }
+    Response.prototype._share = function () {
+        var self = this;
+        if (self._bodyConsumed) {
+            return Promise.reject(new TypeError("the body was already read"));
+        }
+        self._bodyConsumed = true;
+        return Promise.resolve(self._body);
+    };
+    Response.prototype.arrayBuffer = function () {
+        return this._share().then(function (bytes) {
+            return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+        });
+    };
+    Response.prototype.text = function () {
+        return this._share().then(function (bytes) { return new TextDecoder().decode(bytes); });
+    };
+    Response.prototype.json = function () {
+        return this.text().then(function (text) { return JSON.parse(text); });
+    };
+    Response.prototype.blob = function () {
+        return this._share().then(function (bytes) { return new Blob([bytes]); });
+    };
+
+    var pendingFetch = new Map();
+    function fetch(input, init) {
+        var request;
+        try {
+            request = new Request(input, init);
+        } catch (error) {
+            return Promise.reject(error);
+        }
+        var signal = request.signal;
+        if (signal && signal.aborted) return Promise.reject(signal.reason || abortError());
+        return new Promise(function (resolve, reject) {
+            var start = globalThis.__nlayerHttpStart;
+            var id;
+            try {
+                id = start(
+                    request.method,
+                    request.url,
+                    request.headers._pairs,
+                    request._body,
+                    request.follow
+                );
+            } catch (error) {
+                reject(error);
+                return;
+            }
+            pendingFetch.set(id, { resolve: resolve, reject: reject, signal: signal });
+            if (signal) {
+                var onAbort = function () {
+                    if (pendingFetch.delete(id)) reject(signal.reason || abortError());
+                };
+                signal.addEventListener("abort", onAbort);
+            }
+        });
+    }
+
+    function __nlayerFetchDone(id, error, data) {
+        var pending = pendingFetch.get(id);
+        if (!pending) return;
+        pendingFetch.delete(id);
+        if (error !== null && error !== undefined) {
+            pending.reject(new TypeError(String(error)));
+            return;
+        }
+        pending.resolve(new Response({
+            status: data.status,
+            statusText: data.statusText,
+            url: data.url,
+            redirected: data.redirected,
+            headers: data.headers,
+            body: data.body,
+        }));
+    }
+    Object.defineProperty(globalThis, "__nlayerFetchDone", { value: __nlayerFetchDone, writable: false, configurable: false });
+    var globals = {
+        Headers: Headers,
+        Request: Request,
+        Response: Response,
+        Blob: Blob,
+        AbortController: AbortController,
+        AbortSignal: AbortSignal,
+        fetch: fetch,
+    };
+    for (var name in globals) {
+        Object.defineProperty(globalThis, name, { value: globals[name], writable: true, configurable: true });
+    }
 })();
 "#;
 
@@ -117,12 +382,14 @@ fn string(cx: *mut JsContext, value: JsValue) -> Option<String> {
             qjs::JS_FreeValue(cx, qjs::JS_GetException(cx));
             return None;
         }
-        let c = qjs::JS_ToCStringLen(cx, std::ptr::null_mut(), s);
+        let mut len = 0usize;
+        let c = qjs::JS_ToCStringLen(cx, &mut len, s);
         if c.is_null() {
             qjs::JS_FreeValue(cx, s);
             return None;
         }
-        let out = CStr::from_ptr(c).to_string_lossy().into_owned();
+        let out =
+            String::from_utf8_lossy(std::slice::from_raw_parts(c.cast::<u8>(), len)).into_owned();
         qjs::JS_FreeCString(cx, c);
         qjs::JS_FreeValue(cx, s);
         Some(out)
@@ -148,6 +415,7 @@ pub(crate) fn install(cx: &Ctx<'_>) {
     random(raw);
     encoding(raw);
     url(cx);
+    network(raw);
     // SAFETY: a classic script's completion value is freed.
     unsafe {
         // QuickJS reads up to the NUL it requires after the source.
@@ -289,6 +557,74 @@ unsafe extern "C" fn timer_clear(
         }
     }
     UNDEFINED
+}
+
+/// `__nlayerHttpStart`: queues a `fetch` for the engine and returns its id.
+fn network(cx: *mut JsContext) {
+    set_global(
+        cx,
+        c"__nlayerHttpStart",
+        new_function(cx, c"__nlayerHttpStart", http_start, 5),
+    );
+}
+
+unsafe extern "C" fn http_start(
+    cx: *mut JsContext,
+    _this: JsValue,
+    argc: i32,
+    argv: *mut JsValue,
+) -> JsValue {
+    let arg = |i: usize| {
+        if (i as i32) < argc {
+            // SAFETY: QuickJS passes `argc` values.
+            unsafe { *argv.add(i) }
+        } else {
+            UNDEFINED
+        }
+    };
+    let (Some(method), Some(url)) = (string(cx, arg(0)), string(cx, arg(1))) else {
+        return qjs::JS_EXCEPTION;
+    };
+    // The headers: an array of `[name, value]` pairs.
+    let mut headers = Vec::new();
+    // SAFETY: reads of a live array; every value got is freed.
+    unsafe {
+        let list = arg(2);
+        if qjs::JS_IsArray(list) {
+            let mut len: i64 = 0;
+            if qjs::JS_GetLength(cx, list, &mut len) == 0 {
+                for i in 0..len.max(0) as u32 {
+                    let pair = qjs::JS_GetPropertyUint32(cx, list, i);
+                    if qjs::JS_IsException(pair) {
+                        return pair;
+                    }
+                    if qjs::JS_IsArray(pair) {
+                        let name = qjs::JS_GetPropertyUint32(cx, pair, 0);
+                        let value = qjs::JS_GetPropertyUint32(cx, pair, 1);
+                        if let (Some(name), Some(value)) = (string(cx, name), string(cx, value)) {
+                            headers.push((name, value));
+                        }
+                        qjs::JS_FreeValue(cx, name);
+                        qjs::JS_FreeValue(cx, value);
+                    }
+                    qjs::JS_FreeValue(cx, pair);
+                }
+            }
+        }
+    }
+    let body = bytes_of(cx, arg(3)).filter(|bytes| !bytes.is_empty());
+    // SAFETY: truthiness of a live value runs no JS.
+    let follow = argc > 4 && unsafe { qjs::JS_ToBool(cx, arg(4)) } != 0;
+    let request = crate::net::HttpRequest {
+        method: method.to_ascii_uppercase(),
+        url,
+        headers,
+        body,
+        follow_redirects: follow,
+    };
+    // SAFETY: the live state.
+    let id = unsafe { (*crate::state::state(cx)).net.push(request) };
+    qjs::JS_NewFloat64(id as f64)
 }
 
 /// `performance.now()`: milliseconds since the VM started.
