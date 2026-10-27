@@ -2046,6 +2046,34 @@ mod tests {
         }
     }
 
+    /// [`FakeEngine`], except `max_lines` clamps the line count (0: none).
+    struct ClampedEngine;
+
+    impl TextEngine for ClampedEngine {
+        type Prepared = (usize, u32);
+
+        fn prepare(&self, text: &AttributedText) -> (usize, u32) {
+            (text.text.chars().count(), text.max_lines)
+        }
+
+        fn measure(&self, prepared: &Self::Prepared, max_width: Option<Points>) -> Size<Points> {
+            let (chars, max_lines) = *prepared;
+            let w = chars as f32 * 8.0;
+            let (width, mut lines) = match max_width.map(|m| m.0) {
+                Some(max) if w > max && max > 0.0 => (max, (w / max).ceil()),
+                _ => (w, 1.0),
+            };
+            if max_lines > 0 {
+                lines = lines.min(max_lines as f32);
+            }
+            size_pt(width, lines * 16.0)
+        }
+
+        fn layout(&self, _: &Self::Prepared, _: Size<Points>) -> TextLayout {
+            TextLayout(Arc::new(()))
+        }
+    }
+
     fn core() -> Core<FakeEngine> {
         Core::new(FakeEngine, size(px(100.0), px(200.0)))
     }
@@ -3182,6 +3210,31 @@ mod tests {
         })
         .unwrap();
         assert_eq!(frame(&c.commit().unwrap(), 2).size, size_pt(100.0, 16.0));
+    }
+
+    #[test]
+    fn a_single_line_input_stays_one_line_when_its_text_wraps() {
+        // 50 characters at 8pt in a 100pt box is four lines unless
+        // `max_lines` is 1. [`FakeEngine`] ignores that, so this engine
+        // does not.
+        let mut c = Core::new(ClampedEngine, size(px(100.0), px(200.0)));
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Input,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Value("x".repeat(50)),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        assert_eq!(frame(&c.commit().unwrap(), 2).size.height, px(16.0));
     }
 
     #[test]
