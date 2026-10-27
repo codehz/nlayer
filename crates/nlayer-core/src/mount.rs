@@ -1,11 +1,11 @@
 //! Instructions a platform applies to native views.
 //!
-//! Extracted from `nsh_core::mount`, cut to the view tree. Text, image,
-//! scroll and input items follow with those hosts.
+//! Extracted from `nsh_core::mount`, cut to views and images. Text, scroll
+//! and input items follow with those hosts.
 
 use crate::{
     geometry::{Bounds, Points},
-    ops::{EventMask, NodeId},
+    ops::{EventMask, ImageSource, NodeId, ResizeMode},
     style::ViewStyle,
 };
 
@@ -14,6 +14,8 @@ use crate::{
 pub enum ViewKind {
     /// A plain container view.
     View,
+    /// An image.
+    Image,
 }
 
 /// One instruction for the platform backend.
@@ -70,6 +72,16 @@ pub enum MountItem {
         id: NodeId,
         /// Event set.
         events: EventMask,
+    },
+    /// Set the source of an image view.
+    Image {
+        /// Image view.
+        id: NodeId,
+        /// Source; `None` clears the image. A bundled asset is the variant
+        /// for the screen's pixel ratio.
+        source: Option<ImageSource>,
+        /// How the image fits its box (`objectFit`; cover when unset).
+        resize_mode: ResizeMode,
     },
 }
 

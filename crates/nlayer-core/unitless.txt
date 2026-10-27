@@ -2,6 +2,7 @@
 # (geometry::unit_types): one item path per line, then the reason.
 # Reasons copied from nsh where the item already existed.
 
+core::Core::set_pixel_ratio(pixel_ratio)                         # device pixels per point
 css::Color::with_alpha(factor)                                   # an opacity factor
 effects::Filter::Brightness.0                                    # a filter amount (1 leaves the image as it is)
 effects::Filter::Contrast.0                                      # a filter amount (1 leaves the image as it is)
@@ -50,3 +51,5 @@ transform::Transform::push(value)                                # a transform o
 transform::TransformKind::identity ->                            # a transform operand (any of its kinds' units)
 transform::TransformOp.value                                     # a transform operand (any of its kinds' units)
 text::ResolvedTextStyle.line_height_multiple                     # a multiple of the font's line height
+ops::IMAGE_SCALES                                                # pixel densities (device pixels per point)
+ops::ImageScales::iter ->                                        # pixel densities (device pixels per point)

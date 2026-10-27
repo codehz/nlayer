@@ -1,8 +1,8 @@
 //! Shadow tree.
 //!
-//! Apply, commit and frame emission for views, extracted from
-//! `nsh_core::core` and cut to that host. Text, image, scroll and input
-//! follow in this module; they are not stubbed here.
+//! Apply, commit and frame emission for views and images, extracted from
+//! `nsh_core::core` and cut to those hosts. Text, scroll and input follow
+//! in this module; they are not stubbed here.
 
 mod layout_tree;
 
@@ -15,7 +15,7 @@ use layout_tree::LayoutTree;
 use crate::{
     geometry::{Bounds, Points, Size, rect},
     mount::{MountBatch, MountItem, ViewKind},
-    ops::{EventMask, NodeId, Op, ROOT_ID, Tag},
+    ops::{EventMask, ImageSource, NodeId, Op, Prop, ROOT_ID, ResizeMode, Tag},
     style::{self, Style, ViewStyle},
 };
 
@@ -31,6 +31,31 @@ mod dirty {
     pub(super) const VIEW: u32 = 1 << 0;
     /// Emit [`crate::MountItem::Events`].
     pub(super) const EVENTS: u32 = 1 << 1;
+    /// Emit [`crate::MountItem::Image`].
+    pub(super) const IMAGE: u32 = 1 << 2;
+}
+
+/// Host kind. Text, scroll and input join this when their paths are copied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    View,
+    Image,
+}
+
+impl Kind {
+    fn of(tag: Tag) -> Self {
+        match tag {
+            Tag::View => Kind::View,
+            Tag::Image => Kind::Image,
+        }
+    }
+
+    fn view_kind(self) -> ViewKind {
+        match self {
+            Kind::View => ViewKind::View,
+            Kind::Image => ViewKind::Image,
+        }
+    }
 }
 
 /// An op referenced a node in an impossible way. This is a renderer bug;
@@ -67,6 +92,7 @@ impl ApplyError {
 
 struct Node {
     id: NodeId,
+    kind: Kind,
     parent: Key,
     children: Vec<Key>,
     /// Layout node. Present for every view.
@@ -76,6 +102,10 @@ struct Node {
     /// again.
     logical: Option<Box<style::Logical>>,
     events: EventMask,
+    /// `objectFit`. `None` is the image default (cover).
+    object_fit: Option<ResizeMode>,
+    /// Present exactly for [`Kind::Image`]: `None` until `src` is set.
+    image: Option<Option<ImageSource>>,
     /// `zIndex`: native views are ordered by it (stable) among siblings.
     z_index: i32,
     /// Laid out right to left (the resolved `direction`).
@@ -91,15 +121,18 @@ struct Node {
 }
 
 impl Node {
-    fn new(id: NodeId, layout: LayoutId) -> Self {
+    fn new(id: NodeId, kind: Kind, layout: LayoutId) -> Self {
         Self {
             id,
+            kind,
             parent: NO_KEY,
             children: Vec::new(),
             layout,
             view_style: ViewStyle::default(),
             logical: None,
             events: EventMask::default(),
+            object_fit: None,
+            image: matches!(kind, Kind::Image).then_some(None),
             z_index: 0,
             rtl: false,
             direction: None,
@@ -119,13 +152,15 @@ pub struct Core {
     nodes: slab::Slab<Node>,
     /// `slots[id] = key + 1`, 0 if free. Ids index the table directly.
     slots: Vec<Key>,
-    layout: LayoutTree<()>,
+    layout: LayoutTree<Option<Size<Points>>>,
     max_nodes: usize,
     root: Key,
     viewport: Size<Points>,
     mount: Vec<MountItem>,
     queue: Vec<Key>,
     needs_layout: bool,
+    /// Device pixels per point. Bundled image variants are picked from it.
+    pixel_ratio: f32,
 }
 
 impl Core {
@@ -135,7 +170,7 @@ impl Core {
         let mut layout = LayoutTree::with_capacity(256);
         let root_layout = layout.new_leaf(root_style(viewport));
         let mut nodes = slab::Slab::with_capacity(256);
-        let mut root = Node::new(ROOT_ID, root_layout);
+        let mut root = Node::new(ROOT_ID, Kind::View, root_layout);
         root.created = true;
         let root = nodes.insert(root) as Key;
         layout.set_tag(root_layout, root);
@@ -151,6 +186,7 @@ impl Core {
             mount: Vec::new(),
             queue: Vec::new(),
             needs_layout: true,
+            pixel_ratio: 1.0,
         }
     }
 
@@ -169,11 +205,23 @@ impl Core {
         }
     }
 
+    /// Device pixels per point. Images whose bundled variant changes are
+    /// mounted again; their layout does not change.
+    pub fn set_pixel_ratio(&mut self, pixel_ratio: f32) {
+        if pixel_ratio == self.pixel_ratio {
+            return;
+        }
+        let old = self.pixel_ratio;
+        self.pixel_ratio = pixel_ratio;
+        self.repick_images(old, pixel_ratio);
+    }
+
     /// Applies one op from JS.
     pub fn apply(&mut self, op: Op) -> Result<(), ApplyError> {
         match op {
             Op::Create { id, tag } => self.create(id, tag),
             Op::SetStyle { id, style, .. } => self.set_style(id, *style),
+            Op::SetProp { id, prop } => self.set_prop(id, prop),
             Op::Listen { id, event, enabled } => {
                 let key = self.key(id)?;
                 let node = &mut self.nodes[key as usize];
@@ -236,7 +284,7 @@ impl Core {
         }
     }
 
-    fn alloc(&mut self, id: NodeId, layout: LayoutId) -> Result<Key, ApplyError> {
+    fn alloc(&mut self, id: NodeId, kind: Kind, layout: LayoutId) -> Result<Key, ApplyError> {
         let idx = id as usize;
         if self.nodes.len() >= self.max_nodes {
             return Err(ApplyError::TooManyNodes(self.max_nodes));
@@ -249,22 +297,26 @@ impl Core {
         } else if self.slots[idx] != 0 {
             return Err(ApplyError::DuplicateNode(id));
         }
-        let key = self.nodes.insert(Node::new(id, layout)) as Key;
+        let key = self.nodes.insert(Node::new(id, kind, layout)) as Key;
         self.slots[idx] = key + 1;
         Ok(key)
     }
 
     fn create(&mut self, id: NodeId, tag: Tag) -> Result<(), ApplyError> {
-        let Tag::View = tag;
+        let kind = Kind::of(tag);
         let mut layout_style = Style::default().layout;
         style::resolve_normal_alignment(&mut layout_style);
-        let layout = self.layout.new_leaf(layout_style);
-        let key = self.alloc(id, layout)?;
+        let layout = match kind {
+            Kind::Image => self.layout.new_leaf_with_context(layout_style, None),
+            Kind::View => self.layout.new_leaf(layout_style),
+        };
+        let key = self.alloc(id, kind, layout)?;
         self.layout.set_tag(layout, key);
         Ok(())
     }
 
     fn set_style(&mut self, id: NodeId, style: Style) -> Result<(), ApplyError> {
+        let fit = style.object_fit();
         let key = self.key(id)?;
         let Style {
             mut layout,
@@ -288,6 +340,10 @@ impl Core {
         let z_changed = node.z_index != z_index;
         node.view_style = view;
         node.z_index = z_index;
+        let fit_changed = node.image.is_some() && node.object_fit != fit;
+        if fit_changed {
+            node.object_fit = fit;
+        }
         // `overflow: "hidden"` clips in layout as well as in paint. `Clip`,
         // not `Hidden`: both stop the overflow from propagating, but `Hidden`
         // is a scroll container in CSS and would also make the box's
@@ -307,7 +363,53 @@ impl Core {
         if view_changed {
             self.mark(key, dirty::VIEW);
         }
+        if fit_changed {
+            self.mark(key, dirty::IMAGE);
+        }
         Ok(())
+    }
+
+    fn set_prop(&mut self, id: NodeId, prop: Prop) -> Result<(), ApplyError> {
+        let key = self.key(id)?;
+        match prop {
+            Prop::Source(source) => {
+                let Some(image) = self.nodes[key as usize].image.as_mut() else {
+                    return Ok(());
+                };
+                let size = source.as_ref().and_then(|s| s.size);
+                *image = source;
+                self.mark(key, dirty::IMAGE);
+                let layout = self.nodes[key as usize].layout;
+                if let Some(natural) = self.layout.get_node_context_mut(layout)
+                    && *natural != size
+                {
+                    *natural = size;
+                    self.layout.mark_dirty(layout);
+                    self.needs_layout = true;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The pixel ratio went from `old` to `new`: the images whose variant
+    /// changes are sent again.
+    fn repick_images(&mut self, old: f32, new: f32) {
+        let images: Vec<Key> = self
+            .nodes
+            .iter()
+            .filter(|(_, n)| {
+                n.image.as_ref().is_some_and(|source| {
+                    source
+                        .as_ref()
+                        .is_some_and(|s| !s.scales.is_empty() && s.variant(old) != s.variant(new))
+                })
+            })
+            .map(|(k, _)| k as Key)
+            .collect();
+        for key in images {
+            self.mark(key, dirty::IMAGE);
+        }
     }
 
     /// The direction `key` lays out in: its own, else its parent's (the
@@ -483,10 +585,11 @@ impl Core {
         if !node.events.is_empty() {
             flags |= dirty::EVENTS;
         }
-        self.mount.push(MountItem::Create {
-            id,
-            kind: ViewKind::View,
-        });
+        if node.image.as_ref().is_some_and(|source| source.is_some()) {
+            flags |= dirty::IMAGE;
+        }
+        let kind = node.kind.view_kind();
+        self.mount.push(MountItem::Create { id, kind });
         self.mark(key, flags);
         let mut children = mem::take(&mut self.nodes[key as usize].children);
         let original = children.clone();
@@ -539,6 +642,17 @@ impl Core {
             if flags & dirty::EVENTS != 0 {
                 let events = self.nodes[key as usize].events;
                 self.mount.push(MountItem::Events { id, events });
+            }
+            if flags & dirty::IMAGE != 0
+                && let Some(image) = &self.nodes[key as usize].image
+            {
+                let resize_mode = self.nodes[key as usize].object_fit.unwrap_or_default();
+                let ratio = self.pixel_ratio;
+                self.mount.push(MountItem::Image {
+                    id,
+                    source: image.as_ref().map(|s| s.resolved(ratio)),
+                    resize_mode,
+                });
             }
         }
     }
@@ -703,10 +817,35 @@ impl Core {
 fn measure_leaf(
     input: taffy::LayoutInput,
     _: taffy::NodeId,
-    _: Option<&mut ()>,
+    context: Option<&mut Option<Size<Points>>>,
     style: &TaffyStyle,
 ) -> taffy::LayoutOutput {
-    taffy::compute_leaf_layout(input, style, |_, _| 0.0, |_, _| taffy::Size::ZERO)
+    taffy::compute_leaf_layout(
+        input,
+        style,
+        |_, _| 0.0,
+        |known, _| match context {
+            Some(Some(natural)) => image_size(*natural, known.width, known.height),
+            _ => taffy::Size::ZERO,
+        },
+    )
+}
+
+/// Size of an image with a known natural size: fill a known dimension and
+/// keep the aspect ratio for the other.
+fn image_size(natural: Size<Points>, w: Option<f32>, h: Option<f32>) -> taffy::Size<f32> {
+    let ratio = if natural.height > Points::ZERO {
+        natural.width / natural.height
+    } else {
+        1.0
+    };
+    let (width, height) = match (w, h) {
+        (Some(w), None) => (w, w / ratio),
+        (None, Some(h)) => (h * ratio, h),
+        (Some(w), Some(h)) => (w, h),
+        (None, None) => (natural.width.0, natural.height.0),
+    };
+    taffy::Size { width, height }
 }
 
 fn root_style(viewport: Size<Points>) -> TaffyStyle {
@@ -769,9 +908,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        geometry::{px, size},
-        ops::EventKind,
-        style::StylePatch,
+        geometry::{px, size, size_pt},
+        ops::{EventKind, ImageScales, ImageSource, Prop, ResizeMode},
+        style::{StylePatch, StyleValue},
     };
 
     fn core() -> Core {
@@ -1095,5 +1234,160 @@ mod tests {
             }),
             Err(ApplyError::Cycle(2))
         );
+    }
+
+    fn source(uri: &str, width: f32, height: f32, scales: &[f32]) -> ImageSource {
+        ImageSource {
+            uri: uri.into(),
+            size: Some(size_pt(width, height)),
+            scales: scales.iter().copied().collect(),
+        }
+    }
+
+    #[test]
+    fn an_image_uses_its_natural_size_and_aspect_ratio() {
+        let mut c = Core::new(size(px(320.0), px(480.0)));
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Image,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Source(Some(source("asset:/logo.png", 200.0, 100.0, &[]))),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::Image,
+        })
+        .unwrap();
+        let mut narrow = Style::default();
+        narrow.set("width", StyleValue::Number(50.0)).unwrap();
+        narrow
+            .set("alignSelf", StyleValue::Str("flex-start"))
+            .unwrap();
+        apply_style(&mut c, 3, narrow);
+        c.apply(Op::SetProp {
+            id: 3,
+            prop: Prop::Source(Some(source("asset:/logo.png", 200.0, 100.0, &[]))),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        assert!(batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::Create {
+                id: 2,
+                kind: ViewKind::Image
+            }
+        )));
+        assert_eq!(frame(&batch, 2).size, size(px(320.0), px(160.0)));
+        assert_eq!(frame(&batch, 3).size, size(px(50.0), px(25.0)));
+    }
+
+    #[test]
+    fn object_fit_is_mounted_on_the_image() {
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Image,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Source(Some(source("https://example.com/a.png", 40.0, 30.0, &[]))),
+        })
+        .unwrap();
+        let mut style = Style::default();
+        style.set("objectFit", StyleValue::Str("contain")).unwrap();
+        apply_style(&mut c, 2, style);
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        let fitted = batch.items.iter().rev().find_map(|item| match item {
+            MountItem::Image {
+                id: 2,
+                resize_mode,
+                source,
+            } => Some((*resize_mode, source.as_ref().map(|s| s.uri.clone()))),
+            _ => None,
+        });
+        assert_eq!(
+            fitted,
+            Some((
+                ResizeMode::Contain,
+                Some(std::sync::Arc::from("https://example.com/a.png"))
+            ))
+        );
+    }
+
+    #[test]
+    fn a_bundled_image_picks_the_screen_density() {
+        let mut c = core();
+        c.set_pixel_ratio(2.0);
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Image,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Source(Some(source(
+                "asset:/logo.png",
+                40.0,
+                30.0,
+                &[1.0, 2.0, 2.5],
+            ))),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        let uri = batch.items.iter().find_map(|item| match item {
+            MountItem::Image {
+                id: 2,
+                source: Some(source),
+                ..
+            } => Some(source.uri.clone()),
+            _ => None,
+        });
+        assert_eq!(uri.as_deref(), Some("asset:/logo@2x.png"));
+        assert_eq!(
+            source("asset:/logo.png", 1.0, 1.0, &[1.0, 2.0, 2.5]).scales,
+            ImageScales::NONE.with(1.0).with(2.0)
+        );
+        c.set_pixel_ratio(1.0);
+        let batch = c.commit().unwrap();
+        let uri = batch.items.iter().find_map(|item| match item {
+            MountItem::Image {
+                id: 2,
+                source: Some(source),
+                ..
+            } => Some(source.uri.clone()),
+            _ => None,
+        });
+        assert_eq!(uri.as_deref(), Some("asset:/logo.png"));
+        c.set_pixel_ratio(1.0);
+        assert!(c.commit().is_none());
     }
 }

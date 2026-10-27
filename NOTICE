@@ -23,7 +23,7 @@ Copied files:
   `PropEnum` derives are omitted until the element macros exist.
 - `crates/nlayer-core/src/text.rs` from `crates/nsh-core/src/text.rs`
 - `crates/nlayer-core/src/core/layout_tree.rs` from `crates/nsh-core/src/core/layout_tree.rs`
-- `crates/nlayer-core/src/mount.rs` from `crates/nsh-core/src/mount.rs` (view items)
-- `Tag`, `EventKind`, `Op` from `nsh_core::ops` (view tree)
-- `crates/nlayer-core/src/core/mod.rs` from `crates/nsh-core/src/core/mod.rs` (view apply, commit and frame rounding)
+- `crates/nlayer-core/src/mount.rs` from `crates/nsh-core/src/mount.rs` (view and image items)
+- `Tag`, `EventKind`, `Op`, `Prop`, `ImageSource`, `ImageScales` from `nsh_core::ops`
+- `crates/nlayer-core/src/core/mod.rs` from `crates/nsh-core/src/core/mod.rs` (view and image apply, commit and frame rounding)
 - `NodeId`, `ROOT_ID`, `EventMask` from `nsh_core::ops`
