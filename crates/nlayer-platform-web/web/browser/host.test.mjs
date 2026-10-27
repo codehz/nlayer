@@ -21,6 +21,7 @@ test("the page graph and a text mount do not need QuickJS", async () => {
   assert.equal(binary.includes("__rquickjs"), false);
   assert.equal(binary.includes("QuickJS"), false);
   const frames = [];
+  const logs = [];
   let facade;
   const imports = {
     nlayer_browser: {
@@ -36,7 +37,9 @@ test("the page graph and a text mount do not need QuickJS", async () => {
         const text = new TextDecoder().decode(new Uint8Array(wasm.memory.buffer, ptr, len));
         throw new Error(text);
       },
-      nlayer_log: () => {},
+      nlayer_log: (level, ptr, len) => {
+        logs.push(new TextDecoder().decode(new Uint8Array(wasm.memory.buffer, ptr, len)));
+      },
     },
   };
   const instance = await WebAssembly.instantiate(module, imports);
@@ -67,4 +70,12 @@ test("the page graph and a text mount do not need QuickJS", async () => {
   wasm.nlayer_pump();
   assert.ok(frames.length > 0, "a frame was submitted");
   assert.match(JSON.stringify(frames.at(-1)), /hello/);
+  assert.equal(typeof global.gc, "function", "run node with --expose-gc");
+  for (let i = 0; i < 5; i++) {
+    global.gc();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  wasm.nlayer_pump();
+  assert.match(JSON.stringify(frames.at(-1)), /hello/);
+  assert.equal(logs.join("\n").includes("UnknownNode"), false);
 });

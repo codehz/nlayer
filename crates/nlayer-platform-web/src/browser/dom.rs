@@ -1,5 +1,7 @@
-//! Host nodes for compiled JSX. The page keeps the objects; this table
-//! records parents and emits the core's ops.
+//! Host nodes for compiled JSX. A mounted node's page object stays reachable
+//! because its parent holds that [`Value`](super::values::Value), as nsh's
+//! browser host does. The finalizer releases a node only after it leaves the
+//! tree. This table records parents and emits the core's ops.
 
 use std::cell::{Cell, RefCell};
 
@@ -15,16 +17,22 @@ use super::{
 const DETACHED: NodeId = 0;
 const MAX_DEPTH: u32 = 64;
 
+struct Child {
+    id: NodeId,
+    /// Keeps the page object alive while the node is mounted.
+    value: Value,
+}
+
 struct Node {
     text: bool,
     tag: Option<Tag>,
     parent: NodeId,
-    children: Vec<NodeId>,
+    children: Vec<Child>,
     listening: Vec<EventKind>,
 }
 
 enum Item {
-    Node(NodeId),
+    Node(Value),
     Text(String),
 }
 
@@ -110,21 +118,59 @@ impl Dom {
             .is_some_and(|n| n.text)
     }
 
+    /// A new reference to a mounted node, taken without holding `nodes`
+    /// across the page call.
+    fn share_child(&self, id: NodeId) -> Option<Value> {
+        let raw = {
+            let nodes = self.nodes.borrow();
+            let parent = nodes.get(id as usize)?.as_ref()?.parent;
+            if parent == DETACHED {
+                return None;
+            }
+            nodes
+                .get(parent as usize)?
+                .as_ref()?
+                .children
+                .iter()
+                .find(|child| child.id == id)
+                .map(|child| child.value.0)
+        };
+        raw.map(Value::share)
+    }
+
+    /// Pulls `id` out of its parent without emitting an op. `None` when it
+    /// is already detached.
+    fn detach_value(&self, id: NodeId) -> Option<Value> {
+        let mut nodes = self.nodes.borrow_mut();
+        let parent = nodes.get(id as usize)?.as_ref()?.parent;
+        if parent == DETACHED {
+            return None;
+        }
+        let children = &mut nodes.get_mut(parent as usize)?.as_mut()?.children;
+        let index = children.iter().position(|child| child.id == id)?;
+        let child = children.remove(index);
+        if let Some(node) = nodes.get_mut(id as usize).and_then(|slot| slot.as_mut()) {
+            node.parent = DETACHED;
+        }
+        Some(child.value)
+    }
+
     fn insert(
         &self,
         parent: NodeId,
-        child: NodeId,
+        child: Value,
         before: Option<NodeId>,
     ) -> Result<(), PropError> {
-        if child == ROOT_ID {
+        let child_id = Self::id_of(&child)?;
+        if child_id == ROOT_ID {
             return Err(PropError("cannot insert the root".into()));
         }
-        if before == Some(child) {
+        if before == Some(child_id) {
             return Ok(());
         }
         let mut ancestor = parent;
         while ancestor != DETACHED {
-            if ancestor == child {
+            if ancestor == child_id {
                 return Err(PropError(
                     "nlayer: a node cannot be inserted into itself".into(),
                 ));
@@ -140,13 +186,13 @@ impl Dom {
         let old_parent = {
             let nodes = self.nodes.borrow();
             nodes
-                .get(child as usize)
+                .get(child_id as usize)
                 .and_then(|n| n.as_ref())
                 .ok_or_else(|| PropError("released child node".into()))?
                 .parent
         };
         if old_parent == parent {
-            let next = self.next_sibling(child);
+            let next = self.next_sibling(child_id);
             let in_place = match (next, before) {
                 (None, None) => true,
                 (Some(n), Some(b)) => n == b,
@@ -156,7 +202,7 @@ impl Dom {
                 return Ok(());
             }
         }
-        if self.is_text(child) && self.tag_of(parent) != Some(Tag::Text) {
+        if self.is_text(child_id) && self.tag_of(parent) != Some(Tag::Text) {
             self.warnings.warn(format!(
                 "a string in {} is not shown: text shows in a <Text>",
                 match self.tag_of(parent) {
@@ -165,35 +211,45 @@ impl Dom {
                 }
             ));
         }
-        if old_parent != DETACHED {
-            let mut nodes = self.nodes.borrow_mut();
-            if let Some(parent_node) = nodes.get_mut(old_parent as usize).and_then(|n| n.as_mut()) {
-                parent_node.children.retain(|id| *id != child);
-            }
-        }
-        let mut nodes = self.nodes.borrow_mut();
-        let parent_node = nodes
-            .get_mut(parent as usize)
-            .and_then(|n| n.as_mut())
-            .ok_or_else(|| PropError("released parent node".into()))?;
-        let pos = match before {
-            Some(before) => parent_node
-                .children
-                .iter()
-                .position(|id| *id == before)
-                .unwrap_or(parent_node.children.len()),
-            None => parent_node.children.len(),
+        let before_id = {
+            let nodes = self.nodes.borrow();
+            let children = &nodes
+                .get(parent as usize)
+                .and_then(|n| n.as_ref())
+                .ok_or_else(|| PropError("released parent node".into()))?
+                .children;
+            before.filter(|id| children.iter().any(|child| child.id == *id))
         };
-        let before_id = before.filter(|id| parent_node.children.contains(id));
-        parent_node.children.insert(pos, child);
-        drop(nodes);
-        self.nodes.borrow_mut()[child as usize]
+        let stored = self.detach_value(child_id).unwrap_or(child);
+        {
+            let mut nodes = self.nodes.borrow_mut();
+            let parent_node = nodes
+                .get_mut(parent as usize)
+                .and_then(|n| n.as_mut())
+                .ok_or_else(|| PropError("released parent node".into()))?;
+            let pos = match before_id {
+                Some(before) => parent_node
+                    .children
+                    .iter()
+                    .position(|child| child.id == before)
+                    .unwrap_or(parent_node.children.len()),
+                None => parent_node.children.len(),
+            };
+            parent_node.children.insert(
+                pos,
+                Child {
+                    id: child_id,
+                    value: stored,
+                },
+            );
+        }
+        self.nodes.borrow_mut()[child_id as usize]
             .as_mut()
             .ok_or_else(|| PropError("released child node".into()))?
             .parent = parent;
         self.push(Op::Insert {
             parent,
-            child,
+            child: child_id,
             before: before_id,
         });
         Ok(())
@@ -206,34 +262,46 @@ impl Dom {
             return None;
         }
         let children = &nodes.get(parent as usize)?.as_ref()?.children;
-        let index = children.iter().position(|id| *id == child)?;
-        children.get(index + 1).copied()
+        let index = children.iter().position(|item| item.id == child)?;
+        children.get(index + 1).map(|item| item.id)
     }
 
     fn remove(&self, parent: NodeId, child: NodeId) {
-        let mut nodes = self.nodes.borrow_mut();
-        let Some(child_node) = nodes.get(child as usize).and_then(|n| n.as_ref()) else {
-            return;
+        let value = {
+            let mut nodes = self.nodes.borrow_mut();
+            let attached = nodes
+                .get(child as usize)
+                .and_then(|n| n.as_ref())
+                .is_some_and(|n| n.parent == parent);
+            if !attached {
+                return;
+            }
+            let Some(parent_node) = nodes.get_mut(parent as usize).and_then(|n| n.as_mut()) else {
+                return;
+            };
+            let Some(index) = parent_node
+                .children
+                .iter()
+                .position(|item| item.id == child)
+            else {
+                return;
+            };
+            let value = parent_node.children.remove(index).value;
+            if let Some(child_node) = nodes.get_mut(child as usize).and_then(|n| n.as_mut()) {
+                child_node.parent = DETACHED;
+            }
+            value
         };
-        if child_node.parent != parent {
-            return;
-        }
-        if let Some(parent_node) = nodes.get_mut(parent as usize).and_then(|n| n.as_mut()) {
-            parent_node.children.retain(|id| *id != child);
-        }
-        if let Some(child_node) = nodes.get_mut(child as usize).and_then(|n| n.as_mut()) {
-            child_node.parent = DETACHED;
-        }
-        drop(nodes);
         self.push(Op::Remove { parent, child });
+        drop(value);
     }
 
-    fn flatten(&self, value: &Value, out: &mut Vec<Item>, depth: u32) -> Result<(), PropError> {
+    fn flatten(&self, value: Value, out: &mut Vec<Item>, depth: u32) -> Result<(), PropError> {
         if depth > MAX_DEPTH {
             return Err(PropError("nlayer: children nested too deeply".into()));
         }
-        if let Some(id) = value.node() {
-            out.push(Item::Node(id));
+        if value.node().is_some() {
+            out.push(Item::Node(value));
             return Ok(());
         }
         match value.kind() {
@@ -245,14 +313,14 @@ impl Dom {
             5 => {
                 let n = value.length().unwrap_or(0);
                 for i in 0..n {
-                    self.flatten(&value.index(i)?, out, depth + 1)?;
+                    self.flatten(value.index(i)?, out, depth + 1)?;
                 }
                 Ok(())
             }
             6 => {
                 let args = Value::array([])?;
                 let returned = value.call(&Value::unit(), &args)?;
-                self.flatten(&returned, out, depth + 1)
+                self.flatten(returned, out, depth + 1)
             }
             _ => {
                 self.warnings.warn(
@@ -269,28 +337,28 @@ impl Dom {
         value: &Value,
         old: &[NodeId],
         marker: Option<NodeId>,
-    ) -> Result<Vec<NodeId>, PropError> {
+    ) -> Result<Vec<Value>, PropError> {
         let mut items = Vec::new();
-        self.flatten(value, &mut items, 0)?;
-        let reuse = match (old, items.as_slice()) {
-            ([only], [Item::Text(_)]) if self.is_text(*only) => Some(*only),
+        self.flatten(value.clone(), &mut items, 0)?;
+        let reused = match (old, items.first()) {
+            ([only], Some(Item::Text(_))) if items.len() == 1 && self.is_text(*only) => Some(*only),
             _ => None,
         };
-        let new = if let (Some(id), [Item::Text(text)]) = (reuse, items.as_slice()) {
-            self.push(Op::SetText {
-                id,
-                text: text.clone(),
-            });
-            vec![id]
+        let new = if let Some(id) = reused {
+            let Item::Text(text) = items.pop().expect("the reused child is text") else {
+                unreachable!("reused only when the only child is text");
+            };
+            self.push(Op::SetText { id, text });
+            vec![
+                self.share_child(id)
+                    .ok_or_else(|| PropError("released text node".into()))?,
+            ]
         } else {
             let mut nodes = Vec::with_capacity(items.len());
             for item in items {
                 match item {
-                    Item::Node(id) => nodes.push(id),
-                    Item::Text(text) => {
-                        let created = self.create(None, Some(text))?;
-                        nodes.push(Self::id_of(&created)?);
-                    }
+                    Item::Node(node) => nodes.push(node),
+                    Item::Text(text) => nodes.push(self.create(None, Some(text))?),
                 }
             }
             nodes
@@ -303,12 +371,12 @@ impl Dom {
         &self,
         parent: NodeId,
         old: &[NodeId],
-        new: &[NodeId],
+        new: &[Value],
         marker: Option<NodeId>,
     ) -> Result<(), PropError> {
         let mut a = old.to_vec();
-        let b = new;
-        let b_len = b.len();
+        let b_id = |index: usize| new[index].node().unwrap_or(DETACHED);
+        let b_len = new.len();
         let (mut a_start, mut b_start) = (0usize, 0usize);
         let (mut a_end, mut b_end) = (a.len(), b_len);
         let after = match a.last() {
@@ -317,19 +385,23 @@ impl Dom {
         };
         let mut map: Option<FxHashMap<NodeId, usize>> = None;
         while a_start < a_end || b_start < b_end {
-            if a_start < a_end && b_start < b_end && a[a_start] == b[b_start] {
+            if a_start < a_end && b_start < b_end && a[a_start] == b_id(b_start) {
                 a_start += 1;
                 b_start += 1;
                 continue;
             }
-            while a_end > a_start && b_end > b_start && a[a_end - 1] == b[b_end - 1] {
+            while a_end > a_start && b_end > b_start && a[a_end - 1] == b_id(b_end - 1) {
                 a_end -= 1;
                 b_end -= 1;
             }
             if a_end == a_start {
-                let anchor = if b_end < b_len { Some(b[b_end]) } else { after };
+                let anchor = if b_end < b_len {
+                    Some(b_id(b_end))
+                } else {
+                    after
+                };
                 while b_start < b_end {
-                    self.insert(parent, b[b_start], anchor)?;
+                    self.insert(parent, new[b_start].clone(), anchor)?;
                     b_start += 1;
                 }
             } else if b_end == b_start {
@@ -339,18 +411,19 @@ impl Dom {
                     }
                     a_start += 1;
                 }
-            } else if a[a_start] == b[b_end - 1] && b[b_start] == a[a_end - 1] {
+            } else if a[a_start] == b_id(b_end - 1) && b_id(b_start) == a[a_end - 1] {
                 a_end -= 1;
                 let anchor = self.next_sibling(a[a_end]);
                 let first_next = self.next_sibling(a[a_start]);
-                self.insert(parent, b[b_start], first_next)?;
+                self.insert(parent, new[b_start].clone(), first_next)?;
                 b_start += 1;
                 a_start += 1;
                 b_end -= 1;
-                self.insert(parent, b[b_end], anchor)?;
-                a[a_end] = b[b_end];
+                self.insert(parent, new[b_end].clone(), anchor)?;
+                a[a_end] = b_id(b_end);
             } else {
-                let map = map.get_or_insert_with(|| (b_start..b_end).map(|i| (b[i], i)).collect());
+                let map =
+                    map.get_or_insert_with(|| (b_start..b_end).map(|i| (b_id(i), i)).collect());
                 match map.get(&a[a_start]).copied() {
                     Some(index) if b_start < index && index < b_end => {
                         let mut i = a_start;
@@ -368,11 +441,11 @@ impl Dom {
                         if sequence > index - b_start {
                             let anchor = a[a_start];
                             while b_start < index {
-                                self.insert(parent, b[b_start], Some(anchor))?;
+                                self.insert(parent, new[b_start].clone(), Some(anchor))?;
                                 b_start += 1;
                             }
                         } else {
-                            self.insert(parent, b[b_start], Some(a[a_start]))?;
+                            self.insert(parent, new[b_start].clone(), Some(a[a_start]))?;
                             if !map.contains_key(&a[a_start]) {
                                 self.remove(parent, a[a_start]);
                             }
@@ -419,7 +492,7 @@ impl Dom {
             }
             302 => {
                 let parent = Self::id_of(&args.index(0)?)?;
-                let child = Self::id_of(&args.index(1)?)?;
+                let child = args.index(1)?;
                 let before = args.index(2)?.node();
                 self.insert(parent, child, before)?;
                 Ok(Value::unit())
@@ -476,20 +549,45 @@ impl Dom {
                 if id <= ROOT_ID {
                     return Ok(Value::unit());
                 }
-                let parent = self
+                let Some(node) = self
                     .nodes
-                    .borrow()
-                    .get(id as usize)
-                    .and_then(|n| n.as_ref())
-                    .map(|n| n.parent);
-                if let Some(parent) = parent.filter(|parent| *parent != DETACHED) {
-                    self.remove(parent, id);
-                }
-                self.nodes
                     .borrow_mut()
                     .get_mut(id as usize)
-                    .map(|slot| *slot = None);
+                    .and_then(Option::take)
+                else {
+                    return Ok(Value::unit());
+                };
+                let parent = node.parent;
+                for child in &node.children {
+                    if let Some(Some(child_node)) =
+                        self.nodes.borrow_mut().get_mut(child.id as usize)
+                    {
+                        child_node.parent = DETACHED;
+                    }
+                }
+                let removed = if parent == DETACHED {
+                    Vec::new()
+                } else {
+                    let mut nodes = self.nodes.borrow_mut();
+                    if let Some(Some(parent_node)) = nodes.get_mut(parent as usize) {
+                        let mut kept = Vec::new();
+                        let mut removed = Vec::new();
+                        for child in parent_node.children.drain(..) {
+                            if child.id == id {
+                                removed.push(child);
+                            } else {
+                                kept.push(child);
+                            }
+                        }
+                        parent_node.children = kept;
+                        removed
+                    } else {
+                        Vec::new()
+                    }
+                };
                 self.push(Op::Release { id });
+                drop(removed);
+                drop(node);
                 Ok(Value::unit())
             }
             308 => {
@@ -498,11 +596,7 @@ impl Dom {
                 let old = Self::ids(&args.index(2)?)?;
                 let before = args.index(3)?.node();
                 let shown = self.show(parent, &value, &old, before)?;
-                let objects = shown
-                    .into_iter()
-                    .map(|id| Value::node_object(id, self.is_text(id)))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Value::array(objects)
+                Value::array(shown)
             }
             _ => Err(PropError("unknown dom operation".into())),
         }

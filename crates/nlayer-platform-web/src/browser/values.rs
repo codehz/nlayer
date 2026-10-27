@@ -165,6 +165,11 @@ impl Value {
         }
     }
 
+    /// Another reference to a live slot. Not for slots 0–3.
+    pub(super) fn share(raw: u32) -> Self {
+        invoke(16, raw, 0, 0, 0.0);
+        Value(raw)
+    }
     /// The page makes the node object for `id` (`text`: a text node).
     pub(super) fn node_object(id: u32, text: bool) -> Result<Self, PropError> {
         Ok(Value(owned(invoke(39, id, u32::from(text), 0, 0.0))?))

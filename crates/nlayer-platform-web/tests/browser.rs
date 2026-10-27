@@ -18,7 +18,7 @@ fn the_browser_host_mounts_without_quickjs() {
     assert!(status.success(), "browser wasm build failed");
     let script = concat!(env!("CARGO_MANIFEST_DIR"), "/web/browser/host.test.mjs");
     let status = Command::new("node")
-        .args(["--test", script])
+        .args(["--expose-gc", "--test", script])
         .status()
         .expect("node runs the browser host test");
     assert!(status.success(), "node --test {script}");
