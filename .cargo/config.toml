@@ -1,4 +1,11 @@
 # The wasm engine has no OS entropy. `nlayer-js` supplies getrandom's custom
 # backend, and the page fills it (`__nlayer_random_fill`).
+#
+# QuickJS is C. Apple's `ar` drops wasm objects (`libquickjs.a` ends up
+# empty), so the archive has to be made by `llvm-ar`.
+[env]
+AR_wasm32_unknown_unknown = "llvm-ar"
+
 [target.wasm32-unknown-unknown]
-rustflags = ["--cfg", 'getrandom_backend="custom"']
+# 8 MiB: QuickJS's own stack check trips on the 1 MiB default.
+rustflags = ["-C", "link-arg=-zstack-size=8388608", "--cfg", 'getrandom_backend="custom"']

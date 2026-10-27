@@ -1,21 +1,28 @@
 [package]
 name = "nlayer-platform-web"
-description = "Web host: mount batches as the JSON a page applies to the DOM."
+description = "Web host: the page's engine and the mount JSON it applies to the DOM."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+
+[lib]
+crate-type = ["rlib", "cdylib"]
 
 [lints]
 workspace = true
 
 [dependencies]
 nlayer-core.workspace = true
+nlayer-engine.workspace = true
 rustc-hash.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+log.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 nlayer-bundler.workspace = true
 nlayer-core.workspace = true
-nlayer-engine.workspace = true
 serde_json.workspace = true
 crossbeam-channel.workspace = true

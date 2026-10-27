@@ -97,3 +97,9 @@ Copied files:
 - `LocalEngine` in `crates/nlayer-engine/src/lib.rs` from `nsh_engine::LocalEngine`
   (the caller's thread pumps input, timers and finished fetches; component
   tasks, display frames and posted JS calls are not copied)
+- `crates/nlayer-platform-web/src/page.rs`, `src/ffi.rs`, `web/boot.js` and
+  `web/index.html` from `nsh-platform-web/src/lib.rs` and `web/nsh.js` (the
+  page's engine: one wasm module, mount JSON into the DOM mounter, the
+  browser's `fetch`, press, input, scroll, resize, safe area and the
+  keyboard inset. Text measurement is the headless stand-in. Glyph runs,
+  hot reload and bytecode are not copied)

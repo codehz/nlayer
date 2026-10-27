@@ -18,7 +18,7 @@ pub(crate) struct State {
     pub(crate) graph: Graph,
     pub(crate) dom: Dom,
     /// When the VM started, for `performance.now`.
-    pub(crate) started: std::time::Instant,
+    pub(crate) started: crate::clock::Mono,
     /// The timers the engine's loop waits on.
     pub(crate) timers: Timers,
     /// The requests `fetch` queued for the engine.
@@ -31,14 +31,14 @@ pub(crate) struct State {
 /// Timers, by the id JS gave them and the instant they are due.
 #[derive(Default)]
 pub(crate) struct Timers {
-    due: std::collections::BTreeMap<(std::time::Instant, u32), ()>,
+    due: std::collections::BTreeMap<(crate::clock::Mono, u32), ()>,
 }
 
 impl Timers {
     /// Makes timer `id` due after `ms` milliseconds (again).
     pub(crate) fn set(&mut self, id: u32, ms: f64) {
         self.clear(id);
-        let at = std::time::Instant::now() + std::time::Duration::from_secs_f64(ms / 1000.0);
+        let at = crate::clock::Mono::now() + std::time::Duration::from_secs_f64(ms / 1000.0);
         self.due.insert((at, id), ());
     }
 
@@ -50,13 +50,13 @@ impl Timers {
     /// How long until the first timer is due.
     pub(crate) fn next(&self) -> Option<std::time::Duration> {
         let (&(at, _), ()) = self.due.first_key_value()?;
-        Some(at.saturating_duration_since(std::time::Instant::now()))
+        Some(at.saturating_duration_since(crate::clock::Mono::now()))
     }
 
     /// The ids due now, removed from the queue (they reschedule themselves
     /// when they repeat).
     pub(crate) fn run_due(&mut self) -> Vec<u32> {
-        let now = std::time::Instant::now();
+        let now = crate::clock::Mono::now();
         let mut ids = Vec::new();
         while let Some((&(at, id), ())) = self.due.first_key_value() {
             if at > now {

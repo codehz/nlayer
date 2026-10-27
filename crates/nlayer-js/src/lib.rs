@@ -7,6 +7,7 @@
 //! is single-threaded (`!Send`): create and use it on the engine thread.
 
 mod bridge;
+mod clock;
 mod dom;
 mod error;
 mod modules;

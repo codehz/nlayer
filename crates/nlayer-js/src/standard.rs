@@ -7,7 +7,6 @@
 //! resolves their promises here.
 
 use std::ffi::CStr;
-use std::time::Instant;
 
 use rquickjs::{Ctx, qjs};
 
@@ -871,6 +870,6 @@ fn url(cx: &Ctx<'_>) {
 }
 
 /// The VM's start, for `performance.now`.
-pub(crate) fn started() -> Instant {
-    Instant::now()
+pub(crate) fn started() -> crate::clock::Mono {
+    crate::clock::Mono::now()
 }
