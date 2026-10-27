@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "jsxImportSource": "@nlayer",
+    "strict": true,
+    "noEmit": true,
+    "lib": ["ES2022"],
+    "paths": {
+      "@nlayer/runtime": [".nlayer/types/@nlayer/runtime.d.ts"],
+      "@nlayer/ui": [".nlayer/types/@nlayer/ui.d.ts"],
+      "@nlayer/test": [".nlayer/types/@nlayer/test.d.ts"],
+      "@nlayer/jsx-runtime": [".nlayer/types/@nlayer/jsx-runtime.d.ts"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx", ".nlayer/types/globals.d.ts"]
+}
