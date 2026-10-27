@@ -1,0 +1,153 @@
+//! The native ES modules an app imports: `@nlayer` (the public API) and
+//! `nlayer:rt` (the renderer's, which only compiled JSX imports).
+//!
+//! The exports are made when a bundle first imports the module. QuickJS
+//! resolves imports when it compiles a module, so the loader declares the
+//! export names then.
+
+use std::ffi::{CStr, c_char, c_int};
+
+use rquickjs::{Ctx, Module, qjs};
+
+use crate::reactive::{self, Native};
+
+type JsContext = qjs::JSContext;
+
+/// A value a native module exports.
+#[derive(Clone, Copy)]
+pub(crate) enum Export {
+    /// A native function and its `length`.
+    Function(Native, c_int),
+}
+
+/// An export: its name and how it is made.
+pub(crate) type Item = (&'static str, Export);
+
+/// One of nlayer's own modules.
+pub(crate) struct NativeModule {
+    pub(crate) name: &'static str,
+    pub(crate) exports: &'static [Item],
+}
+
+/// `@nlayer`: the reactive graph apps write components with.
+const NL: &[Item] = &[
+    ("signal", Export::Function(reactive::signal, 2)),
+    ("computed", Export::Function(reactive::computed, 2)),
+    ("effect", Export::Function(reactive::effect, 1)),
+    ("batch", Export::Function(reactive::batch, 1)),
+    ("untracked", Export::Function(reactive::untrack, 1)),
+    ("cleanup", Export::Function(reactive::on_cleanup, 1)),
+];
+
+pub(crate) const MODULES: &[NativeModule] = &[NativeModule {
+    name: "@nlayer",
+    exports: NL,
+}];
+
+/// Resolves a module name to the name the loader is asked for. Only bare
+/// names are native modules: anything else comes from the bundle.
+pub(crate) struct Resolver;
+impl rquickjs::loader::Resolver for Resolver {
+    fn resolve<'js>(
+        &mut self,
+        _ctx: &Ctx<'js>,
+        _base: &str,
+        name: &str,
+        _attributes: Option<rquickjs::loader::ImportAttributes<'js>>,
+    ) -> rquickjs::Result<String> {
+        Ok(name.to_owned())
+    }
+}
+
+pub(crate) struct Loader;
+impl rquickjs::loader::Loader for Loader {
+    fn load<'js>(
+        &mut self,
+        cx: &Ctx<'js>,
+        name: &str,
+        _attributes: Option<rquickjs::loader::ImportAttributes<'js>>,
+    ) -> rquickjs::Result<Module<'js>> {
+        // SAFETY: the thunk returns exactly the native module declared for
+        // this name, or throws.
+        unsafe { Module::from_load_fn(cx.clone(), name, load_native) }
+    }
+}
+
+unsafe extern "C" fn load_native(
+    raw: *mut JsContext,
+    name: *const c_char,
+) -> *mut qjs::JSModuleDef {
+    // SAFETY: called by `Module::from_load_fn` while its runtime is locked;
+    // the temporary `Ctx` never escapes this callback.
+    unsafe {
+        let name = CStr::from_ptr(name);
+        let module = MODULES
+            .iter()
+            .find(|m| m.name.as_bytes() == name.to_bytes());
+        let Some(module) = module else {
+            // Throws on the live context of this callback; `%s` keeps the
+            // name literal.
+            let name = std::ffi::CString::new(name.to_bytes()).unwrap_or_default();
+            qjs::JS_ThrowReferenceError(
+                raw,
+                c"could not load module '%s' (only the runtime's native modules can be imported at run time)"
+                    .as_ptr(),
+                name.as_ptr(),
+            );
+            return std::ptr::null_mut();
+        };
+        let m = qjs::JS_NewCModule(raw, name.as_ptr(), Some(init));
+        if m.is_null() {
+            return m;
+        }
+        for (export, _) in module.exports {
+            let export = std::ffi::CString::new(*export).unwrap_or_default();
+            qjs::JS_AddModuleExport(raw, m, export.as_ptr());
+        }
+        m
+    }
+}
+
+/// Fills a module's exports: `0`, or `-1` with an exception pending.
+unsafe extern "C" fn init(cx: *mut JsContext, m: *mut qjs::JSModuleDef) -> c_int {
+    // SAFETY: the module's name atom, freed below; exports are new values
+    // the module takes.
+    unsafe {
+        let atom = qjs::JS_GetModuleName(cx, m);
+        let name = qjs::JS_AtomToCStringLen(cx, std::ptr::null_mut(), atom);
+        qjs::JS_FreeAtom(cx, atom);
+        if name.is_null() {
+            return -1;
+        }
+        let module_name = CStr::from_ptr(name).to_string_lossy().into_owned();
+        qjs::JS_FreeCString(cx, name);
+        let Some(module) = MODULES.iter().find(|m| m.name == module_name) else {
+            return -1;
+        };
+        for (export, made) in module.exports {
+            let value = match made {
+                Export::Function(f, length) => {
+                    let cname = std::ffi::CString::new(*export).unwrap_or_default();
+                    reactive::new_function(cx, &cname, *f, *length)
+                }
+            };
+            if qjs::JS_IsException(value) {
+                return -1;
+            }
+            let cname = std::ffi::CString::new(*export).unwrap_or_default();
+            if qjs::JS_SetModuleExport(cx, m, cname.as_ptr(), value) != 0 {
+                return -1;
+            }
+        }
+    }
+    0
+}
+
+/// The names native module `specifier` exports, if it is one (a bundler
+/// checks named imports against them).
+pub fn native_module_exports(specifier: &str) -> Option<Vec<&'static str>> {
+    MODULES
+        .iter()
+        .find(|m| m.name == specifier)
+        .map(|m| m.exports.iter().map(|(name, _)| *name).collect())
+}

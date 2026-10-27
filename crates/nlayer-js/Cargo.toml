@@ -1,0 +1,20 @@
+[package]
+name = "nlayer-js"
+description = "QuickJS host: the JSX runtime, the reactive graph and the platform API a TSX app runs on."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+nlayer-core.workspace = true
+log.workspace = true
+rustc-hash.workspace = true
+thiserror.workspace = true
+rquickjs.workspace = true
+
+[dev-dependencies]
+rquickjs.workspace = true

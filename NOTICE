@@ -42,3 +42,10 @@ Copied files:
 - safe-area and keyboard `env()` on padding and margin in `core`
   (`Core::set_safe_area`, `Core::set_keyboard_inset`) from `nsh_core::core`
   (one surface; no per-screen insets and no keyboard layout animation)
+- `crates/nlayer-js/src/reactive.rs` from `crates/nsh-js/src/reactive.rs`
+  (the graph natives and their classes; `resource` is not copied)
+- `crates/nlayer-js/src/state.rs` from `crates/nsh-js/src/state.rs`
+  (the context state holds the graph only)
+- `crates/nlayer-js/src/error.rs` from `crates/nsh-js/src/error.rs`
+- `crates/nlayer-js/src/modules.rs` from `crates/nsh-js/src/modules.rs`
+  (the native module loader; the table is `@nlayer`'s graph exports)
