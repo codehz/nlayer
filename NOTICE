@@ -1,0 +1,9 @@
+native-layer
+Copyright 2026 Longbridge
+
+This product includes software developed by Longbridge as part of nsh
+(https://github.com/longbridge/nsh), licensed under the Apache License,
+Version 2.0. Extracted from nsh commit ca59368b.
+
+Copied sources keep their original notices. Changes are described in the
+git history of this repository.
