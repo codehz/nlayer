@@ -6,7 +6,7 @@
 //! [`MountBatch`] to the platform through a [`MountSink`]. The platform
 //! thread never blocks on the engine.
 
-use std::{sync::Arc, thread::JoinHandle};
+use std::{collections::HashMap, sync::Arc, thread::JoinHandle};
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use nlayer_core::{
@@ -14,7 +14,8 @@ use nlayer_core::{
     geometry::{Edges, Points, Size},
     text::TextEngine,
 };
-use nlayer_js::{EventPayload, Host};
+pub use nlayer_js::EventPayload;
+use nlayer_js::Host;
 
 /// A platform that applies mount batches.
 pub trait MountSink: Send + Sync + 'static {
@@ -69,6 +70,10 @@ enum Message {
         event: EventKind,
         payload: EventPayload,
     },
+    Input {
+        id: NodeId,
+        text: String,
+    },
     Resize(Size<Points>),
     SafeArea(Edges<Points>),
     KeyboardInset(Points),
@@ -85,6 +90,15 @@ impl EngineControl {
     /// Calls node `id`'s handler of `event` on the engine thread.
     pub fn dispatch_event(&self, id: NodeId, event: EventKind, payload: EventPayload) {
         let _ = self.tx.send(Message::Event { id, event, payload });
+    }
+
+    /// The user typed `text` into input `id` (the whole new text): the
+    /// app's `onChange` gets it and the input shows it.
+    pub fn input_changed(&self, id: NodeId, text: impl Into<String>) {
+        let _ = self.tx.send(Message::Input {
+            id,
+            text: text.into(),
+        });
     }
 
     /// The surface changed size (points).
@@ -189,9 +203,16 @@ fn run<M, F>(
     if ready.send(Ok(())).is_err() {
         return;
     }
+    let mut edits: HashMap<NodeId, u32> = HashMap::new();
     while let Ok(message) = rx.recv() {
         match message {
             Message::Event { id, event, payload } => host.dispatch_event(id, event, &payload),
+            Message::Input { id, text } => {
+                let count = edits.entry(id).or_insert(0);
+                *count += 1;
+                core.input_changed(id, &text, *count);
+                host.dispatch_event(id, EventKind::Change, &EventPayload::Text(text));
+            }
             Message::Resize(size) => core.set_viewport(size),
             Message::SafeArea(insets) => core.set_safe_area(insets),
             Message::KeyboardInset(height) => core.set_keyboard_inset(height),

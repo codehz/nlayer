@@ -480,6 +480,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nlayer-testing"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "log",
+ "nlayer-bundler",
+ "nlayer-core",
+ "nlayer-engine",
+ "thiserror",
+]
+
+[[package]]
 name = "nonmax"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
