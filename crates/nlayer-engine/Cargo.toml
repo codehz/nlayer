@@ -1,0 +1,17 @@
+[package]
+name = "nlayer-engine"
+description = "The engine thread of one surface: QuickJS, the shadow tree, layout and frames."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+nlayer-core.workspace = true
+nlayer-js.workspace = true
+crossbeam-channel.workspace = true
+log.workspace = true
+thiserror.workspace = true
