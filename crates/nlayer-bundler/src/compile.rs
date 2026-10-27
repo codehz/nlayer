@@ -32,6 +32,11 @@ impl NativeModules {
         }
         out
     }
+
+    /// Whether `spec` is a native module.
+    pub(crate) fn contains(&self, spec: &str) -> bool {
+        self.specifiers.contains(spec)
+    }
 }
 
 /// A module compiled by [`compile_native`].

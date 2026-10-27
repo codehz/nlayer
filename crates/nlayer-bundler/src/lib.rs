@@ -2,11 +2,15 @@
 //! runtime's calls, written in Rust end to end (no Node.js).
 //!
 //! Each `.tsx`/`.jsx` module is compiled against the native modules
-//! (`@nlayer`, `nlayer:rt`), which stay imports. Apps are single modules
-//! for now: their own imports are the next slice (a module graph).
+//! (`@nlayer`, `nlayer:rt`), which stay imports; rolldown bundles the app's
+//! own modules into one ES module of the app's code.
 
+mod bundle;
 mod compile;
 mod jsx;
+mod plugin;
+
+pub use bundle::{Bundle, BundleError, BundleOptions, bundle, bundle_async};
 
 /// Compiles one module (TSX, JSX, TS or JS, as `name`'s extension says) to
 /// the ES module the runtime runs: TypeScript removed, JSX compiled, imports

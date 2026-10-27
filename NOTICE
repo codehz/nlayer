@@ -64,3 +64,9 @@ Copied files:
   `crates/nsh-bundler/src/compile.rs` (one module: TypeScript removal,
   named import checks against the native modules; rolldown, hot reload,
   props checks and source maps are not copied)
+- `crates/nlayer-bundler/src/bundle.rs` from `crates/nsh-bundler/src/bundle.rs`
+  (one entry chunk, no code splitting, no themes, assets, capabilities,
+  hot reload or native-use report)
+- `crates/nlayer-bundler/src/plugin.rs` from `crates/nsh-bundler/src/plugin.rs`
+  (resolve, load and transform: native modules external, app modules
+  compiled; image, font, SVG and split handling are not copied)

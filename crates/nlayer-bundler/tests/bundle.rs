@@ -1,0 +1,97 @@
+//! Bundling an app's modules into one runnable ES module.
+
+use std::path::PathBuf;
+
+use nlayer_bundler::{BundleOptions, bundle};
+
+fn app(name: &str, files: &[(&str, &str)]) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("nlayer-bundle-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for (path, source) in files {
+        std::fs::write(dir.join(path), source).unwrap();
+    }
+    dir
+}
+
+#[test]
+fn the_entrys_modules_are_bundled() {
+    let dir = app(
+        "modules",
+        &[
+            (
+                "App.tsx",
+                r#"
+import { mount, View } from "@nlayer";
+import { Label } from "./Label";
+
+function App() {
+    return <View style={{ width: 10, height: 10 }}><Label value="hi" /></View>;
+}
+mount(App);
+"#,
+            ),
+            (
+                "Label.tsx",
+                r#"
+import { Text } from "@nlayer";
+
+export function Label(props: { value: string }) {
+    return <Text>{props.value}</Text>;
+}
+"#,
+            ),
+        ],
+    );
+    let out = bundle(&BundleOptions {
+        entry: dir.join("App.tsx"),
+        minify: false,
+    })
+    .expect("it bundles");
+    // One module: the app's own import is gone, the native one stays.
+    assert!(!out.code.contains("./Label"), "{}", out.code);
+    assert!(out.code.contains("from \"@nlayer\""), "{}", out.code);
+    assert!(out.code.contains("from \"nlayer:rt\""), "{}", out.code);
+    assert!(!out.code.contains("<Text"), "JSX is compiled");
+    assert!(!out.code.contains(": string"), "types are removed");
+    let host = nlayer_js::Host::new().unwrap();
+    host.eval_source(&out.code).expect("the bundle runs");
+    let mut ops = Vec::new();
+    host.take_ops(&mut ops);
+    assert!(!ops.is_empty(), "the app rendered");
+}
+
+#[test]
+fn an_unknown_import_is_an_error_of_the_module() {
+    let dir = app(
+        "missing",
+        &[(
+            "App.tsx",
+            "import { nope } from \"./Missing\";\nexport const a = nope;\n",
+        )],
+    );
+    let error = bundle(&BundleOptions {
+        entry: dir.join("App.tsx"),
+        minify: false,
+    })
+    .expect_err("the import is missing");
+    assert!(error.plain.contains("Missing"), "{}", error.plain);
+}
+
+#[test]
+fn a_node_builtin_is_refused_by_name() {
+    let dir = app(
+        "builtin",
+        &[("App.tsx", "import fs from \"fs\";\nexport const a = fs;\n")],
+    );
+    let error = bundle(&BundleOptions {
+        entry: dir.join("App.tsx"),
+        minify: false,
+    })
+    .expect_err("fs is not there");
+    assert!(
+        error.plain.contains("has no module `fs`"),
+        "{}",
+        error.plain
+    );
+}
