@@ -1,12 +1,15 @@
 //! `nlayer`, the command line tool.
 
-use std::{path::PathBuf, process::ExitCode};
+use std::{path::PathBuf, process::ExitCode, sync::Arc};
 
-use clap::{Parser, Subcommand};
-use nlayer_cli::{BuildOptions, InitOptions, TestOptions, build, init, test};
+use clap::{Parser, Subcommand, ValueEnum};
+use nlayer_cli::{
+    BuildOptions, BuildOutcome, InitOptions, RunOptions, TestOptions, build, init, serve, test,
+    web_module,
+};
 
 #[derive(Parser)]
-#[command(name = "nlayer", about = "Create, build and test nlayer apps")]
+#[command(name = "nlayer", about = "Create, build, test and run nlayer apps")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -41,6 +44,32 @@ enum Command {
         #[arg(default_value = ".")]
         dir: PathBuf,
     },
+    /// Serve the app in a browser. Rebuilds when TSX or assets change and reloads the page.
+    /// A failed rebuild is printed; the previous page keeps running.
+    Run {
+        /// The entry module, or the app's directory (default: the current one), whose `App.tsx` is the entry.
+        #[arg(default_value = ".")]
+        entry: PathBuf,
+        /// Which host runs the app.
+        #[arg(long, value_enum, default_value = "web")]
+        target: Target,
+        /// Port. `0` picks a free one.
+        #[arg(long, default_value_t = 8733)]
+        port: u16,
+        /// Minify the bundle.
+        #[arg(long)]
+        release: bool,
+        /// Do not open a browser.
+        #[arg(long)]
+        no_open: bool,
+    },
+}
+
+/// A host `run` can start.
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum Target {
+    /// This machine's browser.
+    Web,
 }
 
 fn main() -> ExitCode {
@@ -85,5 +114,104 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Command::Run {
+            entry,
+            target,
+            port,
+            release,
+            no_open,
+        } => match target {
+            Target::Web => match run_web(entry, port, release, !no_open) {
+                Ok(server) => {
+                    server.park();
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
+            },
+        },
+    }
+}
+
+fn run_web(
+    entry: PathBuf,
+    port: u16,
+    release: bool,
+    open: bool,
+) -> Result<nlayer_cli::DevServer, nlayer_cli::RunError> {
+    let wasm = web_module()?;
+    let announce = Arc::new(std::sync::Once::new());
+    let on_build = Arc::new(move |outcome: BuildOutcome| {
+        announce.call_once(|| {
+            eprintln!("http://127.0.0.1:{}/", outcome.port);
+        });
+        if !outcome.success {
+            eprintln!("{}", outcome.error.trim_end());
+        } else if outcome.first_success {
+            if open {
+                open_browser(&format!("http://127.0.0.1:{}/", outcome.port));
+            }
+        } else if outcome.updated {
+            eprintln!("rebuilt in {:.0} ms", outcome.elapsed_ms);
+        }
+    });
+    serve(RunOptions {
+        entry,
+        port,
+        release,
+        wasm,
+        on_build: Some(on_build),
+    })
+}
+
+fn open_browser(url: &str) {
+    if let Err(error) = browser(url).spawn() {
+        eprintln!("could not open a browser: {error}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn browser(url: &str) -> std::process::Command {
+    let mut command = std::process::Command::new("open");
+    command.arg(url);
+    command
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn browser(url: &str) -> std::process::Command {
+    let mut command = std::process::Command::new("xdg-open");
+    command.arg(url);
+    command
+}
+
+#[cfg(windows)]
+fn browser(url: &str) -> std::process::Command {
+    let mut command = std::process::Command::new("cmd");
+    command.args(["/C", "start", "", url]);
+    command
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::{Cli, Command, Target};
+
+    #[test]
+    fn run_defaults_to_the_browser() {
+        let cli = Cli::try_parse_from(["nlayer", "run"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Run {
+                target: Target::Web,
+                port: 8733,
+                release: false,
+                no_open: false,
+                ..
+            }
+        ));
+        assert!(Cli::try_parse_from(["nlayer", "run", "--target", "ios"]).is_err());
     }
 }

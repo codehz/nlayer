@@ -1,8 +1,10 @@
 //! `nlayer init` creates a TSX app. `nlayer build` writes its bundle, source
 //! map, imported images and TypeScript declarations. `nlayer test` runs its
-//! test files headless.
+//! test files headless. `nlayer run --target web` serves the app to a browser
+//! and reloads it after a rebuild.
 
 mod init;
+mod run;
 
 use std::{
     fs,
@@ -11,6 +13,7 @@ use std::{
 
 pub use init::{InitError, InitOptions, InitReport, init};
 use nlayer_bundler::{BundleError, BundleOptions, bundle};
+pub use run::{BuildOutcome, DevServer, RunError, RunOptions, serve, web_module};
 
 /// What to build and where to write it.
 #[derive(Debug, Clone)]
@@ -90,7 +93,7 @@ pub fn build(options: &BuildOptions) -> Result<(), BuildError> {
     Ok(())
 }
 
-fn resolve_entry(path: &Path) -> Result<PathBuf, BuildError> {
+pub(crate) fn resolve_entry(path: &Path) -> Result<PathBuf, BuildError> {
     let path = if path.is_dir() {
         path.join("App.tsx")
     } else {

@@ -1,6 +1,6 @@
 [package]
 name = "nlayer-cli"
-description = "The nlayer command line: create, build and test a TSX app."
+description = "The nlayer command line: create, build, test and run a TSX app."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
