@@ -14,8 +14,10 @@ use oxc::{
 };
 use oxc_sourcemap::SourceMap;
 
-/// What the compiler knows of the native modules a host serves:
-/// `@nlayer/runtime`, `@nlayer/ui` and the renderer's `nlayer:rt`.
+/// What the compiler knows of the modules it checks named imports against:
+/// `@nlayer/runtime`, `@nlayer/ui` and the renderer's `nlayer:rt`. With
+/// `test`, `@nlayer/test` too (the bundler inlines that module; the app host
+/// does not serve it).
 #[derive(Debug, Default)]
 pub(crate) struct NativeModules {
     specifiers: std::collections::BTreeSet<String>,
@@ -24,13 +26,19 @@ pub(crate) struct NativeModules {
 }
 
 impl NativeModules {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(test: bool) -> Self {
         let mut out = Self::default();
         for spec in ["@nlayer/runtime", "@nlayer/ui", "nlayer:rt"] {
             out.specifiers.insert(spec.to_owned());
             if let Some(names) = nlayer_js::native_module_exports(spec) {
                 out.exports.insert(spec.to_owned(), names);
             }
+        }
+        if test {
+            out.exports.insert(
+                crate::test_api::SPECIFIER.to_owned(),
+                crate::test_api::EXPORTS.to_vec(),
+            );
         }
         out
     }

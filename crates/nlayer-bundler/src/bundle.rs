@@ -22,6 +22,9 @@ pub struct BundleOptions {
     pub entry: PathBuf,
     /// Minify the output (release builds).
     pub minify: bool,
+    /// Inline `@nlayer/test`. An app bundle leaves this false and refuses
+    /// the import.
+    pub test: bool,
 }
 
 /// A failed build, formatted for people.
@@ -133,8 +136,9 @@ pub async fn bundle_async(options: &BundleOptions) -> Result<Bundle, BundleError
             plugin::NlayerPlugin {
                 root: cwd_root.clone(),
                 error: plugin_error.clone(),
-                modules: Arc::new(NativeModules::new()),
+                modules: Arc::new(NativeModules::new(options.test)),
                 assets: assets.clone(),
+                test: options.test,
             },
         )],
     )

@@ -103,6 +103,8 @@ pub(crate) struct NlayerPlugin {
     pub(crate) modules: Arc<NativeModules>,
     /// Asset files imported by the app (absolute paths).
     pub(crate) assets: Arc<Mutex<Vec<PathBuf>>>,
+    /// Inline `@nlayer/test` instead of refusing it.
+    pub(crate) test: bool,
 }
 
 impl NlayerPlugin {
@@ -140,6 +142,21 @@ impl Plugin for NlayerPlugin {
         args: &HookResolveIdArgs<'_>,
     ) -> HookResolveIdReturn {
         let spec = args.specifier;
+        if spec == crate::test_api::SPECIFIER {
+            let from = args
+                .importer
+                .map(|i| format!("{}: ", self.rel(Path::new(i))))
+                .unwrap_or_default();
+            if !self.test {
+                return Err(self.refuse(format!(
+                    "{from}`@nlayer/test` is the test runner's module (`nlayer test`); an app does not import it"
+                )));
+            }
+            return Ok(Some(HookResolveIdOutput {
+                external: Some(false.into()),
+                ..HookResolveIdOutput::from_id(crate::test_api::MODULE_ID)
+            }));
+        }
         if self.modules.contains(spec) {
             // Imports of the native modules stay.
             return Ok(Some(HookResolveIdOutput {
@@ -190,6 +207,13 @@ impl Plugin for NlayerPlugin {
         args: &HookLoadArgs<'_>,
     ) -> HookLoadReturn {
         let path = Path::new(args.id);
+        if args.id == crate::test_api::MODULE_ID {
+            return Ok(Some(HookLoadOutput {
+                code: crate::test_api::SOURCE.into(),
+                module_type: Some(ModuleType::Js),
+                ..Default::default()
+            }));
+        }
         if has_extension(path, LATER_EXTENSIONS) {
             return Err(self.fail(
                 path,

@@ -374,7 +374,7 @@ fn new_function(cx: *mut JsContext, name: &CStr, f: Native, length: i32) -> JsVa
     }
 }
 
-fn string(cx: *mut JsContext, value: JsValue) -> Option<String> {
+pub(crate) fn string(cx: *mut JsContext, value: JsValue) -> Option<String> {
     // SAFETY: converts a live value; the result is freed.
     unsafe {
         let s = qjs::JS_ToString(cx, value);
@@ -396,7 +396,7 @@ fn string(cx: *mut JsContext, value: JsValue) -> Option<String> {
     }
 }
 
-fn set_global(cx: *mut JsContext, name: &CStr, value: JsValue) {
+pub(crate) fn set_global(cx: *mut JsContext, name: &CStr, value: JsValue) {
     // SAFETY: the global object takes the value.
     unsafe {
         let global = qjs::JS_GetGlobalObject(cx);

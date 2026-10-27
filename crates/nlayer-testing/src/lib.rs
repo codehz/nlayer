@@ -1,6 +1,7 @@
 //! Headless runs of TSX apps: a [`Screen`] models the native views a mount
 //! batch would make, so tests assert the mount tree, its text and its
-//! layout with no window.
+//! layout with no window. [`run`] is `nlayer test`: test files import
+//! `@nlayer/test` and open the app on an engine of their own.
 //!
 //! ```ignore
 //! let mut app = nlayer_testing::Headless::start(bundle, viewport)?;
@@ -8,6 +9,9 @@
 //! assert!(app.press_text("Tap"));
 //! ```
 
+mod runner;
+
+pub use runner::{CaseResult, FileResult, Report, RunError, run};
 use std::{
     collections::HashMap,
     sync::Arc,

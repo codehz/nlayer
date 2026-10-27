@@ -6,6 +6,7 @@
 //! `nlayer:rt`: the JSX runtime compiled code calls). A host is
 //! single-threaded (`!Send`): create and use it on the engine thread.
 
+mod bridge;
 mod dom;
 mod error;
 mod modules;
@@ -21,6 +22,7 @@ use nlayer_core::{EventKind, NodeId, Op};
 use rquickjs::qjs;
 use rquickjs::{CatchResultExt, Context, Module, Persistent, Promise, Runtime};
 
+pub use crate::bridge::TestBridge;
 pub use crate::error::JsError;
 pub use crate::modules::native_module_exports;
 pub use crate::net::{HttpRequest, HttpResponse, NetworkRequest};

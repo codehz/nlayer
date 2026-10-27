@@ -1132,6 +1132,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "nlayer-bundler",
+ "nlayer-testing",
 ]
 
 [[package]]
@@ -1183,6 +1184,9 @@ dependencies = [
  "nlayer-bundler",
  "nlayer-core",
  "nlayer-engine",
+ "nlayer-js",
+ "serde",
+ "serde_json",
  "thiserror",
 ]
 

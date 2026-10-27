@@ -58,5 +58,10 @@ mount(App);
             .unwrap()
             .contains("export function signal")
     );
+    assert!(
+        fs::read_to_string(out.join("types/@nlayer/test.d.ts"))
+            .unwrap()
+            .contains("export function open")
+    );
     let _ = fs::remove_dir_all(&dir);
 }

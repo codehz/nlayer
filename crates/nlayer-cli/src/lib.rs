@@ -1,5 +1,6 @@
-//! `nlayer build`: one app's bundle, its source map, the images it imports
-//! and the TypeScript declarations, written under an output directory.
+//! `nlayer build` writes one app's bundle, its source map, the images it
+//! imports and the TypeScript declarations. `nlayer test` runs the app's
+//! test files headless.
 
 use std::{
     fs,
@@ -60,6 +61,7 @@ pub fn build(options: &BuildOptions) -> Result<(), BuildError> {
     let bundled = bundle(&BundleOptions {
         entry: entry.clone(),
         minify: options.release,
+        test: false,
     })?;
     let root = entry
         .parent()
@@ -99,4 +101,18 @@ fn resolve_entry(path: &Path) -> Result<PathBuf, BuildError> {
             path.display()
         )))
     }
+}
+
+/// What `nlayer test` runs.
+#[derive(Debug, Clone)]
+pub struct TestOptions {
+    /// A test file, or a directory of them.
+    pub path: PathBuf,
+    /// Run only tests whose name contains this.
+    pub filter: Option<String>,
+}
+
+/// Runs the tests [`TestOptions`] names.
+pub fn test(options: &TestOptions) -> Result<nlayer_testing::Report, nlayer_testing::RunError> {
+    nlayer_testing::run(&options.path, options.filter.as_deref())
 }

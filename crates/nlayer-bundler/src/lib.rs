@@ -9,6 +9,7 @@ mod bundle;
 mod compile;
 mod jsx;
 mod plugin;
+mod test_api;
 mod types;
 
 pub use bundle::{Bundle, BundleError, BundleOptions, bundle, bundle_async};
@@ -20,7 +21,7 @@ pub use types::type_files;
 pub fn compile_module(name: &str, source: &str) -> Result<String, String> {
     let path = std::path::Path::new(name);
     let source_type = oxc::span::SourceType::from_path(path).map_err(|e| e.to_string())?;
-    let modules = compile::NativeModules::new();
+    let modules = compile::NativeModules::new(false);
     let compiled = compile::compile_native(path, source_type, source, &modules)
         .map_err(|e| compile::strip_ansi(&e))?;
     Ok(compiled.code)

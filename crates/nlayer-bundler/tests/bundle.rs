@@ -56,6 +56,7 @@ export function Label(props: { value: string }) {
     let out = bundle(&BundleOptions {
         entry: dir.join("App.tsx"),
         minify: false,
+        test: false,
     })
     .expect("it bundles");
     // One module: the app's own import is gone, the native one stays.
@@ -107,6 +108,7 @@ fn an_unknown_import_is_an_error_of_the_module() {
     let error = bundle(&BundleOptions {
         entry: dir.join("App.tsx"),
         minify: false,
+        test: false,
     })
     .expect_err("the import is missing");
     assert!(error.plain.contains("Missing"), "{}", error.plain);
@@ -121,6 +123,7 @@ fn a_node_builtin_is_refused_by_name() {
     let error = bundle(&BundleOptions {
         entry: dir.join("App.tsx"),
         minify: false,
+        test: false,
     })
     .expect_err("fs is not there");
     assert!(
@@ -142,6 +145,7 @@ fn a_bare_scope_and_the_jsx_types_module_are_refused() {
     let error = bundle(&BundleOptions {
         entry: dir.join("App.tsx"),
         minify: false,
+        test: false,
     })
     .expect_err("bare @nlayer is not a module");
     assert!(error.plain.contains("@nlayer/runtime"), "{}", error.plain);
@@ -156,6 +160,7 @@ fn a_bare_scope_and_the_jsx_types_module_are_refused() {
     let error = bundle(&BundleOptions {
         entry: dir.join("App.tsx"),
         minify: false,
+        test: false,
     })
     .expect_err("jsx-runtime is types only");
     assert!(error.plain.contains("types only"), "{}", error.plain);
@@ -185,6 +190,7 @@ mount(App);
     let out = bundle(&BundleOptions {
         entry: dir.join("App.tsx"),
         minify: false,
+        test: false,
     })
     .expect("it bundles");
     assert!(out.code.contains("asset:/img/icon.png"), "{}", out.code);
@@ -231,7 +237,45 @@ fn an_svg_is_refused_as_later() {
     let error = bundle(&BundleOptions {
         entry: dir.join("App.tsx"),
         minify: false,
+        test: false,
     })
     .expect_err("SVG is not v1");
     assert!(error.plain.contains("not part of v1"), "{}", error.plain);
+}
+
+#[test]
+fn an_app_cannot_import_the_test_module() {
+    let dir = app(
+        "no-test-module",
+        &[(
+            "App.tsx",
+            "import { test } from \"@nlayer/test\";\nexport const t = test;\n",
+        )],
+    );
+    let error = bundle(&BundleOptions {
+        entry: dir.join("App.tsx"),
+        minify: false,
+        test: false,
+    })
+    .expect_err("apps do not import the test module");
+    assert!(error.plain.contains("nlayer test"), "{}", error.plain);
+}
+
+#[test]
+fn a_test_bundle_inlines_the_test_module() {
+    let dir = app(
+        "test-module",
+        &[(
+            "App.test.tsx",
+            "import { test, finish } from \"@nlayer/test\";\ntest(\"a\", () => {});\nfinish(null);\n",
+        )],
+    );
+    let out = bundle(&BundleOptions {
+        entry: dir.join("App.test.tsx"),
+        minify: false,
+        test: true,
+    })
+    .expect("a test file bundles");
+    assert!(out.code.contains("__nlayerTest"), "{}", out.code);
+    assert!(!out.code.contains("from \"@nlayer/test\""), "{}", out.code);
 }

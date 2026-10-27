@@ -3,10 +3,10 @@
 use std::{path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand};
-use nlayer_cli::{BuildOptions, build};
+use nlayer_cli::{BuildOptions, TestOptions, build, test};
 
 #[derive(Parser)]
-#[command(name = "nlayer", about = "Build nlayer apps")]
+#[command(name = "nlayer", about = "Build and test nlayer apps")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -26,24 +26,48 @@ enum Command {
         #[arg(long)]
         release: bool,
     },
+    /// Run `*.test.tsx` files headless (`@nlayer/test`).
+    Test {
+        /// A test file, or a directory (default: the current one).
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Run only tests whose name contains this.
+        #[arg(long)]
+        filter: Option<String>,
+    },
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let Command::Build {
-        entry,
-        out,
-        release,
-    } = cli.command;
-    match build(&BuildOptions {
-        entry,
-        out,
-        release,
-    }) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(err) => {
-            eprintln!("{err}");
-            ExitCode::FAILURE
-        }
+    match cli.command {
+        Command::Build {
+            entry,
+            out,
+            release,
+        } => match build(&BuildOptions {
+            entry,
+            out,
+            release,
+        }) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("{err}");
+                ExitCode::FAILURE
+            }
+        },
+        Command::Test { path, filter } => match test(&TestOptions { path, filter }) {
+            Ok(report) => {
+                println!("{report}");
+                if report.ok() {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::FAILURE
+                }
+            }
+            Err(err) => {
+                eprintln!("{err}");
+                ExitCode::FAILURE
+            }
+        },
     }
 }
