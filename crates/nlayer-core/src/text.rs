@@ -1,7 +1,7 @@
 //! Attributed text and the measurement trait platforms implement.
 //!
 //! Extracted from `nsh_core::text`.
-#![allow(dead_code)] // the shadow tree measures text; it is not extracted yet
+#![allow(dead_code)] // hit testing and selection helpers wait for input and the platforms
 use std::{
     any::Any,
     fmt,

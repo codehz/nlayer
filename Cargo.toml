@@ -21,4 +21,5 @@ rustc-hash = "2.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 slab = "0.4"
+unicode-linebreak = "0.1.5"
 taffy = { version = "0.15", default-features = false, features = ["std", "flexbox", "grid", "block_layout", "content_size"] }

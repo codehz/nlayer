@@ -1,22 +1,24 @@
 //! Shadow tree.
 //!
-//! Apply, commit and frame emission for views and images, extracted from
-//! `nsh_core::core` and cut to those hosts. Text, scroll and input follow
-//! in this module; they are not stubbed here.
+//! Apply, commit and frame emission for views, text and images, extracted
+//! from `nsh_core::core` and cut to those hosts. Scroll and input follow
+//! in this module; they are not stubbed here. Inline views inside text,
+//! text selection and links are not part of this slice.
 
 mod layout_tree;
 
-use std::mem;
+use std::{mem, sync::Arc};
 
 use taffy::{AvailableSpace, Layout, Position, Style as TaffyStyle};
 
 use layout_tree::LayoutTree;
 
 use crate::{
-    geometry::{Bounds, Points, Size, rect},
+    geometry::{Bounds, Percentage, Points, Size, rect},
     mount::{MountBatch, MountItem, ViewKind},
     ops::{EventMask, ImageSource, NodeId, Op, Prop, ROOT_ID, ResizeMode, Tag},
-    style::{self, Style, ViewStyle},
+    style::{self, EllipsizeMode, Style, TextAlign, TextStyle, ViewStyle},
+    text::{AttributedText, MeasureCache, ResolvedTextStyle, TextEngine, TextLayout},
 };
 
 /// Slab index of a node. Internal links use keys, never ids.
@@ -31,21 +33,34 @@ mod dirty {
     pub(super) const VIEW: u32 = 1 << 0;
     /// Emit [`crate::MountItem::Events`].
     pub(super) const EVENTS: u32 = 1 << 1;
+    /// Rebuild the attributed text of a text block.
+    pub(super) const TEXT_BUILD: u32 = 1 << 2;
+    /// Lay out the text block again and emit [`crate::MountItem::Text`].
+    pub(super) const TEXT_MOUNT: u32 = 1 << 3;
     /// Emit [`crate::MountItem::Image`].
-    pub(super) const IMAGE: u32 = 1 << 2;
+    pub(super) const IMAGE: u32 = 1 << 4;
 }
 
-/// Host kind. Text, scroll and input join this when their paths are copied.
+/// Host kind. Scroll and input join this when their paths are copied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
     View,
+    /// A text block, or a span when [`Node::inline`].
+    Text,
+    /// A run of characters. Not a native view.
+    RawText,
     Image,
 }
 
 impl Kind {
+    fn is_container(self) -> bool {
+        matches!(self, Kind::View | Kind::Image)
+    }
+
     fn of(tag: Tag) -> Self {
         match tag {
             Tag::View => Kind::View,
+            Tag::Text => Kind::Text,
             Tag::Image => Kind::Image,
         }
     }
@@ -53,7 +68,10 @@ impl Kind {
     fn view_kind(self) -> ViewKind {
         match self {
             Kind::View => ViewKind::View,
+            Kind::Text => ViewKind::Text,
             Kind::Image => ViewKind::Image,
+            // Raw text is never created as a native view.
+            Kind::RawText => ViewKind::View,
         }
     }
 }
@@ -93,11 +111,22 @@ impl ApplyError {
 struct Node {
     id: NodeId,
     kind: Kind,
+    /// Inside a text block: a nested `<text>` span or a raw text run.
+    inline: bool,
     parent: Key,
     children: Vec<Key>,
-    /// Layout node. Present for every view.
-    layout: LayoutId,
+    /// Layout node. Absent for raw text and for spans.
+    layout: Option<LayoutId>,
+    /// Layout style kept while a text block is a span (no layout node).
+    base_layout: Option<Box<TaffyStyle>>,
     view_style: ViewStyle,
+    text_style: TextStyle,
+    /// `numberOfLines` (`Some(0)`: no clamp).
+    number_of_lines: Option<u32>,
+    /// `textOverflow`.
+    ellipsize: Option<EllipsizeMode>,
+    /// Raw text content.
+    text: String,
     /// Start / end properties, if any, so a direction change can place them
     /// again.
     logical: Option<Box<style::Logical>>,
@@ -118,17 +147,24 @@ struct Node {
     frame: Bounds<Points>,
     dirty: u32,
     queued: bool,
+    text_queued: bool,
 }
 
 impl Node {
-    fn new(id: NodeId, kind: Kind, layout: LayoutId) -> Self {
+    fn new(id: NodeId, kind: Kind) -> Self {
         Self {
             id,
             kind,
+            inline: false,
             parent: NO_KEY,
             children: Vec::new(),
-            layout,
+            layout: None,
+            base_layout: None,
             view_style: ViewStyle::default(),
+            text_style: TextStyle::default(),
+            number_of_lines: None,
+            ellipsize: None,
+            text: String::new(),
             logical: None,
             events: EventMask::default(),
             object_fit: None,
@@ -140,37 +176,85 @@ impl Node {
             frame: Bounds::default(),
             dirty: 0,
             queued: false,
+            text_queued: false,
         }
     }
+}
+
+/// Taffy context of a text block.
+struct TextContext<P> {
+    text: Arc<AttributedText>,
+    /// `text.layout_hash()`, computed once per content.
+    layout_hash: u64,
+    /// Platform typesetting state, created on first use.
+    prepared: Option<P>,
+    /// Natural width of the widest UAX #14 unbreakable segment.
+    min_content: Option<Points>,
+    /// Last measurement: `(max_width, size)`.
+    cache: Option<(Option<f32>, Size<Points>)>,
+    /// Last final layout sent to the platform and the content box it was
+    /// made for (where in the view the text goes).
+    laid_out: Option<LaidText>,
+}
+
+/// The final text sent with its layout.
+struct LaidText {
+    content: Bounds<Points>,
+    layout: TextLayout,
+}
+
+impl<P> TextContext<P> {
+    fn new(text: Arc<AttributedText>) -> Self {
+        Self {
+            layout_hash: text.layout_hash(),
+            text,
+            prepared: None,
+            min_content: None,
+            cache: None,
+            laid_out: None,
+        }
+    }
+}
+
+/// Measured leaves: text blocks and images with a known natural size.
+enum LeafContext<P> {
+    Text(TextContext<P>),
+    Image(Option<Size<Points>>),
 }
 
 /// The shadow tree of one surface.
 ///
 /// Feed it [`Op`]s with [`Core::apply`], then call [`Core::commit`] once per
-/// JS turn to get the [`MountBatch`] for the platform.
-pub struct Core {
+/// JS turn to get the [`MountBatch`] for the platform. `M` measures text.
+pub struct Core<M: TextEngine> {
     nodes: slab::Slab<Node>,
     /// `slots[id] = key + 1`, 0 if free. Ids index the table directly.
     slots: Vec<Key>,
-    layout: LayoutTree<Option<Size<Points>>>,
+    layout: LayoutTree<LeafContext<M::Prepared>>,
+    text_engine: M,
+    measure_cache: MeasureCache,
     max_nodes: usize,
     root: Key,
     viewport: Size<Points>,
     mount: Vec<MountItem>,
     queue: Vec<Key>,
+    /// Text blocks whose final layout must be sent.
+    pending_text: Vec<Key>,
     needs_layout: bool,
     /// Device pixels per point. Bundled image variants are picked from it.
     pixel_ratio: f32,
 }
 
-impl Core {
+impl<M: TextEngine> Core<M> {
     /// Creates a core whose root view (id [`ROOT_ID`]) fills `viewport`.
-    /// The platform owns that view; it is not in the mount batch.
-    pub fn new(viewport: Size<Points>) -> Self {
+    /// The platform owns that view; it is not in the mount batch. `text_engine`
+    /// measures and lays out text on the engine thread.
+    pub fn new(text_engine: M, viewport: Size<Points>) -> Self {
         let mut layout = LayoutTree::with_capacity(256);
         let root_layout = layout.new_leaf(root_style(viewport));
         let mut nodes = slab::Slab::with_capacity(256);
-        let mut root = Node::new(ROOT_ID, Kind::View, root_layout);
+        let mut root = Node::new(ROOT_ID, Kind::View);
+        root.layout = Some(root_layout);
         root.created = true;
         let root = nodes.insert(root) as Key;
         layout.set_tag(root_layout, root);
@@ -180,11 +264,14 @@ impl Core {
             nodes,
             slots,
             layout,
+            text_engine,
+            measure_cache: MeasureCache::default(),
             max_nodes: usize::MAX,
             root,
             viewport,
             mount: Vec::new(),
             queue: Vec::new(),
+            pending_text: Vec::new(),
             needs_layout: true,
             pixel_ratio: 1.0,
         }
@@ -199,7 +286,9 @@ impl Core {
     pub fn set_viewport(&mut self, viewport: Size<Points>) {
         if viewport != self.viewport {
             self.viewport = viewport;
-            let root = self.nodes[self.root as usize].layout;
+            let root = self.nodes[self.root as usize]
+                .layout
+                .expect("root has a layout");
             self.layout.set_style(root, root_style(viewport));
             self.needs_layout = true;
         }
@@ -220,6 +309,22 @@ impl Core {
     pub fn apply(&mut self, op: Op) -> Result<(), ApplyError> {
         match op {
             Op::Create { id, tag } => self.create(id, tag),
+            Op::CreateText { id, text } => {
+                let key = self.alloc(id, Kind::RawText)?;
+                self.nodes[key as usize].text = text;
+                Ok(())
+            }
+            Op::SetText { id, text } => {
+                let key = self.key(id)?;
+                let node = &mut self.nodes[key as usize];
+                if node.text != text {
+                    node.text = text;
+                    if node.inline {
+                        self.mark_text_block(key);
+                    }
+                }
+                Ok(())
+            }
             Op::SetStyle { id, style, .. } => self.set_style(id, *style),
             Op::SetProp { id, prop } => self.set_prop(id, prop),
             Op::Listen { id, event, enabled } => {
@@ -268,6 +373,7 @@ impl Core {
                 self.emit_frames(key);
             }
         }
+        self.flush_text();
         if self.mount.is_empty() {
             None
         } else {
@@ -284,7 +390,7 @@ impl Core {
         }
     }
 
-    fn alloc(&mut self, id: NodeId, kind: Kind, layout: LayoutId) -> Result<Key, ApplyError> {
+    fn alloc(&mut self, id: NodeId, kind: Kind) -> Result<Key, ApplyError> {
         let idx = id as usize;
         if self.nodes.len() >= self.max_nodes {
             return Err(ApplyError::TooManyNodes(self.max_nodes));
@@ -297,21 +403,33 @@ impl Core {
         } else if self.slots[idx] != 0 {
             return Err(ApplyError::DuplicateNode(id));
         }
-        let key = self.nodes.insert(Node::new(id, kind, layout)) as Key;
+        let key = self.nodes.insert(Node::new(id, kind)) as Key;
         self.slots[idx] = key + 1;
         Ok(key)
     }
 
     fn create(&mut self, id: NodeId, tag: Tag) -> Result<(), ApplyError> {
         let kind = Kind::of(tag);
+        let key = self.alloc(id, kind)?;
         let mut layout_style = Style::default().layout;
         style::resolve_normal_alignment(&mut layout_style);
         let layout = match kind {
-            Kind::Image => self.layout.new_leaf_with_context(layout_style, None),
+            Kind::Image => self
+                .layout
+                .new_leaf_with_context(layout_style, LeafContext::Image(None)),
+            Kind::Text => self.layout.new_leaf_with_context(
+                layout_style,
+                LeafContext::Text(TextContext::new(Arc::default())),
+            ),
             Kind::View => self.layout.new_leaf(layout_style),
+            Kind::RawText => unreachable!("raw text is CreateText, not a tag"),
         };
-        let key = self.alloc(id, kind, layout)?;
         self.layout.set_tag(layout, key);
+        let node = &mut self.nodes[key as usize];
+        node.layout = Some(layout);
+        if kind == Kind::Text {
+            node.dirty |= dirty::TEXT_BUILD;
+        }
         Ok(())
     }
 
@@ -321,24 +439,36 @@ impl Core {
         let Style {
             mut layout,
             mut view,
+            text,
             logical,
             z_index,
             direction,
+            pending,
             ..
         } = style;
-        let node = &mut self.nodes[key as usize];
         if key != self.root {
-            node.direction = direction;
+            self.nodes[key as usize].direction = direction;
         }
-        node.logical = (!logical.is_empty()).then(|| Box::new(logical.clone()));
+        self.nodes[key as usize].logical = (!logical.is_empty()).then(|| Box::new(logical.clone()));
         let rtl = self.resolved_rtl(key);
+        let flipped = self.nodes[key as usize].rtl != rtl;
         style::resolve_normal_alignment(&mut layout);
         style::apply_direction(&mut layout, &mut view, &logical, rtl);
         let node = &mut self.nodes[key as usize];
+        let span_background_changed = node.inline
+            && node.kind == Kind::Text
+            && span_background(&node.view_style, node.id) != span_background(&view, node.id);
+        let lines_changed = node.kind == Kind::Text
+            && (node.number_of_lines != pending.number_of_lines
+                || node.ellipsize != pending.text_overflow);
+        let text_changed = node.text_style != text || span_background_changed || lines_changed;
         node.rtl = rtl;
         let view_changed = node.view_style != view;
         let z_changed = node.z_index != z_index;
         node.view_style = view;
+        node.text_style = text;
+        node.number_of_lines = pending.number_of_lines;
+        node.ellipsize = pending.text_overflow;
         node.z_index = z_index;
         let fit_changed = node.image.is_some() && node.object_fit != fit;
         if fit_changed {
@@ -354,9 +484,13 @@ impl Core {
             taffy::Overflow::Visible
         };
         layout.overflow = taffy::Point { x: clip, y: clip };
-        let l = node.layout;
-        self.layout.set_style(l, layout);
-        self.needs_layout = true;
+        if node.kind == Kind::Text {
+            node.base_layout = Some(Box::new(layout.clone()));
+        }
+        if let Some(l) = node.layout {
+            self.layout.set_style(l, layout);
+            self.needs_layout = true;
+        }
         if z_changed {
             self.restack(key);
         }
@@ -365,6 +499,16 @@ impl Core {
         }
         if fit_changed {
             self.mark(key, dirty::IMAGE);
+        }
+        if text_changed || flipped {
+            match self.nodes[key as usize].kind {
+                Kind::Text => self.mark_text_block(key),
+                _ if text_changed => self.mark_inheriting_text(key),
+                _ => {}
+            }
+        }
+        if flipped {
+            self.update_children_direction(key);
         }
         Ok(())
     }
@@ -379,8 +523,10 @@ impl Core {
                 let size = source.as_ref().and_then(|s| s.size);
                 *image = source;
                 self.mark(key, dirty::IMAGE);
-                let layout = self.nodes[key as usize].layout;
-                if let Some(natural) = self.layout.get_node_context_mut(layout)
+                let Some(layout) = self.nodes[key as usize].layout else {
+                    return Ok(());
+                };
+                if let Some(LeafContext::Image(natural)) = self.layout.get_node_context_mut(layout)
                     && *natural != size
                 {
                     *natural = size;
@@ -448,6 +594,9 @@ impl Core {
             self.unlink(child, !parent_created);
         }
 
+        // Inside a block or a span. Other elements inside text are not
+        // part of v1; `set_inline` leaves them out of layout.
+        let inline = self.nodes[parent as usize].kind == Kind::Text;
         let pos = match before {
             Some(b) => self.nodes[parent as usize]
                 .children
@@ -456,23 +605,30 @@ impl Core {
                 .expect("anchor is a child"),
             None => self.nodes[parent as usize].children.len(),
         };
+        self.set_inline(child, inline);
         self.nodes[child as usize].parent = parent;
         self.nodes[parent as usize].children.insert(pos, child);
-
-        let index = pos;
-        let parent_layout = self.nodes[parent as usize].layout;
-        let child_layout = self.nodes[child as usize].layout;
-        self.layout
-            .insert_child_at_index(parent_layout, index as usize, child_layout);
-        self.needs_layout = true;
-        if parent_created {
-            self.ensure_created(child);
-            let before = self.native_before(parent, child);
-            self.mount.push(MountItem::Insert {
-                parent: self.nodes[parent as usize].id,
-                child: self.nodes[child as usize].id,
-                before,
-            });
+        self.update_direction(child);
+        if inline {
+            self.mark_text_block(parent);
+            return Ok(());
+        }
+        if let Some(child_layout) = self.nodes[child as usize].layout {
+            let parent_layout = self.nodes[parent as usize]
+                .layout
+                .expect("block parent has layout");
+            self.layout
+                .insert_child_at_index(parent_layout, pos, child_layout);
+            self.needs_layout = true;
+            if parent_created {
+                self.ensure_created(child);
+                let before = self.native_before(parent, child);
+                self.mount.push(MountItem::Insert {
+                    parent: self.nodes[parent as usize].id,
+                    child: self.nodes[child as usize].id,
+                    before,
+                });
+            }
         }
         Ok(())
     }
@@ -486,16 +642,25 @@ impl Core {
             .expect("child of parent");
         siblings.remove(pos);
         self.nodes[key as usize].parent = NO_KEY;
-        let (layout, created, id) = (
+        let (inline, layout, created, id) = (
+            self.nodes[key as usize].inline,
             self.nodes[key as usize].layout,
             self.nodes[key as usize].created,
             self.nodes[key as usize].id,
         );
-        let parent_layout = self.nodes[parent as usize].layout;
-        self.layout.remove_child(parent_layout, layout);
-        self.needs_layout = true;
-        if emit_remove && created && self.nodes[parent as usize].created {
-            self.mount.push(MountItem::Remove { id });
+        if inline {
+            self.mark_text_block(parent);
+            return;
+        }
+        if let Some(layout) = layout {
+            let parent_layout = self.nodes[parent as usize]
+                .layout
+                .expect("block parent has layout");
+            self.layout.remove_child(parent_layout, layout);
+            self.needs_layout = true;
+            if emit_remove && created && self.nodes[parent as usize].created {
+                self.mount.push(MountItem::Remove { id });
+            }
         }
     }
 
@@ -514,7 +679,9 @@ impl Core {
                 child.parent = NO_KEY;
             }
         }
-        self.layout.remove(node.layout);
+        if let Some(layout) = node.layout {
+            self.layout.remove(layout);
+        }
         if node.created {
             self.mount.push(MountItem::Delete { id });
         }
@@ -554,7 +721,7 @@ impl Core {
     fn restack(&mut self, key: Key) {
         let node = &self.nodes[key as usize];
         let (parent, id) = (node.parent, node.id);
-        if parent == NO_KEY || !node.created {
+        if parent == NO_KEY || !node.created || node.inline {
             return;
         }
         if !self.nodes[parent as usize].created {
@@ -568,16 +735,47 @@ impl Core {
         });
     }
 
+    /// Moves `key` (and its subtree) into or out of an inline context.
+    fn set_inline(&mut self, key: Key, inline: bool) {
+        let node = &mut self.nodes[key as usize];
+        if node.inline == inline {
+            return;
+        }
+        node.inline = inline;
+        if node.kind != Kind::Text {
+            // Other elements inside text are not part of v1; they are ignored.
+            return;
+        }
+        if inline {
+            // Block -> span: spans have no layout node or native view.
+            if let Some(l) = node.layout.take() {
+                self.layout.remove(l);
+            }
+            if node.created {
+                node.created = false;
+                self.mount.push(MountItem::Delete { id: node.id });
+            }
+        } else {
+            let style = node.base_layout.as_deref().cloned().unwrap_or_default();
+            let cx = LeafContext::Text(TextContext::new(Arc::default()));
+            let layout = self.layout.new_leaf_with_context(style, cx);
+            self.layout.set_tag(layout, key);
+            node.layout = Some(layout);
+            self.mark(key, dirty::TEXT_BUILD);
+        }
+    }
+
     /// Creates the native views of `key`'s subtree if needed, wiring up the
     /// children in order.
     fn ensure_created(&mut self, key: Key) {
         let node = &mut self.nodes[key as usize];
-        if node.created {
+        if node.created || node.layout.is_none() {
             return;
         }
         node.created = true;
         node.frame = Bounds::UNSET;
         let id = node.id;
+        let kind = node.kind;
         let mut flags = 0;
         if node.view_style != ViewStyle::default() {
             flags |= dirty::VIEW;
@@ -585,12 +783,20 @@ impl Core {
         if !node.events.is_empty() {
             flags |= dirty::EVENTS;
         }
+        if kind == Kind::Text {
+            flags |= dirty::TEXT_MOUNT;
+        }
         if node.image.as_ref().is_some_and(|source| source.is_some()) {
             flags |= dirty::IMAGE;
         }
-        let kind = node.kind.view_kind();
-        self.mount.push(MountItem::Create { id, kind });
+        self.mount.push(MountItem::Create {
+            id,
+            kind: kind.view_kind(),
+        });
         self.mark(key, flags);
+        if !kind.is_container() {
+            return;
+        }
         let mut children = mem::take(&mut self.nodes[key as usize].children);
         let original = children.clone();
         if children
@@ -600,6 +806,9 @@ impl Core {
             children.sort_by_key(|&c| self.nodes[c as usize].z_index);
         }
         for &child in &children {
+            if self.nodes[child as usize].layout.is_none() {
+                continue;
+            }
             self.ensure_created(child);
             let child_id = self.nodes[child as usize].id;
             self.mount.push(MountItem::Insert {
@@ -626,11 +835,18 @@ impl Core {
     fn flush_dirty(&mut self) {
         let queue = mem::take(&mut self.queue);
         for key in queue {
-            let Some(node) = self.nodes.get_mut(key as usize) else {
-                continue;
+            let (mut flags, has_layout) = {
+                let Some(node) = self.nodes.get_mut(key as usize) else {
+                    continue;
+                };
+                let flags = mem::take(&mut node.dirty);
+                node.queued = false;
+                (flags, node.layout.is_some())
             };
-            let flags = mem::take(&mut node.dirty);
-            node.queued = false;
+            if flags & dirty::TEXT_BUILD != 0 && has_layout && self.rebuild_text(key) {
+                flags |= dirty::TEXT_MOUNT;
+            }
+            let node = &self.nodes[key as usize];
             if !node.created {
                 continue;
             }
@@ -653,6 +869,9 @@ impl Core {
                     source: image.as_ref().map(|s| s.resolved(ratio)),
                     resize_mode,
                 });
+            }
+            if flags & dirty::TEXT_MOUNT != 0 {
+                self.queue_text(key);
             }
         }
     }
@@ -713,29 +932,49 @@ impl Core {
             })
     }
 
+    /// `layout`'s layout, rounded to whole points as Taffy's rounding pass
+    /// does ([`rounded`]).
+    fn rounded_layout(&self, layout: LayoutId) -> taffy::Layout {
+        rounded(
+            self.layout.unrounded_layout(layout),
+            self.layout_origin(layout),
+        )
+    }
+
     fn layout_main(&mut self) -> bool {
-        let root = self.nodes[self.root as usize].layout;
+        let root = self.nodes[self.root as usize]
+            .layout
+            .expect("root has a layout");
         let available = taffy::Size {
             width: AvailableSpace::Definite(self.viewport.width.0),
             height: AvailableSpace::Definite(self.viewport.height.0),
         };
         let main = self.layout.dirty(root);
         if main {
+            let engine = &self.text_engine;
+            let cache = &mut self.measure_cache;
             self.layout
-                .compute_layout_with_measure(root, available, measure_leaf);
+                .compute_layout_with_measure(root, available, |input, _, cx, style| {
+                    measure_leaf(engine, cache, input, cx, style)
+                });
         }
         main
     }
 
     fn relayout_boundaries(&mut self) -> Vec<Key> {
-        self.layout.relayout_boundaries(measure_leaf)
+        let engine = &self.text_engine;
+        let cache = &mut self.measure_cache;
+        self.layout.relayout_boundaries(|input, _, cx, style| {
+            measure_leaf(engine, cache, input, cx, style)
+        })
     }
 
     fn displays_none(&self, key: Key) -> bool {
         let mut k = key;
         while k != NO_KEY {
-            let layout = self.nodes[k as usize].layout;
-            if self.layout.style(layout).display == taffy::Display::None {
+            if let Some(layout) = self.nodes[k as usize].layout
+                && self.layout.style(layout).display == taffy::Display::None
+            {
                 return true;
             }
             k = self.nodes[k as usize].parent;
@@ -744,24 +983,29 @@ impl Core {
     }
 
     fn emit_frames(&mut self, key: Key) {
+        let Some(layout) = self.nodes[key as usize].layout else {
+            return;
+        };
         let parent = self.nodes[key as usize].parent;
         let hidden = parent != NO_KEY && self.displays_none(parent);
-        let origin = self.layout.parent(self.nodes[key as usize].layout).map_or(
-            taffy::Point::ZERO,
-            |parent| {
+        let origin = self
+            .layout
+            .parent(layout)
+            .map_or(taffy::Point::ZERO, |parent| {
                 let origin = self.layout_origin(parent);
                 let location = self.layout.unrounded_layout(parent).location;
                 taffy::Point {
                     x: origin.x + location.x,
                     y: origin.y + location.y,
                 }
-            },
-        );
+            });
         self.emit_frames_in(key, hidden, origin);
     }
 
     fn emit_frames_in(&mut self, key: Key, hidden: bool, origin: taffy::Point<f32>) {
-        let layout = self.nodes[key as usize].layout;
+        let Some(layout) = self.nodes[key as usize].layout else {
+            return;
+        };
         if !self.nodes[key as usize].created {
             return;
         }
@@ -812,20 +1056,328 @@ impl Core {
             }
         }
     }
+
+    /// Re-resolves the direction of `key` (moved, or its parent's changed)
+    /// and of the nodes inheriting it.
+    fn update_direction(&mut self, key: Key) {
+        let rtl = self.resolved_rtl(key);
+        if self.nodes[key as usize].rtl == rtl {
+            return;
+        }
+        self.flip_direction(key, rtl);
+        self.update_children_direction(key);
+    }
+
+    fn update_children_direction(&mut self, key: Key) {
+        let children = self.nodes[key as usize].children.clone();
+        for child in children {
+            self.update_direction(child);
+        }
+    }
+
+    /// Lays `key` out in the other direction.
+    fn flip_direction(&mut self, key: Key, rtl: bool) {
+        let direction = if rtl {
+            taffy::Direction::Rtl
+        } else {
+            taffy::Direction::Ltr
+        };
+        let node = &mut self.nodes[key as usize];
+        node.rtl = rtl;
+        let kind = node.kind;
+        if let Some(l) = node.layout {
+            let mut layout = self.layout.style(l).clone();
+            layout.direction = direction;
+            self.layout.set_style(l, layout);
+            self.needs_layout = true;
+        }
+        self.mark(key, dirty::VIEW);
+        if kind == Kind::Text {
+            self.mark_text_block(key);
+        }
+    }
+
+    /// Marks the text block containing `key` (or `key` itself) for rebuild.
+    fn mark_text_block(&mut self, mut key: Key) {
+        loop {
+            let node = &self.nodes[key as usize];
+            if !node.inline {
+                if node.kind == Kind::Text {
+                    self.mark(key, dirty::TEXT_BUILD);
+                }
+                return;
+            }
+            if node.parent == NO_KEY {
+                return;
+            }
+            key = node.parent;
+        }
+    }
+
+    /// Text blocks inside `key` inherit its new text style.
+    fn mark_inheriting_text(&mut self, key: Key) {
+        let mut stack: Vec<Key> = self.nodes[key as usize].children.clone();
+        while let Some(k) = stack.pop() {
+            match self.nodes[k as usize].kind {
+                Kind::Text => self.mark_text_block(k),
+                Kind::RawText => {}
+                _ => stack.extend_from_slice(&self.nodes[k as usize].children),
+            }
+        }
+    }
+
+    fn text_cx(&mut self, layout: LayoutId) -> &mut TextContext<M::Prepared> {
+        match self.layout.get_node_context_mut(layout) {
+            Some(LeafContext::Text(cx)) => cx,
+            _ => unreachable!("text block without text context"),
+        }
+    }
+
+    /// The style text inherits at the root: React Native's defaults.
+    fn base_text_style(&self) -> ResolvedTextStyle {
+        ResolvedTextStyle::default()
+    }
+
+    /// The text style `key` inherits from the views around it, as CSS
+    /// does: `color` on a container styles the text in it.
+    fn inherited_text_style(&self, key: Key) -> ResolvedTextStyle {
+        let mut chain: Vec<Key> = Vec::new();
+        let mut k = self.nodes[key as usize].parent;
+        while k != NO_KEY {
+            let node = &self.nodes[k as usize];
+            if node.kind != Kind::Text && node.text_style != TextStyle::default() {
+                chain.push(k);
+            }
+            k = node.parent;
+        }
+        chain
+            .iter()
+            .rev()
+            .fold(self.base_text_style(), |style, &k| {
+                style.inherit(&self.nodes[k as usize].text_style)
+            })
+    }
+
+    /// The nearest `textAlign` set on a view around `key`.
+    fn inherited_text_align(&self, key: Key) -> Option<(TextAlign, bool)> {
+        let mut k = self.nodes[key as usize].parent;
+        while k != NO_KEY {
+            let node = &self.nodes[k as usize];
+            if let Some(align) = node.text_style.text_align {
+                return Some((align, node.text_style.text_align_physical));
+            }
+            k = node.parent;
+        }
+        None
+    }
+
+    /// Rebuilds the attributed text of a block. Returns true if it changed.
+    ///
+    /// Only layout-relevant changes invalidate measurement and layout; a
+    /// color change keeps both and just needs a new final layout.
+    fn rebuild_text(&mut self, key: Key) -> bool {
+        let node = &self.nodes[key as usize];
+        let max_lines = node.number_of_lines.unwrap_or(0);
+        let ellipsize = node.ellipsize.unwrap_or_default();
+        let inherited = self.inherited_text_style(key);
+        let (align, physical) = node
+            .text_style
+            .text_align
+            .map(|align| (align, node.text_style.text_align_physical))
+            .or_else(|| self.inherited_text_align(key))
+            .unwrap_or_default();
+        let mut text = AttributedText {
+            align: directed_align(align, node.rtl && !physical),
+            writing_direction: node.text_style.writing_direction,
+            rtl: node.rtl,
+            max_lines,
+            ellipsize,
+            shadow: node.text_style.shadow(),
+            ..AttributedText::default()
+        };
+        let base = inherited.inherit(&node.text_style);
+        self.collect_text(key, base, &mut text);
+        let layout = self.nodes[key as usize]
+            .layout
+            .expect("text block has layout");
+        let same_layout = {
+            let cx = self.text_cx(layout);
+            if *cx.text == text {
+                return false;
+            }
+            let same_layout = cx.text.layout_eq(&text);
+            cx.text = Arc::new(text);
+            cx.prepared = None;
+            cx.min_content = None;
+            cx.laid_out = None;
+            if !same_layout {
+                cx.layout_hash = cx.text.layout_hash();
+                cx.cache = None;
+            }
+            same_layout
+        };
+        if !same_layout {
+            let engine = &self.text_engine;
+            let cache = &mut self.measure_cache;
+            if !self
+                .layout
+                .measures_as_before(layout, |input, _, cx, style| {
+                    measure_leaf(engine, cache, input, cx, style)
+                })
+            {
+                self.layout.mark_dirty(layout);
+                self.needs_layout = true;
+            }
+        }
+        true
+    }
+
+    fn collect_text(&self, key: Key, style: ResolvedTextStyle, out: &mut AttributedText) {
+        for &c in &self.nodes[key as usize].children {
+            let child = &self.nodes[c as usize];
+            match child.kind {
+                Kind::RawText => out.push(&child.text, style),
+                Kind::Text => {
+                    let mut inner = style.inherit(&child.text_style);
+                    if let Some(background) = span_background(&child.view_style, child.id) {
+                        inner.background = Some(background);
+                    }
+                    self.collect_text(c, inner, out);
+                }
+                // Inline views are not part of v1.
+                _ => {}
+            }
+        }
+    }
+
+    #[inline]
+    fn queue_text(&mut self, key: Key) {
+        let node = &mut self.nodes[key as usize];
+        if !node.text_queued {
+            node.text_queued = true;
+            self.pending_text.push(key);
+        }
+    }
+
+    /// Makes the final layout of every queued text block whose content or
+    /// box changed, and emits it.
+    fn flush_text(&mut self) {
+        let pending = mem::take(&mut self.pending_text);
+        for key in pending {
+            let (align_vertical, id, layout) = {
+                let Some(node) = self.nodes.get_mut(key as usize) else {
+                    continue;
+                };
+                node.text_queued = false;
+                let align_vertical = node.text_style.align_vertical.unwrap_or_default();
+                if !node.created {
+                    continue;
+                }
+                let Some(layout) = node.layout else {
+                    continue;
+                };
+                (align_vertical, node.id, layout)
+            };
+            let hidden = self.displays_none(key);
+            let mut content = if hidden {
+                Bounds::default()
+            } else {
+                content_box(&self.rounded_layout(layout))
+            };
+            let engine = &self.text_engine;
+            let cache = &mut self.measure_cache;
+            let Some(LeafContext::Text(cx)) = self.layout.get_node_context_mut(layout) else {
+                continue;
+            };
+            if hidden {
+                // Out of the layout (`display: none`). Glyphs typeset in
+                // its zero box would still show where a platform does not
+                // clip text to its box, so it gets an empty layout; the
+                // text itself stays what it is.
+                if matches!(&cx.laid_out, Some(l) if l.content == content) {
+                    continue;
+                }
+                let text_layout =
+                    engine.layout(&engine.prepare(&AttributedText::default()), content.size);
+                cx.laid_out = Some(LaidText {
+                    content,
+                    layout: text_layout.clone(),
+                });
+                self.mount.push(MountItem::Text {
+                    id,
+                    text: cx.text.clone(),
+                    layout: text_layout,
+                    content,
+                });
+                continue;
+            }
+            if cx.text.no_wrap {
+                content.size.width = content
+                    .size
+                    .width
+                    .max(measure_text(engine, cache, cx, None).width);
+            }
+            if align_vertical > Percentage(0.0) {
+                let height = measure_text(engine, cache, cx, Some(content.size.width.0)).height;
+                if height < content.size.height {
+                    content.origin.y += align_vertical.of(content.size.height - height);
+                    content.size.height = height;
+                }
+            }
+            let size = content.size;
+            let text_layout = match &cx.laid_out {
+                Some(l) if l.content == content => continue,
+                Some(l) if l.content.size == size => l.layout.clone(),
+                _ => {
+                    let prepared = cx.prepared.get_or_insert_with(|| engine.prepare(&cx.text));
+                    engine.layout(prepared, size)
+                }
+            };
+            cx.laid_out = Some(LaidText {
+                content,
+                layout: text_layout.clone(),
+            });
+            self.mount.push(MountItem::Text {
+                id,
+                text: cx.text.clone(),
+                layout: text_layout,
+                content,
+            });
+        }
+    }
 }
 
-fn measure_leaf(
+fn measure_leaf<M: TextEngine>(
+    engine: &M,
+    cache: &mut MeasureCache,
     input: taffy::LayoutInput,
-    _: taffy::NodeId,
-    context: Option<&mut Option<Size<Points>>>,
+    cx: Option<&mut LeafContext<M::Prepared>>,
     style: &TaffyStyle,
 ) -> taffy::LayoutOutput {
     taffy::compute_leaf_layout(
         input,
         style,
         |_, _| 0.0,
-        |known, _| match context {
-            Some(Some(natural)) => image_size(*natural, known.width, known.height),
+        |known, available| match cx {
+            Some(LeafContext::Text(cx)) => {
+                let max_width = if cx.text.no_wrap {
+                    None
+                } else {
+                    known.width.or(match available.width {
+                        AvailableSpace::Definite(w) => Some(w),
+                        AvailableSpace::MinContent => Some(min_content_width(engine, cache, cx).0),
+                        AvailableSpace::MaxContent => None,
+                    })
+                };
+                let measured = measure_text(engine, cache, cx, max_width);
+                taffy::Size {
+                    width: known.width.unwrap_or(measured.width.0),
+                    height: known.height.unwrap_or(measured.height.0),
+                }
+            }
+            Some(LeafContext::Image(Some(natural))) => {
+                image_size(*natural, known.width, known.height)
+            }
             _ => taffy::Size::ZERO,
         },
     )
@@ -846,6 +1398,129 @@ fn image_size(natural: Size<Points>, w: Option<f32>, h: Option<f32>) -> taffy::S
         (None, None) => (natural.width.0, natural.height.0),
     };
     taffy::Size { width, height }
+}
+/// The content box (inside padding and border) of a laid-out node.
+fn content_box(l: &taffy::Layout) -> Bounds<Points> {
+    rect(
+        l.padding.left + l.border.left,
+        l.padding.top + l.border.top,
+        (l.size.width - l.padding.left - l.padding.right - l.border.left - l.border.right).max(0.0),
+        (l.size.height - l.padding.top - l.padding.bottom - l.border.top - l.border.bottom)
+            .max(0.0),
+    )
+}
+
+/// Min-content keeps every unbreakable segment intact. Measure the styled
+/// segments with the platform engine rather than estimating glyph advances.
+fn min_content_width<M: TextEngine>(
+    engine: &M,
+    cache: &mut MeasureCache,
+    cx: &mut TextContext<M::Prepared>,
+) -> Points {
+    if let Some(width) = cx.min_content {
+        return width;
+    }
+    let text = &cx.text;
+    let mut offsets = Vec::with_capacity(text.text.chars().count() + 1);
+    let mut utf16 = 0u32;
+    for (byte, ch) in text.text.char_indices() {
+        offsets.push((utf16, byte));
+        utf16 += ch.len_utf16() as u32;
+    }
+    offsets.push((utf16, text.text.len()));
+    let byte_at = |offset: u32| {
+        offsets[offsets
+            .binary_search_by_key(&offset, |&(at, _)| at)
+            .unwrap()]
+        .1
+    };
+    let mut start = 0usize;
+    let mut width = Points::ZERO;
+    for (end, _) in unicode_linebreak::linebreaks(&text.text) {
+        let word = text.text[start..end].trim_end_matches([' ', '\t', '\n', '\r', '\u{000c}']);
+        let from = offsets[offsets
+            .binary_search_by_key(&start, |&(_, byte)| byte)
+            .unwrap()]
+        .0;
+        let to = from + word.encode_utf16().count() as u32;
+        if from < to {
+            let mut part = AttributedText {
+                no_wrap: true,
+                rtl: text.rtl,
+                writing_direction: text.writing_direction,
+                ..Default::default()
+            };
+            for span in &text.spans {
+                let (lo, hi) = (from.max(span.start), to.min(span.end));
+                if lo < hi {
+                    part.push(&text.text[byte_at(lo)..byte_at(hi)], span.style);
+                }
+            }
+            for attachment in &text.attachments {
+                if (from..to).contains(&attachment.index) {
+                    let mut attachment = *attachment;
+                    attachment.index -= from;
+                    part.attachments.push(attachment);
+                }
+            }
+            let hash = part.layout_hash();
+            let measured = cache.get(hash, None).unwrap_or_else(|| {
+                let measured = engine.measure(&engine.prepare(&part), None);
+                cache.insert(hash, None, measured);
+                measured
+            });
+            width = width.max(measured.width);
+        }
+        start = end;
+    }
+    cx.min_content = Some(width);
+    width
+}
+
+fn measure_text<M: TextEngine>(
+    engine: &M,
+    cache: &mut MeasureCache,
+    cx: &mut TextContext<M::Prepared>,
+    max_width: Option<f32>,
+) -> Size<Points> {
+    if let Some((w, size)) = cx.cache
+        && w == max_width
+    {
+        return size;
+    }
+    let typed = max_width.map(Points);
+    let size = match cache.get(cx.layout_hash, typed) {
+        Some(size) => size,
+        None => {
+            let prepared = cx.prepared.get_or_insert_with(|| engine.prepare(&cx.text));
+            let size = engine.measure(prepared, typed);
+            // Round up so rendering never truncates the last glyph.
+            let size = size.map(Points::ceil);
+            cache.insert(cx.layout_hash, typed, size);
+            size
+        }
+    };
+    cx.cache = Some((max_width, size));
+    size
+}
+
+/// `align` in a layout of direction `rtl`: left and right trade places
+/// right to left, as all left / right properties do.
+fn directed_align(align: TextAlign, rtl: bool) -> TextAlign {
+    match (align, rtl) {
+        (TextAlign::Left, true) => TextAlign::Right,
+        (TextAlign::Right, true) => TextAlign::Left,
+        (align, _) => align,
+    }
+}
+
+/// The background a nested text's view style gives its characters.
+fn span_background(style: &ViewStyle, node: NodeId) -> Option<crate::text::TextBackground> {
+    (style.background_color.0 & 0xff != 0).then_some(crate::text::TextBackground {
+        color: style.background_color,
+        radius: style.border_radius.max(Points::ZERO),
+        node,
+    })
 }
 
 fn root_style(viewport: Size<Points>) -> TaffyStyle {
@@ -904,6 +1579,8 @@ fn rounded(layout: &Layout, origin: taffy::Point<f32>) -> Layout {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use taffy::{Dimension, Display, Position};
 
     use super::*;
@@ -911,10 +1588,38 @@ mod tests {
         geometry::{px, size, size_pt},
         ops::{EventKind, ImageScales, ImageSource, Prop, ResizeMode},
         style::{StylePatch, StyleValue},
+        text::{AttributedText, TextEngine, TextLayout},
     };
 
-    fn core() -> Core {
-        Core::new(size(px(100.0), px(200.0)))
+    /// 8pt per character, 16pt per line, wrapping at `max_width`.
+    struct FakeEngine;
+
+    struct FakeLayout {
+        chars: usize,
+    }
+
+    impl TextEngine for FakeEngine {
+        type Prepared = usize;
+
+        fn prepare(&self, text: &AttributedText) -> usize {
+            text.text.chars().count()
+        }
+
+        fn measure(&self, chars: &usize, max_width: Option<Points>) -> Size<Points> {
+            let w = *chars as f32 * 8.0;
+            match max_width.map(|m| m.0) {
+                Some(max) if w > max && max > 0.0 => size_pt(max, (w / max).ceil() * 16.0),
+                _ => size_pt(w, 16.0),
+            }
+        }
+
+        fn layout(&self, chars: &usize, _: Size<Points>) -> TextLayout {
+            TextLayout(Arc::new(FakeLayout { chars: *chars }))
+        }
+    }
+
+    fn core() -> Core<FakeEngine> {
+        Core::new(FakeEngine, size(px(100.0), px(200.0)))
     }
 
     fn sized(width: f32, height: f32) -> Style {
@@ -926,7 +1631,7 @@ mod tests {
         style
     }
 
-    fn apply_style(core: &mut Core, id: NodeId, style: Style) {
+    fn apply_style(core: &mut Core<FakeEngine>, id: NodeId, style: Style) {
         core.apply(Op::SetStyle {
             id,
             style: Box::new(style),
@@ -1246,7 +1951,7 @@ mod tests {
 
     #[test]
     fn an_image_uses_its_natural_size_and_aspect_ratio() {
-        let mut c = Core::new(size(px(320.0), px(480.0)));
+        let mut c = Core::new(FakeEngine, size(px(320.0), px(480.0)));
         c.apply(Op::Create {
             id: 2,
             tag: Tag::Image,
@@ -1389,5 +2094,293 @@ mod tests {
         assert_eq!(uri.as_deref(), Some("asset:/logo.png"));
         c.set_pixel_ratio(1.0);
         assert!(c.commit().is_none());
+    }
+
+    fn mounted_text(batch: &MountBatch, id: NodeId) -> Arc<AttributedText> {
+        batch
+            .items
+            .iter()
+            .rev()
+            .find_map(|item| match item {
+                MountItem::Text { id: i, text, .. } if *i == id => Some(text.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no text for {id}"))
+    }
+
+    #[test]
+    fn a_text_block_mounts_its_run_and_stretches() {
+        let mut c = Core::new(FakeEngine, size(px(320.0), px(480.0)));
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::View,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::Text,
+        })
+        .unwrap();
+        c.apply(Op::CreateText {
+            id: 4,
+            text: "hello".into(),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 3,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        let mut padded = Style::default();
+        padded.set("padding", StyleValue::Number(10.0)).unwrap();
+        apply_style(&mut c, 2, padded);
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        let creates: Vec<_> = batch
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                MountItem::Create { id, kind } => Some((*id, *kind)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(creates, vec![(2, ViewKind::View), (3, ViewKind::Text)]);
+        assert_eq!(mounted_text(&batch, 3).text, "hello");
+        assert_eq!(
+            frame(&batch, 2),
+            crate::geometry::rect(0.0, 0.0, 320.0, 36.0)
+        );
+        assert_eq!(
+            frame(&batch, 3),
+            crate::geometry::rect(10.0, 10.0, 300.0, 16.0)
+        );
+        assert!(c.commit().is_none());
+    }
+
+    #[test]
+    fn updating_text_emits_the_string_without_a_new_frame() {
+        let mut c = Core::new(FakeEngine, size(px(320.0), px(480.0)));
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Text,
+        })
+        .unwrap();
+        c.apply(Op::CreateText {
+            id: 3,
+            text: "a".into(),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.commit().unwrap();
+        c.apply(Op::SetText {
+            id: 3,
+            text: "abc".into(),
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        assert_eq!(mounted_text(&batch, 2).text, "abc");
+        assert_eq!(batch.items.len(), 1);
+    }
+
+    #[test]
+    fn nested_text_inherits_and_overrides_span_style() {
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::View,
+        })
+        .unwrap();
+        let mut parent = Style::default();
+        parent.set("color", StyleValue::Str("#00ff00")).unwrap();
+        apply_style(&mut c, 2, parent);
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::Text,
+        })
+        .unwrap();
+        c.apply(Op::CreateText {
+            id: 4,
+            text: "hi ".into(),
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 5,
+            tag: Tag::Text,
+        })
+        .unwrap();
+        let mut span = Style::default();
+        span.set("color", StyleValue::Str("#ff0000")).unwrap();
+        span.set("fontWeight", StyleValue::Str("bold")).unwrap();
+        span.set("fontSize", StyleValue::Number(20.0)).unwrap();
+        span.set("fontStyle", StyleValue::Str("italic")).unwrap();
+        span.set("backgroundColor", StyleValue::Str("#0000ff"))
+            .unwrap();
+        apply_style(&mut c, 5, span);
+        c.apply(Op::CreateText {
+            id: 6,
+            text: "there".into(),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 5,
+            child: 6,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 3,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 3,
+            child: 5,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        let text = mounted_text(&batch, 3);
+        assert_eq!(text.text, "hi there");
+        assert_eq!(text.spans.len(), 2);
+        assert_eq!(
+            text.spans[0].style.color,
+            crate::Color::parse("#00ff00").unwrap()
+        );
+        assert!(!text.spans[0].style.italic);
+        assert_eq!(text.spans[0].style.font_weight, 400);
+        assert_eq!(
+            text.spans[1].style.color,
+            crate::Color::parse("#ff0000").unwrap()
+        );
+        assert_eq!(text.spans[1].style.font_weight, 700);
+        assert_eq!(text.spans[1].style.font_size, px(20.0));
+        assert!(text.spans[1].style.italic);
+        assert_eq!(
+            text.spans[1].style.background.unwrap().color,
+            crate::Color::parse("#0000ff").unwrap()
+        );
+        assert!(!batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::Create { id: 5, .. } | MountItem::Insert { child: 5, .. }
+        )));
+    }
+
+    #[test]
+    fn hidden_text_keeps_its_string_and_lays_out_nothing() {
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Text,
+        })
+        .unwrap();
+        c.apply(Op::CreateText {
+            id: 3,
+            text: "check".into(),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        let mut hidden = Style::default();
+        hidden.layout.display = Display::None;
+        apply_style(&mut c, 2, hidden);
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        let (text, chars) = batch
+            .items
+            .iter()
+            .find_map(|item| match item {
+                MountItem::Text {
+                    id: 2,
+                    text,
+                    layout,
+                    ..
+                } => Some((
+                    text.text.clone(),
+                    layout.downcast::<FakeLayout>().unwrap().chars,
+                )),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(text, "check");
+        assert_eq!(chars, 0);
+        assert_eq!(frame(&batch, 2).size, size(px(0.0), px(0.0)));
+    }
+
+    #[test]
+    fn number_of_lines_reaches_the_block() {
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Text,
+        })
+        .unwrap();
+        c.apply(Op::CreateText {
+            id: 3,
+            text: "one two three four".into(),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        let mut clamped = Style::default();
+        clamped
+            .set("numberOfLines", StyleValue::Number(1.0))
+            .unwrap();
+        apply_style(&mut c, 2, clamped);
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        assert_eq!(mounted_text(&c.commit().unwrap(), 2).max_lines, 1);
     }
 }

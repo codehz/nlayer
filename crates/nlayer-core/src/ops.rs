@@ -2,8 +2,8 @@
 //!
 //! `ResizeMode`, `ImageSource` and `ImageScales` are copied from
 //! `nsh_core::ops`. The `PropEnum` derive arrives with the element macros.
-//! Text, scroll and input ops follow with those hosts. `data:` image bytes
-//! are not part of v1.
+//! Scroll and input ops follow with those hosts. `data:` image bytes are
+//! not part of v1.
 
 use std::sync::Arc;
 
@@ -25,6 +25,8 @@ pub const ROOT_ID: NodeId = 1;
 pub enum Tag {
     /// A container view (`<view>`).
     View,
+    /// A text block, or a span when nested in another text (`<text>`).
+    Text,
     /// An image (`<image>`).
     Image,
 }
@@ -34,6 +36,7 @@ impl Tag {
     pub fn from_name(name: &str) -> Option<Tag> {
         match name {
             "view" => Some(Tag::View),
+            "text" => Some(Tag::Text),
             "image" => Some(Tag::Image),
             _ => None,
         }
@@ -304,6 +307,21 @@ pub enum Op {
         id: NodeId,
         /// Element tag.
         tag: Tag,
+    },
+    /// Creates a detached raw text node. It is not a native view: inserted
+    /// into a `<text>`, it is a run of that block.
+    CreateText {
+        /// New node id.
+        id: NodeId,
+        /// Text content.
+        text: String,
+    },
+    /// Replaces the content of a raw text node.
+    SetText {
+        /// Text node id.
+        id: NodeId,
+        /// New content.
+        text: String,
     },
     /// Replaces the whole style of a node.
     SetStyle {

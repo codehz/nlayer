@@ -1,12 +1,15 @@
 //! Instructions a platform applies to native views.
 //!
-//! Extracted from `nsh_core::mount`, cut to views and images. Text, scroll
+//! Extracted from `nsh_core::mount`, cut to views, text and images. Scroll
 //! and input items follow with those hosts.
+
+use std::sync::Arc;
 
 use crate::{
     geometry::{Bounds, Points},
     ops::{EventMask, ImageSource, NodeId, ResizeMode},
     style::ViewStyle,
+    text::{AttributedText, TextLayout},
 };
 
 /// Kind of native view to create.
@@ -14,6 +17,8 @@ use crate::{
 pub enum ViewKind {
     /// A plain container view.
     View,
+    /// A text block.
+    Text,
     /// An image.
     Image,
 }
@@ -65,6 +70,17 @@ pub enum MountItem {
         id: NodeId,
         /// New style.
         style: Box<ViewStyle>,
+    },
+    /// Set the content of a text view.
+    Text {
+        /// Text view.
+        id: NodeId,
+        /// Content, shared and never copied.
+        text: Arc<AttributedText>,
+        /// The final layout, ready to draw.
+        layout: TextLayout,
+        /// Where `layout` goes inside the view (inside padding and border).
+        content: Bounds<Points>,
     },
     /// Set which events the view must report.
     Events {
