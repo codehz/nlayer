@@ -227,3 +227,31 @@ mount(App);
     assert_eq!(texts(&last), ["3"]);
     engine.stop();
 }
+
+/// `platform.os` is the surface the engine was started for.
+#[test]
+fn platform_os_is_the_surface() {
+    const APP: &str = r#"
+import { mount } from "@nlayer/runtime";
+import { platform } from "@nlayer/ui";
+import { element, append, text } from "nlayer:rt";
+
+function App() {
+    const view = element("view");
+    const block = element("text");
+    append(block, text(platform.os));
+    append(view, block);
+    return view;
+}
+mount(App);
+"#;
+    let (tx, rx) = unbounded();
+    let engine = Engine::start(
+        EngineConfig::new(APP, Size::new(px(100.0), px(100.0))).with_os(nlayer_engine::Os::Android),
+        || ApproxTextEngine,
+        Arc::new(Sink { tx }),
+    )
+    .unwrap();
+    assert_eq!(texts(&frame(&rx)), ["android"]);
+    engine.stop();
+}

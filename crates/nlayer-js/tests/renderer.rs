@@ -303,3 +303,28 @@ fn context_provides_values() {
     let batch = frame(&host, &mut core);
     assert_eq!(text_of(&batch), ["light", "dark"]);
 }
+
+/// `platform.os` is the OS the host set before the module was imported.
+#[test]
+fn platform_os_is_the_host() {
+    let host = Host::new().unwrap();
+    host.set_os(nlayer_js::Os::Ios);
+    host.eval_source(
+        r#"
+        import { platform } from "@nlayer/ui";
+        globalThis.__os = platform.os;
+        "#,
+    )
+    .unwrap();
+    assert_eq!(host.global_string("__os").as_deref(), Some("ios"));
+
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r#"
+        import { platform } from "@nlayer/ui";
+        globalThis.__os = platform.os;
+        "#,
+    )
+    .unwrap();
+    assert_eq!(host.global_string("__os").as_deref(), Some("web"));
+}

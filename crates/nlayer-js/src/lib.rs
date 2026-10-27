@@ -36,6 +36,29 @@ pub enum EventPayload {
     Text(String),
 }
 
+/// The operating system a surface runs on (`platform.os`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Os {
+    /// A browser page.
+    #[default]
+    Web,
+    /// iOS.
+    Ios,
+    /// Android.
+    Android,
+}
+
+impl Os {
+    /// `platform.os`: `"web"`, `"ios"` or `"android"`.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Os::Web => "web",
+            Os::Ios => "ios",
+            Os::Android => "android",
+        }
+    }
+}
+
 /// Name of the app bundle's module (stack traces, imports it awaits).
 pub const BUNDLE_NAME: &str = "bundle.js";
 
@@ -59,6 +82,16 @@ impl Host {
         });
         installed?;
         Ok(Host { rt, cx })
+    }
+
+    /// The OS [`Os::name`] `platform.os` reports. Set it before the app
+    /// imports `@nlayer/ui`: the object is made then, and does not change.
+    /// Unset, it is [`Os::Web`].
+    pub fn set_os(&self, os: Os) {
+        self.cx.with(|cx| {
+            // SAFETY: the state `install` made for this context.
+            unsafe { (*state::state(cx.as_raw().as_ptr())).os.set(os) }
+        });
     }
 
     /// Evaluates the app bundle (an ES module) and runs its jobs: its

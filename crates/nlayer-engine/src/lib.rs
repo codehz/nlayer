@@ -16,8 +16,8 @@ use nlayer_core::{
     geometry::{Edges, Points, Size},
     text::TextEngine,
 };
-pub use nlayer_js::EventPayload;
 use nlayer_js::Host;
+pub use nlayer_js::{EventPayload, Os};
 
 /// A platform that applies mount batches.
 pub trait MountSink: Send + Sync + 'static {
@@ -52,6 +52,8 @@ pub struct EngineConfig {
     pub bundle: String,
     /// The surface's size in points.
     pub viewport: Size<Points>,
+    /// What `platform.os` reports. [`EngineConfig::new`] is [`Os::Web`].
+    pub os: Os,
 }
 
 impl EngineConfig {
@@ -60,7 +62,14 @@ impl EngineConfig {
         Self {
             bundle: bundle.into(),
             viewport,
+            os: Os::Web,
         }
+    }
+
+    /// `platform.os` on this surface.
+    pub fn with_os(mut self, os: Os) -> Self {
+        self.os = os;
+        self
     }
 }
 
@@ -201,6 +210,7 @@ fn run<M, F>(
             return;
         }
     };
+    host.set_os(config.os);
     if let Err(e) = host.eval_source(&config.bundle) {
         let _ = ready.send(Err(EngineError::new(e.message)));
         return;

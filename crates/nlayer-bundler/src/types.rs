@@ -302,6 +302,13 @@ export function Text(props: TextProps): unknown;
 export function Image(props: ImageProps): unknown;
 export function Scroll(props: ScrollProps): unknown;
 export function Input(props: InputProps): unknown;
+
+/** The host this app runs on. It does not change. Safe area and the keyboard
+ * inset are not here: padding and margin read them with `env(safe-area-inset-*)`
+ * and `env(keyboard-inset-height)`. */
+export const platform: {
+  readonly os: "web" | "ios" | "android";
+};
 "#
 }
 
@@ -402,12 +409,16 @@ mod tests {
             );
         }
         for name in nlayer_js::native_module_exports("@nlayer/ui").unwrap() {
+            if name == "platform" {
+                assert!(ui.contains("export const platform"));
+                continue;
+            }
             assert!(
                 ui.contains(&format!("export function {name}")),
                 "{name} missing from ui declarations"
             );
         }
-        assert!(!ui.contains("platform"));
+        assert!(ui.contains("readonly os: \"web\" | \"ios\" | \"android\""));
         assert!(!runtime.contains("resource"));
         assert!(text("styles.d.ts").contains("gridTemplateColumns?:"));
         assert!(!text("styles.d.ts").contains("boxShadow?:"));

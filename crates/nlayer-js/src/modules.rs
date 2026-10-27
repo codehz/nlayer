@@ -59,6 +59,19 @@ fn input(cx: *mut JsContext) -> JsValue {
     dom::host_component(cx, "input", false)
 }
 
+/// `platform`: `{ os }`. Safe area and the keyboard inset are not on it;
+/// padding and margin read them through `env()`.
+fn platform(cx: *mut JsContext) -> JsValue {
+    // SAFETY: the state of this context; the object is new and the module takes it.
+    unsafe {
+        let os = (*crate::state::state(cx)).os.get().name();
+        let object = qjs::JS_NewObject(cx);
+        let name = qjs::JS_NewStringLen(cx, os.as_ptr().cast(), os.len() as _);
+        qjs::JS_SetPropertyStr(cx, object, c"os".as_ptr(), name);
+        object
+    }
+}
+
 /// `@nlayer/runtime`: the reactive graph and the tree entry an app mounts.
 const RUNTIME: &[Item] = &[
     ("signal", Export::Function(reactive::signal, 2)),
@@ -79,6 +92,7 @@ const UI: &[Item] = &[
     ("Image", Export::Value(image)),
     ("Scroll", Export::Value(scroll)),
     ("Input", Export::Value(input)),
+    ("platform", Export::Value(platform)),
 ];
 
 pub(crate) const MODULES: &[NativeModule] = &[
