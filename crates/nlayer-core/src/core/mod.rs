@@ -1048,11 +1048,16 @@ impl<M: TextEngine> Core<M> {
         let node = &mut self.nodes[key as usize];
         if node.frame != frame {
             node.frame = frame;
-            let id = node.id;
+            let (id, is_text) = (node.id, node.kind == Kind::Text);
             self.mount.push(MountItem::Frame { id, frame });
             if node.view_style.transform.has_fractions() {
                 let style = self.mounted_view_style(key);
                 self.mount.push(MountItem::ViewStyle { id, style });
+            }
+            // The content box is inside this frame. A size or padding change
+            // does not rebuild the string, so the text is sent again from here.
+            if is_text {
+                self.queue_text(key);
             }
         }
     }
@@ -2382,5 +2387,49 @@ mod tests {
         })
         .unwrap();
         assert_eq!(mounted_text(&c.commit().unwrap(), 2).max_lines, 1);
+    }
+
+    #[test]
+    fn a_frame_change_remounts_the_text_content_box() {
+        let mut c = Core::new(FakeEngine, size(px(320.0), px(480.0)));
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Text,
+        })
+        .unwrap();
+        c.apply(Op::CreateText {
+            id: 3,
+            text: "hello".into(),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.commit().unwrap();
+        let mut padded = Style::default();
+        padded.set("padding", StyleValue::Number(10.0)).unwrap();
+        apply_style(&mut c, 2, padded);
+        let batch = c.commit().unwrap();
+        let content = batch.items.iter().rev().find_map(|item| match item {
+            MountItem::Text { id: 2, content, .. } => Some(*content),
+            _ => None,
+        });
+        assert_eq!(
+            content,
+            Some(crate::geometry::rect(10.0, 10.0, 300.0, 16.0))
+        );
+        assert_eq!(
+            frame(&batch, 2),
+            crate::geometry::rect(0.0, 0.0, 320.0, 36.0)
+        );
     }
 }
