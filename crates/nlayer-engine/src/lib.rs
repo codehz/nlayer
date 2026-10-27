@@ -1,16 +1,19 @@
 //! The engine of one surface.
 //!
-//! [`Engine`] runs it on a dedicated thread. [`LocalEngine`] runs it on the
-//! caller's thread: the page has no thread of its own, so it sends input and
-//! calls [`LocalEngine::pump`] when a timer is due or [`LocalEngine::start`]'s
-//! `wake` says a fetch finished. Either way one [`nlayer_core::Core`] and one
-//! [`nlayer_js::Host`] apply what JS committed, lay out, and hand one
-//! [`MountBatch`] to the platform through a [`MountSink`]. The platform
-//! thread never blocks on [`Engine`].
+//! [`Engine`] runs it on a dedicated thread (native targets). [`LocalEngine`]
+//! runs it on the caller's thread, which is the only engine on wasm: the page
+//! has no thread of its own, so it sends input and calls [`LocalEngine::pump`]
+//! when a timer is due or a fetch finishes. Fetches on wasm are the host's
+//! ([`LocalEngine::start_with_host_fetch`]); the engine's ureq stack does not
+//! build there. Either way one [`nlayer_core::Core`] and one [`nlayer_js::Host`]
+//! apply what JS committed, lay out, and hand one [`MountBatch`] to the
+//! platform through a [`MountSink`]. The platform thread never blocks on
+//! [`Engine`].
 //!
 //! [`LocalEngine`] follows `nsh_engine::LocalEngine`, cut to this loop: no
 //! component tasks, display frames or posted JS calls.
 
+#[cfg(not(target_arch = "wasm32"))]
 mod net;
 
 use std::{
@@ -19,9 +22,11 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    thread::JoinHandle,
     time::Duration,
 };
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::thread::JoinHandle;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use nlayer_core::{
@@ -103,6 +108,8 @@ enum Message {
     KeyboardInset(Points),
     /// A request finished (its result is in the engine's slot).
     NetworkDone,
+    /// The engine thread was asked to exit. Never sent on wasm.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     Stop,
 }
 
@@ -144,12 +151,14 @@ impl EngineControl {
     }
 }
 
-/// A running surface.
+/// A running surface. Native only: wasm drives [`LocalEngine`].
+#[cfg(not(target_arch = "wasm32"))]
 pub struct Engine {
     control: EngineControl,
     thread: Option<JoinHandle<()>>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Engine {
     /// Starts the engine thread, loads the app and lays out its first
     /// frame before returning.
@@ -196,6 +205,7 @@ impl Engine {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for Engine {
     fn drop(&mut self) {
         let _ = self.control.tx.send(Message::Stop);
@@ -251,14 +261,22 @@ impl LocalNotify {
 impl<M: TextEngine> LocalEngine<M> {
     /// Loads the app and lays out its first frame before returning.
     /// `wake` runs when a fetch finishes and no pump is draining the queue.
-    /// Fetches run on the engine's HTTP stack.
+    /// Fetches run on the engine's HTTP stack. On wasm this is
+    /// [`start_with_host_fetch`](Self::start_with_host_fetch): ureq does not
+    /// build there, so the host answers `fetch`.
     pub fn start(
         config: EngineConfig,
         text_engine: M,
         sink: Arc<dyn MountSink>,
         wake: Wake,
     ) -> Result<Self, EngineError> {
-        Self::open(config, text_engine, sink, wake, false)
+        Self::open(
+            config,
+            text_engine,
+            sink,
+            wake,
+            cfg!(target_arch = "wasm32"),
+        )
     }
 
     /// [`start`](Self::start), but `fetch` is not sent: the host takes each
@@ -366,8 +384,10 @@ impl<M: TextEngine> LocalEngine<M> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 type Ready = Sender<Result<(), EngineError>>;
 
+#[cfg(not(target_arch = "wasm32"))]
 fn run<M, F>(
     config: EngineConfig,
     text_engine: F,
@@ -407,13 +427,17 @@ fn run<M, F>(
     }
 }
 
+/// A request's result, waiting until the engine applies it.
+type ResultSlot = Arc<Mutex<Vec<(u32, Result<HttpResponse, String>)>>>;
+
 /// One engine's state, whoever drives it.
 struct Session<M: TextEngine> {
     host: Host,
     core: Core<M>,
     sink: Arc<dyn MountSink>,
-    results: net::ResultSlot,
+    results: ResultSlot,
     edits: HashMap<NodeId, u32>,
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     notify: Wake,
     /// `fetch` waits for the host instead of the engine's HTTP stack.
     host_fetch: bool,
@@ -450,6 +474,8 @@ impl<M: TextEngine> Session<M> {
     }
 
     /// One message, then one frame. `false`: the engine was stopped.
+    /// The thread engine's path; wasm commits through [`on_burst`](Self::on_burst).
+    #[cfg(not(target_arch = "wasm32"))]
     fn on_message(&mut self, message: Message) -> bool {
         complete_network(&self.host, &self.results);
         if !self.apply(message) {
@@ -522,15 +548,20 @@ impl<M: TextEngine> Session<M> {
             self.outgoing.append(&mut requests);
             return;
         }
+        // Native: the engine's HTTP stack. Wasm never reaches this; `start`
+        // there is the host-fetch engine.
+        #[cfg(not(target_arch = "wasm32"))]
         for request in requests {
             let notify = Arc::clone(&self.notify);
             net::start(request, Arc::clone(&self.results), move || notify());
         }
+        #[cfg(target_arch = "wasm32")]
+        self.outgoing.append(&mut requests);
     }
 }
 
 /// Hands JS the responses that arrived.
-fn complete_network(host: &Host, results: &net::ResultSlot) {
+fn complete_network(host: &Host, results: &ResultSlot) {
     let done = std::mem::take(&mut *results.lock().expect("network results"));
     for (id, result) in done {
         host.complete_network(id, result);

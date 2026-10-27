@@ -1,11 +1,7 @@
 //! The HTTP stack behind `fetch`, on ureq (rustls with the webpki roots):
 //! one thread per request, whole bodies (v1 streams none).
 
-use std::{
-    io::Read,
-    sync::{Arc, Mutex, OnceLock},
-    time::Duration,
-};
+use std::{io::Read, sync::OnceLock, time::Duration};
 
 use nlayer_js::{HttpRequest, HttpResponse, NetworkRequest};
 use ureq::{Agent, ResponseExt};
@@ -13,8 +9,7 @@ use ureq::{Agent, ResponseExt};
 /// Redirects followed before the last response is handed on as it is.
 const MAX_REDIRECTS: u32 = 20;
 
-/// A request's result, waiting for the engine thread.
-pub(crate) type ResultSlot = Arc<Mutex<Vec<(u32, Result<HttpResponse, String>)>>>;
+pub(crate) use super::ResultSlot;
 
 fn agents() -> &'static (Agent, Agent) {
     static AGENTS: OnceLock<(Agent, Agent)> = OnceLock::new();
