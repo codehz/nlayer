@@ -94,3 +94,6 @@ Copied files:
   (bound on this host's classes; nsh's web class layer is not copied)
 - `crates/nlayer-js/src/random.rs` from `crates/nsh-js/src/standard/random.rs`
   (the wasm custom getrandom hook; the page fills `__nlayer_random_fill`)
+- `LocalEngine` in `crates/nlayer-engine/src/lib.rs` from `nsh_engine::LocalEngine`
+  (the caller's thread pumps input, timers and finished fetches; component
+  tasks, display frames and posted JS calls are not copied)

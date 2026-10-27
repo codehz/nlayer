@@ -1,6 +1,6 @@
 [package]
 name = "nlayer-engine"
-description = "The engine thread of one surface: QuickJS, the shadow tree, layout and frames."
+description = "One surface's engine: QuickJS, the shadow tree and layout, on its own thread or the caller's."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

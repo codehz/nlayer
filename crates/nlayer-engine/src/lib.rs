@@ -1,14 +1,27 @@
-//! The engine thread of one surface.
+//! The engine of one surface.
 //!
-//! The engine owns one [`nlayer_core::Core`] and one [`nlayer_js::Host`] on
-//! a dedicated thread: each wake-up (an input event, a resize, new insets)
-//! runs the app's code, applies what JS committed, lays out, and hands one
+//! [`Engine`] runs it on a dedicated thread. [`LocalEngine`] runs it on the
+//! caller's thread: the page has no thread of its own, so it sends input and
+//! calls [`LocalEngine::pump`] when a timer is due or [`LocalEngine::start`]'s
+//! `wake` says a fetch finished. Either way one [`nlayer_core::Core`] and one
+//! [`nlayer_js::Host`] apply what JS committed, lay out, and hand one
 //! [`MountBatch`] to the platform through a [`MountSink`]. The platform
-//! thread never blocks on the engine.
+//! thread never blocks on [`Engine`].
+//!
+//! [`LocalEngine`] follows `nsh_engine::LocalEngine`, cut to this loop: no
+//! component tasks, display frames or posted JS calls.
 
 mod net;
 
-use std::{collections::HashMap, sync::Arc, thread::JoinHandle, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread::JoinHandle,
+    time::Duration,
+};
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use nlayer_core::{
@@ -189,6 +202,128 @@ impl Drop for Engine {
     }
 }
 
+/// Called when a fetch finishes outside [`LocalEngine::pump`]. It may run
+/// on the fetch thread: schedule a pump, do not call [`LocalEngine::pump`]
+/// from it (the VM is not `Send`, and a pump must not re-enter).
+pub type Wake = Arc<dyn Fn() + Send + Sync>;
+
+/// An engine driven by its host's event loop instead of a thread of its
+/// own. Input sent through [`EngineControl`] is handled at the next
+/// [`pump`](Self::pump). A burst of input is one frame.
+pub struct LocalEngine<M: TextEngine> {
+    session: Session<M>,
+    rx: Receiver<Message>,
+    control: EngineControl,
+    /// Fetches finished outside a pump send here and call [`Wake`].
+    notify: Arc<LocalNotify>,
+    stopped: bool,
+}
+
+struct LocalNotify {
+    tx: Sender<Message>,
+    pumping: AtomicBool,
+    host: Mutex<Wake>,
+}
+
+impl LocalNotify {
+    fn new(tx: Sender<Message>, host: Wake) -> Self {
+        Self {
+            tx,
+            pumping: AtomicBool::new(false),
+            host: Mutex::new(host),
+        }
+    }
+
+    /// Queues the finished fetch, then tells the host unless a pump is
+    /// already draining the queue (it will see the message).
+    fn wake(&self) {
+        let _ = self.tx.send(Message::NetworkDone);
+        if !self.pumping.load(Ordering::SeqCst) {
+            (self.host.lock().expect("wake"))();
+        }
+    }
+
+    fn call_host(&self) {
+        (self.host.lock().expect("wake"))();
+    }
+}
+
+impl<M: TextEngine> LocalEngine<M> {
+    /// Loads the app and lays out its first frame before returning.
+    /// `wake` runs when a fetch finishes and no pump is draining the queue.
+    pub fn start(
+        config: EngineConfig,
+        text_engine: M,
+        sink: Arc<dyn MountSink>,
+        wake: Wake,
+    ) -> Result<Self, EngineError> {
+        let (tx, rx) = unbounded();
+        let notify = Arc::new(LocalNotify::new(tx.clone(), wake));
+        let hook: Wake = {
+            let notify = Arc::clone(&notify);
+            Arc::new(move || notify.wake())
+        };
+        let mut session = Session::open(config, text_engine, sink, hook)?;
+        session.commit();
+        Ok(LocalEngine {
+            session,
+            rx,
+            control: EngineControl { tx },
+            notify,
+            stopped: false,
+        })
+    }
+
+    /// A handle for sending input.
+    pub fn control(&self) -> EngineControl {
+        self.control.clone()
+    }
+
+    /// How long until the next timer (`None`: only input and [`Wake`]).
+    pub fn deadline(&self) -> Option<Duration> {
+        self.session.next_timer()
+    }
+
+    /// Handles the input sent since the last call, runs the timers that are
+    /// due and commits. Returns when to call again at the latest (`None`:
+    /// only for input or [`Wake`]).
+    pub fn pump(&mut self) -> Option<Duration> {
+        if self.stopped {
+            return None;
+        }
+        self.notify.pumping.store(true, Ordering::SeqCst);
+        // Bounded: a fetch that finishes while this pump runs is handled
+        // here too. A loop that never settles is not.
+        for _ in 0..4 {
+            let mut batch = Vec::new();
+            while let Ok(message) = self.rx.try_recv() {
+                batch.push(message);
+            }
+            let stop = if batch.is_empty() {
+                self.session.on_timer();
+                false
+            } else {
+                !self.session.on_burst(batch)
+            };
+            if stop {
+                self.stopped = true;
+                break;
+            }
+            if self.rx.is_empty() {
+                break;
+            }
+        }
+        // After the flag: a fetch that lands as the pump ends either is
+        // still in the queue (the host is called here) or sees the flag
+        // clear and calls the host itself.
+        self.notify.pumping.store(false, Ordering::SeqCst);
+        if !self.rx.is_empty() {
+            self.notify.call_host();
+        }
+        self.session.next_timer()
+    }
+}
+
 type Ready = Sender<Result<(), EngineError>>;
 
 fn run<M, F>(
@@ -202,53 +337,143 @@ fn run<M, F>(
     M: TextEngine + 'static,
     F: FnOnce() -> M,
 {
-    let mut core = Core::new(text_engine(), config.viewport);
-    let host = match Host::new() {
-        Ok(host) => host,
-        Err(e) => {
-            let _ = ready.send(Err(EngineError::new(e.message)));
+    let notify: Wake = Arc::new(move || {
+        let _ = wake.send(Message::NetworkDone);
+    });
+    let mut session = match Session::open(config, text_engine(), sink, notify) {
+        Ok(session) => session,
+        Err(error) => {
+            let _ = ready.send(Err(error));
             return;
         }
     };
-    host.set_os(config.os);
-    if let Err(e) = host.eval_source(&config.bundle) {
-        let _ = ready.send(Err(EngineError::new(e.message)));
-        return;
-    }
-    let results: net::ResultSlot = Arc::default();
-    pump(&host, &mut core, &*sink, &results, &wake);
+    session.commit();
     if ready.send(Ok(())).is_err() {
         return;
     }
-    let mut edits: HashMap<NodeId, u32> = HashMap::new();
     loop {
-        let wait = host.next_timer().unwrap_or(Duration::from_secs(3600));
-        let message = match rx.recv_timeout(wait) {
-            Ok(message) => message,
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                host.run_due_timers();
-                pump(&host, &mut core, &*sink, &results, &wake);
-                continue;
+        let wait = session.next_timer().unwrap_or(Duration::from_secs(3600));
+        match rx.recv_timeout(wait) {
+            Ok(message) => {
+                if !session.on_message(message) {
+                    break;
+                }
             }
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => session.on_timer(),
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
-        };
-        complete_network(&host, &results);
-        match message {
-            Message::Event { id, event, payload } => host.dispatch_event(id, event, &payload),
-            Message::Input { id, text } => {
-                let count = edits.entry(id).or_insert(0);
-                *count += 1;
-                core.input_changed(id, &text, *count);
-                host.dispatch_event(id, EventKind::Change, &EventPayload::Text(text));
-            }
-            Message::Resize(size) => core.set_viewport(size),
-            Message::SafeArea(insets) => core.set_safe_area(insets),
-            Message::KeyboardInset(height) => core.set_keyboard_inset(height),
-            Message::NetworkDone => {}
-            Message::Stop => break,
         }
-        host.run_due_timers();
-        pump(&host, &mut core, &*sink, &results, &wake);
+    }
+}
+
+/// One engine's state, whoever drives it.
+struct Session<M: TextEngine> {
+    host: Host,
+    core: Core<M>,
+    sink: Arc<dyn MountSink>,
+    results: net::ResultSlot,
+    edits: HashMap<NodeId, u32>,
+    notify: Wake,
+}
+
+impl<M: TextEngine> Session<M> {
+    fn open(
+        config: EngineConfig,
+        text_engine: M,
+        sink: Arc<dyn MountSink>,
+        notify: Wake,
+    ) -> Result<Self, EngineError> {
+        let core = Core::new(text_engine, config.viewport);
+        let host = Host::new().map_err(|error| EngineError::new(error.message))?;
+        host.set_os(config.os);
+        host.eval_source(&config.bundle)
+            .map_err(|error| EngineError::new(error.message))?;
+        Ok(Session {
+            host,
+            core,
+            sink,
+            results: Arc::default(),
+            edits: HashMap::new(),
+            notify,
+        })
+    }
+
+    fn next_timer(&self) -> Option<Duration> {
+        self.host.next_timer()
+    }
+
+    /// One message, then one frame. `false`: the engine was stopped.
+    fn on_message(&mut self, message: Message) -> bool {
+        complete_network(&self.host, &self.results);
+        if !self.apply(message) {
+            return false;
+        }
+        self.host.run_due_timers();
+        self.commit();
+        true
+    }
+
+    /// A timer fired and nothing else is waiting.
+    fn on_timer(&mut self) {
+        self.host.run_due_timers();
+        self.commit();
+    }
+
+    /// One burst of input, then one frame. `false`: the engine was stopped.
+    fn on_burst(&mut self, messages: Vec<Message>) -> bool {
+        complete_network(&self.host, &self.results);
+        for message in messages {
+            if !self.apply(message) {
+                return false;
+            }
+        }
+        self.host.run_due_timers();
+        self.commit();
+        true
+    }
+
+    fn apply(&mut self, message: Message) -> bool {
+        match message {
+            Message::Event { id, event, payload } => {
+                self.host.dispatch_event(id, event, &payload);
+            }
+            Message::Input { id, text } => {
+                let count = self.edits.entry(id).or_insert(0);
+                *count += 1;
+                self.core.input_changed(id, &text, *count);
+                self.host
+                    .dispatch_event(id, EventKind::Change, &EventPayload::Text(text));
+            }
+            Message::Resize(size) => self.core.set_viewport(size),
+            Message::SafeArea(insets) => self.core.set_safe_area(insets),
+            Message::KeyboardInset(height) => self.core.set_keyboard_inset(height),
+            Message::NetworkDone => {}
+            Message::Stop => return false,
+        }
+        true
+    }
+
+    /// Applies what JS queued, lays out, and hands the frame to the platform.
+    fn commit(&mut self) {
+        let mut ops = Vec::new();
+        self.host.take_ops(&mut ops);
+        for op in ops {
+            if let Err(error) = self.core.apply(op) {
+                if error.is_fatal() {
+                    self.sink.failed(EngineError::new(format!("{error:?}")));
+                    return;
+                }
+                log::error!("{error:?}");
+            }
+        }
+        if let Some(batch) = self.core.commit() {
+            self.sink.submit(batch);
+        }
+        let mut requests = Vec::new();
+        self.host.take_network(&mut requests);
+        for request in requests {
+            let notify = Arc::clone(&self.notify);
+            net::start(request, Arc::clone(&self.results), move || notify());
+        }
     }
 }
 
@@ -257,37 +482,5 @@ fn complete_network(host: &Host, results: &net::ResultSlot) {
     let done = std::mem::take(&mut *results.lock().expect("network results"));
     for (id, result) in done {
         host.complete_network(id, result);
-    }
-}
-
-/// Applies what JS queued, lays out, and hands the frame to the platform.
-fn pump<M: TextEngine>(
-    host: &Host,
-    core: &mut Core<M>,
-    sink: &dyn MountSink,
-    results: &net::ResultSlot,
-    wake: &Sender<Message>,
-) {
-    let mut ops = Vec::new();
-    host.take_ops(&mut ops);
-    for op in ops {
-        if let Err(error) = core.apply(op) {
-            if error.is_fatal() {
-                sink.failed(EngineError::new(format!("{error:?}")));
-                return;
-            }
-            log::error!("{error:?}");
-        }
-    }
-    if let Some(batch) = core.commit() {
-        sink.submit(batch);
-    }
-    let mut requests = Vec::new();
-    host.take_network(&mut requests);
-    for request in requests {
-        let wake = wake.clone();
-        net::start(request, results.clone(), move || {
-            let _ = wake.send(Message::NetworkDone);
-        });
     }
 }
