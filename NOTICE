@@ -22,4 +22,5 @@ Copied files:
 - `PointerEvents` from `nsh_core::props`
   `PropEnum` derives are omitted until the element macros exist.
 - `crates/nlayer-core/src/text.rs` from `crates/nsh-core/src/text.rs`
+- `crates/nlayer-core/src/core/layout_tree.rs` from `crates/nsh-core/src/core/layout_tree.rs`
 - `NodeId`, `ROOT_ID`, `EventMask` from `nsh_core::ops`
