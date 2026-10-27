@@ -2,9 +2,9 @@
 //!
 //! [`Host`] owns one QuickJS runtime and context and serves the native
 //! modules an app imports (`@nlayer/runtime`: the reactive graph, `mount`,
-//! `context` and `ErrorBoundary`; `@nlayer/ui`: the host components;
-//! `nlayer:rt`: the JSX runtime compiled code calls). A host is
-//! single-threaded (`!Send`): create and use it on the engine thread.
+//! `context` and `ErrorBoundary`; `@nlayer/ui`: the host components and
+//! `platform.os`; `nlayer:rt`: the JSX runtime compiled code calls). A host
+//! is single-threaded (`!Send`): create and use it on the engine thread.
 
 mod bridge;
 mod dom;
@@ -15,6 +15,7 @@ mod protocol;
 mod reactive;
 mod standard;
 mod state;
+mod url;
 
 use std::time::Duration;
 

@@ -865,11 +865,9 @@ unsafe extern "C" fn btoa(
     unsafe { qjs::JS_NewStringLen(cx, out.as_ptr().cast(), out.len() as _) }
 }
 
-/// `URL` and `URLSearchParams`.
+/// `URL` and `URLSearchParams`, on the `url` crate.
 fn url(cx: &Ctx<'_>) {
-    if let Err(error) = quickjs_stdlib::url::init(cx) {
-        log::error!("could not install URL: {error}");
-    }
+    crate::url::install(cx);
 }
 
 /// The VM's start, for `performance.now`.

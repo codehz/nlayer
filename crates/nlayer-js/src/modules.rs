@@ -1,7 +1,8 @@
 //! The native ES modules an app imports: `@nlayer/runtime` (the reactive
 //! graph, `mount`, `context`, `ErrorBoundary`) and `@nlayer/ui` (the host
-//! components). `nlayer:rt` is the renderer's, which only compiled JSX
-//! imports. `@nlayer/jsx-runtime` is types only and is not served here.
+//! components and `platform.os`). `nlayer:rt` is the renderer's, which only
+//! compiled JSX imports. `@nlayer/jsx-runtime` is types only and is not
+//! served here.
 //!
 //! The exports are made when a bundle first imports the module. QuickJS
 //! resolves imports when it compiles a module, so the loader declares the

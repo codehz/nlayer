@@ -25,8 +25,9 @@ pub(crate) struct State {
     pub(crate) net: crate::net::Queue,
     /// What `platform.os` reports. Set before the app imports `@nlayer/ui`.
     pub(crate) os: std::cell::Cell<crate::Os>,
+    /// Class ids of `URL` and `URLSearchParams`.
+    pub(crate) url_classes: crate::url::Classes,
 }
-
 /// Timers, by the id JS gave them and the instant they are due.
 #[derive(Default)]
 pub(crate) struct Timers {
@@ -103,6 +104,7 @@ pub(crate) fn install(cx: &Ctx<'_>) {
             timers: crate::state::Timers::default(),
             net: crate::net::Queue::default(),
             os: std::cell::Cell::new(crate::Os::Web),
+            url_classes: crate::url::Classes::default(),
         }));
         qjs::JS_SetContextOpaque(raw, state as *mut c_void);
         STATES.with(|m| m.borrow_mut().insert(rt as usize, state as usize));

@@ -33,6 +33,49 @@ fn base64_and_url() {
     "#);
 }
 
+/// `searchParams` rewrites the URL, and `search` / `href` parse it again.
+#[test]
+fn url_search_params_stay_live() {
+    run(r##"
+        const url = new URL("/a?b=1", "https://example.com/base/x");
+        if (url.href !== "https://example.com/a?b=1") throw new Error(url.href);
+        if (url.origin !== "https://example.com") throw new Error(url.origin);
+        if (String(url) !== url.href || url.toJSON() !== url.href) throw new Error("string");
+        url.searchParams.append("c", "2");
+        if (url.search !== "?b=1&c=2") throw new Error(url.search);
+        url.search = "?z=9";
+        if (url.searchParams.get("z") !== "9" || url.searchParams.get("b") !== null) {
+            throw new Error(url.searchParams.toString());
+        }
+        url.href = "https://example.com/q?m=1#h";
+        if (url.hash !== "#h" || url.searchParams.get("m") !== "1") throw new Error(url.href);
+        if (!URL.canParse("/c", "https://example.com/a/")) throw new Error("canParse relative");
+        if (!URL.canParse("https://example.com/") || URL.canParse("not a url")) {
+            throw new Error("canParse");
+        }
+        if (URL.parse("not a url") !== null) throw new Error("parse failed");
+        const parsed = URL.parse("c?d=1", "https://example.com/base/x");
+        if (!(parsed instanceof URL) || parsed.href !== "https://example.com/base/c?d=1") {
+            throw new Error(String(parsed));
+        }
+        try { new URL("not a url"); throw new Error("constructor accepted it"); }
+        catch (e) { if (!(e instanceof TypeError)) throw e; }
+
+        const params = new URLSearchParams([["b", "2"], ["a", "1"]]);
+        params.sort();
+        if (params.toString() !== "a=1&b=2" || params.size !== 2) throw new Error(params.toString());
+        params.set("a", "0");
+        params.append("a", "3");
+        if (params.getAll("a").join(",") !== "0,3") throw new Error(params.getAll("a").join(","));
+        params.delete("a", "0");
+        if (!params.has("a", "3") || params.has("a", "0")) throw new Error(params.toString());
+        if (new URLSearchParams("a=1+2").get("a") !== "1 2") throw new Error("plus");
+        const seen = [];
+        params.forEach(function (value, key) { seen.push(this + key + value); }, "T");
+        if (seen.join("|") !== "Tb2|Ta3") throw new Error(seen.join("|"));
+    "##);
+}
+
 #[test]
 fn performance_and_random_values() {
     run(r#"
