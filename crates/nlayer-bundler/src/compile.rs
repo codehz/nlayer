@@ -1,5 +1,6 @@
 //! One module to the JS the runtime runs: TypeScript removed and the JSX
-//! compiled by nlayer's compiler ([`crate::jsx`]) in one oxc pass.
+//! compiled by nlayer's compiler ([`crate::jsx`]) in one oxc pass, with a
+//! source map back to that module.
 
 use std::path::Path;
 
@@ -11,6 +12,7 @@ use oxc::{
     span::SourceType,
     transformer::{JsxOptions, TransformOptions, Transformer},
 };
+use oxc_sourcemap::SourceMap;
 
 /// What the compiler knows of the native modules a host serves:
 /// `@nlayer/runtime`, `@nlayer/ui` and the renderer's `nlayer:rt`.
@@ -42,6 +44,8 @@ impl NativeModules {
 /// A module compiled by [`compile_native`].
 pub(crate) struct Compiled {
     pub(crate) code: String,
+    /// Mappings from [`Self::code`] back to the module's source.
+    pub(crate) map: SourceMap<'static>,
 }
 
 /// TSX -> JS with nlayer's JSX compiler ([`crate::jsx`]), TypeScript
@@ -91,9 +95,15 @@ pub(crate) fn compile_native(
         elide_unused_imports(&mut program, &scoping);
     }
     let out = Codegen::new()
-        .with_options(CodegenOptions::default())
+        .with_options(CodegenOptions {
+            source_map_path: Some(path.to_path_buf()),
+            ..CodegenOptions::default()
+        })
         .build(&program);
-    Ok(Compiled { code: out.code })
+    Ok(Compiled {
+        code: out.code,
+        map: out.map.expect("source map requested").into_owned(),
+    })
 }
 
 /// The first named import of a native module that it does not export:

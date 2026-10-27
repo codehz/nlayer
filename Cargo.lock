@@ -1016,6 +1016,7 @@ dependencies = [
  "nlayer-core",
  "nlayer-js",
  "oxc 0.153.0",
+ "oxc_sourcemap",
  "rolldown",
  "rolldown_common",
  "rolldown_error",

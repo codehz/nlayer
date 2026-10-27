@@ -13,6 +13,7 @@ workspace = true
 nlayer-core.workspace = true
 nlayer-js.workspace = true
 oxc = { version = "=0.153.0", features = ["transformer", "codegen", "semantic", "ast_visit"] }
+oxc_sourcemap = "9"
 log.workspace = true
 serde_json.workspace = true
 anyhow = "1"

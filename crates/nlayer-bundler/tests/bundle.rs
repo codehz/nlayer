@@ -60,10 +60,34 @@ export function Label(props: { value: string }) {
     .expect("it bundles");
     // One module: the app's own import is gone, the native one stays.
     assert!(!out.code.contains("./Label"), "{}", out.code);
-    assert!(out.code.contains("from \"@nlayer/runtime\""), "{}", out.code);
+    assert!(
+        out.code.contains("from \"@nlayer/runtime\""),
+        "{}",
+        out.code
+    );
     assert!(out.code.contains("from \"nlayer:rt\""), "{}", out.code);
     assert!(!out.code.contains("<Text"), "JSX is compiled");
     assert!(!out.code.contains(": string"), "types are removed");
+    assert!(!out.code.contains("sourceMappingURL"), "{}", out.code);
+    let map: serde_json::Value = serde_json::from_str(&out.source_map).expect("source map JSON");
+    let sources: Vec<&str> = map["sources"]
+        .as_array()
+        .expect("sources")
+        .iter()
+        .filter_map(|s| s.as_str())
+        .collect();
+    assert!(
+        sources.iter().any(|s| s.ends_with("App.tsx")),
+        "{sources:?}"
+    );
+    assert!(
+        sources.iter().any(|s| s.ends_with("Label.tsx")),
+        "{sources:?}"
+    );
+    assert!(
+        map["mappings"].as_str().is_some_and(|m| !m.is_empty()),
+        "{map}"
+    );
     let host = nlayer_js::Host::new().unwrap();
     host.eval_source(&out.code).expect("the bundle runs");
     let mut ops = Vec::new();

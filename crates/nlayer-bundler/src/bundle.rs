@@ -1,5 +1,6 @@
 //! Bundling an app's modules (rolldown): one ES module holding the app's
-//! code, with the native modules left as imports.
+//! code, with the native modules left as imports and a source map back to
+//! the app's modules.
 
 use std::{
     path::PathBuf,
@@ -7,7 +8,9 @@ use std::{
     time::Instant,
 };
 
-use rolldown::{Bundler, BundlerOptions, InputItem, OutputFormat, Platform, RawMinifyOptions};
+use rolldown::{
+    Bundler, BundlerOptions, InputItem, OutputFormat, Platform, RawMinifyOptions, SourceMapType,
+};
 use rolldown_common::{CodeSplittingMode, Output};
 
 use crate::{compile::NativeModules, compile::strip_ansi, plugin};
@@ -68,6 +71,9 @@ impl BundleError {
 pub struct Bundle {
     /// The bundle: an ES module importing the native modules.
     pub code: String,
+    /// Source map (JSON) from [`Self::code`] back to the app's modules.
+    /// Kept out of the code: no `sourceMappingURL` comment.
+    pub source_map: String,
     /// Asset files the app imports, relative to the entry directory
     /// (`asset:/<path>` URIs refer to them).
     pub assets: Vec<PathBuf>,
@@ -113,6 +119,8 @@ pub async fn bundle_async(options: &BundleOptions) -> Result<Bundle, BundleError
         // Imports of the native modules stay.
         format: Some(OutputFormat::Esm),
         minify: Some(RawMinifyOptions::Bool(options.minify)),
+        // Kept out of the code; `build` writes the JSON beside the bundle.
+        sourcemap: Some(SourceMapType::Hidden),
         // The runtime has the web APIs, not Node's.
         platform: Some(Platform::Browser),
         // Dynamic imports are inlined: one module.
@@ -139,16 +147,22 @@ pub async fn bundle_async(options: &BundleOptions) -> Result<Bundle, BundleError
             None => BundleError::new(e.into_vec()),
         }
     })?;
-    let mut code = None;
+    let mut entry = None;
     for asset in output.assets {
         let Output::Chunk(chunk) = asset else {
             continue;
         };
         if chunk.is_entry {
-            code = Some(chunk.code.clone());
+            let map = chunk
+                .map
+                .as_ref()
+                .map(|m| m.to_json_string())
+                .ok_or_else(|| BundleError::other("bundle produced no source map"))?;
+            entry = Some((chunk.code.clone(), map));
         }
     }
-    let code = code.ok_or_else(|| BundleError::other("bundle produced no entry chunk"))?;
+    let (code, source_map) =
+        entry.ok_or_else(|| BundleError::other("bundle produced no entry chunk"))?;
     let mut assets: Vec<PathBuf> = std::mem::take(&mut *assets.lock().expect("assets lock"))
         .into_iter()
         .filter_map(|p| p.strip_prefix(&cwd_root).ok().map(PathBuf::from))
@@ -165,6 +179,7 @@ pub async fn bundle_async(options: &BundleOptions) -> Result<Bundle, BundleError
     watch_files.dedup();
     Ok(Bundle {
         code,
+        source_map,
         assets,
         watch_files,
         elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,

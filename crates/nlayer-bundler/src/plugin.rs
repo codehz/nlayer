@@ -267,6 +267,7 @@ impl Plugin for NlayerPlugin {
             .map_err(|detail| self.fail(path, &detail))?;
         Ok(Some(HookTransformOutput {
             code: Some(compiled.code),
+            map: compiled.map.into(),
             module_type: Some(ModuleType::Js),
             ..Default::default()
         }))
