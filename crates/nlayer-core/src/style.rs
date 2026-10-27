@@ -1,7 +1,7 @@
 //! Styles: the keys a view stores, how they merge, and the Taffy layout they become.
 //!
 //! Extracted from `nsh_core::style`. The v1 public subset is the whitelist
-//! in `AGENTS.md`, including grid and static transform. Other fields stay
+//! in `docs/v1.md`, including grid and static transform. Other fields stay
 //! in the IR so the copied apply path still type-checks. Shadow and
 //! gradient are later; the rest of those fields are not a commitment.
 //! v1 does not expose them.

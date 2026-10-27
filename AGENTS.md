@@ -2,11 +2,7 @@
 
 native-layer（crate、CLI、JS 模块都叫 `nlayer`）是一个 TSX 应用在 web、iOS、Android 上跑的运行时。机制从 [nsh](https://github.com/longbridge/nsh) 抽进新 crate，不保证跑现有 nsh 应用，也不从零重写渲染器。来源和 Apache-2.0 归属在 `NOTICE`。抽代码的起点是 nsh `ca59368b`。
 
-这份文件是范围。和它冲突的实现改范围，不改文件来迁就实现。
-
-## v1 完成的标准
-
-同一个 TSX 应用，用 `nlayer init` / `build` / `run --target web|ios|android` 在三端跑起来。`nlayer test` 在无窗口引擎里跑 TSX，断言 mount 树、文本和布局。验收屏至少覆盖：纵向布局、一段 grid、嵌套 `Text` span、打包图片、双轴 `Scroll`、单行受控 `Input`、`onPress`、一处静态 transform、一次 `fetch` JSON、safe area 的 `env()`。
+本文件是不做的事和搬运纪律。产品范围在 `docs/v1.md`（验收、产品面、公开模块导出）。两份冲突时，不做的事以本文件为准，产品行为以 `docs/v1.md` 为准。`docs/v1.md` 不能把本文件禁止的东西写成 v1。不要把 `docs/v1.md` `@` 进本文件。
 
 ## 不要做
 
@@ -57,31 +53,19 @@ v1 不做。不写后期做不做，也不写后期方案。
 
 缺的依赖是缺的。用最小的真实类型把已拷文件编译过去可以，用整子系统去填一个字段不行。`todo!()`、空函数、未接入的桩不算搬完。
 
-## 已定的产品面
+## 名字
 
-- 宿主：`View`、`Text`、`Image`、`Scroll`、`Input`。`onPress`。`If` / `Each`。图：`signal`、`computed`、`effect`、`batch`、`untracked`、`cleanup`、`context`，外加 `ErrorBoundary`。v1 无 `resource`（以后要做，不留）。函数名沿用 nsh，不是 `createSignal`。
-- 文本：嵌套 `Text` 是同一段的 span（颜色、字重、字号、斜体），继承父级文本样式。
-- 输入：单行受控 `value` / `onChange` / `placeholder` / `disabled`，加 `secureTextEntry` 和 `keyboardType`（`text` / `email` / `number` / `phone`）。
-- 样式：Taffy。未写 `display` 为纵向 flex，`flexShrink` 为 0，无 `min-width: auto`。公开子集是白名单：盒模型、flex、relative/absolute、尺寸、margin/padding（含 `env()`）、纯色背景、border、radius、opacity、overflow、zIndex、列出的文本样式、`objectFit`、静态 transform（`transform` / `translate` / `rotate` / `scale` / `transformOrigin`）、grid（`display: "grid"`、`gridTemplateColumns` / `gridTemplateRows`、`gridAutoColumns` / `gridAutoRows`、`gridAutoFlow`、`gridColumn` / `gridRow` 及其 `Start` / `End`，含 line names）。`activeStyle` / `hoverStyle` / `focusStyle` 进协议，由平台应用。白名单外的 key，不管 IR 里有没有、apply 接没接，都在终端报错且不生效，不进 mount 协议或 JS 模块。任何 `class` 同样报错且不生效，不拆引擎。
-- 滚动：原生，两轴。v1 无刷新、缩放、分页（以后要做，不留）。
-- 图片：打包 `import` 加 `http(s)`。v1 是 PNG / JPEG / WebP（SVG、GIF 以后要做）。系统字体（自定义字体不预承诺）。
-- 平台 API：`console`、timers、`queueMicrotask`、`URL` / `URLSearchParams`、`TextEncoder` / `TextDecoder`、`AbortController`、`atob` / `btoa`、`performance.now`、`crypto.getRandomValues`、`fetch` / `Request` / `Response` / `Headers`。body 只有 text / json / arrayBuffer / blob。`Blob` 只作为这个结果类型。`crypto.subtle` 是缺的，不是空桩（以后要做）。`fetch` 任意 URL，跟随重定向，认 `AbortSignal`。v1 不带 cookie（以后要做）。无 capability grant（永久）。QuickJS 宿主（iOS、Android、`nlayer test`）由引擎发请求。Web 上应用在页面里跑，`fetch` 就是浏览器的，不进 wasm
-- UI 环境留在 `@nlayer/ui`：`platform.os` 为 `web` | `ios` | `android`，safe area，keyboard inset。只通过 `env()` 进入 padding/margin。
-- 运行：iOS、Android 和 `nlayer test` 用 QuickJS。Web 不把 QuickJS 打进 wasm：页面执行应用的 ES module，wasm 只跑 reactive 图、布局和 mount batch，DOM 由页面挂。应用的 `fetch` 留在页面，不经引擎。引擎线程产出 batch，平台主线程挂原生视图。`run` 监视 TSX 和资源，重建后重启引擎，状态丢掉。编译失败只打在终端，上一份成功的引擎继续跑。v1 无 HMR（以后要做）；监视重建、重启、丢状态仍是 v1。
-- 测试：headless 跑 TSX。文本度量用确定性替身。v1 不对齐真机像素；像素对齐断言和三端 UI 自动化以后要做。
-- 底线：iOS 15+，Android API 28+。`run` 用模拟器或浏览器，不重装 App。构建不需要 Node。`build` 写出 bundle、类型和 source map。
-
-名字：仓库 `native-layer`，二进制 `nlayer`，crate 前缀 `nlayer-`。应用源码不写裸 `@nlayer`。公开两个原生模块，互不重导出：`@nlayer/runtime`（`signal`、`computed`、`effect`、`batch`、`untracked`、`cleanup`、`context`、`mount`、`ErrorBoundary`）和 `@nlayer/ui`（`View`、`Text`、`Image`、`Scroll`、`Input`，以及 `platform`）。`@nlayer/jsx-runtime` 只有类型，没有实现：`jsx` 为 `react-jsx`，`jsxImportSource` 为 `@nlayer`，这个裸 scope 只写在 tsconfig。编译后的 JSX 导入内部模块 `nlayer:rt`，应用不写它，也不写 `@nlayer/jsx-runtime`。v1 没有 `@nlayer/jsx-dev-runtime`。
+仓库 `native-layer`，二进制 `nlayer`，crate 前缀 `nlayer-`。应用源码不写裸 `@nlayer`。公开两个原生模块，互不重导出：`@nlayer/runtime` 和 `@nlayer/ui`。导出名单在 `docs/v1.md`。`@nlayer/jsx-runtime` 只有类型，没有实现：`jsx` 为 `react-jsx`，`jsxImportSource` 为 `@nlayer`，这个裸 scope 只写在 tsconfig。编译后的 JSX 导入内部模块 `nlayer:rt`，应用不写它，也不写 `@nlayer/jsx-runtime`。v1 没有 `@nlayer/jsx-dev-runtime`。
 
 ## 仓库
 
-- 计划中的 crate：`nlayer-core`、`nlayer-js`、`nlayer-engine`、`nlayer-bundler`、`nlayer-platform-web`、`nlayer-platform-ios`、`nlayer-platform-android`、`nlayer-cli`、`nlayer-testing`。没有 `nlayer-dev`，没有 `nlayer-package`，没有 `nlayer-base`。`nlayer package` 和 `nsh-dev` 协议以后要做，v1 不为此加 crate。
-
-已经在 `nlayer-core` 里的：reactive 图、几何单位、样式 IR、attributed text。还没有阴影树、mount batch、JS 宿主、引擎、打包器、三端宿主和 CLI。不要在这些还不存在时写调用它们的桩。
+只有这些 crate：`nlayer-core`、`nlayer-js`、`nlayer-engine`、`nlayer-bundler`、`nlayer-platform-web`、`nlayer-platform-ios`、`nlayer-platform-android`、`nlayer-cli`、`nlayer-testing`。没有 `nlayer-dev`，没有 `nlayer-package`，没有 `nlayer-base`。`nlayer package` 和 `nsh-dev` 协议以后要做，v1 不为此加 crate。
 
 ## 改代码时
 
-- 先读这份文件，再读要改的模块的 `//!`。
+- 先读本文件，再读要改的模块的 `//!`。动到产品行为（宿主、样式、平台 API、模块导出、验收）先读 `docs/v1.md`。
+- 产品范围要变：先改 `docs/v1.md`，或与实现在同一切片里改。文件写目标契约，不写做到哪了。
+- 交给子代理的任务写明相关的不做事项，以及 `docs/v1.md` 里相关的产品范围。子代理不加载 `AGENTS.md`。
 - 一个提交是一个做完的切片：行为能跑，测试是绿的，没有 `todo!()`、空实现或「先留着」的桩。红的树不提交。
-- 现在的验证是 `cargo test -p nlayer-core`。`nlayer test` 落地之后，动到 TSX、引擎或宿主的切片还要它是绿的。不要用空测试代替。
+- 改过的 crate 跑 `cargo test -p`。动到 TSX、引擎或宿主的切片还要 `nlayer test` 是绿的。不要用空测试代替。
 - 拷来的文件保留行为。改名和裁掉 v1 不用的入口可以，重写算法不行。
