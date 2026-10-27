@@ -49,3 +49,11 @@ Copied files:
 - `crates/nlayer-js/src/error.rs` from `crates/nsh-js/src/error.rs`
 - `crates/nlayer-js/src/modules.rs` from `crates/nsh-js/src/modules.rs`
   (the native module loader; the table is `@nlayer`'s graph exports)
+- `crates/nlayer-js/src/dom.rs` from `crates/nsh-js/src/dom.rs` (the v1
+  renderer: host elements, text, style and prop decoding, children and
+  keyed rows, components, context, error boundaries, mount)
+- `crates/nlayer-js/src/protocol.rs` from `crates/nsh-js/src/protocol.rs`
+  (styles with a static transform list, the v1 host props; animation,
+  shadows, filters and native components are not copied)
+- `crates/nlayer-js/src/modules.rs` extends the loader table with
+  `nlayer:rt` and the host components as values

@@ -12,10 +12,11 @@ use std::{cell::RefCell, ffi::c_void, ptr};
 use rquickjs::{Ctx, qjs};
 use rustc_hash::FxHashMap;
 
-use crate::reactive::Graph;
+use crate::{dom::Dom, reactive::Graph};
 
 pub(crate) struct State {
     pub(crate) graph: Graph,
+    pub(crate) dom: Dom,
 }
 
 thread_local! {
@@ -45,7 +46,8 @@ pub(crate) fn install(cx: &Ctx<'_>) {
     unsafe {
         let rt = qjs::JS_GetRuntime(raw);
         let graph = crate::reactive::new_graph(raw);
-        let state = Box::into_raw(Box::new(State { graph }));
+        let dom = crate::dom::new();
+        let state = Box::into_raw(Box::new(State { graph, dom }));
         qjs::JS_SetContextOpaque(raw, state as *mut c_void);
         STATES.with(|m| m.borrow_mut().insert(rt as usize, state as usize));
     }
@@ -67,6 +69,7 @@ pub(crate) fn uninstall(cx: &Ctx<'_>) {
         STATES.with(|m| m.borrow_mut().remove(&(rt as usize)));
         qjs::JS_SetContextOpaque(raw, ptr::null_mut());
         let mut state = Box::from_raw(p);
+        state.dom.free_all(raw);
         crate::reactive::free_all(&mut state.graph, raw);
     }
 }

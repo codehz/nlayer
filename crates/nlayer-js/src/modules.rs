@@ -9,15 +9,21 @@ use std::ffi::{CStr, c_char, c_int};
 
 use rquickjs::{Ctx, Module, qjs};
 
-use crate::reactive::{self, Native};
+use crate::{
+    dom,
+    reactive::{self, Native},
+};
 
 type JsContext = qjs::JSContext;
+type JsValue = qjs::JSValue;
 
 /// A value a native module exports.
 #[derive(Clone, Copy)]
 pub(crate) enum Export {
     /// A native function and its `length`.
     Function(Native, c_int),
+    /// A value made when the module is first imported (owned).
+    Value(fn(*mut JsContext) -> JsValue),
 }
 
 /// An export: its name and how it is made.
@@ -29,7 +35,30 @@ pub(crate) struct NativeModule {
     pub(crate) exports: &'static [Item],
 }
 
-/// `@nlayer`: the reactive graph apps write components with.
+/// `View` as a component: builds the host element and its children.
+fn view(cx: *mut JsContext) -> JsValue {
+    // SAFETY: a live context.
+    dom::host_component(cx, "view", true)
+}
+
+fn text(cx: *mut JsContext) -> JsValue {
+    dom::host_component(cx, "text", true)
+}
+
+fn image(cx: *mut JsContext) -> JsValue {
+    dom::host_component(cx, "image", false)
+}
+
+fn scroll(cx: *mut JsContext) -> JsValue {
+    dom::host_component(cx, "scroll", true)
+}
+
+fn input(cx: *mut JsContext) -> JsValue {
+    dom::host_component(cx, "input", false)
+}
+
+/// `@nlayer`: the reactive graph and the host components apps write
+/// components with.
 const NL: &[Item] = &[
     ("signal", Export::Function(reactive::signal, 2)),
     ("computed", Export::Function(reactive::computed, 2)),
@@ -37,12 +66,26 @@ const NL: &[Item] = &[
     ("batch", Export::Function(reactive::batch, 1)),
     ("untracked", Export::Function(reactive::untrack, 1)),
     ("cleanup", Export::Function(reactive::on_cleanup, 1)),
+    ("context", Export::Function(dom::context, 1)),
+    ("mount", Export::Function(dom::mount, 2)),
+    ("ErrorBoundary", Export::Function(dom::error_boundary, 1)),
+    ("View", Export::Value(view)),
+    ("Text", Export::Value(text)),
+    ("Image", Export::Value(image)),
+    ("Scroll", Export::Value(scroll)),
+    ("Input", Export::Value(input)),
 ];
 
-pub(crate) const MODULES: &[NativeModule] = &[NativeModule {
-    name: "@nlayer",
-    exports: NL,
-}];
+pub(crate) const MODULES: &[NativeModule] = &[
+    NativeModule {
+        name: "@nlayer",
+        exports: NL,
+    },
+    NativeModule {
+        name: "nlayer:rt",
+        exports: dom::RT_EXPORTS,
+    },
+];
 
 /// Resolves a module name to the name the loader is asked for. Only bare
 /// names are native modules: anything else comes from the bundle.
@@ -130,6 +173,7 @@ unsafe extern "C" fn init(cx: *mut JsContext, m: *mut qjs::JSModuleDef) -> c_int
                     let cname = std::ffi::CString::new(*export).unwrap_or_default();
                     reactive::new_function(cx, &cname, *f, *length)
                 }
+                Export::Value(make) => make(cx),
             };
             if qjs::JS_IsException(value) {
                 return -1;

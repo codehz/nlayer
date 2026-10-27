@@ -18,8 +18,6 @@
 //! context's opaque pointer, every access is short, and values leave their
 //! node before they are freed.
 
-#![allow(dead_code)] // The renderer's natives (next slice) call these.
-
 use std::{
     ffi::{CStr, c_int, c_void},
     ptr,
@@ -1034,15 +1032,6 @@ pub(crate) unsafe extern "C" fn signal(
     object(cx, class, id)
 }
 
-/// Whether `v` (borrowed) is a signal object (`signal()`), and whether
-/// it is a memo's (`memo()`, read-only).
-pub(crate) fn signal_kind(cx: *mut JsContext, v: JsValue) -> (bool, bool) {
-    let classes = unsafe { graph(cx) }.data.classes;
-    // SAFETY: reads the class of a live value.
-    let class = unsafe { qjs::JS_GetClassID(v) };
-    (class == classes.signal, class == classes.memo)
-}
-
 /// The signal `this` names, or a thrown `TypeError`.
 fn this_signal(cx: *mut JsContext, this: JsValue) -> Result<u32, JsValue> {
     let class = unsafe { graph(cx) }.data.classes.signal;
@@ -1191,20 +1180,6 @@ pub(crate) fn set_signal(cx: *mut JsContext, obj: JsValue, value: JsValue) {
     }
 }
 
-/// The number signal object `obj` holds (untracked), if it holds one.
-pub(crate) fn peek_number(cx: *mut JsContext, obj: JsValue) -> Option<f64> {
-    let v = peek(cx, obj);
-    // SAFETY: an inline check and a conversion of a live value.
-    unsafe {
-        if !qjs::JS_IsNumber(v) {
-            return None;
-        }
-        let mut n = 0f64;
-        qjs::JS_ToFloat64(cx, &mut n, v);
-        Some(n)
-    }
-}
-
 /// The current value of signal object `obj` (borrowed; untracked), if live.
 pub(crate) fn peek(cx: *mut JsContext, obj: JsValue) -> JsValue {
     let class = unsafe { graph(cx) }.data.classes.signal;
@@ -1227,11 +1202,6 @@ pub(crate) fn memo(cx: *mut JsContext, func: JsValue, equals_truthy: bool) -> Js
     object(cx, class, id)
 }
 
-/// Runs `f` as one batch: its writes apply together at the end.
-pub(crate) fn batch_with<R>(cx: *mut JsContext, f: impl FnOnce() -> R) -> R {
-    r::batch(Js(cx), f)
-}
-
 /// Runs `f` with no listener (untracked).
 pub(crate) fn untracked_with<R>(cx: *mut JsContext, f: impl FnOnce() -> R) -> R {
     r::untracked(Js(cx), f)
@@ -1242,27 +1212,6 @@ pub(crate) fn untracked_with<R>(cx: *mut JsContext, f: impl FnOnce() -> R) -> R 
 /// with [`dispose_owner`].
 pub(crate) fn with_root<R>(cx: *mut JsContext, f: impl FnOnce() -> R) -> (u32, R) {
     r::with_root(Js(cx), f)
-}
-
-/// Whether something owns what runs now (a component, an effect, a
-/// root): its cleanups run when it goes.
-pub(crate) fn has_owner(cx: *mut JsContext) -> bool {
-    unsafe { graph(cx) }.has_owner()
-}
-
-/// The current owner (for [`with_root_under`] later).
-pub(crate) fn current_owner(cx: *mut JsContext) -> u32 {
-    unsafe { graph(cx) }.owner()
-}
-
-/// [`with_root`] as if run under `owner` (from [`current_owner`]): rows a
-/// list makes later see the list's context.
-pub(crate) fn with_root_under<R>(
-    cx: *mut JsContext,
-    owner: u32,
-    f: impl FnOnce() -> R,
-) -> (u32, R) {
-    r::with_root_under(Js(cx), owner, f)
 }
 
 /// Disposes owner `id` (a root from [`with_root`]), untracked.
