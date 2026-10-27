@@ -7,3 +7,8 @@ Version 2.0. Extracted from nsh commit ca59368b.
 
 Copied sources keep their original notices. Changes are described in the
 git history of this repository.
+
+Copied files:
+- `crates/nlayer-core/src/reactive.rs`
+- `crates/nlayer-core/src/reactive/tests.rs`
+  from `crates/nsh-core/src/reactive.rs` and `reactive/tests.rs`
