@@ -126,7 +126,7 @@ impl ApplyError {
 }
 
 /// A scroll view's axis and the content size last sent to the platform.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct ScrollState {
     horizontal: bool,
     /// Last content size sent.
@@ -138,18 +138,8 @@ struct ScrollState {
     content_item: Option<usize>,
 }
 
-impl Default for ScrollState {
-    fn default() -> Self {
-        Self {
-            horizontal: false,
-            content: None,
-            content_item: None,
-        }
-    }
-}
-
 /// A single-line input's text and the configuration last sent.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct InputState {
     value: String,
     /// Edits reported by the platform.
@@ -160,18 +150,6 @@ struct InputState {
     content: Option<Bounds<Points>>,
     /// The input is measured with its placeholder (its value is empty).
     placeholder_measured: bool,
-}
-
-impl Default for InputState {
-    fn default() -> Self {
-        Self {
-            value: String::new(),
-            count: 0,
-            config: InputConfig::default(),
-            content: None,
-            placeholder_measured: false,
-        }
-    }
 }
 
 struct Node {
@@ -583,7 +561,7 @@ impl<M: TextEngine> Core<M> {
         if key != self.root {
             self.nodes[key as usize].direction = direction;
         }
-        self.nodes[key as usize].logical = (!logical.is_empty()).then(|| Box::new(logical.clone()));
+        self.nodes[key as usize].logical = (!logical.is_empty()).then(|| Box::new(logical));
         let rtl = self.resolved_rtl(key);
         let flipped = self.nodes[key as usize].rtl != rtl;
         style::resolve_normal_alignment(&mut layout);
@@ -2490,11 +2468,15 @@ mod tests {
             .unwrap();
         }
         c.commit().unwrap();
-        let mut high = Style::default();
-        high.z_index = 5;
+        let high = Style {
+            z_index: 5,
+            ..Default::default()
+        };
         apply_style(&mut c, 3, high);
-        let mut mid = Style::default();
-        mid.z_index = 1;
+        let mid = Style {
+            z_index: 1,
+            ..Default::default()
+        };
         apply_style(&mut c, 2, mid);
         let batch = c.commit().unwrap();
         assert!(batch.items.iter().any(|item| matches!(
@@ -3900,10 +3882,7 @@ mod tests {
         let mut scroll = sized(150.0, 50.0);
         scroll.direction = Some(true);
         scroll
-            .set(
-                "paddingLeft",
-                StyleValue::Str("env(safe-area-inset-left)"),
-            )
+            .set("paddingLeft", StyleValue::Str("env(safe-area-inset-left)"))
             .unwrap();
         apply_style(&mut c, 2, scroll);
         for id in [3, 4] {

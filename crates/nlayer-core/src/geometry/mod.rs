@@ -33,7 +33,6 @@ pub use units::{
 
 /// Bounds at `x`, `y` of `width` × `height` points, for the core's
 /// layout code, which computes in taffy's `f32`.
-
 #[inline]
 pub(crate) const fn rect(x: f32, y: f32, width: f32, height: f32) -> Bounds<Points> {
     Bounds::new(

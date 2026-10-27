@@ -68,15 +68,27 @@ impl Space {
             } else {
                 (K::MarginRight, K::MarginLeft)
             };
-            let (key, other) = if self.reverse_x { (start, end) } else { (end, start) };
+            let (key, other) = if self.reverse_x {
+                (start, end)
+            } else {
+                (end, start)
+            };
             let _ = style.set_key(other, StyleValue::Number(0.0));
             let _ = style.apply_value(key, v);
         }
         if let Some(v) = &self.y
             && self.important_y == important
         {
-            let key = if self.reverse_y { K::MarginTop } else { K::MarginBottom };
-            let other = if self.reverse_y { K::MarginBottom } else { K::MarginTop };
+            let key = if self.reverse_y {
+                K::MarginTop
+            } else {
+                K::MarginBottom
+            };
+            let other = if self.reverse_y {
+                K::MarginBottom
+            } else {
+                K::MarginTop
+            };
             let _ = style.set_key(other, StyleValue::Number(0.0));
             let _ = style.apply_value(key, v);
         }
