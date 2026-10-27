@@ -1,14 +1,14 @@
-//! The reactive graph as the app module `@nlayer` exposes it.
+//! The reactive graph as the app module `@nlayer/runtime` exposes it.
 
 use nlayer_js::Host;
 
-/// `@nlayer`'s exports, driven from a module.
+/// `@nlayer/runtime`'s exports, driven from a module.
 #[test]
 fn signals_are_read_by_calling_and_written_with_set_and_update() {
     let host = Host::new().unwrap();
     host.eval_source(
         r#"
-        import { signal, computed, effect, batch, untracked } from "@nlayer";
+        import { signal, computed, effect, batch, untracked } from "@nlayer/runtime";
 
         const count = signal(0);
         const doubled = computed(() => count() * 2);
@@ -35,7 +35,7 @@ fn cleanup_runs_before_each_rerun() {
     let host = Host::new().unwrap();
     host.eval_source(
         r#"
-        import { signal, effect, cleanup } from "@nlayer";
+        import { signal, effect, cleanup } from "@nlayer/runtime";
 
         const count = signal(0);
         const log = [];

@@ -13,7 +13,7 @@ use nlayer_js::EventPayload;
 
 /// The counter: a press increments a signal a text shows.
 const BUNDLE: &str = r#"
-import { mount, signal } from "@nlayer";
+import { mount, signal } from "@nlayer/runtime";
 import { element, prop, append, insert, text } from "nlayer:rt";
 
 const count = signal(0);
@@ -96,7 +96,7 @@ fn a_press_updates_the_frame() {
 
 /// A view that fills the surface.
 const FILL: &str = r#"
-import { mount } from "@nlayer";
+import { mount } from "@nlayer/runtime";
 import { element, prop } from "nlayer:rt";
 
 function App() {
@@ -157,7 +157,8 @@ fn a_bundle_that_throws_fails_to_start() {
 #[test]
 fn a_compiled_tsx_app_runs() {
     let source = r#"
-import { mount, signal, Text, View } from "@nlayer";
+import { mount, signal } from "@nlayer/runtime";
+import { Text, View } from "@nlayer/ui";
 
 function App() {
     const count = signal(7);
@@ -187,7 +188,7 @@ mount(App);
 #[test]
 fn timers_make_later_frames() {
     const TIMED: &str = r#"
-import { mount, signal } from "@nlayer";
+import { mount, signal } from "@nlayer/runtime";
 import { element, append, insert, text } from "nlayer:rt";
 
 const count = signal(0);

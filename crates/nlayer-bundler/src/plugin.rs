@@ -151,9 +151,19 @@ impl Plugin for NlayerPlugin {
             .importer
             .map(|i| format!("{}: ", self.rel(Path::new(i))))
             .unwrap_or_default();
+        if spec == "@nlayer" {
+            return Err(self.refuse(format!(
+                "{from}`@nlayer` is not a module: import signal, computed, effect, batch, untracked, cleanup, context, mount and ErrorBoundary from \"@nlayer/runtime\", and View, Text, Image, Scroll and Input from \"@nlayer/ui\""
+            )));
+        }
+        if spec == "@nlayer/jsx-runtime" {
+            return Err(self.refuse(format!(
+                "{from}`@nlayer/jsx-runtime` is types only (`jsxImportSource` is \"@nlayer\"); compiled JSX imports \"nlayer:rt\", which apps do not write"
+            )));
+        }
         if spec == "solid-js" || spec.starts_with("solid-js/") {
             return Err(self.refuse(format!(
-                "{from}`{spec}` is not part of nlayer apps: import signal, computed, effect, batch, untracked, cleanup, context and mount from \"@nlayer\""
+                "{from}`{spec}` is not part of nlayer apps: import signal, computed, effect, batch, untracked, cleanup, context, mount and ErrorBoundary from \"@nlayer/runtime\""
             )));
         }
         // Node's modules are not there: the runtime has the web APIs only.

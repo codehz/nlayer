@@ -45,7 +45,7 @@ fn elements_styles_and_children_reach_the_core() {
     let host = Host::new().unwrap();
     host.eval_source(
         r#"
-        import { mount } from "@nlayer";
+        import { mount } from "@nlayer/runtime";
         import { element, prop, append, text } from "nlayer:rt";
 
         function App() {
@@ -96,7 +96,7 @@ fn press_handlers_are_listened_and_called() {
     let host = Host::new().unwrap();
     host.eval_source(
         r#"
-        import { mount, signal } from "@nlayer";
+        import { mount, signal } from "@nlayer/runtime";
         import { element, prop, append, text } from "nlayer:rt";
 
         const pressed = signal(0);
@@ -129,7 +129,7 @@ fn press_handlers_are_listened_and_called() {
     host.dispatch_event(id, EventKind::Press, &EventPayload::None);
     // The handler ran: the next script reads the signal's value.
     let error = host
-        .eval_source("import { signal } from '@nlayer'; throw new Error('check');")
+        .eval_source("import { signal } from '@nlayer/runtime'; throw new Error('check');")
         .unwrap_err();
     assert!(error.message.contains("check"));
 }
@@ -141,7 +141,7 @@ fn dynamic_children_are_kept_by_their_owner() {
     let host = Host::new().unwrap();
     host.eval_source(
         r#"
-        import { mount, signal } from "@nlayer";
+        import { mount, signal } from "@nlayer/runtime";
         import { element, append, insert, prop, text } from "nlayer:rt";
 
         const count = signal(0);
@@ -191,7 +191,7 @@ fn each_keeps_keyed_rows() {
     let host = Host::new().unwrap();
     host.eval_source(
         r#"
-        import { mount, signal } from "@nlayer";
+        import { mount, signal } from "@nlayer/runtime";
         import { element, prop, append, insert, each, text } from "nlayer:rt";
 
         const items = signal(["a", "b"]);
@@ -242,7 +242,7 @@ fn error_boundary_shows_the_fallback() {
     let host = Host::new().unwrap();
     host.eval_source(
         r#"
-        import { mount, ErrorBoundary } from "@nlayer";
+        import { mount, ErrorBoundary } from "@nlayer/runtime";
         import { element, append, text, component } from "nlayer:rt";
 
         const label = (value) => {
@@ -277,7 +277,7 @@ fn context_provides_values() {
     let host = Host::new().unwrap();
     host.eval_source(
         r#"
-        import { mount, context } from "@nlayer";
+        import { mount, context } from "@nlayer/runtime";
         import { element, append, insert, text, component } from "nlayer:rt";
 
         const Theme = context("dark");

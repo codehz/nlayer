@@ -66,12 +66,12 @@ v1 不做。不写后期做不做，也不写后期方案。
 - 滚动：原生，两轴。v1 无刷新、缩放、分页（以后要做，不留）。
 - 图片：打包 `import` 加 `http(s)`。v1 是 PNG / JPEG / WebP（SVG、GIF 以后要做）。系统字体（自定义字体不预承诺）。
 - 平台 API：`console`、timers、`queueMicrotask`、`URL` / `URLSearchParams`、`TextEncoder` / `TextDecoder`、`AbortController`、`atob` / `btoa`、`performance.now`、`crypto.getRandomValues`、`fetch` / `Request` / `Response` / `Headers`。body 只有 text / json / arrayBuffer / blob。`Blob` 只作为这个结果类型。`crypto.subtle` 是缺的，不是空桩（以后要做）。`fetch` 任意 URL，跟随重定向，认 `AbortSignal`。v1 不带 cookie（以后要做）。无 capability grant（永久）。
-- UI 环境留在 `@nlayer`：`platform.os` 为 `web` | `ios` | `android`，safe area，keyboard inset。只通过 `env()` 进入 padding/margin。
+- UI 环境留在 `@nlayer/ui`：`platform.os` 为 `web` | `ios` | `android`，safe area，keyboard inset。只通过 `env()` 进入 padding/margin。
 - 运行：QuickJS。Web 是同一套 WASM 引擎加 DOM，不是第二条 JS 运行时。引擎线程产出 batch，平台主线程挂原生视图。`run` 监视 TSX 和资源，重建后重启引擎，状态丢掉。编译失败只打在终端，上一份成功的引擎继续跑。v1 无 HMR（以后要做）；监视重建、重启、丢状态仍是 v1。
 - 测试：headless 跑 TSX。文本度量用确定性替身。v1 不对齐真机像素；像素对齐断言和三端 UI 自动化以后要做。
 - 底线：iOS 15+，Android API 28+。`run` 用模拟器或浏览器，不重装 App。构建不需要 Node。`build` 写出 bundle、类型和 source map。
 
-名字：仓库 `native-layer`，包和 import `@nlayer`，JSX runtime `@nlayer/jsx-runtime`，内部模块 `nlayer:rt`，二进制 `nlayer`，crate 前缀 `nlayer-`。
+名字：仓库 `native-layer`，二进制 `nlayer`，crate 前缀 `nlayer-`。应用源码不写裸 `@nlayer`。公开两个原生模块，互不重导出：`@nlayer/runtime`（`signal`、`computed`、`effect`、`batch`、`untracked`、`cleanup`、`context`、`mount`、`ErrorBoundary`）和 `@nlayer/ui`（`View`、`Text`、`Image`、`Scroll`、`Input`，以及 `platform`）。`@nlayer/jsx-runtime` 只有类型，没有实现：`jsx` 为 `react-jsx`，`jsxImportSource` 为 `@nlayer`，这个裸 scope 只写在 tsconfig。编译后的 JSX 导入内部模块 `nlayer:rt`，应用不写它，也不写 `@nlayer/jsx-runtime`。v1 没有 `@nlayer/jsx-dev-runtime`。
 
 ## 仓库
 

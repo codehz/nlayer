@@ -1,5 +1,7 @@
-//! The native ES modules an app imports: `@nlayer` (the public API) and
-//! `nlayer:rt` (the renderer's, which only compiled JSX imports).
+//! The native ES modules an app imports: `@nlayer/runtime` (the reactive
+//! graph, `mount`, `context`, `ErrorBoundary`) and `@nlayer/ui` (the host
+//! components). `nlayer:rt` is the renderer's, which only compiled JSX
+//! imports. `@nlayer/jsx-runtime` is types only and is not served here.
 //!
 //! The exports are made when a bundle first imports the module. QuickJS
 //! resolves imports when it compiles a module, so the loader declares the
@@ -57,9 +59,8 @@ fn input(cx: *mut JsContext) -> JsValue {
     dom::host_component(cx, "input", false)
 }
 
-/// `@nlayer`: the reactive graph and the host components apps write
-/// components with.
-const NL: &[Item] = &[
+/// `@nlayer/runtime`: the reactive graph and the tree entry an app mounts.
+const RUNTIME: &[Item] = &[
     ("signal", Export::Function(reactive::signal, 2)),
     ("computed", Export::Function(reactive::computed, 2)),
     ("effect", Export::Function(reactive::effect, 1)),
@@ -69,6 +70,10 @@ const NL: &[Item] = &[
     ("context", Export::Function(dom::context, 1)),
     ("mount", Export::Function(dom::mount, 2)),
     ("ErrorBoundary", Export::Function(dom::error_boundary, 1)),
+];
+
+/// `@nlayer/ui`: the host components.
+const UI: &[Item] = &[
     ("View", Export::Value(view)),
     ("Text", Export::Value(text)),
     ("Image", Export::Value(image)),
@@ -78,8 +83,12 @@ const NL: &[Item] = &[
 
 pub(crate) const MODULES: &[NativeModule] = &[
     NativeModule {
-        name: "@nlayer",
-        exports: NL,
+        name: "@nlayer/runtime",
+        exports: RUNTIME,
+    },
+    NativeModule {
+        name: "@nlayer/ui",
+        exports: UI,
     },
     NativeModule {
         name: "nlayer:rt",

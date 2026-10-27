@@ -16,7 +16,8 @@ fn app(source: &str) -> Headless {
 #[test]
 fn a_press_changes_the_text() {
     let source = r#"
-import { mount, signal, Text, View } from "@nlayer";
+import { mount, signal } from "@nlayer/runtime";
+import { Text, View } from "@nlayer/ui";
 
 function App() {
     const count = signal(0);
@@ -42,7 +43,8 @@ mount(App);
 #[test]
 fn layout_and_tree_are_assertable() {
     let source = r#"
-import { mount, Text, View } from "@nlayer";
+import { mount } from "@nlayer/runtime";
+import { Text, View } from "@nlayer/ui";
 
 function App() {
     return (
@@ -73,7 +75,8 @@ mount(App);
 #[test]
 fn typing_reaches_onchange_and_the_text() {
     let source = r#"
-import { mount, signal, Input, Text, View } from "@nlayer";
+import { mount, signal } from "@nlayer/runtime";
+import { Input, Text, View } from "@nlayer/ui";
 
 function App() {
     const text = signal("");

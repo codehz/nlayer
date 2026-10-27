@@ -5,7 +5,7 @@
 //! tag is imported or local, except `<If when else>` and `<Each of key>`,
 //! globals no binding of their name shadows. A tag naming one of the
 //! [`PRIMITIVES`] imported from its module (`import { View as V } from
-//! "@nlayer"` too) compiles to what it is: a host element made in place, the
+//! "@nlayer/ui"` too) compiles to what it is: a host element made in place, the
 //! renderer's list, control flow; the import is then unused and goes.
 //! Every other tag is a component call. Lowercase tags are errors naming
 //! the import to write (TypeScript checks a lowercase tag against one
@@ -59,11 +59,11 @@ pub(crate) enum Compiled {
 /// nlayer's primitives, by their home (module, export), and what their
 /// tags compile to.
 pub(crate) const PRIMITIVES: &[(&str, &str, Compiled)] = &[
-    ("@nlayer", "View", Compiled::Host("view")),
-    ("@nlayer", "Text", Compiled::Host("text")),
-    ("@nlayer", "Image", Compiled::Host("image")),
-    ("@nlayer", "Scroll", Compiled::Host("scroll")),
-    ("@nlayer", "Input", Compiled::Host("input")),
+    ("@nlayer/ui", "View", Compiled::Host("view")),
+    ("@nlayer/ui", "Text", Compiled::Host("text")),
+    ("@nlayer/ui", "Image", Compiled::Host("image")),
+    ("@nlayer/ui", "Scroll", Compiled::Host("scroll")),
+    ("@nlayer/ui", "Input", Compiled::Host("input")),
 ];
 
 /// The control flow tags, global unless a binding of the name shadows them.
@@ -565,11 +565,11 @@ impl<'a> Compiler<'a, '_> {
             });
         match best {
             Some(name) => format!(": write <{name}>{}", self.import_hint(name)),
-            None => ": write the component's name (`<View>`, imported from \"@nlayer\")".to_owned(),
+            None => ": write the component's name (`<View>`, imported from \"@nlayer/ui\")".to_owned(),
         }
     }
 
-    /// `` and `import { View } from "@nlayer"` `` for a primitive not in
+    /// `` and `import { View } from "@nlayer/ui"` `` for a primitive not in
     /// scope; nothing for one in scope or a global.
     fn import_hint(&self, name: &str) -> String {
         if self.binding(name).is_some() {

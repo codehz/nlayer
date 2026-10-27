@@ -31,7 +31,8 @@ fn the_entrys_modules_are_bundled() {
             (
                 "App.tsx",
                 r#"
-import { mount, View } from "@nlayer";
+import { mount } from "@nlayer/runtime";
+import { View } from "@nlayer/ui";
 import { Label } from "./Label";
 
 function App() {
@@ -43,7 +44,7 @@ mount(App);
             (
                 "Label.tsx",
                 r#"
-import { Text } from "@nlayer";
+import { Text } from "@nlayer/ui";
 
 export function Label(props: { value: string }) {
     return <Text>{props.value}</Text>;
@@ -59,7 +60,7 @@ export function Label(props: { value: string }) {
     .expect("it bundles");
     // One module: the app's own import is gone, the native one stays.
     assert!(!out.code.contains("./Label"), "{}", out.code);
-    assert!(out.code.contains("from \"@nlayer\""), "{}", out.code);
+    assert!(out.code.contains("from \"@nlayer/runtime\""), "{}", out.code);
     assert!(out.code.contains("from \"nlayer:rt\""), "{}", out.code);
     assert!(!out.code.contains("<Text"), "JSX is compiled");
     assert!(!out.code.contains(": string"), "types are removed");
@@ -106,13 +107,45 @@ fn a_node_builtin_is_refused_by_name() {
 }
 
 #[test]
+fn a_bare_scope_and_the_jsx_types_module_are_refused() {
+    let dir = app(
+        "bare",
+        &[(
+            "App.tsx",
+            "import { signal } from \"@nlayer\";\nexport const a = signal;\n",
+        )],
+    );
+    let error = bundle(&BundleOptions {
+        entry: dir.join("App.tsx"),
+        minify: false,
+    })
+    .expect_err("bare @nlayer is not a module");
+    assert!(error.plain.contains("@nlayer/runtime"), "{}", error.plain);
+
+    let dir = app(
+        "jsx-types",
+        &[(
+            "App.tsx",
+            "import { jsx } from \"@nlayer/jsx-runtime\";\nexport const a = jsx;\n",
+        )],
+    );
+    let error = bundle(&BundleOptions {
+        entry: dir.join("App.tsx"),
+        minify: false,
+    })
+    .expect_err("jsx-runtime is types only");
+    assert!(error.plain.contains("types only"), "{}", error.plain);
+}
+
+#[test]
 fn an_imported_image_is_an_asset_descriptor() {
     let dir = app(
         "image",
         &[(
             "App.tsx",
             r#"
-import { mount, Image } from "@nlayer";
+import { mount } from "@nlayer/runtime";
+import { Image } from "@nlayer/ui";
 import icon from "./img/icon.png";
 
 function App() {

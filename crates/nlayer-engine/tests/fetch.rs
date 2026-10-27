@@ -117,7 +117,8 @@ fn fetch_reads_json_and_headers() {
     });
     let bundle = format!(
         r#"
-import {{ mount, signal, Text }} from "@nlayer";
+import {{ mount, signal }} from "@nlayer/runtime";
+import {{ Text }} from "@nlayer/ui";
 
 function App() {{
     const shown = signal("loading");
@@ -161,7 +162,8 @@ fn fetch_posts_a_body_and_reports_the_status() {
     });
     let bundle = format!(
         r#"
-import {{ mount, signal, Text }} from "@nlayer";
+import {{ mount, signal }} from "@nlayer/runtime";
+import {{ Text }} from "@nlayer/ui";
 
 function App() {{
     const shown = signal("loading");
@@ -194,7 +196,8 @@ fn aborting_rejects_the_fetch() {
     });
     let bundle = format!(
         r#"
-import {{ mount, signal, Text }} from "@nlayer";
+import {{ mount, signal }} from "@nlayer/runtime";
+import {{ Text }} from "@nlayer/ui";
 
 function App() {{
     const shown = signal("loading");
@@ -225,7 +228,8 @@ mount(App);
 fn a_failed_connection_rejects_the_fetch() {
     // Nothing listens on port 1.
     let bundle = r#"
-import { mount, signal, Text } from "@nlayer";
+import { mount, signal } from "@nlayer/runtime";
+import { Text } from "@nlayer/ui";
 
 function App() {
     const shown = signal("loading");
@@ -261,7 +265,8 @@ fn fetch_reads_bytes_and_blobs() {
     });
     let bundle = format!(
         r#"
-import {{ mount, signal, Text }} from "@nlayer";
+import {{ mount, signal }} from "@nlayer/runtime";
+import {{ Text }} from "@nlayer/ui";
 
 function App() {{
     const shown = signal("loading");

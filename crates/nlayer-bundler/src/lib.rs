@@ -2,7 +2,7 @@
 //! runtime's calls, written in Rust end to end (no Node.js).
 //!
 //! Each `.tsx`/`.jsx` module is compiled against the native modules
-//! (`@nlayer`, `nlayer:rt`), which stay imports; rolldown bundles the app's
+//! (`@nlayer/runtime`, `@nlayer/ui`, `nlayer:rt`), which stay imports; rolldown bundles the app's
 //! own modules into one ES module of the app's code.
 
 mod bundle;
@@ -30,13 +30,15 @@ mod tests {
     fn compile_module_makes_a_runnable_module() {
         let code = super::compile_module(
             "App.tsx",
-            "import { mount, signal, View } from \"@nlayer\";\n\
+            "import { mount, signal } from \"@nlayer/runtime\";\n\
+             import { View } from \"@nlayer/ui\";\n\
              const n: number = 1;\n\
              function App() { const c = signal(n); return <View onPress={() => c.set(2)} />; }\n\
              mount(App);\n",
         )
         .unwrap();
         assert!(code.contains("from \"nlayer:rt\""), "{code}");
+        assert!(code.contains("from \"@nlayer/runtime\""), "{code}");
         assert!(!code.contains(": number"), "types are removed: {code}");
         assert!(!code.contains("<View"), "JSX is compiled: {code}");
     }

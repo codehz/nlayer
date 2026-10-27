@@ -1,7 +1,6 @@
 //! The renderer compiled JSX runs on: the natives of `nlayer:rt` (internal:
-//! only the bundler's JSX output imports it) and the parts of `@nlayer`
-//! built on them (`mount`, `context`, `ErrorBoundary`, the host
-//! components).
+//! only the bundler's JSX output imports it), `@nlayer/runtime` (`mount`,
+//! `context`, `ErrorBoundary`) and `@nlayer/ui` (the host components).
 //!
 //! A node is a JS object of a native class holding its id and what keeps
 //! the tree alive: a parent holds its children's objects and a node holds
@@ -2024,7 +2023,7 @@ pub(crate) fn catch_listener_failure(cx: *mut JsContext, id: NodeId) -> bool {
 // --- The primitives as components ---------------------------------------------
 
 /// A component rendering host element `tag` with its props (children too
-/// when `children`): what `@nlayer`'s `View`, `Text`, `Image`, `Scroll`
+/// when `children`): what `@nlayer/ui`'s `View`, `Text`, `Image`, `Scroll`
 /// and `Input` are as values.
 pub(crate) fn host_component(cx: *mut JsContext, tag: &str, children: bool) -> JsValue {
     let name = new_string(cx, tag);

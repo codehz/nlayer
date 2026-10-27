@@ -12,8 +12,8 @@ use oxc::{
     transformer::{JsxOptions, TransformOptions, Transformer},
 };
 
-/// What the compiler knows of the native modules a host serves: `@nlayer`
-/// and the renderer's `nlayer:rt`.
+/// What the compiler knows of the native modules a host serves:
+/// `@nlayer/runtime`, `@nlayer/ui` and the renderer's `nlayer:rt`.
 #[derive(Debug, Default)]
 pub(crate) struct NativeModules {
     specifiers: std::collections::BTreeSet<String>,
@@ -24,7 +24,7 @@ pub(crate) struct NativeModules {
 impl NativeModules {
     pub(crate) fn new() -> Self {
         let mut out = Self::default();
-        for spec in ["@nlayer", "nlayer:rt"] {
+        for spec in ["@nlayer/runtime", "@nlayer/ui", "nlayer:rt"] {
             out.specifiers.insert(spec.to_owned());
             if let Some(names) = nlayer_js::native_module_exports(spec) {
                 out.exports.insert(spec.to_owned(), names);
@@ -97,7 +97,7 @@ pub(crate) fn compile_native(
 }
 
 /// The first named import of a native module that it does not export:
-/// `import { createSignal } from "@nlayer"` bundles fine and only fails
+/// `import { createSignal } from "@nlayer/runtime"` bundles fine and only fails
 /// when the app runs, so it is reported with its place in the source.
 /// Only names the code uses as values count (`scoping` is that of the
 /// program once TypeScript and the JSX are compiled): the declarations also

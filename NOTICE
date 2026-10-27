@@ -48,7 +48,7 @@ Copied files:
   (the context state holds the graph only)
 - `crates/nlayer-js/src/error.rs` from `crates/nsh-js/src/error.rs`
 - `crates/nlayer-js/src/modules.rs` from `crates/nsh-js/src/modules.rs`
-  (the native module loader; the table is `@nlayer`'s graph exports)
+  (the native module loader; the tables are `@nlayer/runtime` and `@nlayer/ui`)
 - `crates/nlayer-js/src/dom.rs` from `crates/nsh-js/src/dom.rs` (the v1
   renderer: host elements, text, style and prop decoding, children and
   keyed rows, components, context, error boundaries, mount)
@@ -58,7 +58,7 @@ Copied files:
 - `crates/nlayer-js/src/modules.rs` extends the loader table with
   `nlayer:rt` and the host components as values
 - `crates/nlayer-bundler/src/jsx.rs` from `crates/nsh-bundler/src/jsx.rs`
-  (the JSX lowering: primitives from `@nlayer`, the v1 helpers; refs,
+  (the JSX lowering: primitives from `@nlayer/ui`, the v1 helpers; refs,
   `import.meta.url`, native components and UI sets are not copied)
 - `crates/nlayer-bundler/src/compile.rs` from
   `crates/nsh-bundler/src/compile.rs` (one module: TypeScript removal,
