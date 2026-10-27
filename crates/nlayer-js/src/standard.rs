@@ -712,7 +712,7 @@ fn bytes_of(cx: *mut JsContext, value: JsValue) -> Option<Vec<u8>> {
     // SAFETY: reads of a live value; the bytes are copied before JS runs.
     unsafe {
         if qjs::JS_IsArrayBuffer(value) {
-            let mut size = 0u64;
+            let mut size: qjs::size_t = 0;
             let data = qjs::JS_GetArrayBuffer(cx, &mut size, value);
             if data.is_null() {
                 return None;
@@ -720,16 +720,16 @@ fn bytes_of(cx: *mut JsContext, value: JsValue) -> Option<Vec<u8>> {
             return Some(std::slice::from_raw_parts(data, size as usize).to_vec());
         }
         if qjs::JS_IsObject(value) {
-            let mut offset = 0u64;
-            let mut length = 0u64;
-            let mut _element = 0u64;
+            let mut offset: qjs::size_t = 0;
+            let mut length: qjs::size_t = 0;
+            let mut _element: qjs::size_t = 0;
             let buffer =
                 qjs::JS_GetTypedArrayBuffer(cx, value, &mut offset, &mut length, &mut _element);
             if qjs::JS_IsException(buffer) {
                 qjs::JS_FreeValue(cx, qjs::JS_GetException(cx));
                 return None;
             }
-            let mut size = 0u64;
+            let mut size: qjs::size_t = 0;
             let data = qjs::JS_GetArrayBuffer(cx, &mut size, buffer);
             let out = if data.is_null() {
                 None
@@ -776,9 +776,9 @@ unsafe extern "C" fn get_random_values(
                 c"crypto.getRandomValues: expected a typed array".as_ptr(),
             );
         }
-        let mut offset = 0u64;
-        let mut length = 0u64;
-        let mut _element = 0u64;
+        let mut offset: qjs::size_t = 0;
+        let mut length: qjs::size_t = 0;
+        let mut _element: qjs::size_t = 0;
         let buffer =
             qjs::JS_GetTypedArrayBuffer(cx, value, &mut offset, &mut length, &mut _element);
         if qjs::JS_IsException(buffer) {
@@ -788,7 +788,7 @@ unsafe extern "C" fn get_random_values(
                 c"crypto.getRandomValues: expected a typed array".as_ptr(),
             );
         }
-        let mut size = 0u64;
+        let mut size: qjs::size_t = 0;
         let data = qjs::JS_GetArrayBuffer(cx, &mut size, buffer);
         if !data.is_null() {
             let bytes = std::slice::from_raw_parts_mut(data.add(offset as usize), length as usize);
