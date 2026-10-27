@@ -69,7 +69,13 @@ Copied files:
   capabilities, hot reload or native-use report)
 - `crates/nlayer-bundler/src/plugin.rs` from `crates/nsh-bundler/src/plugin.rs`
   (resolve, load and transform: native modules external, app modules
-  compiled; image, font, SVG and split handling are not copied)
+  compiled, PNG / JPEG / WebP imports with density variants; fonts, SVG
+  and split handling are not copied)
+- `crates/nlayer-core/src/typescript.rs` from `crates/nsh-core/src/js/style.rs`
+  (style interfaces from the style table, cut to the v1 keys; animated
+  values, shadows, gradients and filters are not emitted)
+- `crates/nlayer-bundler/src/types.rs` (the module and asset declarations
+  `build` writes; not the nsh element-registry generator)
 - `crates/nlayer-js/src/net.rs` from `crates/nsh-core/src/platform.rs`
   (`HttpRequest` / `HttpHead`, cut to whole bodies and no streams)
 - `crates/nlayer-engine/src/net.rs` from `crates/nsh-engine/src/net.rs`

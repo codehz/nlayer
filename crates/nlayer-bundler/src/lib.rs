@@ -9,8 +9,10 @@ mod bundle;
 mod compile;
 mod jsx;
 mod plugin;
+mod types;
 
 pub use bundle::{Bundle, BundleError, BundleOptions, bundle, bundle_async};
+pub use types::type_files;
 
 /// Compiles one module (TSX, JSX, TS or JS, as `name`'s extension says) to
 /// the ES module the runtime runs: TypeScript removed, JSX compiled, imports

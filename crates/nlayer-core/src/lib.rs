@@ -18,6 +18,7 @@ mod props;
 pub mod reactive;
 pub mod style;
 mod tailwind;
+pub mod typescript;
 
 pub use ops::{EventMask, NodeId, ROOT_ID, ResizeMode};
 pub use transform::{MAX_TRANSFORMS, TransformOp};
