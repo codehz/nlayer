@@ -14,3 +14,10 @@ Copied files:
   from `crates/nsh-core/src/reactive.rs` and `reactive/tests.rs`
 - `crates/nlayer-core/src/geometry/` from `crates/nsh-core/src/geometry/`
   (`Axis` does not derive `PropEnum` yet; that derive arrives with the element macros)
+- `crates/nlayer-core/src/{style,color,css,css_named,effects,transform,grid}.rs`
+  from the same paths under `crates/nsh-core/src/`
+- `ResizeMode` from `nsh_core::ops` (`crates/nlayer-core/src/ops.rs`)
+- `ClassProps` / `Space` from `nsh_core::tailwind` (utility table not copied)
+- `AnimationProp` names from `nsh_core::animation` (graph not copied)
+- `PointerEvents` from `nsh_core::props`
+  `PropEnum` derives are omitted until the element macros exist.

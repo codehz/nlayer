@@ -1,4 +1,51 @@
 # Public API of nlayer-core with bare floats that have no unit
 # (geometry::unit_types): one item path per line, then the reason.
-# Entries arrive with the modules they describe. Do not copy nsh's list ahead
-# of those modules: a line for an item that is not in this crate fails the scan.
+# Reasons copied from nsh where the item already existed.
+
+css::Color::with_alpha(factor)                                   # an opacity factor
+effects::Filter::Brightness.0                                    # a filter amount (1 leaves the image as it is)
+effects::Filter::Contrast.0                                      # a filter amount (1 leaves the image as it is)
+effects::Filter::Grayscale.0                                     # a filter amount (1 leaves the image as it is)
+effects::Filter::Invert.0                                        # a filter amount (1 leaves the image as it is)
+effects::Filter::Opacity.0                                       # an opacity, 0..1
+effects::Filter::Saturate.0                                      # a filter amount (1 leaves the image as it is)
+effects::Filter::Sepia.0                                         # a filter amount (1 leaves the image as it is)
+effects::Filter::color_matrix ->                                 # color components
+effects::KeyframeAnimation.delay                                 # time
+effects::KeyframeAnimation.duration                              # time
+effects::KeyframeAnimation.easing                                # easing curve coordinates (unit square)
+effects::KeyframeAnimation::delay(ms)                            # time
+effects::KeyframeAnimation::duration(ms)                         # time
+effects::KeyframeAnimation::easing(curve)                        # easing curve coordinates (unit square)
+effects::Transition.delay                                        # time
+effects::Transition.duration                                     # time
+effects::Transition.easing                                       # easing curve coordinates (unit square)
+effects::Transition::EASE                                        # easing curve coordinates (unit square)
+effects::compose_color_matrices ->                               # color components
+style::Color::to_f64 ->                                          # color components
+style::LineHeight::Em.0                                          # a multiple of the element's font size
+style::LineHeight::Multiple.0                                    # a multiple of the font size
+style::PropertyValue::Easing.0                                   # easing curve coordinates (unit square)
+style::PropertyValue::Flex.0                                     # a flex grow factor
+style::PropertyValue::Flex.1                                     # a flex shrink factor
+style::PropertyValue::LetterSpacing.1                            # ems of the font size
+style::PropertyValue::Ms.0                                       # time
+style::PropertyValue::Number.0                                   # a unitless style number (a flex factor, an opacity, a z-index)
+style::PropertyValue::OptNumber.0                                # an aspect ratio
+style::PropertyValue::Transform.0                                # transform operands (any of their kinds' units)
+style::Style::set_transform(steps)                               # transform operands (any of their kinds' units)
+style::StyleDecl::SetTransform.1                                 # transform operands (any of their kinds' units)
+style::StyleDecl::Transform.1                                    # a transform operand (any of its kinds' units)
+style::StyleKey::number_value(n)                                 # a style number as TSX writes it (points or a factor, by property)
+style::StyleValue::Number.0                                      # a generic number (a JS value, a recorded slot)
+style::TextStyle.letter_spacing_em                               # a multiple of the font size (em)
+style::TextStyle.line_height_em                                  # a line-height length in multiples of the element font size
+style::TextStyle.line_height_multiple                            # a multiple of the font's line height
+style::ViewStyle.opacity                                         # an opacity, 0..1
+transform::Decomposed.scale                                      # a scale factor
+transform::Matrix.0                                              # a transform operand (any of its kinds' units)
+transform::Matrix::of(v)                                         # a transform operand (any of its kinds' units)
+transform::Transform::matrix(value)                              # a transform operand (any of its kinds' units)
+transform::Transform::push(value)                                # a transform operand (any of its kinds' units)
+transform::TransformKind::identity ->                            # a transform operand (any of its kinds' units)
+transform::TransformOp.value                                     # a transform operand (any of its kinds' units)
