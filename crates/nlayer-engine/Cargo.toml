@@ -15,3 +15,6 @@ nlayer-js.workspace = true
 crossbeam-channel.workspace = true
 log.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+nlayer-bundler.workspace = true

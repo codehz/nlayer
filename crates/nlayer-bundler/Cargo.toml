@@ -1,0 +1,16 @@
+[package]
+name = "nlayer-bundler"
+description = "The app's TSX compiler: TypeScript removed and JSX lowered to the runtime's calls, in Rust."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+nlayer-js.workspace = true
+oxc = { version = "=0.153.0", features = ["transformer", "codegen", "semantic", "ast_visit"] }
+log.workspace = true
+serde_json.workspace = true

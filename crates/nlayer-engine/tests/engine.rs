@@ -151,3 +151,33 @@ fn a_bundle_that_throws_fails_to_start() {
     .expect_err("the app throws");
     assert!(error.message.contains("boom"), "{error}");
 }
+
+/// A TSX app, compiled by the bundler, runs: the compiler's output and the
+/// renderer agree.
+#[test]
+fn a_compiled_tsx_app_runs() {
+    let source = r#"
+import { mount, signal, Text, View } from "@nlayer";
+
+function App() {
+    const count = signal(7);
+    return (
+        <View style={{ width: 100, height: 50 }}>
+            <Text>{`count: ${count()}`}</Text>
+        </View>
+    );
+}
+mount(App);
+"#;
+    let bundle = nlayer_bundler::compile_module("App.tsx", source).unwrap();
+    let (tx, rx) = unbounded();
+    let engine = Engine::start(
+        EngineConfig::new(bundle, Size::new(px(390.0), px(844.0))),
+        || ApproxTextEngine,
+        Arc::new(Sink { tx }),
+    )
+    .expect("the app runs");
+    let batch = frame(&rx);
+    assert_eq!(texts(&batch), ["count: 7"]);
+    engine.stop();
+}

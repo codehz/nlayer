@@ -17,6 +17,7 @@ private_interfaces = "deny"
 nlayer-core = { version = "0.1.0", path = "crates/nlayer-core" }
 nlayer-js = { version = "0.1.0", path = "crates/nlayer-js" }
 nlayer-engine = { version = "0.1.0", path = "crates/nlayer-engine" }
+nlayer-bundler = { version = "0.1.0", path = "crates/nlayer-bundler" }
 crossbeam-channel = "0.5"
 log = "0.4"
 ordered-float = { version = "5", default-features = false }

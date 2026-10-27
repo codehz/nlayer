@@ -57,3 +57,10 @@ Copied files:
   shadows, filters and native components are not copied)
 - `crates/nlayer-js/src/modules.rs` extends the loader table with
   `nlayer:rt` and the host components as values
+- `crates/nlayer-bundler/src/jsx.rs` from `crates/nsh-bundler/src/jsx.rs`
+  (the JSX lowering: primitives from `@nlayer`, the v1 helpers; refs,
+  `import.meta.url`, native components and UI sets are not copied)
+- `crates/nlayer-bundler/src/compile.rs` from
+  `crates/nsh-bundler/src/compile.rs` (one module: TypeScript removal,
+  named import checks against the native modules; rolldown, hot reload,
+  props checks and source maps are not copied)
