@@ -1176,6 +1176,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nlayer-platform-web"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "nlayer-bundler",
+ "nlayer-core",
+ "nlayer-engine",
+ "rustc-hash",
+ "serde_json",
+]
+
+[[package]]
 name = "nlayer-testing"
 version = "0.1.0"
 dependencies = [

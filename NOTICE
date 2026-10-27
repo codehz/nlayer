@@ -81,3 +81,12 @@ Copied files:
 - `crates/nlayer-engine/src/net.rs` from `crates/nsh-engine/src/net.rs`
   (ureq with rustls, whole bodies; streaming, pause and cancellation are
   not copied)
+- `crates/nlayer-platform-web/src/encode.rs` from
+  `crates/nsh-platform-web/src/encode.rs` and `src/text/css.rs` (the mount
+  JSON and its CSS classes, cut to the v1 views and the whitelist: fill,
+  radius, opacity, overflow, static transform, transform origin, border
+  and attributed text spans; shadows, gradients, filters and glyph runs
+  are not copied)
+- `crates/nlayer-platform-web/web/nlayer.js` and `web/base.css` from
+  `crates/nsh-platform-web/web/nsh.js` (the DOM mounter, the same cut:
+  frames, classes, border overlay, scroll spacer, single-line field)
