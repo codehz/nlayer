@@ -2,8 +2,8 @@
 //!
 //! `ResizeMode`, `ImageSource` and `ImageScales` are copied from
 //! `nsh_core::ops`. The `PropEnum` derive arrives with the element macros.
-//! Scroll and input ops follow with those hosts. `data:` image bytes are
-//! not part of v1.
+//! Scroll ops are the axis lock only: no refresh, zoom or paging. `data:`
+//! image bytes are not part of v1. Input ops follow with that host.
 
 use std::sync::Arc;
 
@@ -29,6 +29,9 @@ pub enum Tag {
     Text,
     /// An image (`<image>`).
     Image,
+    /// A scroll view (`<scroll>`). One axis: vertical, or horizontal with
+    /// [`Prop::Horizontal`].
+    Scroll,
 }
 impl Tag {
     /// Parses a host element's name (what `nlayer:rt`'s `element` takes).
@@ -38,6 +41,7 @@ impl Tag {
             "view" => Some(Tag::View),
             "text" => Some(Tag::Text),
             "image" => Some(Tag::Image),
+            "scroll" => Some(Tag::Scroll),
             _ => None,
         }
     }
@@ -296,6 +300,8 @@ impl FromIterator<f32> for ImageScales {
 pub enum Prop {
     /// `src`: a URL or an imported asset.
     Source(Option<ImageSource>),
+    /// `horizontal`: the scroll view scrolls along x instead of y.
+    Horizontal(bool),
 }
 
 /// A mutation produced by the JS renderer.
@@ -370,5 +376,19 @@ pub enum Op {
     Release {
         /// Node id.
         id: NodeId,
+    },
+}
+
+/// An imperative call on a native view.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Command {
+    /// Scroll a scroll view to a content offset.
+    ScrollTo {
+        /// Horizontal offset.
+        x: Points,
+        /// Vertical offset.
+        y: Points,
+        /// Animate the change.
+        animated: bool,
     },
 }

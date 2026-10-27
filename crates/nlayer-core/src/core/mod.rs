@@ -1,9 +1,9 @@
 //! Shadow tree.
 //!
-//! Apply, commit and frame emission for views, text and images, extracted
-//! from `nsh_core::core` and cut to those hosts. Scroll and input follow
-//! in this module; they are not stubbed here. Inline views inside text,
-//! text selection and links are not part of this slice.
+//! Apply, commit and frame emission for views, text, images and scroll
+//! views, extracted from `nsh_core::core` and cut to those hosts. Input
+//! follows in this module; it is not stubbed here. Inline views inside
+//! text, text selection and links are not part of this slice.
 
 mod layout_tree;
 
@@ -16,7 +16,7 @@ use layout_tree::LayoutTree;
 use crate::{
     geometry::{Bounds, Percentage, Points, Size, rect},
     mount::{MountBatch, MountItem, ViewKind},
-    ops::{EventMask, ImageSource, NodeId, Op, Prop, ROOT_ID, ResizeMode, Tag},
+    ops::{Command, EventMask, ImageSource, NodeId, Op, Prop, ROOT_ID, ResizeMode, Tag},
     style::{self, EllipsizeMode, Style, TextAlign, TextStyle, ViewStyle},
     text::{AttributedText, MeasureCache, ResolvedTextStyle, TextEngine, TextLayout},
 };
@@ -39,9 +39,11 @@ mod dirty {
     pub(super) const TEXT_MOUNT: u32 = 1 << 3;
     /// Emit [`crate::MountItem::Image`].
     pub(super) const IMAGE: u32 = 1 << 4;
+    /// Emit [`crate::MountItem::ScrollConfig`].
+    pub(super) const SCROLL: u32 = 1 << 5;
 }
 
-/// Host kind. Scroll and input join this when their paths are copied.
+/// Host kind. Input joins this when its path is copied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
     View,
@@ -50,11 +52,13 @@ enum Kind {
     /// A run of characters. Not a native view.
     RawText,
     Image,
+    /// Scrolls on one axis ([`ScrollState::horizontal`]).
+    Scroll,
 }
 
 impl Kind {
     fn is_container(self) -> bool {
-        matches!(self, Kind::View | Kind::Image)
+        matches!(self, Kind::View | Kind::Image | Kind::Scroll)
     }
 
     fn of(tag: Tag) -> Self {
@@ -62,6 +66,7 @@ impl Kind {
             Tag::View => Kind::View,
             Tag::Text => Kind::Text,
             Tag::Image => Kind::Image,
+            Tag::Scroll => Kind::Scroll,
         }
     }
 
@@ -70,6 +75,7 @@ impl Kind {
             Kind::View => ViewKind::View,
             Kind::Text => ViewKind::Text,
             Kind::Image => ViewKind::Image,
+            Kind::Scroll => ViewKind::Scroll,
             // Raw text is never created as a native view.
             Kind::RawText => ViewKind::View,
         }
@@ -108,6 +114,29 @@ impl ApplyError {
     }
 }
 
+/// A scroll view's axis and the content size last sent to the platform.
+#[derive(Debug)]
+struct ScrollState {
+    horizontal: bool,
+    /// Last content size sent.
+    content: Option<Size<Points>>,
+    /// Index of that [`MountItem::ScrollContent`] in the current mount
+    /// batch. A later size in the same batch replaces it, so the platform
+    /// never sees a transient size (which would clamp the offset before the
+    /// content grows back).
+    content_item: Option<usize>,
+}
+
+impl Default for ScrollState {
+    fn default() -> Self {
+        Self {
+            horizontal: false,
+            content: None,
+            content_item: None,
+        }
+    }
+}
+
 struct Node {
     id: NodeId,
     kind: Kind,
@@ -135,6 +164,8 @@ struct Node {
     object_fit: Option<ResizeMode>,
     /// Present exactly for [`Kind::Image`]: `None` until `src` is set.
     image: Option<Option<ImageSource>>,
+    /// Present exactly for [`Kind::Scroll`].
+    scroll: Option<Box<ScrollState>>,
     /// `zIndex`: native views are ordered by it (stable) among siblings.
     z_index: i32,
     /// Laid out right to left (the resolved `direction`).
@@ -169,6 +200,7 @@ impl Node {
             events: EventMask::default(),
             object_fit: None,
             image: matches!(kind, Kind::Image).then_some(None),
+            scroll: matches!(kind, Kind::Scroll).then(Box::default),
             z_index: 0,
             rtl: false,
             direction: None,
@@ -413,6 +445,9 @@ impl<M: TextEngine> Core<M> {
         let key = self.alloc(id, kind)?;
         let mut layout_style = Style::default().layout;
         style::resolve_normal_alignment(&mut layout_style);
+        // The authored style. [`Self::sync_scroll_style`] derives the
+        // taffy style (the scroll axis, and a horizontal row).
+        let scroll_base = (kind == Kind::Scroll).then(|| layout_style.clone());
         let layout = match kind {
             Kind::Image => self
                 .layout
@@ -421,7 +456,7 @@ impl<M: TextEngine> Core<M> {
                 layout_style,
                 LeafContext::Text(TextContext::new(Arc::default())),
             ),
-            Kind::View => self.layout.new_leaf(layout_style),
+            Kind::View | Kind::Scroll => self.layout.new_leaf(layout_style),
             Kind::RawText => unreachable!("raw text is CreateText, not a tag"),
         };
         self.layout.set_tag(layout, key);
@@ -429,6 +464,12 @@ impl<M: TextEngine> Core<M> {
         node.layout = Some(layout);
         if kind == Kind::Text {
             node.dirty |= dirty::TEXT_BUILD;
+        }
+        if let Some(base) = scroll_base {
+            node.base_layout = Some(Box::new(base));
+        }
+        if kind == Kind::Scroll {
+            self.sync_scroll_style(key);
         }
         Ok(())
     }
@@ -484,10 +525,14 @@ impl<M: TextEngine> Core<M> {
             taffy::Overflow::Visible
         };
         layout.overflow = taffy::Point { x: clip, y: clip };
-        if node.kind == Kind::Text {
+        let kind = node.kind;
+        if kind == Kind::Text || kind == Kind::Scroll {
             node.base_layout = Some(Box::new(layout.clone()));
         }
-        if let Some(l) = node.layout {
+        if kind == Kind::Scroll {
+            // The scroll axis overrides the authored overflow.
+            self.sync_scroll_style(key);
+        } else if let Some(l) = node.layout {
             self.layout.set_style(l, layout);
             self.needs_layout = true;
         }
@@ -532,6 +577,20 @@ impl<M: TextEngine> Core<M> {
                     *natural = size;
                     self.layout.mark_dirty(layout);
                     self.needs_layout = true;
+                }
+            }
+            Prop::Horizontal(horizontal) => {
+                let changed = self.nodes[key as usize]
+                    .scroll
+                    .as_mut()
+                    .is_some_and(|scroll| {
+                        let changed = scroll.horizontal != horizontal;
+                        scroll.horizontal = horizontal;
+                        changed
+                    });
+                if changed {
+                    self.mark(key, dirty::SCROLL);
+                    self.sync_scroll_style(key);
                 }
             }
         }
@@ -789,6 +848,11 @@ impl<M: TextEngine> Core<M> {
         if node.image.as_ref().is_some_and(|source| source.is_some()) {
             flags |= dirty::IMAGE;
         }
+        if kind == Kind::Scroll {
+            // A new native view has not been told its content size.
+            node.scroll.as_mut().expect("scroll").content = None;
+            flags |= dirty::SCROLL;
+        }
         self.mount.push(MountItem::Create {
             id,
             kind: kind.view_kind(),
@@ -869,6 +933,14 @@ impl<M: TextEngine> Core<M> {
                     source: image.as_ref().map(|s| s.resolved(ratio)),
                     resize_mode,
                 });
+            }
+            if flags & dirty::SCROLL != 0
+                && let Some(horizontal) = self.nodes[key as usize]
+                    .scroll
+                    .as_ref()
+                    .map(|scroll| scroll.horizontal)
+            {
+                self.mount.push(MountItem::ScrollConfig { id, horizontal });
             }
             if flags & dirty::TEXT_MOUNT != 0 {
                 self.queue_text(key);
@@ -1030,13 +1102,43 @@ impl<M: TextEngine> Core<M> {
             y: containing.y + unrounded.location.y,
         };
         let l = rounded(&unrounded, containing);
-        let frame = rect(
+        let mut frame = rect(
             l.location.x + round(containing.x) - round(origin.x),
             l.location.y + round(containing.y) - round(origin.y),
             l.size.width,
             l.size.height,
         );
+        // Children of a right-to-left horizontal scroll view are mirrored
+        // in its content. The view is laid out left to right, so a row
+        // does not overflow to negative offsets.
+        let parent = self.nodes[key as usize].parent;
+        if parent != NO_KEY {
+            let parent = &self.nodes[parent as usize];
+            if parent.rtl
+                && parent.kind == Kind::Scroll
+                && let Some(content) = parent
+                    .scroll
+                    .as_ref()
+                    .filter(|scroll| scroll.horizontal)
+                    .and_then(|scroll| scroll.content)
+            {
+                frame.origin.x = content.width - frame.origin.x - frame.size.width;
+            }
+        }
         self.set_frame(key, frame);
+        if self.nodes[key as usize].kind == Kind::Scroll {
+            // Scrollable extent: the overflow rectangle is measured from the
+            // padding box origin and stops at the children's border boxes, so
+            // add the leading border and trailing padding.
+            let o = l.scrollable_overflow_rect;
+            let size = crate::geometry::size_pt(
+                l.size.width.max(l.border.left + o.right + l.padding.right),
+                l.size
+                    .height
+                    .max(l.border.top + o.bottom + l.padding.bottom),
+            );
+            self.set_scroll_content(key, size);
+        }
         let children = mem::take(&mut self.nodes[key as usize].children);
         for &child in &children {
             self.emit_frames_in(child, false, inner);
@@ -1087,10 +1189,15 @@ impl<M: TextEngine> Core<M> {
         } else {
             taffy::Direction::Ltr
         };
-        let node = &mut self.nodes[key as usize];
-        node.rtl = rtl;
-        let kind = node.kind;
-        if let Some(l) = node.layout {
+        self.nodes[key as usize].rtl = rtl;
+        let kind = self.nodes[key as usize].kind;
+        let layout_id = self.nodes[key as usize].layout;
+        if kind == Kind::Scroll {
+            if let Some(base) = self.nodes[key as usize].base_layout.as_mut() {
+                base.direction = direction;
+            }
+            self.sync_scroll_style(key);
+        } else if let Some(l) = layout_id {
             let mut layout = self.layout.style(l).clone();
             layout.direction = direction;
             self.layout.set_style(l, layout);
@@ -1580,6 +1687,103 @@ fn rounded(layout: &Layout, origin: taffy::Point<f32>) -> Layout {
     out.scrollable_overflow_rect.top = round(y + o.top) - round(y);
     out.scrollable_overflow_rect.bottom = round(y + o.bottom) - round(y);
     out
+}
+
+impl<M: TextEngine> Core<M> {
+    /// The taffy style of a scroll view: children overflow on its axis, and a
+    /// horizontal one lays them out in a row. Right to left, that row is laid
+    /// out left to right (padding and border swapped back) and
+    /// [`Core::emit_frames_in`] mirrors the children: a right-to-left row would
+    /// overflow to negative offsets.
+    fn sync_scroll_style(&mut self, key: Key) {
+        let node = &self.nodes[key as usize];
+        let (Some(layout), Some(base)) = (node.layout, node.base_layout.as_deref()) else {
+            return;
+        };
+        let mut style = base.clone();
+        let horizontal = node.scroll.as_ref().is_some_and(|scroll| scroll.horizontal);
+        if horizontal {
+            style.flex_direction = taffy::FlexDirection::Row;
+            style.overflow.x = taffy::Overflow::Scroll;
+            if node.rtl {
+                mem::swap(&mut style.padding.left, &mut style.padding.right);
+                mem::swap(&mut style.border.left, &mut style.border.right);
+                style.direction = taffy::Direction::Ltr;
+            }
+        } else {
+            style.overflow.y = taffy::Overflow::Scroll;
+        }
+        self.layout.set_style(layout, style);
+        self.needs_layout = true;
+    }
+
+    fn set_scroll_content(&mut self, key: Key, size: Size<Points>) {
+        let (id, rtl, kind, viewport, horizontal, old, content_item) = {
+            let node = &mut self.nodes[key as usize];
+            let Some(scroll) = node.scroll.as_mut() else {
+                return;
+            };
+            if scroll.content == Some(size) {
+                return;
+            }
+            let old = scroll.content.replace(size);
+            (
+                node.id,
+                node.rtl,
+                node.kind,
+                node.frame.size.width,
+                scroll.horizontal,
+                old,
+                scroll.content_item,
+            )
+        };
+        // Items are only inserted before it since (a `ScrollBy`), so it is
+        // at its index or later.
+        let queued = content_item.and_then(|i| {
+            let at = self.mount.get(i..)?.iter().position(
+                |item| matches!(item, MountItem::ScrollContent { id: queued, .. } if *queued == id),
+            )?;
+            Some(i + at)
+        });
+        if let Some(j) = queued {
+            self.mount[j] = MountItem::ScrollContent { id, size };
+        }
+        // A scroll queued after it must still come before the new size.
+        let scrolled_since = queued.is_some_and(|j| {
+            self.mount[j + 1..].iter().any(
+                |item| matches!(item, MountItem::ScrollBy { id: scrolled, .. } if *scrolled == id),
+            )
+        });
+        if queued.is_none() || scrolled_since {
+            let at = self.mount.len();
+            self.mount.push(MountItem::ScrollContent { id, size });
+            if let Some(scroll) = self.nodes[key as usize].scroll.as_mut() {
+                scroll.content_item = Some(at);
+            }
+        }
+        // Right to left, a horizontal scroll view starts at its right end
+        // and keeps its distance from it as the content changes.
+        if kind == Kind::Scroll && horizontal && rtl {
+            match old {
+                None => self.mount.push(MountItem::Command {
+                    id,
+                    command: Command::ScrollTo {
+                        x: (size.width - viewport).max(Points::ZERO),
+                        y: Points::ZERO,
+                        animated: false,
+                    },
+                }),
+                Some(old) if old.width != size.width => {
+                    self.mount.push(MountItem::ScrollBy {
+                        id,
+                        dx: size.width - old.width,
+                        dy: Points::ZERO,
+                    });
+                }
+                Some(_) => {}
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2431,5 +2635,217 @@ mod tests {
             frame(&batch, 2),
             crate::geometry::rect(0.0, 0.0, 320.0, 36.0)
         );
+    }
+
+    fn scroll_content(batch: &MountBatch, id: NodeId) -> Size<Points> {
+        batch
+            .items
+            .iter()
+            .rev()
+            .find_map(|item| match item {
+                MountItem::ScrollContent { id: i, size } if *i == id => Some(*size),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no scroll content for {id}"))
+    }
+
+    #[test]
+    fn a_vertical_scroll_reports_its_content_and_keeps_child_heights() {
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Scroll,
+        })
+        .unwrap();
+        apply_style(&mut c, 2, sized(100.0, 50.0));
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        for id in [3, 4, 5] {
+            c.apply(Op::Create { id, tag: Tag::View }).unwrap();
+            apply_style(&mut c, id, sized(100.0, 40.0));
+            c.apply(Op::Insert {
+                parent: 2,
+                child: id,
+                before: None,
+            })
+            .unwrap();
+        }
+        let batch = c.commit().unwrap();
+        assert!(batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::Create {
+                id: 2,
+                kind: ViewKind::Scroll
+            }
+        )));
+        assert!(batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::ScrollConfig {
+                id: 2,
+                horizontal: false
+            }
+        )));
+        assert_eq!(scroll_content(&batch, 2), size_pt(100.0, 120.0));
+        // Children are not shrunk to the scroll view's height.
+        assert_eq!(frame(&batch, 5).origin.y, px(80.0));
+        assert_eq!(frame(&batch, 5).size.height, px(40.0));
+    }
+
+    #[test]
+    fn a_horizontal_scroll_lays_its_children_out_in_a_row() {
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Scroll,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Horizontal(true),
+        })
+        .unwrap();
+        apply_style(&mut c, 2, sized(100.0, 40.0));
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        for id in [3, 4] {
+            c.apply(Op::Create { id, tag: Tag::View }).unwrap();
+            apply_style(&mut c, id, sized(80.0, 40.0));
+            c.apply(Op::Insert {
+                parent: 2,
+                child: id,
+                before: None,
+            })
+            .unwrap();
+        }
+        let batch = c.commit().unwrap();
+        assert!(batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::ScrollConfig {
+                id: 2,
+                horizontal: true
+            }
+        )));
+        assert_eq!(scroll_content(&batch, 2), size_pt(160.0, 40.0));
+        assert_eq!(frame(&batch, 4).origin.x, px(80.0));
+    }
+
+    /// `overflow: "hidden"` clips in layout as well as in paint: what a box
+    /// clips away must not grow an ancestor scroll view's content size.
+    #[test]
+    fn clipped_overflow_does_not_grow_scroll_content() {
+        fn content_width(clips: bool) -> f32 {
+            let mut c = core();
+            c.apply(Op::Create {
+                id: 2,
+                tag: Tag::Scroll,
+            })
+            .unwrap();
+            apply_style(&mut c, 2, sized(100.0, 80.0));
+            c.apply(Op::Insert {
+                parent: ROOT_ID,
+                child: 2,
+                before: None,
+            })
+            .unwrap();
+            c.apply(Op::Create {
+                id: 3,
+                tag: Tag::View,
+            })
+            .unwrap();
+            let mut boxed = sized(80.0, 40.0);
+            boxed.view.overflow_hidden = clips;
+            apply_style(&mut c, 3, boxed);
+            c.apply(Op::Insert {
+                parent: 2,
+                child: 3,
+                before: None,
+            })
+            .unwrap();
+            c.apply(Op::Create {
+                id: 4,
+                tag: Tag::View,
+            })
+            .unwrap();
+            let mut child = sized(150.0, 20.0);
+            child.layout.position = Position::Absolute;
+            child.layout.inset.left = taffy::LengthPercentageAuto::length(0.0);
+            child.layout.inset.top = taffy::LengthPercentageAuto::length(0.0);
+            apply_style(&mut c, 4, child);
+            c.apply(Op::Insert {
+                parent: 3,
+                child: 4,
+                before: None,
+            })
+            .unwrap();
+            scroll_content(&c.commit().unwrap(), 2).width.0
+        }
+        // Visible: the 150pt child reaches the scroll view.
+        assert_eq!(content_width(false), 150.0);
+        // Clipped: the scroll view keeps its own width.
+        assert_eq!(content_width(true), 100.0);
+    }
+
+    #[test]
+    fn a_right_to_left_horizontal_scroll_starts_at_its_end() {
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Scroll,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Horizontal(true),
+        })
+        .unwrap();
+        let mut scroll = sized(150.0, 50.0);
+        scroll.direction = Some(true);
+        scroll.logical.padding[0] = Some(taffy::LengthPercentage::length(10.0));
+        apply_style(&mut c, 2, scroll);
+        for id in [3, 4] {
+            c.apply(Op::Create { id, tag: Tag::View }).unwrap();
+            apply_style(&mut c, id, sized(100.0, 50.0));
+            c.apply(Op::Insert {
+                parent: 2,
+                child: id,
+                before: None,
+            })
+            .unwrap();
+        }
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        // Content: 10 (start padding) + 200; the first child at the right end.
+        assert_eq!(scroll_content(&batch, 2), size_pt(210.0, 50.0));
+        assert_eq!(frame(&batch, 3).origin.x, px(210.0 - 10.0 - 100.0));
+        assert_eq!(frame(&batch, 4).origin.x, px(0.0));
+        assert!(batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::Command {
+                id: 2,
+                command: Command::ScrollTo { x, .. }
+            } if *x == px(60.0)
+        )));
+
+        // Wider content keeps its distance from the right end.
+        apply_style(&mut c, 3, sized(130.0, 50.0));
+        let batch = c.commit().unwrap();
+        assert_eq!(scroll_content(&batch, 2).width, px(240.0));
+        assert!(batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::ScrollBy { id: 2, dx, .. } if *dx == px(30.0)
+        )));
     }
 }

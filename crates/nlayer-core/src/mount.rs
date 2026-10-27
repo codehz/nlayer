@@ -1,13 +1,13 @@
 //! Instructions a platform applies to native views.
 //!
-//! Extracted from `nsh_core::mount`, cut to views, text and images. Scroll
-//! and input items follow with those hosts.
+//! Extracted from `nsh_core::mount`, cut to views, text, images and scroll
+//! views. Input items follow with that host.
 
 use std::sync::Arc;
 
 use crate::{
-    geometry::{Bounds, Points},
-    ops::{EventMask, ImageSource, NodeId, ResizeMode},
+    geometry::{Bounds, Points, Size},
+    ops::{Command, EventMask, ImageSource, NodeId, ResizeMode},
     style::ViewStyle,
     text::{AttributedText, TextLayout},
 };
@@ -21,6 +21,8 @@ pub enum ViewKind {
     Text,
     /// An image.
     Image,
+    /// A scroll view. It scrolls on one axis ([`MountItem::ScrollConfig`]).
+    Scroll,
 }
 
 /// One instruction for the platform backend.
@@ -98,6 +100,38 @@ pub enum MountItem {
         source: Option<ImageSource>,
         /// How the image fits its box (`objectFit`; cover when unset).
         resize_mode: ResizeMode,
+    },
+    /// Which axis a scroll view scrolls. The platform locks the other.
+    ScrollConfig {
+        /// Scroll view.
+        id: NodeId,
+        /// Scrolls horizontally. Otherwise it scrolls vertically.
+        horizontal: bool,
+    },
+    /// Set the scrollable content size.
+    ScrollContent {
+        /// Scroll view.
+        id: NodeId,
+        /// Content size. The viewport is the view's frame; the platform
+        /// scrolls where this is larger.
+        size: Size<Points>,
+    },
+    /// Shift the scroll position, keeping visible content in place when a
+    /// right-to-left horizontal scroll view's content width changes.
+    ScrollBy {
+        /// Scroll view.
+        id: NodeId,
+        /// Horizontal shift.
+        dx: Points,
+        /// Vertical shift.
+        dy: Points,
+    },
+    /// An imperative call (`scrollTo`).
+    Command {
+        /// View.
+        id: NodeId,
+        /// The call.
+        command: Command,
     },
 }
 

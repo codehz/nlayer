@@ -23,8 +23,11 @@ Copied files:
   `PropEnum` derives are omitted until the element macros exist.
 - `crates/nlayer-core/src/text.rs` from `crates/nsh-core/src/text.rs`
 - `crates/nlayer-core/src/core/layout_tree.rs` from `crates/nsh-core/src/core/layout_tree.rs`
-- `crates/nlayer-core/src/mount.rs` from `crates/nsh-core/src/mount.rs` (view, text and image items)
-- `Tag`, `EventKind`, `Op`, `Prop`, `ImageSource`, `ImageScales` from `nsh_core::ops`
-  (text ops included; scroll and input ops are not)
-- `crates/nlayer-core/src/core/mod.rs` from `crates/nsh-core/src/core/mod.rs` (view, text and image apply, commit and frame rounding)
+- `crates/nlayer-core/src/mount.rs` from `crates/nsh-core/src/mount.rs` (view, text, image and scroll items)
+- `Tag`, `EventKind`, `Op`, `Prop`, `Command`, `ImageSource`, `ImageScales` from `nsh_core::ops`
+  (text and scroll ops included; input ops are not)
+- `crates/nlayer-core/src/core/mod.rs` from `crates/nsh-core/src/core/mod.rs` (view, text, image and scroll apply, commit and frame rounding)
+- `Tag::Scroll`, `Prop::Horizontal`, `Command::ScrollTo`, `MountItem::ScrollConfig` /
+  `ScrollContent` / `ScrollBy` and the scroll path in `core` from `nsh_core`
+  (one axis; refresh, zoom, paging, snap and scrollbar props are not copied)
 - `NodeId`, `ROOT_ID`, `EventMask` from `nsh_core::ops`
