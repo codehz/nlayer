@@ -18,10 +18,11 @@ fn init_writes_an_app_that_builds_and_tests() {
         report.wrote.iter().any(|path| path == "App.test.tsx"),
         "{report}"
     );
+    let tsconfig = fs::read_to_string(dir.join("tsconfig.json")).unwrap();
+    assert!(tsconfig.contains("\"jsxImportSource\": \"@nlayer\""));
     assert!(
-        fs::read_to_string(dir.join("tsconfig.json"))
-            .unwrap()
-            .contains("\"jsxImportSource\": \"@nlayer\"")
+        tsconfig.contains(".nlayer/types/globals.d.ts"),
+        "ES2022 has no fetch or console; the globals file has to be included"
     );
     assert!(
         fs::read_to_string(dir.join(".nlayer/types/@nlayer/ui.d.ts"))

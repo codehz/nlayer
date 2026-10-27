@@ -63,5 +63,8 @@ mount(App);
             .unwrap()
             .contains("export function open")
     );
+    let globals = fs::read_to_string(out.join("types/globals.d.ts")).unwrap();
+    assert!(globals.contains("declare function fetch"));
+    assert!(!globals.contains("subtle"));
     let _ = fs::remove_dir_all(&dir);
 }
