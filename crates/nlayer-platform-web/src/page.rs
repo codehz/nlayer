@@ -7,7 +7,9 @@
 //! is [`ApproxTextEngine`] (the same stand-in as `nlayer test`); the
 //! browser wraps the attributed spans in the box it produced. Glyph
 //! measurement, hot reload and bytecode are not here. The wasm exports
-//! (`nlayer_start`, `nlayer_pump`) call this module.
+//! (`nlayer_browser_start`, `nlayer_pump`) call this module. The bundle
+//! string is evaluated only by the native QuickJS host; on wasm the page
+//! owns the script and the string is empty.
 //!
 //! Extracted from `nsh-platform-web`'s page loop (`src/lib.rs`, the
 //! `nsh_start` / `nsh_pump` / `nsh_event` exports) and cut to that set.

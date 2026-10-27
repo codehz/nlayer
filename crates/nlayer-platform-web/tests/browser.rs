@@ -11,9 +11,6 @@ fn the_browser_host_mounts_without_quickjs() {
             "nlayer-platform-web",
             "--target",
             "wasm32-unknown-unknown",
-            "--no-default-features",
-            "--features",
-            "browser",
             "--offline",
         ])
         .status()

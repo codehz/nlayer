@@ -1,6 +1,6 @@
 [package]
 name = "nlayer-platform-web"
-description = "Web host: the page's engine and the mount JSON it applies to the DOM."
+description = "Web host: the page evaluates the app; the wasm module lays out frames and does not link QuickJS."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,23 +12,23 @@ crate-type = ["rlib", "cdylib"]
 [lints]
 workspace = true
 
-[features]
-default = ["js"]
-# QuickJS inside the wasm module. The published page does not use this.
-js = ["nlayer-engine/js"]
-# The page evaluates the app. The wasm build uses this instead of `js`.
-browser = ["nlayer-engine/browser"]
-
 [dependencies]
 nlayer-core.workspace = true
-nlayer-engine = { workspace = true, default-features = false }
 rustc-hash.workspace = true
 
+# Headless page tests evaluate a bundle with QuickJS. That dependency is
+# native only: a wasm build cannot enable it, so the module never links QuickJS.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+nlayer-engine = { workspace = true, default-features = false, features = ["js"] }
+
+# The page evaluates ES modules (nsh's browser host). Same crate, no `js` feature.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+nlayer-engine = { workspace = true, default-features = false, features = ["browser"] }
 log.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+nlayer-engine = { workspace = true, default-features = false, features = ["js"] }
 nlayer-bundler.workspace = true
 nlayer-core.workspace = true
 serde_json.workspace = true

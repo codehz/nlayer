@@ -11,13 +11,18 @@ const wasmPath = new URL(
 
 test("the page graph and a text mount do not need QuickJS", async () => {
   const bytes = await readFile(wasmPath);
+  const module = await WebAssembly.compile(bytes);
+  const imported = WebAssembly.Module.imports(module).map((entry) => `${entry.module}.${entry.name}`);
+  assert.equal(imported.some((name) => /quickjs|rquickjs/i.test(name)), false);
+  const exported = WebAssembly.Module.exports(module).map((entry) => entry.name);
+  assert.equal(exported.includes("nlayer_browser_initialize"), true);
+  assert.equal(exported.includes("nlayer_start"), false);
+  const binary = Buffer.from(bytes).toString("latin1");
+  assert.equal(binary.includes("__rquickjs"), false);
+  assert.equal(binary.includes("QuickJS"), false);
   const frames = [];
   let facade;
   const imports = {
-    env: {
-      __nlayer_random_fill: () => 0,
-      __rquickjs_host_now_us: () => 0,
-    },
     nlayer_browser: {
       value: (op, a, b, c, number) => facade.imports.value(op, a, b, c, number),
     },
@@ -35,7 +40,7 @@ test("the page graph and a text mount do not need QuickJS", async () => {
       nlayer_fetch: () => {},
     },
   };
-  const { instance } = await WebAssembly.instantiate(bytes, imports);
+  const instance = await WebAssembly.instantiate(module, imports);
   const wasm = instance.exports;
   assert.equal(typeof wasm.nlayer_browser_initialize, "function");
   facade = createFacade(wasm, () => {});

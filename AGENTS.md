@@ -67,7 +67,7 @@ v1 不做。不写后期做不做，也不写后期方案。
 - 图片：打包 `import` 加 `http(s)`。v1 是 PNG / JPEG / WebP（SVG、GIF 以后要做）。系统字体（自定义字体不预承诺）。
 - 平台 API：`console`、timers、`queueMicrotask`、`URL` / `URLSearchParams`、`TextEncoder` / `TextDecoder`、`AbortController`、`atob` / `btoa`、`performance.now`、`crypto.getRandomValues`、`fetch` / `Request` / `Response` / `Headers`。body 只有 text / json / arrayBuffer / blob。`Blob` 只作为这个结果类型。`crypto.subtle` 是缺的，不是空桩（以后要做）。`fetch` 任意 URL，跟随重定向，认 `AbortSignal`。v1 不带 cookie（以后要做）。无 capability grant（永久）。
 - UI 环境留在 `@nlayer/ui`：`platform.os` 为 `web` | `ios` | `android`，safe area，keyboard inset。只通过 `env()` 进入 padding/margin。
-- 运行：QuickJS。Web 是同一套 WASM 引擎加 DOM，不是第二条 JS 运行时。引擎线程产出 batch，平台主线程挂原生视图。`run` 监视 TSX 和资源，重建后重启引擎，状态丢掉。编译失败只打在终端，上一份成功的引擎继续跑。v1 无 HMR（以后要做）；监视重建、重启、丢状态仍是 v1。
+- 运行：iOS、Android 和 `nlayer test` 用 QuickJS。Web 不把 QuickJS 打进 wasm：页面执行应用的 ES module，wasm 只跑 reactive 图、布局和 mount batch，DOM 由页面挂。引擎线程产出 batch，平台主线程挂原生视图。`run` 监视 TSX 和资源，重建后重启引擎，状态丢掉。编译失败只打在终端，上一份成功的引擎继续跑。v1 无 HMR（以后要做）；监视重建、重启、丢状态仍是 v1。
 - 测试：headless 跑 TSX。文本度量用确定性替身。v1 不对齐真机像素；像素对齐断言和三端 UI 自动化以后要做。
 - 底线：iOS 15+，Android API 28+。`run` 用模拟器或浏览器，不重装 App。构建不需要 Node。`build` 写出 bundle、类型和 source map。
 

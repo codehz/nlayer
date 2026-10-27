@@ -103,8 +103,8 @@ Copied files:
   browser's `fetch`, press, input, scroll, resize, safe area and the
   keyboard inset. Text measurement is the headless stand-in. Glyph runs,
   hot reload and bytecode are not copied)
-- `crates/nlayer-engine` feature `browser` and `crates/nlayer-platform-web`
-  feature `browser` (`src/browser/`, `web/browser/`) follow
-  `nsh-platform-web`'s browser host: the page evaluates the app and the wasm
-  module does not link QuickJS. The opcode facade is written for nlayer's v1
+- `crates/nlayer-engine` feature `browser` and the wasm target of
+  `crates/nlayer-platform-web` (`src/browser/`, `web/browser/`) follow
+  `nsh-platform-web`'s browser host: the page evaluates the app and that
+  wasm module does not link QuickJS. The opcode facade is written for nlayer's v1
   modules; nsh's canvas, list, gesture and animation facades are not copied.

@@ -3,10 +3,9 @@
 //! JS copies them before returning.
 //!
 //! Imports are the module `nlayer` (`nlayer_submit`, `nlayer_request_pump`,
-//! `nlayer_report_error`, `nlayer_log`, `nlayer_fetch`). Entropy is
-//! `env.__nlayer_random_fill`, which `nlayer-js` already imports. The
-//! QuickJS wasm shim also imports `env.__rquickjs_host_now_us` (microseconds
-//! since the Unix epoch, as an f64): this module has no clock of its own.
+//! `nlayer_report_error`, `nlayer_log`, `nlayer_fetch`). The module does not
+//! link QuickJS, so it imports no `env` clock or entropy. The page evaluates
+//! the app and starts it with [`nlayer_browser_start`].
 #![allow(unreachable_pub)]
 use std::cell::RefCell;
 
@@ -179,35 +178,9 @@ fn with_session(f: impl FnOnce(&mut PageSession) -> f64) -> f64 {
     })
 }
 
-/// Starts `bundle` (JS source, an ES module as `nlayer build` writes it)
-/// in a `width` × `height` surface (CSS pixels). Replaces a running app
-/// only when this one starts; a bundle that throws leaves the previous
-/// one. Returns the delay (ms) until [`nlayer_pump`] is due, or -1.
-///
-/// # Safety
-///
-/// `ptr..ptr + len` is memory from [`nlayer_alloc`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn nlayer_start(ptr: *const u8, len: usize, width: f32, height: f32) -> f64 {
-    install_logger();
-    // SAFETY: the caller passes a range from [`nlayer_alloc`].
-    let bundle = unsafe { string(ptr, len) };
-    match PageSession::start(bundle, Size::new(px(width), px(height)), HostPage) {
-        Ok(session) => {
-            let delay = delay_ms(session.deadline());
-            RUNNING.with(|slot| *slot.borrow_mut() = Some(session));
-            delay
-        }
-        Err(error) => {
-            HostPage.report_error(&error.message);
-            -1.0
-        }
-    }
-}
 /// Starts the page-owned script. The page registered it with
 /// [`nlayer_browser_initialize`] first. Returns the delay (ms) until
 /// [`nlayer_pump`] is due, or -1.
-#[cfg(feature = "browser")]
 #[unsafe(no_mangle)]
 pub extern "C" fn nlayer_browser_start(width: f32, height: f32) -> f64 {
     install_logger();
@@ -224,7 +197,7 @@ pub extern "C" fn nlayer_browser_start(width: f32, height: f32) -> f64 {
     }
 }
 
-/// Stops the app. A later [`nlayer_start`] runs another.
+/// Stops the app. A later [`nlayer_browser_start`] runs another.
 #[unsafe(no_mangle)]
 pub extern "C" fn nlayer_stop() {
     RUNNING.with(|slot| *slot.borrow_mut() = None);

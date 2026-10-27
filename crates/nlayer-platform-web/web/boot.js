@@ -2,8 +2,9 @@
 //
 // Licensed under the Apache License, Version 2.0.
 //
-// The page's side of the wasm engine. Extracted from nsh's player loop
-// and cut to v1: instantiate the module, apply mount JSON with `Player`,
+// The page's side of the wasm engine. The module does not link QuickJS:
+// this file evaluates the app (`browser/runtime.js`) and the module lays
+// out frames. Instantiate the module, apply mount JSON with `Player`,
 // answer `fetch` with the browser's, and report press, input, scroll,
 // resize, safe area and the keyboard inset. A call into the module never
 // re-enters it: DOM events that fire while a batch is applied (a scroll
@@ -94,30 +95,8 @@ function requestPump() {
   });
 }
 
-function fillRandom(ptr, len) {
-  const crypto = globalThis.crypto;
-  if (!wasm || !crypto?.getRandomValues) return 1;
-  const bytes = new Uint8Array(memory(), ptr, len);
-  let offset = 0;
-  while (offset < len) {
-    const n = Math.min(65536, len - offset);
-    crypto.getRandomValues(bytes.subarray(offset, offset + n));
-    offset += n;
-  }
-  return 0;
-}
-
-/** Microseconds since the Unix epoch. QuickJS's wasm shim has no clock of its own. */
-function nowUs() {
-  return (performance.timeOrigin + performance.now()) * 1000;
-}
-
 function importsFor(options) {
   return {
-    env: {
-      __nlayer_random_fill: fillRandom,
-      __rquickjs_host_now_us: nowUs,
-    },
     nlayer_browser: {
       value(op, a, b, c, number) {
         if (!facade) throw new Error("the browser host was not initialized");
@@ -188,7 +167,17 @@ async function instantiate(source, options) {
   const response = typeof source === "string" || source instanceof URL ? await fetch(source) : source;
   const bytes = response instanceof Response ? await response.arrayBuffer() : response;
   const module = await WebAssembly.compile(bytes);
-  const instance = await WebAssembly.instantiate(module, importsFor(options));
+  const provided = importsFor(options);
+  for (const entry of WebAssembly.Module.imports(module)) {
+    if (/quickjs|rquickjs/i.test(`${entry.module}.${entry.name}`)) {
+      throw new Error("nlayer.wasm links QuickJS; the page evaluates the app");
+    }
+    const namespace = provided[entry.module];
+    if (!namespace || typeof namespace[entry.name] !== "function") {
+      throw new Error(`nlayer.wasm imports ${entry.module}.${entry.name}, which the page does not provide`);
+    }
+  }
+  const instance = await WebAssembly.instantiate(module, provided);
   return instance.exports;
 }
 
@@ -273,31 +262,23 @@ export async function startPage(root, options = {}) {
   const [width, height] = surfaceSize(root);
   const [top, right, bottom, left] = readInsets(root);
   const keyboard = keyboardInset();
-  if (typeof wasm.nlayer_browser_initialize === "function") {
-    facade = createFacade(wasm, requestPump);
-    enter(() => {
-      wasm.nlayer_browser_initialize();
-      facade.installBoundary();
-      wasm.nlayer_browser_start(width, height);
-      wasm.nlayer_insets(top, right, bottom, left, keyboard);
-      return wasm.nlayer_pump();
-    });
-    releaseBundle = await loadBundle(options.bundle ?? "", {
-      "@nlayer/runtime": facade.runtime,
-      "@nlayer/ui": facade.ui,
-      "nlayer:rt": facade.rt,
-    });
-    enter(() => wasm.nlayer_pump());
-    return;
+  if (typeof wasm.nlayer_browser_initialize !== "function" || typeof wasm.nlayer_start === "function") {
+    throw new Error("nlayer.wasm must be the browser host and must not export nlayer_start");
   }
-  const code = encoder.encode(options.bundle ?? "");
-  enter(() =>
-    withBytes([code], (p, l) => {
-      wasm.nlayer_start(p, l, width, height);
-      wasm.nlayer_insets(top, right, bottom, left, keyboard);
-      return wasm.nlayer_pump();
-    }),
-  );
+  facade = createFacade(wasm, requestPump);
+  enter(() => {
+    wasm.nlayer_browser_initialize();
+    facade.installBoundary();
+    wasm.nlayer_browser_start(width, height);
+    wasm.nlayer_insets(top, right, bottom, left, keyboard);
+    return wasm.nlayer_pump();
+  });
+  releaseBundle = await loadBundle(options.bundle ?? "", {
+    "@nlayer/runtime": facade.runtime,
+    "@nlayer/ui": facade.ui,
+    "nlayer:rt": facade.rt,
+  });
+  enter(() => wasm.nlayer_pump());
 }
 
 /** Stops the running app. The module stays loaded. */
