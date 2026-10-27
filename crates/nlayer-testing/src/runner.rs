@@ -5,15 +5,22 @@
 use std::{
     cell::RefCell,
     fs,
+    io::{Read, Write},
+    net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc, LazyLock, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+    thread,
     time::{Duration, Instant},
 };
 
 use nlayer_bundler::{BundleOptions, bundle};
 use nlayer_core::{
-    ROOT_ID, ViewKind,
+    KeyboardType, ROOT_ID, ResizeMode, ViewKind,
     geometry::{Bounds, Edges, Points, Size, px},
+    transform::TransformKind,
 };
 use nlayer_engine::EngineError;
 use nlayer_js::Host;
@@ -380,6 +387,14 @@ struct PressRequest {
 struct TypeRequest {
     id: usize,
     value: String,
+    /// Selects the input whose placeholder equals this. Absent: the first input.
+    placeholder: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct WaitRequest {
+    id: usize,
+    text: String,
 }
 
 impl Session {
@@ -408,18 +423,45 @@ impl Session {
                 let request: TypeRequest =
                     serde_json::from_str(payload).map_err(|e| e.to_string())?;
                 let app = self.app_mut(request.id)?;
+                let wanted = request
+                    .placeholder
+                    .as_deref()
+                    .filter(|text| !text.is_empty());
                 let mut ids: Vec<_> = app
                     .screen()
                     .views()
                     .filter(|(_, view)| view.kind == ViewKind::Input)
+                    .filter(|(_, view)| match wanted {
+                        None => true,
+                        Some(placeholder) => view
+                            .input
+                            .as_ref()
+                            .is_some_and(|input| input.config.placeholder == placeholder),
+                    })
                     .map(|(id, _)| id)
                     .collect();
                 ids.sort_unstable();
                 let Some(input) = ids.first().copied() else {
-                    return Err("no input".to_owned());
+                    return Err(match wanted {
+                        Some(placeholder) => format!("no input shows \"{placeholder}\""),
+                        None => "no input".to_owned(),
+                    });
                 };
                 app.type_text(input, request.value);
                 let _ = app.next_frame(Duration::from_secs(2));
+                Ok("null".to_owned())
+            }
+            "waitFor" => {
+                let request: WaitRequest =
+                    serde_json::from_str(payload).map_err(|e| e.to_string())?;
+                let app = self.app_mut(request.id)?;
+                if !app.wait_for(&request.text, Duration::from_secs(5)) {
+                    let texts = app.texts();
+                    return Err(format!(
+                        "timed out waiting for \"{}\" in {texts:?}",
+                        request.text
+                    ));
+                }
                 Ok("null".to_owned())
             }
             "tree" => {
@@ -444,6 +486,7 @@ impl Session {
     fn open(&mut self, payload: &str) -> Result<String, String> {
         let request: OpenRequest = serde_json::from_str(payload).map_err(|e| e.to_string())?;
         let entry = resolve_entry(&self.dir, &request.entry)?;
+        let app_dir = entry.parent().unwrap_or(Path::new(".")).to_path_buf();
         let bundled = bundle(&BundleOptions {
             entry,
             minify: false,
@@ -452,7 +495,7 @@ impl Session {
         .map_err(|e| e.plain)?;
         let options = request.options.unwrap_or_default();
         let mut app = Headless::start(
-            bundled.code,
+            with_fixture_origin(&bundled.code, &app_dir),
             Size::new(
                 px(options.width.unwrap_or(VIEWPORT_WIDTH)),
                 px(options.height.unwrap_or(VIEWPORT_HEIGHT)),
@@ -554,11 +597,58 @@ fn node_json(node: &TreeNode, screen: &Screen) -> serde_json::Value {
         map.insert("text".into(), text.clone().into());
     }
     if let Some(view) = view {
+        if !view.spans.is_empty() {
+            map.insert(
+                "spans".into(),
+                serde_json::Value::Array(view.spans.iter().map(span_json).collect()),
+            );
+        }
         if let Some(input) = &view.input {
             map.insert("value".into(), input.value.clone().into());
+            map.insert(
+                "placeholder".into(),
+                input.config.placeholder.clone().into(),
+            );
+            map.insert("secure".into(), input.config.secure.into());
+            map.insert(
+                "keyboard".into(),
+                keyboard_name(input.config.keyboard).into(),
+            );
+            map.insert("disabled".into(), input.config.disabled.into());
         }
         if let Some(source) = &view.source {
             map.insert("src".into(), source.uri.as_ref().into());
+            map.insert("fit".into(), fit_name(view.resize_mode).into());
+        }
+        if node.kind == ViewKind::Scroll {
+            map.insert(
+                "horizontal".into(),
+                view.scroll_horizontal.unwrap_or(false).into(),
+            );
+            if let Some(size) = view.scroll_content {
+                map.insert(
+                    "content".into(),
+                    serde_json::json!({
+                        "width": size.width.0,
+                        "height": size.height.0,
+                    }),
+                );
+            }
+        }
+        if let Some(style) = &view.style
+            && !style.transform.is_identity()
+        {
+            map.insert(
+                "transform".into(),
+                serde_json::Value::Array(
+                    style
+                        .transform
+                        .ops()
+                        .iter()
+                        .map(|op| serde_json::json!({ transform_name(op.kind): op.value }))
+                        .collect(),
+                ),
+            );
         }
     }
     map.insert(
@@ -590,4 +680,147 @@ fn frame_json(frame: Bounds<Points>) -> serde_json::Value {
         "width": frame.size.width.0,
         "height": frame.size.height.0,
     })
+}
+
+fn span_json(span: &crate::TextRun) -> serde_json::Value {
+    serde_json::json!({
+        "text": span.text,
+        "fontSize": span.font_size,
+        "fontWeight": span.font_weight,
+        "italic": span.italic,
+        "color": color_hex(span.color),
+    })
+}
+
+fn color_hex(packed: u32) -> String {
+    let rgb = packed >> 8;
+    let alpha = packed & 0xff;
+    if alpha == 0xff {
+        format!("#{rgb:06x}")
+    } else {
+        format!("#{packed:08x}")
+    }
+}
+
+fn keyboard_name(keyboard: KeyboardType) -> &'static str {
+    match keyboard {
+        KeyboardType::Text => "text",
+        KeyboardType::Email => "email",
+        KeyboardType::Number => "number",
+        KeyboardType::Phone => "phone",
+    }
+}
+
+fn fit_name(mode: ResizeMode) -> &'static str {
+    match mode {
+        ResizeMode::Cover => "cover",
+        ResizeMode::Contain => "contain",
+        ResizeMode::Stretch => "fill",
+        ResizeMode::Center => "none",
+        ResizeMode::ScaleDown => "scale-down",
+    }
+}
+
+fn transform_name(kind: TransformKind) -> &'static str {
+    match kind {
+        TransformKind::TranslateX | TransformKind::TranslateXFraction => "translateX",
+        TransformKind::TranslateY | TransformKind::TranslateYFraction => "translateY",
+        TransformKind::Scale => "scale",
+        TransformKind::ScaleX => "scaleX",
+        TransformKind::ScaleY => "scaleY",
+        TransformKind::Rotate => "rotate",
+        TransformKind::RotateX => "rotateX",
+        TransformKind::RotateY => "rotateY",
+        TransformKind::SkewX => "skewX",
+        TransformKind::SkewY => "skewY",
+        TransformKind::Perspective => "perspective",
+    }
+}
+
+/// Points the app's `fetch` at a loopback server of `root`, so a headless
+/// run can read the same files `nlayer run` serves next to the page.
+fn with_fixture_origin(code: &str, root: &Path) -> String {
+    let origin = fixture_origin(root);
+    format!("globalThis.__nlayerTestOrigin={origin:?};\n{code}")
+}
+
+fn fixture_origin(root: &Path) -> String {
+    static FIXTURE: LazyLock<(u16, Arc<Mutex<PathBuf>>)> = LazyLock::new(|| {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("test file server");
+        let port = listener.local_addr().expect("test file server").port();
+        let root = Arc::new(Mutex::new(PathBuf::new()));
+        let files = Arc::clone(&root);
+        thread::Builder::new()
+            .name("nlayer-test-files".to_owned())
+            .spawn(move || {
+                for connection in listener.incoming() {
+                    let Ok(socket) = connection else { continue };
+                    let root = files.lock().expect("test files").clone();
+                    let _ = serve_file(socket, &root);
+                }
+            })
+            .expect("test file server");
+        (port, root)
+    });
+    let (port, slot) = &*FIXTURE;
+    *slot.lock().expect("test files") = root.to_path_buf();
+    format!("http://127.0.0.1:{port}")
+}
+
+fn serve_file(mut socket: TcpStream, root: &Path) -> std::io::Result<()> {
+    let _ = socket.set_read_timeout(Some(Duration::from_secs(2)));
+    let mut buf = Vec::new();
+    let mut tmp = [0_u8; 1024];
+    while !buf.windows(4).any(|window| window == b"\r\n\r\n") && buf.len() < 8192 {
+        match socket.read(&mut tmp) {
+            Ok(0) | Err(_) => break,
+            Ok(read) => buf.extend_from_slice(&tmp[..read]),
+        }
+    }
+    let text = String::from_utf8_lossy(&buf);
+    let line = text.lines().next().unwrap_or("");
+    let mut parts = line.split(' ');
+    let method = parts.next().unwrap_or("");
+    let url = parts.next().unwrap_or("/");
+    if method != "GET" {
+        return write_status(&mut socket, 405, "text/plain", b"method not allowed");
+    }
+    let path = url.split('?').next().unwrap_or("/");
+    if path.split(['/', '\\']).any(|part| part == "..") {
+        return write_status(&mut socket, 400, "text/plain", b"bad request");
+    }
+    let rel = path.trim_start_matches('/');
+    let file = root.join(rel);
+    let Ok(body) = fs::read(&file) else {
+        return write_status(&mut socket, 404, "text/plain", b"not found");
+    };
+    let mime = if rel.ends_with(".json") {
+        "application/json"
+    } else if rel.ends_with(".png") {
+        "image/png"
+    } else {
+        "application/octet-stream"
+    };
+    write_status(&mut socket, 200, mime, &body)
+}
+
+fn write_status(
+    socket: &mut TcpStream,
+    status: u16,
+    mime: &str,
+    body: &[u8],
+) -> std::io::Result<()> {
+    let reason = match status {
+        200 => "OK",
+        400 => "Bad Request",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        _ => "Error",
+    };
+    write!(
+        socket,
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    )?;
+    socket.write_all(body)
 }

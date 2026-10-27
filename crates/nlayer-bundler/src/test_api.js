@@ -99,8 +99,11 @@ export function open(entry, options) {
     press(text) {
       call("press", { id, text });
     },
-    type(value) {
-      call("type", { id, value });
+    type(value, placeholder) {
+      call("type", { id, value, placeholder: placeholder ?? null });
+    },
+    waitFor(text) {
+      call("waitFor", { id, text });
     },
     tree() {
       return call("tree", id);

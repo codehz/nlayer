@@ -1,6 +1,7 @@
 //! `nlayer run --target web`.
 //!
-//! Serves the page, the wasm engine and the app's bundle on this machine.
+//! Serves the page, the wasm engine, the app's bundle and files next to the
+//! app (a demo's `quote.json`) on this machine.
 //! TSX and imported assets are watched by polling their bytes. A rebuild that
 //! changes the bundle or an asset bumps a generation the page polls; the page
 //! reloads, which drops the running app. A failed rebuild is reported and the
@@ -698,10 +699,20 @@ fn lookup(shared: &Shared, path: &str) -> Result<(&'static str, Body), u16> {
     if let Some((mime, text)) = host(path) {
         return Ok((mime, Body::Text(text)));
     }
-    let inner = shared.inner.lock().expect("dev server");
-    match inner.files.get(path) {
-        Some(bytes) => Ok((mime_of(path), Body::Shared(Arc::clone(bytes)))),
-        None => Err(404),
+    let known = {
+        let inner = shared.inner.lock().expect("dev server");
+        inner.files.get(path).map(Arc::clone)
+    };
+    if let Some(bytes) = known {
+        return Ok((mime_of(path), Body::Shared(bytes)));
+    }
+    // A file beside the app, not an imported asset: `fetch("/quote.json")`.
+    if path.is_empty() || path.ends_with('/') {
+        return Err(404);
+    }
+    match fs::read(shared.app_dir.join(path)) {
+        Ok(bytes) => Ok((mime_of(path), Body::Bytes(bytes))),
+        Err(_) => Err(404),
     }
 }
 

@@ -339,8 +339,28 @@ export interface Node {
   kind: "view" | "text" | "image" | "scroll" | "input";
   frame: Frame;
   text?: string;
+  /** Style runs of a text view, in order. `color` is `#rrggbb` or `#rrggbbaa`. */
+  spans?: Array<{
+    text: string;
+    fontSize: number;
+    fontWeight: number;
+    italic: boolean;
+    color: string;
+  }>;
   value?: string;
+  placeholder?: string;
+  secure?: boolean;
+  keyboard?: "text" | "email" | "number" | "phone";
+  disabled?: boolean;
   src?: string;
+  /** An image's `objectFit`. */
+  fit?: "fill" | "contain" | "cover" | "none" | "scale-down";
+  /** A scroll view scrolls along x. */
+  horizontal?: boolean;
+  /** A scroll view's content size. */
+  content?: { width: number; height: number };
+  /** A view's static transform steps. Angles are degrees. */
+  transform?: Array<Record<string, number>>;
   children: Node[];
 }
 
@@ -359,8 +379,11 @@ export interface App {
   inputs(): string[];
   /** Presses the view showing `text` (a text view whose content contains it) and waits for the frame. */
   press(text: string): void;
-  /** Types `value` into the first input (the whole new text) and waits for the frame. */
-  type(value: string): void;
+  /** Types `value` into an input (the whole new text) and waits for the frame.
+   * `placeholder` selects that field; without it, the first input. */
+  type(value: string, placeholder?: string): void;
+  /** Waits until some text view contains `text`. */
+  waitFor(text: string): void;
   /** The mount tree from the surface root, with each view's frame. */
   tree(): Node;
   close(): void;

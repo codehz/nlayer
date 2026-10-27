@@ -108,6 +108,7 @@ fn run_serves_the_page_and_keeps_it_across_a_failed_rebuild() {
     let image = png();
     fs::write(dir.join("img/icon.png"), &image).unwrap();
     fs::write(dir.join("App.tsx"), source("Hello")).unwrap();
+    fs::write(dir.join("quote.json"), b"{\"title\":\"Gallery\"}").unwrap();
 
     let module = vec![7_u8; 1 << 20];
     let server = serve(RunOptions {
@@ -155,7 +156,10 @@ fn run_serves_the_page_and_keeps_it_across_a_failed_rebuild() {
     assert_eq!(icon.status, 200);
     assert_eq!(icon.content_type, "image/png");
     assert_eq!(icon.body, image);
-
+    let quote = get(port, "/quote.json");
+    assert_eq!(quote.status, 200);
+    assert_eq!(quote.content_type, "application/json");
+    assert_eq!(text(&quote), "{\"title\":\"Gallery\"}");
     assert_eq!(get(port, "/missing").status, 404);
     assert_eq!(get(port, "/../Cargo.toml").status, 400);
     assert_eq!(get(port, "/%2e%2e/Cargo.toml").status, 400);

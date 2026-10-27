@@ -53,6 +53,10 @@ pub struct View {
     pub input: Option<InputView>,
     /// The scrollable size of a scroll view.
     pub scroll_content: Option<Size<Points>>,
+    /// `true` when the scroll view scrolls horizontally.
+    pub scroll_horizontal: Option<bool>,
+    /// Style runs of a text view, covering [`Self::text`].
+    pub spans: Vec<TextRun>,
 }
 
 /// A single-line input's configuration and text.
@@ -62,6 +66,21 @@ pub struct InputView {
     pub config: Box<InputConfig>,
     /// The text it shows (the app's `value`).
     pub value: String,
+}
+
+/// One style run of a text view.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextRun {
+    /// The run's characters.
+    pub text: String,
+    /// Font size, in points.
+    pub font_size: f32,
+    /// Font weight, `100..=900`.
+    pub font_weight: u16,
+    /// Italic.
+    pub italic: bool,
+    /// Packed `0xRRGGBBAA`.
+    pub color: u32,
 }
 
 /// The model of a surface's views.
@@ -193,6 +212,8 @@ impl Screen {
                     resize_mode: ResizeMode::default(),
                     input: None,
                     scroll_content: None,
+                    scroll_horizontal: None,
+                    spans: Vec::new(),
                 });
                 view.kind = *kind;
             }
@@ -229,6 +250,7 @@ impl Screen {
             }
             MountItem::Text { id, text, .. } => {
                 if let Some(view) = self.views.get_mut(id) {
+                    view.spans = text_runs(text);
                     view.text = Some(text.text.clone());
                 }
             }
@@ -247,7 +269,13 @@ impl Screen {
                     view.resize_mode = *resize_mode;
                 }
             }
-            MountItem::ScrollConfig { .. } | MountItem::ScrollBy { .. } => {}
+            MountItem::ScrollConfig { id, horizontal } => {
+                self.ensure(*id, ViewKind::Scroll);
+                if let Some(view) = self.views.get_mut(id) {
+                    view.scroll_horizontal = Some(*horizontal);
+                }
+            }
+            MountItem::ScrollBy { .. } => {}
             MountItem::ScrollContent { id, size } => {
                 if let Some(view) = self.views.get_mut(id) {
                     view.scroll_content = Some(*size);
@@ -289,6 +317,8 @@ impl Screen {
             resize_mode: ResizeMode::default(),
             input: None,
             scroll_content: None,
+            scroll_horizontal: None,
+            spans: Vec::new(),
         });
     }
 
@@ -462,4 +492,26 @@ impl Headless {
     pub fn stop(self) {
         self.engine.stop();
     }
+}
+
+fn text_runs(text: &nlayer_core::text::AttributedText) -> Vec<TextRun> {
+    text.spans
+        .iter()
+        .map(|span| TextRun {
+            text: utf16_slice(&text.text, span.start, span.end),
+            font_size: span.style.font_size.0,
+            font_weight: span.style.font_weight,
+            italic: span.style.italic,
+            color: span.style.color.0,
+        })
+        .collect()
+}
+
+fn utf16_slice(text: &str, start: u32, end: u32) -> String {
+    let units: Vec<u16> = text
+        .encode_utf16()
+        .skip(start as usize)
+        .take(end.saturating_sub(start) as usize)
+        .collect();
+    String::from_utf16_lossy(&units)
 }
