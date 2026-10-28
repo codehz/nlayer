@@ -5,7 +5,7 @@ use std::{path::PathBuf, process::ExitCode, sync::Arc};
 use clap::{Parser, Subcommand, ValueEnum};
 use nlayer_cli::{
     BuildOptions, BuildOutcome, InitOptions, IosOptions, RunOptions, TestOptions, TestTarget,
-    build, init, run_ios, serve, test, web_module,
+    build, init, run_android, run_ios, serve, test, web_module,
 };
 
 #[derive(Parser)]
@@ -49,8 +49,8 @@ enum Command {
         #[arg(default_value = ".")]
         dir: PathBuf,
     },
-    /// Run the app. Web serves a browser. iOS installs a simulator host once,
-    /// then restarts it after a rebuild without reinstalling.
+    /// Run the app. Web serves a browser. iOS and Android install a host once,
+    /// then restart it after a rebuild without reinstalling.
     /// A failed rebuild is printed; the previous app keeps running.
     Run {
         /// The entry module, or the app's directory (default: the current one), whose `App.tsx` is the entry.
@@ -87,6 +87,9 @@ enum Target {
     Web,
     /// The iOS simulator. A rebuild restarts the app and drops its state.
     Ios,
+    /// An Android emulator or a connected device. A rebuild restarts the
+    /// app and drops its state.
+    Android,
 }
 
 fn main() -> ExitCode {
@@ -163,6 +166,17 @@ fn main() -> ExitCode {
                 }
             },
             Target::Ios => match run_ios(IosOptions { entry, release }) {
+                Ok(session) => {
+                    session.park();
+                    drop(session);
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
+            },
+            Target::Android => match run_android(nlayer_cli::AndroidOptions { entry, release }) {
                 Ok(session) => {
                     session.park();
                     drop(session);
@@ -263,7 +277,15 @@ mod tests {
                 ..
             }
         ));
-        assert!(Cli::try_parse_from(["nlayer", "run", "--target", "android"]).is_err());
+        assert!(matches!(
+            Cli::try_parse_from(["nlayer", "run", "--target", "android"])
+                .unwrap()
+                .command,
+            Command::Run {
+                target: Target::Android,
+                ..
+            }
+        ));
         assert!(matches!(
             Cli::try_parse_from(["nlayer", "test", "--target", "web"])
                 .unwrap()

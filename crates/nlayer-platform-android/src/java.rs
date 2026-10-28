@@ -49,7 +49,7 @@ pub(crate) fn init(vm: JavaVM) -> jni::errors::Result<()> {
         text_prepare: env.get_static_method_id(
             text_class,
             "prepare",
-            "(Ljava/lang/String;[I[FIII)Ljava/lang/Object;",
+            "(Ljava/lang/String;[I[FIIIF)Ljava/lang/Object;",
         )?,
         text_measure: env.get_static_method_id(text_class, "measure", "(Ljava/lang/Object;F)J")?,
         text_layout: env.get_static_method_id(

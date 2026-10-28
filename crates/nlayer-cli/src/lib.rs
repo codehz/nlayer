@@ -4,8 +4,10 @@
 //! in a headless browser and `--target ios` in the simulator. `nlayer run --target web` serves the app to a
 //! browser and reloads it after a rebuild. `nlayer run --target ios` runs it
 //! in the simulator and restarts it after a rebuild, without reinstalling
-//! the host.
+//! the host. `nlayer run --target android` does the same on an emulator or
+//! a connected device.
 
+mod android;
 mod init;
 mod ios;
 mod ios_test;
@@ -17,6 +19,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub use android::{AndroidOptions, AndroidSession, run_android};
 pub use init::{InitError, InitOptions, InitReport, init};
 pub use ios::{IosOptions, IosSession, run_ios};
 use nlayer_bundler::{BundleError, BundleOptions, bundle};

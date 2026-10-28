@@ -20,3 +20,4 @@ clap = { version = "4", features = ["derive"] }
 libc = "0.2"
 serde.workspace = true
 serde_json.workspace = true
+zip = { version = "8", default-features = false, features = ["deflate"] }

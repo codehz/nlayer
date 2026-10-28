@@ -134,3 +134,8 @@ Copied files:
   measurement, one-axis scroll, PNG / JPEG / WebP from a bundled file or
   `http(s)`, and a single-line field. Refresh, zoom, paging, shadows,
   gradients and the dev server are not mounted.
+- `crates/nlayer-cli/src/android.rs` from `crates/nsh-cli/src/android.rs`:
+  a debug APK from the SDK build-tools (`aapt2`, `d8`, `zipalign`,
+  `apksigner`), one device ABI, install once, then push the bundle and
+  restart. Multi-ABI packaging, release keystores and the dev server are
+  not copied.
