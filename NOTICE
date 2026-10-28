@@ -144,3 +144,6 @@ Copied files:
   `apksigner`), one device ABI, install once, then push the bundle and
   restart. Multi-ABI packaging, release keystores and the dev server are
   not copied.
+- app-entry steps in `crates/nlayer-testing/src/runner.rs` follow
+  `crates/nsh-cli/src/test.rs` (`steps_file`): open the entry, then run
+  standard input. The idle wait, live network and trace are not copied.

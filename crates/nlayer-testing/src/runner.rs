@@ -1,11 +1,12 @@
 //! `nlayer test`: each `*.test.tsx` (and `.test.ts` / `.test.js` /
 //! `.test.jsx`) on a VM of its own, importing `@nlayer/test`. `open` starts
-//! the app on a [`AppHost`]. The default host is headless. The app bundle
-//! does not serve that module.
+//! the app on a [`AppHost`]. A file that is not a test file is an app entry:
+//! it is opened, then the steps from standard input run. The default host is
+//! headless. The app bundle does not serve that module.
 use std::{
     cell::RefCell,
     fs,
-    io::{Read, Write},
+    io::{IsTerminal, Read, Write},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     sync::{
@@ -219,14 +220,17 @@ pub trait AppHost {
 
 /// Runs the test file `path`, or every test file under the directory
 /// `path` (not under `node_modules`, `target` or a hidden directory).
-/// `filter` runs only tests whose name contains it. The app opens on the
-/// headless engine.
+/// A file that is not a test file is an app entry: it is opened, then the
+/// steps from standard input run (`app` is that app; `expect` and `open`
+/// are in scope). A terminal supplies no steps. `filter` runs only tests
+/// whose name contains it. The app opens on the headless engine.
 pub fn run(path: &Path, filter: Option<&str>) -> Result<Report, RunError> {
     run_with(path, filter, &mut HeadlessHost)
 }
 
 /// [`run`], but `open` starts the app on `host`. The same steps and the
-/// same report. A step the host cannot do fails; it does not fall back.
+/// same report, including an app entry's standard-input steps. A step the
+/// host cannot do fails; it does not fall back.
 pub fn run_with(
     path: &Path,
     filter: Option<&str>,
@@ -246,14 +250,24 @@ impl Drop for HostGuard {
 }
 
 fn run_in(path: &Path, filter: Option<&str>) -> Result<Report, RunError> {
+    run_path(path, filter, None)
+}
+
+/// [`run_in`]. `steps` replaces standard input when `path` is an app entry.
+fn run_path(path: &Path, filter: Option<&str>, steps: Option<&str>) -> Result<Report, RunError> {
+    if path.is_file() && !is_test_file(path) {
+        let owned;
+        let steps = match steps {
+            Some(steps) => steps,
+            None => {
+                owned = read_steps()?;
+                owned.as_str()
+            }
+        };
+        return run_entry(path, steps, filter);
+    }
     let mut files = Vec::new();
     if path.is_file() {
-        if !is_test_file(path) {
-            return Err(RunError::new(format!(
-                "{} is not a test file (*.test.ts, *.test.tsx, *.test.js, *.test.jsx)",
-                path.display()
-            )));
-        }
         files.push(path.to_path_buf());
     } else if path.is_dir() {
         walk(path, &mut files).map_err(|e| RunError::new(format!("{}: {e}", path.display())))?;
@@ -278,6 +292,83 @@ fn run_in(path: &Path, filter: Option<&str>) -> Result<Report, RunError> {
         .map(|file| run_file(file, &root, filter))
         .collect();
     Ok(Report { files })
+}
+
+/// Steps from standard input. A terminal has none: the app is only opened.
+fn read_steps() -> Result<String, RunError> {
+    let stdin = std::io::stdin();
+    if stdin.is_terminal() {
+        return Ok(String::new());
+    }
+    let mut steps = String::new();
+    stdin
+        .lock()
+        .read_to_string(&mut steps)
+        .map_err(|error| RunError::new(format!("read the steps from standard input: {error}")))?;
+    Ok(steps)
+}
+
+/// Opens `entry` and runs `steps` (`app` is the opened app). The report
+/// names the entry, not the generated file.
+fn run_entry(entry: &Path, steps: &str, filter: Option<&str>) -> Result<Report, RunError> {
+    let file = StepsFile::create(entry, steps)?;
+    let name = entry
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| entry.display().to_string());
+    let result = match bundle_test(&file.0) {
+        Ok(code) => execute_in(entry.parent().unwrap_or(entry), &name, &code, filter),
+        Err(error) => FileResult {
+            name,
+            error: Some(error),
+            filtered: false,
+            cases: Vec::new(),
+        },
+    };
+    Ok(Report {
+        files: vec![result],
+    })
+}
+
+fn steps_source(entry: &Path, steps: &str) -> Result<String, String> {
+    let shown = entry
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "app".to_owned());
+    let entry_js = serde_json::to_string(&entry.to_string_lossy().replace('\\', "/"))
+        .map_err(|error| error.to_string())?;
+    Ok(format!(
+        "// Made by `nlayer test {shown}`: the steps of standard input.\n\
+         // `app` is the opened app. `entry` is its path. `expect` and `open` are in scope.\n\
+         import {{ expect, open, test }} from \"@nlayer/test\";\n\
+         \n\
+         test(\"steps\", () => {{\n\
+         const entry = {entry_js};\n\
+         const app = open(entry);\n\
+         {steps}\n\
+         }});\n"
+    ))
+}
+
+/// The generated steps file. Dropping it deletes the file.
+struct StepsFile(PathBuf);
+
+impl StepsFile {
+    fn create(entry: &Path, steps: &str) -> Result<Self, RunError> {
+        let id = ENTRIES.fetch_add(1, Ordering::Relaxed);
+        let path =
+            std::env::temp_dir().join(format!("nlayer-steps-{}-{id}.tsx", std::process::id()));
+        let source = steps_source(entry, steps).map_err(RunError::new)?;
+        fs::write(&path, source)
+            .map_err(|error| RunError::new(format!("write the steps: {error}")))?;
+        Ok(Self(path))
+    }
+}
+
+impl Drop for StepsFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
 }
 
 fn is_test_file(path: &Path) -> bool {
@@ -349,7 +440,11 @@ fn bundle_test(test_file: &Path) -> Result<String, String> {
 }
 
 fn execute(path: &Path, name: &str, code: &str, filter: Option<&str>) -> FileResult {
-    let dir = path.parent().unwrap_or(path).to_path_buf();
+    execute_in(path.parent().unwrap_or(path), name, code, filter)
+}
+
+fn execute_in(dir: &Path, name: &str, code: &str, filter: Option<&str>) -> FileResult {
+    let dir = dir.to_path_buf();
     SESSION.with(|slot| {
         *slot.borrow_mut() = Some(Session {
             dir,
@@ -997,4 +1092,127 @@ fn write_status(
         body.len()
     )?;
     socket.write_all(body)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::{HOST, HeadlessHost, HostGuard, host_ptr, run_path};
+
+    const APP: &str = r#"
+import { mount, signal } from "@nlayer/runtime";
+import { Text, View } from "@nlayer/ui";
+
+function App() {
+    const count = signal(0);
+    return (
+        <View style={{ width: 80, height: 40 }} onPress={() => count.set(count() + 1)}>
+            <Text>Count: {count()}</Text>
+        </View>
+    );
+}
+mount(App);
+"#;
+
+    fn with_host<T>(body: impl FnOnce() -> T) -> T {
+        let mut host = HeadlessHost;
+        HOST.with(|cell| *cell.borrow_mut() = Some(host_ptr(&mut host)));
+        let guard = HostGuard;
+        let value = body();
+        drop(guard);
+        value
+    }
+
+    fn app(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("nlayer-steps-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("App.tsx"), APP).unwrap();
+        dir
+    }
+
+    #[test]
+    fn an_entry_runs_the_steps_against_the_opened_app() {
+        let dir = app("press");
+        let report = with_host(|| {
+            run_path(
+                &dir.join("App.tsx"),
+                None,
+                Some(
+                    "app.press(\"Count: 0\");\nexpect(app.texts()).toEqual([\"Count: 1\"]);\napp.close();\nconst again = open(\"./App.tsx\");\nexpect(again.texts()).toEqual([\"Count: 0\"]);\n",
+                ),
+            )
+        })
+        .expect("steps run");
+        assert!(report.ok(), "{report}");
+        assert_eq!(report.files[0].name, "App.tsx");
+        assert_eq!(report.files[0].cases[0].name, "steps");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failing_step_is_that_case() {
+        let dir = app("fail");
+        let report = with_host(|| {
+            run_path(
+                &dir.join("App.tsx"),
+                None,
+                Some("expect(app.texts()).toEqual([\"missing\"]);\n"),
+            )
+        })
+        .expect("the file runs");
+        assert!(!report.ok(), "{report}");
+        assert_eq!(report.files[0].name, "App.tsx");
+        let error = report.files[0].cases[0].error.as_deref().unwrap_or("");
+        assert!(error.contains("missing"), "{report}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn empty_steps_only_open_the_app() {
+        let dir = app("empty");
+        let report = with_host(|| run_path(&dir.join("App.tsx"), None, Some(""))).expect("opens");
+        assert!(report.ok(), "{report}");
+        assert_eq!(report.passed(), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_step_that_does_not_parse_fails_the_file() {
+        let dir = app("syntax");
+        let report = with_host(|| run_path(&dir.join("App.tsx"), None, Some("const = ;\n")))
+            .expect("the file is reported");
+        assert!(!report.ok(), "{report}");
+        assert!(report.files[0].error.is_some(), "{report}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_test_file_is_not_an_entry() {
+        let dir = app("file");
+        fs::write(
+            dir.join("App.test.tsx"),
+            r#"
+import { expect, open, test } from "@nlayer/test";
+
+test("shows the count", () => {
+    const app = open("./App.tsx");
+    expect(app.texts()).toEqual(["Count: 0"]);
+});
+"#,
+        )
+        .unwrap();
+        let report = with_host(|| {
+            run_path(
+                &dir.join("App.test.tsx"),
+                None,
+                Some("throw new Error(\"steps\");\n"),
+            )
+        })
+        .expect("the file runs");
+        assert!(report.ok(), "{report}");
+        assert_eq!(report.files[0].cases[0].name, "shows the count");
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

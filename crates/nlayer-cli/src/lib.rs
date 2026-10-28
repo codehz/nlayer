@@ -1,6 +1,7 @@
 //! `nlayer init` creates a TSX app. `nlayer build` writes its bundle, source
 //! map, imported images and TypeScript declarations. `nlayer test` runs its
-//! test files. The default is headless; `--target web` runs the opened app
+//! test files, or, given an app entry, opens it and runs the steps from
+//! standard input. The default is headless; `--target web` runs the opened app
 //! in a headless browser, `--target ios` in the simulator, and `--target
 //! android` on an emulator or a connected device. `nlayer run --target web`
 //! serves the app to a browser and reloads it after a rebuild. `nlayer run
@@ -124,7 +125,7 @@ pub(crate) fn resolve_entry(path: &Path) -> Result<PathBuf, BuildError> {
 /// What `nlayer test` runs.
 #[derive(Debug, Clone)]
 pub struct TestOptions {
-    /// A test file, or a directory of them.
+    /// A test file, a directory of them, or an app entry.
     pub path: PathBuf,
     /// Run only tests whose name contains this.
     pub filter: Option<String>,

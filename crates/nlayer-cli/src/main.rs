@@ -30,10 +30,14 @@ enum Command {
         release: bool,
     },
     /// Run `*.test.tsx` files (`@nlayer/test`).
+    /// An app entry instead of a test file is opened, then the steps from
+    /// standard input run (`app.press("Go")`). A terminal supplies no steps.
     /// The default engine is headless. `--target web` runs the opened app
-    /// in a headless browser; `--target ios` runs it in the simulator.
+    /// in a headless browser; `--target ios` runs it in the simulator;
+    /// `--target android` runs it on an emulator or a connected device.
+    /// `--target` applies to an entry's steps too.
     Test {
-        /// A test file, or a directory (default: the current one).
+        /// A test file, a directory of them (default: the current one), or an app entry.
         #[arg(default_value = ".")]
         path: PathBuf,
         /// Run only tests whose name contains this.

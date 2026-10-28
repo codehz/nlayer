@@ -5,7 +5,7 @@ from [nsh](https://github.com/longbridge/nsh); existing nsh apps are not
 compatible.
 
 v1 is the `nlayer` CLI (`init` / `build` / `run --target web|ios|android`)
-plus a TSX test runner: headless by default, and the same steps on a real web, iOS or Android host (`nlayer test --target`). The public surface is `View`, `Text`,
+plus a TSX test runner: headless by default, and the same steps on a real web, iOS or Android host (`nlayer test --target`). An app entry instead of a test file is opened and the steps from standard input run, on that host too. The public surface is `View`, `Text`,
 `Image`, `Scroll` and single-line `Input`, with the nsh reactive graph and
 Taffy layout. `nlayer run --target web` serves an app to a browser on this
 machine, rebuilds when its TSX or assets change, and reloads the page; a
