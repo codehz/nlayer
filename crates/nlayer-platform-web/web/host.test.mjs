@@ -180,3 +180,40 @@ test("selectors name one view, and the steps use the page's events", () => {
   assert.equal(host.query("missing").state, "wait");
   assert.equal(host.query("text:Save").state, "fail");
 });
+
+test("a span color is #rrggbb, not the browser's rgb()", () => {
+  const { player, host, root } = harness();
+  root.ownerDocument.defaultView = {
+    getComputedStyle(el) {
+      return {
+        fontSize: "22px",
+        fontWeight: "400",
+        fontStyle: "normal",
+        color: el.textContent === "fade" ? "rgba(194, 65, 12, 0.5)" : "rgb(194, 65, 12)",
+      };
+    },
+  };
+  player.apply([
+    ["c", 2, "text"],
+    ["i", 1, 2, null],
+    [
+      "t",
+      2,
+      0,
+      0,
+      80,
+      16,
+      null,
+      false,
+      [
+        [" color", null],
+        ["fade", null],
+      ],
+      [],
+      [],
+    ],
+  ]);
+  const spans = host.tree().children[0].spans;
+  assert.equal(spans[0].color, "#c2410c");
+  assert.equal(spans[1].color, "#c2410c80");
+});

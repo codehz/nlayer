@@ -507,11 +507,36 @@ function spanJson(el) {
       const weight = parseInt(style.fontWeight, 10);
       if (!Number.isNaN(weight)) item.fontWeight = weight;
       item.italic = style.fontStyle === "italic";
-      if (style.color) item.color = style.color;
+      if (style.color) item.color = hexColor(style.color);
     }
     spans.push(item);
   }
   return spans.length ? spans : null;
+}
+
+/** A CSS color as `#rrggbb` or `#rrggbbaa`. `rgb()` / `rgba()` convert; anything else is kept. */
+function hexColor(value) {
+  const raw = String(value).trim();
+  if (raw.startsWith("#")) {
+    const hex = raw.toLowerCase();
+    return hex.length === 9 && hex.endsWith("ff") ? hex.slice(0, 7) : hex;
+  }
+  const match = raw.match(
+    /^rgba?\(\s*([0-9.]+)[,\s]+([0-9.]+)[,\s]+([0-9.]+)(?:(?:[,\s/]+)([0-9.]+%?))?\s*\)$/i,
+  );
+  if (!match) return raw;
+  const channel = (n) => {
+    const v = Math.round(Number(n));
+    const c = v < 0 ? 0 : v > 255 ? 255 : v;
+    return c.toString(16).padStart(2, "0");
+  };
+  const rgb = `${channel(match[1])}${channel(match[2])}${channel(match[3])}`;
+  if (match[4] == null) return `#${rgb}`;
+  const spec = match[4];
+  const amount = Number(spec.endsWith("%") ? spec.slice(0, -1) : spec);
+  const alpha = spec.endsWith("%") ? (amount / 100) * 255 : amount <= 1 ? amount * 255 : amount;
+  const a = Math.round(alpha);
+  return a >= 255 ? `#${rgb}` : `#${rgb}${channel(a)}`;
 }
 
 function fitOf(img) {
