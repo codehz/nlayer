@@ -25,6 +25,10 @@ fn init_writes_an_app_that_builds_and_tests() {
         "ES2022 has no fetch or console; the globals file has to be included"
     );
     assert!(
+        tsconfig.contains("\"./.nlayer/types/@nlayer/runtime.d.ts\""),
+        "paths must be relative: TS rejects non-relative paths without baseUrl"
+    );
+    assert!(
         fs::read_to_string(dir.join(".nlayer/types/@nlayer/ui.d.ts"))
             .unwrap()
             .contains("export function View")
