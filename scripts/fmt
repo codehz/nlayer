@@ -1,0 +1,61 @@
+#!/bin/sh
+# Format non-Rust sources.
+# JS, TS, TSX, CSS, HTML, JSON and TOML: `bun fmt` (`bunfig.toml`).
+# Java: google-java-format 1.28.0. Later jars call javac internals this JDK 17
+# does not have; 1.36+ is JDK 21. The Android sources are compiled as Java 8.
+# Markdown is not formatted.
+set -eu
+cd "$(dirname "$0")/.."
+
+check=0
+if [ "${1:-}" = "--check" ]; then
+  check=1
+elif [ "$#" -ne 0 ]; then
+  echo "usage: scripts/fmt [--check]" >&2
+  exit 2
+fi
+
+if ! command -v bun >/dev/null 2>&1; then
+  echo "scripts/fmt: bun is required" >&2
+  exit 1
+fi
+if ! command -v java >/dev/null 2>&1; then
+  echo "scripts/fmt: java is required (JDK 17+)" >&2
+  exit 1
+fi
+
+status=0
+if [ "$check" -eq 1 ]; then
+  bun fmt --check || status=1
+else
+  bun fmt
+fi
+
+version=1.28.0
+jar="target/fmt/google-java-format-${version}-all-deps.jar"
+want=32342e7c1b4600f80df3471da46aee8012d3e1445d5ea1be1fb71289b07cc735
+if [ ! -f "$jar" ]; then
+  mkdir -p target/fmt
+  tmp=$(mktemp)
+  curl -fsSL -o "$tmp" \
+    "https://github.com/google/google-java-format/releases/download/v${version}/google-java-format-${version}-all-deps.jar"
+  if command -v shasum >/dev/null 2>&1; then
+    got=$(shasum -a 256 "$tmp" | awk '{print $1}')
+  else
+    got=$(sha256sum "$tmp" | awk '{print $1}')
+  fi
+  if [ "$got" != "$want" ]; then
+    rm -f "$tmp"
+    echo "scripts/fmt: google-java-format checksum mismatch: $got" >&2
+    exit 1
+  fi
+  mv "$tmp" "$jar"
+fi
+
+java_args="--replace"
+if [ "$check" -eq 1 ]; then
+  java_args="--dry-run --set-exit-if-changed"
+fi
+# shellcheck disable=SC2086
+find crates -name '*.java' -print0 | xargs -0 java -jar "$jar" $java_args || status=1
+exit "$status"

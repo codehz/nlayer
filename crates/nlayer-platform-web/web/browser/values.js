@@ -80,7 +80,7 @@ export class Values {
   }
 
   result(id) {
-    if ((id >>> 0) === EXCEPTION) {
+    if (id >>> 0 === EXCEPTION) {
       const error = this.error;
       const pending = this.hasError;
       this.error = null;

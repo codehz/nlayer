@@ -212,7 +212,10 @@ export class Player {
     const child = this.view(childId);
     if (!parent || !child) return;
     const before = beforeId == null ? null : this.view(beforeId);
-    parent.insertBefore(child, before && before.parentNode === parent ? before : parent._spacer ?? null);
+    parent.insertBefore(
+      child,
+      before && before.parentNode === parent ? before : (parent._spacer ?? null),
+    );
     this.raiseBorder(parent);
   }
 
@@ -347,8 +350,21 @@ export class Player {
     }
     swapClass(field, "_class", this.styleClass(css));
     field.placeholder = config.placeholder;
-    field.type = config.secure ? "password" : config.keyboard === "email" ? "email" : config.keyboard === "phone" ? "tel" : "text";
-    field.inputMode = config.keyboard === "number" ? "numeric" : config.keyboard === "phone" ? "tel" : config.keyboard === "email" ? "email" : "text";
+    field.type = config.secure
+      ? "password"
+      : config.keyboard === "email"
+        ? "email"
+        : config.keyboard === "phone"
+          ? "tel"
+          : "text";
+    field.inputMode =
+      config.keyboard === "number"
+        ? "numeric"
+        : config.keyboard === "phone"
+          ? "tel"
+          : config.keyboard === "email"
+            ? "email"
+            : "text";
     field.disabled = !!config.disabled;
     field._keyboard = config.keyboard || "text";
     field._secure = !!config.secure;

@@ -44,13 +44,16 @@ class Element {
     this.scrollTop = 0;
     this.textContent = "";
     if (tag === "style") {
-      this.sheet = { cssRules: [], insertRule: (rule, i) => {
-        const entry = { cssText: rule, style: { cssText: "" } };
-        const body = rule.slice(rule.indexOf("{") + 1, rule.lastIndexOf("}"));
-        entry.style.cssText = body;
-        this.sheet.cssRules.splice(i, 0, entry);
-        return i;
-      } };
+      this.sheet = {
+        cssRules: [],
+        insertRule: (rule, i) => {
+          const entry = { cssText: rule, style: { cssText: "" } };
+          const body = rule.slice(rule.indexOf("{") + 1, rule.lastIndexOf("}"));
+          entry.style.cssText = body;
+          this.sheet.cssRules.splice(i, 0, entry);
+          return i;
+        },
+      };
     }
   }
   get className() {
@@ -80,7 +83,12 @@ class Element {
     (this.listeners[type] ??= []).push(fn);
   }
   dispatch(type, extra) {
-    const event = { stopPropagation() { event.stopped = true; }, ...(extra ?? {}) };
+    const event = {
+      stopPropagation() {
+        event.stopped = true;
+      },
+      ...(extra ?? {}),
+    };
     for (const fn of this.listeners[type] ?? []) fn(event);
     if (!event.stopped) this.parentNode?.dispatch(type, extra);
   }
@@ -137,7 +145,20 @@ test("a batch becomes views, text, an image, a scroll and an input", () => {
     ["c", 3, "text"],
     ["i", 2, 3, null],
     ["css", "i3t1", "font:italic 700 20px sans-serif;color:#ff0000;"],
-    ["t", 3, 4, 2, 80, 18, null, false, [["Hello ", null], ["span", "i3t1"]]],
+    [
+      "t",
+      3,
+      4,
+      2,
+      80,
+      18,
+      null,
+      false,
+      [
+        ["Hello ", null],
+        ["span", "i3t1"],
+      ],
+    ],
     ["c", 4, "image"],
     ["i", 1, 4, null],
     ["img", 4, "asset:/a.png", "contain"],
@@ -151,7 +172,12 @@ test("a batch becomes views, text, an image, a scroll and an input", () => {
     ["sc", 6, true],
     ["c", 7, "input"],
     ["i", 1, 7, null],
-    ["in", 7, null, { placeholder: "name", secure: false, keyboard: "email", disabled: false, rtl: false }],
+    [
+      "in",
+      7,
+      null,
+      { placeholder: "name", secure: false, keyboard: "email", disabled: false, rtl: false },
+    ],
     ["iv", 7, "hi", 0],
     ["ic", 7, 2, 3, 90, 18],
   ]);
@@ -222,7 +248,13 @@ test("active, hover and focus styles are rules on the view", () => {
   assert.equal(view.tabIndex, 0);
   const sheet = player.doc.head.children.find((el) => el.id === "nl-states");
   const rules = sheet.sheet.cssRules.map((rule) => rule.cssText);
-  assert.ok(rules.some((rule) => rule.startsWith(".nl-p-i2a.nl-p-i2a.nl-p-i2a.nl-p-i2a:active:not(.nl-disabled){") && rule.includes("background-color:#ff0000")));
+  assert.ok(
+    rules.some(
+      (rule) =>
+        rule.startsWith(".nl-p-i2a.nl-p-i2a.nl-p-i2a.nl-p-i2a:active:not(.nl-disabled){") &&
+        rule.includes("background-color:#ff0000"),
+    ),
+  );
   assert.ok(rules.some((rule) => rule.includes(".nl-text span") && rule.includes("color:#00ff00")));
   player.apply([
     ["rule", "i2a", 4, ":active", "", ""],
@@ -234,7 +266,12 @@ test("active, hover and focus styles are rules on the view", () => {
 
   player.apply([
     ["c", 3, "input"],
-    ["in", 3, null, { placeholder: "", secure: false, keyboard: "text", disabled: true, rtl: false }],
+    [
+      "in",
+      3,
+      null,
+      { placeholder: "", secure: false, keyboard: "text", disabled: true, rtl: false },
+    ],
   ]);
   assert.ok(player.view(3).classList.contains("nl-disabled"));
 });

@@ -65,10 +65,14 @@ export function createFacade(wasm, requestPump) {
   }
 
   function effect(fn) {
-    call(104, () => {
-      const result = fn();
-      if (typeof result === "function") call(109, result);
-    }, true);
+    call(
+      104,
+      () => {
+        const result = fn();
+        if (typeof result === "function") call(109, result);
+      },
+      true,
+    );
   }
 
   function renderEffect(fn) {

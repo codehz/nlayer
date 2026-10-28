@@ -82,7 +82,12 @@ class El {
     (this.listeners[type] ??= []).push(fn);
   }
   dispatch(type, extra) {
-    const event = { stopPropagation() { event.stopped = true; }, ...(extra ?? {}) };
+    const event = {
+      stopPropagation() {
+        event.stopped = true;
+      },
+      ...(extra ?? {}),
+    };
     for (const fn of this.listeners[type] ?? []) fn(event);
     if (!event.stopped) this.parentNode?.dispatch(type, extra);
   }
@@ -123,7 +128,12 @@ test("selectors name one view, and the steps use the page's events", () => {
     ["f", 5, 0, 20, 80, 20],
     ["i", 1, 5, null],
     ["tid", 5, "name"],
-    ["in", 5, null, { placeholder: "Name", secure: false, keyboard: "text", disabled: false, rtl: false }],
+    [
+      "in",
+      5,
+      null,
+      { placeholder: "Name", secure: false, keyboard: "text", disabled: false, rtl: false },
+    ],
     ["c", 6, "scroll"],
     ["f", 6, 0, 0, 100, 40],
     ["i", 1, 6, null],
@@ -152,7 +162,10 @@ test("selectors name one view, and the steps use the page's events", () => {
   assert.throws(() => host.press("below"), /not in view/);
 
   host.type("Name", "ab");
-  assert.deepEqual(sink.changes, [[5, "a"], [5, "ab"]]);
+  assert.deepEqual(sink.changes, [
+    [5, "a"],
+    [5, "ab"],
+  ]);
   assert.deepEqual(host.inputs(), ["ab"]);
   assert.equal(host.tree().children.find((child) => child.testID === "name").value, "ab");
 

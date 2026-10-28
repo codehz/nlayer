@@ -12,8 +12,13 @@ const wasmPath = new URL(
 test("the page graph and a text mount do not need QuickJS", async () => {
   const bytes = await readFile(wasmPath);
   const module = await WebAssembly.compile(bytes);
-  const imported = WebAssembly.Module.imports(module).map((entry) => `${entry.module}.${entry.name}`);
-  assert.equal(imported.some((name) => /quickjs|rquickjs/i.test(name)), false);
+  const imported = WebAssembly.Module.imports(module).map(
+    (entry) => `${entry.module}.${entry.name}`,
+  );
+  assert.equal(
+    imported.some((name) => /quickjs|rquickjs/i.test(name)),
+    false,
+  );
   const exported = WebAssembly.Module.exports(module).map((entry) => entry.name);
   assert.equal(exported.includes("nlayer_browser_initialize"), true);
   assert.equal(exported.includes("nlayer_start"), false);

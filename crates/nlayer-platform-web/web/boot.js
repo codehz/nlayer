@@ -125,7 +125,8 @@ function importsFor(options) {
 }
 
 async function instantiate(source, options) {
-  const response = typeof source === "string" || source instanceof URL ? await fetch(source) : source;
+  const response =
+    typeof source === "string" || source instanceof URL ? await fetch(source) : source;
   const bytes = response instanceof Response ? await response.arrayBuffer() : response;
   const module = await WebAssembly.compile(bytes);
   const provided = importsFor(options);
@@ -135,7 +136,9 @@ async function instantiate(source, options) {
     }
     const namespace = provided[entry.module];
     if (!namespace || typeof namespace[entry.name] !== "function") {
-      throw new Error(`nlayer.wasm imports ${entry.module}.${entry.name}, which the page does not provide`);
+      throw new Error(
+        `nlayer.wasm imports ${entry.module}.${entry.name}, which the page does not provide`,
+      );
     }
   }
   const instance = await WebAssembly.instantiate(module, provided);
@@ -157,7 +160,12 @@ function readInsets(root) {
   root.append(probe);
   const style = getComputedStyle(probe);
   const n = (value) => parseFloat(value) || 0;
-  const insets = [n(style.paddingTop), n(style.paddingRight), n(style.paddingBottom), n(style.paddingLeft)];
+  const insets = [
+    n(style.paddingTop),
+    n(style.paddingRight),
+    n(style.paddingBottom),
+    n(style.paddingLeft),
+  ];
   probe.remove();
   return insets;
 }
@@ -207,32 +215,39 @@ export async function startPage(root, options = {}) {
     watchSurface(root);
   }
   root.replaceChildren();
-  player = new Player(root, {
-    press(id) {
-      enter(() => {
-        wasm.nlayer_press(id);
-        return wasm.nlayer_pump();
-      });
-    },
-    change(id, value) {
-      enter(() =>
-        withBytes([encoder.encode(value)], (p, l) => {
-          wasm.nlayer_input(id, p, l);
+  player = new Player(
+    root,
+    {
+      press(id) {
+        enter(() => {
+          wasm.nlayer_press(id);
           return wasm.nlayer_pump();
-        }),
-      );
+        });
+      },
+      change(id, value) {
+        enter(() =>
+          withBytes([encoder.encode(value)], (p, l) => {
+            wasm.nlayer_input(id, p, l);
+            return wasm.nlayer_pump();
+          }),
+        );
+      },
+      scroll(id) {
+        enter(() => {
+          wasm.nlayer_scroll(id);
+          return wasm.nlayer_pump();
+        });
+      },
     },
-    scroll(id) {
-      enter(() => {
-        wasm.nlayer_scroll(id);
-        return wasm.nlayer_pump();
-      });
-    },
-  }, { assetBase: options.assetBase ?? "", baseCSS: options.baseCSS });
+    { assetBase: options.assetBase ?? "", baseCSS: options.baseCSS },
+  );
   const [width, height] = surfaceSize(root);
   const [top, right, bottom, left] = readInsets(root);
   const keyboard = keyboardInset();
-  if (typeof wasm.nlayer_browser_initialize !== "function" || typeof wasm.nlayer_start === "function") {
+  if (
+    typeof wasm.nlayer_browser_initialize !== "function" ||
+    typeof wasm.nlayer_start === "function"
+  ) {
     throw new Error("nlayer.wasm must be the browser host and must not export nlayer_start");
   }
   facade = createFacade(wasm, requestPump);

@@ -27,11 +27,22 @@ ordered-float = { version = "5", default-features = false }
 rustc-hash = "2.1"
 # Same fork nsh uses: the QuickJS-NG VM with bindings the host reaches
 # directly (module loaders, class callbacks, GC marks).
-rquickjs = { package = "quickjs-jit", version = "=0.14.1", default-features = false, features = ["std", "futures", "loader", "macro"] }
+rquickjs = { package = "quickjs-jit", version = "=0.14.1", default-features = false, features = [
+  "std",
+  "futures",
+  "loader",
+  "macro",
+] }
 url = "2.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 slab = "0.4"
 thiserror = "2"
 unicode-linebreak = "0.1.5"
-taffy = { version = "0.15", default-features = false, features = ["std", "flexbox", "grid", "block_layout", "content_size"] }
+taffy = { version = "0.15", default-features = false, features = [
+  "std",
+  "flexbox",
+  "grid",
+  "block_layout",
+  "content_size",
+] }

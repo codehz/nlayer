@@ -37,7 +37,11 @@ function reveal(app, pred) {
 }
 
 test("column, row, and grid place their children", () => {
-  const app = open("./App.tsx", { width: 390, height: 844, safeArea: { top: 22, right: 0, bottom: 0, left: 10 } });
+  const app = open("./App.tsx", {
+    width: 390,
+    height: 844,
+    safeArea: { top: 22, right: 0, bottom: 0, left: 10 },
+  });
   const nodes = flat(app.tree(), []);
   const one = holder(nodes, "One");
   const two = holder(nodes, "Two");
@@ -103,7 +107,9 @@ test("nested text is one block with distinct spans", () => {
 test("images mount a bundled asset and a remote URL", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
   const nodes = flat(app.tree(), []);
-  const bundled = nodes.find((node) => node.kind === "image" && String(node.src).indexOf("asset:/mark.png") === 0);
+  const bundled = nodes.find(
+    (node) => node.kind === "image" && String(node.src).indexOf("asset:/mark.png") === 0,
+  );
   expect(bundled.fit).toBe("cover");
   expect(bundled.frame.width).toBe(32);
   expect(bundled.frame.height).toBe(32);
@@ -118,9 +124,15 @@ test("scroll views overflow on each axis", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
   const nodes = flat(app.tree(), []);
   const down = nodes.find(
-    (node) => node.kind === "scroll" && node.horizontal === false && node.content && node.content.height === 200,
+    (node) =>
+      node.kind === "scroll" &&
+      node.horizontal === false &&
+      node.content &&
+      node.content.height === 200,
   );
-  const across = nodes.find((node) => node.kind === "scroll" && node.horizontal === true && containsText(node, "Across"));
+  const across = nodes.find(
+    (node) => node.kind === "scroll" && node.horizontal === true && containsText(node, "Across"),
+  );
   expect(down.frame.height).toBe(80);
   expect(down.content).toEqual({ width: 200, height: 200 });
   expect(across.frame.height).toBe(48);
@@ -132,7 +144,8 @@ test("scroll views overflow on each axis", () => {
 test("inputs take text, keyboards, a password, and a disabled value", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
   const nodes = flat(app.tree(), []);
-  const input = (placeholder) => nodes.find((node) => node.kind === "input" && node.placeholder === placeholder);
+  const input = (placeholder) =>
+    nodes.find((node) => node.kind === "input" && node.placeholder === placeholder);
   expect(input("Email").keyboard).toBe("email");
   expect(input("Amount").keyboard).toBe("number");
   expect(input("Phone").keyboard).toBe("phone");

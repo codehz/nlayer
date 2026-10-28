@@ -1,0 +1,7 @@
+# Non-Rust formatting. `scripts/fmt` is the command: this file, then Java.
+# Markdown is excluded. bun fmt rewrites inline code (` >> ` becomes `>>`).
+
+[fmt]
+# Same width as rustfmt and google-java-format.
+printWidth = 100
+ignorePatterns = ["**/*.md"]

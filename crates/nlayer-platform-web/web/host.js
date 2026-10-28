@@ -175,14 +175,17 @@ function pushMatches(el, matcher, out) {
   if (textEq(text, matcher.value) || inputEq(el, matcher.value)) out.push(viewTarget(el));
   if (text == null) return;
   for (const span of el._spanIds ?? []) {
-    if (textEq(text.slice(span[1], span[2]), matcher.value)) out.push(spanTarget(el, span[1], span[2]));
+    if (textEq(text.slice(span[1], span[2]), matcher.value))
+      out.push(spanTarget(el, span[1], span[2]));
   }
 }
 
 function pick(source, hits, nth) {
   if (nth != null) return hits[nth] ? [hits[nth]] : [];
   if (hits.length > 1) {
-    throw new Error(`\`${source}\` matches ${hits.length} views: say which (\`${source} >> nth=0\`)`);
+    throw new Error(
+      `\`${source}\` matches ${hits.length} views: say which (\`${source} >> nth=0\`)`,
+    );
   }
   return hits;
 }
@@ -239,13 +242,19 @@ function isVisible(root, target) {
   const cx = box.x + box.width / 2;
   const cy = box.y + box.height / 2;
   const view = elementBox(root);
-  if (cx < view.x || cy < view.y || cx > view.x + view.width || cy > view.y + view.height) return false;
+  if (cx < view.x || cy < view.y || cx > view.x + view.width || cy > view.y + view.height)
+    return false;
   let el = parentView(target.el);
   while (el) {
     if (hidden(el)) return false;
     if (el._kind === "scroll") {
       const scroll = elementBox(el);
-      if (cx < scroll.x || cy < scroll.y || cx > scroll.x + scroll.width || cy > scroll.y + scroll.height) {
+      if (
+        cx < scroll.x ||
+        cy < scroll.y ||
+        cx > scroll.x + scroll.width ||
+        cy > scroll.y + scroll.height
+      ) {
         return false;
       }
     }
@@ -418,7 +427,10 @@ function scrollOf(target) {
 function moveScroll(el, distance) {
   const horizontal = !!el._horizontal;
   const content = spacerSize(el);
-  const span = Math.max(0, horizontal ? content.width - boxSize(el).width : content.height - boxSize(el).height);
+  const span = Math.max(
+    0,
+    horizontal ? content.width - boxSize(el).width : content.height - boxSize(el).height,
+  );
   const current = horizontal ? el.scrollLeft || 0 : el.scrollTop || 0;
   const next = Math.min(span, Math.max(0, current + distance));
   const native = typeof el.dispatchEvent === "function";
@@ -448,7 +460,9 @@ function px(value) {
 }
 
 function nodeJson(el, parent, root) {
-  const frame = parent ? layoutFrame(el, root) : { x: 0, y: 0, width: elementBox(el).width, height: elementBox(el).height };
+  const frame = parent
+    ? layoutFrame(el, root)
+    : { x: 0, y: 0, width: elementBox(el).width, height: elementBox(el).height };
   const node = {
     kind: el._kind,
     frame: { x: frame.x, y: frame.y, width: frame.width, height: frame.height },

@@ -49,10 +49,14 @@ function Layout() {
         </View>
       </View>
       <View style={{ flexDirection: "row", gap: 8 }}>
-        <View style={{ width: 64, height: 28, borderRadius: 6, backgroundColor: "#e2e8f0", padding: 4 }}>
+        <View
+          style={{ width: 64, height: 28, borderRadius: 6, backgroundColor: "#e2e8f0", padding: 4 }}
+        >
           <Text>Left</Text>
         </View>
-        <View style={{ width: 64, height: 28, borderRadius: 6, backgroundColor: "#e2e8f0", padding: 4 }}>
+        <View
+          style={{ width: 64, height: 28, borderRadius: 6, backgroundColor: "#e2e8f0", padding: 4 }}
+        >
           <Text>Right</Text>
         </View>
       </View>
@@ -202,7 +206,12 @@ function Fields() {
   const locked = signal("locked");
   return (
     <Section title="Input">
-      <Field label={`Name: ${name()}`} value={name()} placeholder="Name" onChange={(value) => name.set(value)} />
+      <Field
+        label={`Name: ${name()}`}
+        value={name()}
+        placeholder="Name"
+        onChange={(value) => name.set(value)}
+      />
       <Field
         label="Email"
         value={email()}
@@ -271,7 +280,9 @@ function App() {
         }}
       >
         <Text style={{ fontSize: 28, fontWeight: "700", color: "#0f172a" }}>Gallery</Text>
-        <Text style={{ fontSize: 14, color: "#64748b" }}>View, Text, Image, Scroll, and a single-line Input.</Text>
+        <Text style={{ fontSize: 14, color: "#64748b" }}>
+          View, Text, Image, Scroll, and a single-line Input.
+        </Text>
         <Layout />
         <Type />
         <Pictures />
