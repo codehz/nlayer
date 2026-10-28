@@ -104,7 +104,7 @@ const TSCONFIG: &str = r#"{
       "@nlayer/jsx-runtime": ["./.nlayer/types/@nlayer/jsx-runtime.d.ts"]
     }
   },
-  "include": ["**/*.ts", "**/*.tsx", ".nlayer/types/globals.d.ts"]
+  "include": ["**/*.ts", "**/*.tsx", ".nlayer/types/globals.d.ts", ".nlayer/types/images.d.ts"]
 }
 "#;
 

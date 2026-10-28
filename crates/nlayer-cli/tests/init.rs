@@ -25,6 +25,10 @@ fn init_writes_an_app_that_builds_and_tests() {
         "ES2022 has no fetch or console; the globals file has to be included"
     );
     assert!(
+        tsconfig.contains(".nlayer/types/images.d.ts"),
+        "image ambient modules are not a module file, so include has to list them"
+    );
+    assert!(
         tsconfig.contains("\"./.nlayer/types/@nlayer/runtime.d.ts\""),
         "paths must be relative: TS rejects non-relative paths without baseUrl"
     );
