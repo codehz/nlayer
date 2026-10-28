@@ -96,14 +96,17 @@ export function open(entry, options) {
     inputs() {
       return call("inputs", id);
     },
-    press(text) {
-      call("press", { id, text });
+    press(selector) {
+      call("press", { id, selector });
     },
-    type(value, placeholder) {
-      call("type", { id, value, placeholder: placeholder ?? null });
+    type(selector, text) {
+      call("type", { id, selector, text });
     },
-    waitFor(text) {
-      call("waitFor", { id, text });
+    scroll(selector, distance) {
+      call("scroll", { id, selector, distance });
+    },
+    waitFor(selector) {
+      call("waitFor", { id, selector });
     },
     tree() {
       return call("tree", id);

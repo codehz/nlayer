@@ -261,7 +261,7 @@ function Quote() {
 
 function App() {
   return (
-    <Scroll style={{ flex: 1, backgroundColor: "#f8fafc" }}>
+    <Scroll testID="page" style={{ flex: 1, backgroundColor: "#f8fafc" }}>
       <View style={{ padding: 16, paddingBottom: 32 }}>
         <Text style={{ fontSize: 28, fontWeight: "700", color: "#0f172a" }}>Gallery</Text>
         <Text style={{ fontSize: 14, color: "#64748b" }}>View, Text, Image, Scroll, and a single-line Input.</Text>

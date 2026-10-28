@@ -52,9 +52,9 @@ test("a press updates the text and the frame", () => {
     expect(view.frame).toEqual({ x: 0, y: 0, width: 200, height: 80 });
     expect(view.children[0].text).toBe("Count: 0");
     expect(view.children[0].frame.x).toBe(0);
-    app.press("Count");
+    app.press("Count: 0");
     expect(app.texts()).toEqual(["Count: 1"]);
-    app.type("ada");
+    app.type("Name", "ada");
     expect(app.inputs()).toEqual(["ada"]);
 });
 
@@ -133,5 +133,48 @@ test("dropped", () => {
     assert!(report.ok(), "{report}");
     assert_eq!(report.passed(), 1);
     assert_eq!(report.files[0].cases[0].name, "kept");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_scroll_selector_moves_the_content_offset() {
+    let dir = app(
+        "scroll",
+        &[
+            (
+                "App.tsx",
+                r#"
+import { mount } from "@nlayer/runtime";
+import { Scroll, View } from "@nlayer/ui";
+
+function App() {
+    return (
+        <Scroll testID="list" style={{ width: 100, height: 40 }}>
+            <View style={{ width: 100, height: 200 }} />
+        </Scroll>
+    );
+}
+mount(App);
+"#,
+            ),
+            (
+                "App.test.tsx",
+                r#"
+import { expect, open, test } from "@nlayer/test";
+
+test("scroll moves the offset toward the content", () => {
+    const app = open("./App.tsx", { width: 100, height: 80 });
+    app.scroll("list", 30);
+    const scroll = app.tree().children[0];
+    expect(scroll.kind).toBe("scroll");
+    expect(scroll.testID).toBe("list");
+    expect(scroll.offset).toEqual({ x: 0, y: 30 });
+});
+"#,
+            ),
+        ],
+    );
+    let report = run(&dir, None).expect("the file runs");
+    assert!(report.ok(), "{report}");
     let _ = fs::remove_dir_all(&dir);
 }

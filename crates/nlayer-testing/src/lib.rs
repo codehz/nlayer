@@ -10,6 +10,7 @@
 //! ```
 
 mod runner;
+mod selector;
 
 pub use runner::{CaseResult, FileResult, Report, RunError, run};
 use std::{
@@ -20,11 +21,11 @@ use std::{
 
 use crossbeam_channel::{Receiver, unbounded};
 use nlayer_core::{
-    EventKind, EventMask, ImageSource, InputConfig, MountBatch, MountItem, NodeId, ResizeMode,
-    ViewKind,
+    Command, EventKind, EventMask, ImageSource, InputConfig, MountBatch, MountItem, NodeId,
+    ResizeMode, ViewKind,
     geometry::{Bounds, Points, Size},
     style::ViewStyle,
-    text::{ApproxTextEngine, SpanTestId, TextLink},
+    text::{ApproxTextEngine, SpanTestId, TextLayout, TextLink},
 };
 use nlayer_engine::{Engine, EngineConfig, EngineError, EventPayload, MountSink};
 
@@ -63,6 +64,14 @@ pub struct View {
     pub span_ids: Vec<SpanTestId>,
     /// Nested spans that take presses, on the text view that draws them.
     pub links: Vec<TextLink>,
+    /// Content offset of a scroll view, toward the end of the content.
+    pub scroll_x: f32,
+    /// Content offset of a scroll view.
+    pub scroll_y: f32,
+    /// Where a text view's layout sits inside the view.
+    pub text_content: Bounds<Points>,
+    /// The text view's layout, so a span has a box.
+    pub text_layout: Option<TextLayout>,
 }
 
 /// A single-line input's configuration and text.
@@ -93,6 +102,8 @@ pub struct TextRun {
 #[derive(Debug, Default)]
 pub struct Screen {
     views: HashMap<NodeId, View>,
+    /// The viewport `open` pinned. Visibility is judged against it.
+    viewport: Size<Points>,
 }
 
 /// A node of [`Screen::tree`].
@@ -121,6 +132,24 @@ impl Screen {
     /// Every view, by id.
     pub fn views(&self) -> impl Iterator<Item = (NodeId, &View)> {
         self.views.iter().map(|(&id, view)| (id, view))
+    }
+
+    /// The viewport the screen was opened at.
+    pub fn viewport(&self) -> Size<Points> {
+        self.viewport
+    }
+
+    /// Pins the viewport selectors judge visibility against.
+    pub fn set_viewport(&mut self, viewport: Size<Points>) {
+        self.viewport = viewport;
+    }
+
+    /// Sets the content offset of scroll view `id`.
+    pub fn set_scroll(&mut self, id: NodeId, x: f32, y: f32) {
+        if let Some(view) = self.views.get_mut(&id) {
+            view.scroll_x = x;
+            view.scroll_y = y;
+        }
     }
 
     /// The frame of view `id`.
@@ -223,6 +252,10 @@ impl Screen {
                     test_id: None,
                     span_ids: Vec::new(),
                     links: Vec::new(),
+                    scroll_x: 0.0,
+                    scroll_y: 0.0,
+                    text_content: Bounds::default(),
+                    text_layout: None,
                 });
                 view.kind = *kind;
             }
@@ -257,12 +290,19 @@ impl Screen {
                     view.style = Some(style.clone());
                 }
             }
-            MountItem::Text { id, text, .. } => {
+            MountItem::Text {
+                id,
+                text,
+                layout,
+                content,
+            } => {
                 if let Some(view) = self.views.get_mut(id) {
                     view.spans = text_runs(text);
                     view.text = Some(text.text.clone());
                     view.span_ids = text.test_ids.clone();
                     view.links = text.links.clone();
+                    view.text_content = *content;
+                    view.text_layout = Some(layout.clone());
                 }
             }
             MountItem::Events { id, events } => {
@@ -286,7 +326,12 @@ impl Screen {
                     view.scroll_horizontal = Some(*horizontal);
                 }
             }
-            MountItem::ScrollBy { .. } => {}
+            MountItem::ScrollBy { id, dx, dy } => {
+                if let Some(view) = self.views.get_mut(id) {
+                    view.scroll_x += dx.0;
+                    view.scroll_y += dy.0;
+                }
+            }
             MountItem::ScrollContent { id, size } => {
                 if let Some(view) = self.views.get_mut(id) {
                     view.scroll_content = Some(*size);
@@ -311,9 +356,10 @@ impl Screen {
                     input.value = text.clone();
                 }
             }
-            MountItem::InputContent { .. }
-            | MountItem::Command { .. }
-            | MountItem::StateStyle { .. } => {}
+            MountItem::InputContent { .. } | MountItem::StateStyle { .. } => {}
+            MountItem::Command { id, command } => match command {
+                Command::ScrollTo { x, y, .. } => self.set_scroll(*id, x.0, y.0),
+            },
             MountItem::TestId { id, test_id } => {
                 if let Some(view) = self.views.get_mut(id) {
                     view.test_id = test_id.clone();
@@ -340,6 +386,10 @@ impl Screen {
             test_id: None,
             span_ids: Vec::new(),
             links: Vec::new(),
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            text_content: Bounds::default(),
+            text_layout: None,
         });
     }
 
@@ -410,7 +460,10 @@ impl Headless {
         let mut app = Headless {
             engine,
             rx,
-            screen: Screen::default(),
+            screen: Screen {
+                viewport,
+                ..Screen::default()
+            },
         };
         app.refresh();
         Ok(app)
@@ -490,6 +543,121 @@ impl Headless {
         true
     }
 
+    /// Presses what `selector` names. A match without `onPress` presses the
+    /// nearest ancestor that has it. The match has to be on screen.
+    pub fn press_selector(&mut self, selector: &str) -> Result<(), String> {
+        self.refresh();
+        let target = selector::resolve(&self.screen, selector)?;
+        self.require_visible(selector, target)?;
+        let id = match target {
+            selector::Target::Span { node: Some(id), .. } => id,
+            _ => self
+                .screen
+                .listener(target.view(), EventKind::Press)
+                .ok_or_else(|| format!("`{selector}` does not take a press"))?,
+        };
+        self.press(id);
+        Ok(())
+    }
+
+    /// Types `text` into the single-line input `selector` names, one change
+    /// per character, appended to the value it already shows.
+    pub fn type_selector(&mut self, selector: &str, text: &str) -> Result<(), String> {
+        self.refresh();
+        let target = selector::resolve(&self.screen, selector)?;
+        self.require_visible(selector, target)?;
+        let id = selector::input_of(&self.screen, target)
+            .ok_or_else(|| format!("`{selector}` is not an input"))?;
+        if self
+            .screen
+            .view(id)
+            .and_then(|view| view.input.as_ref())
+            .is_some_and(|input| input.config.disabled)
+        {
+            return Err(format!("`{selector}` is disabled"));
+        }
+        let mut value = self
+            .screen
+            .view(id)
+            .and_then(|view| view.input.as_ref())
+            .map(|input| input.value.clone())
+            .unwrap_or_default();
+        for ch in text.chars() {
+            value.push(ch);
+            if let Some(view) = self.screen.views.get_mut(&id)
+                && let Some(input) = &mut view.input
+            {
+                input.value = value.clone();
+            }
+            self.engine.control().input_changed(id, value.clone());
+            let _ = self.next_frame(Duration::from_millis(200));
+            if let Some(now) = self
+                .screen
+                .view(id)
+                .and_then(|view| view.input.as_ref())
+                .map(|input| input.value.clone())
+            {
+                value = now;
+            }
+        }
+        Ok(())
+    }
+
+    /// Scrolls the scroll view `selector` names (or the one around it) by
+    /// `distance` points toward the end of its content.
+    pub fn scroll_selector(&mut self, selector: &str, distance: f32) -> Result<(), String> {
+        self.refresh();
+        let target = selector::resolve(&self.screen, selector)?;
+        self.require_visible(selector, target)?;
+        let id = selector::scroll_of(&self.screen, target)
+            .ok_or_else(|| format!("`{selector}` is not in a scroll view"))?;
+        selector::scroll_by(&mut self.screen, id, distance)
+            .map_err(|_| format!("`{selector}` is not in a scroll view"))?;
+        self.engine
+            .control()
+            .dispatch_event(id, EventKind::Scroll, EventPayload::None);
+        Ok(())
+    }
+
+    /// Waits until `selector` names one view that is on screen.
+    pub fn wait_selector(&mut self, selector: &str, timeout: Duration) -> Result<(), String> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            match self.selector_state(selector) {
+                SelectorState::Ready => return Ok(()),
+                SelectorState::Wait => {}
+                SelectorState::Fail(error) => return Err(error),
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() || !self.next_frame(left) {
+                break;
+            }
+        }
+        match self.selector_state(selector) {
+            SelectorState::Ready => Ok(()),
+            SelectorState::Wait => Err(format!("`{selector}` matches nothing")),
+            SelectorState::Fail(error) => Err(error),
+        }
+    }
+
+    fn require_visible(&self, selector: &str, target: selector::Target) -> Result<(), String> {
+        if selector::visible(&self.screen, target) {
+            Ok(())
+        } else {
+            Err(format!("`{selector}` is not in view"))
+        }
+    }
+
+    fn selector_state(&mut self, selector: &str) -> SelectorState {
+        self.refresh();
+        match selector::resolve(&self.screen, selector) {
+            Ok(target) if selector::visible(&self.screen, target) => SelectorState::Ready,
+            Ok(_) => SelectorState::Wait,
+            Err(error) if error.contains("matches nothing") => SelectorState::Wait,
+            Err(error) => SelectorState::Fail(error),
+        }
+    }
+
     /// The user typed `text` into input `id`. The native field shows it at
     /// once (as a platform's does); the app's `onChange` decides what the
     /// controlled value becomes.
@@ -506,6 +674,7 @@ impl Headless {
 
     /// The surface changed size.
     pub fn resize(&mut self, size: Size<Points>) {
+        self.screen.set_viewport(size);
         self.engine.control().resize(size);
     }
 
@@ -513,6 +682,12 @@ impl Headless {
     pub fn stop(self) {
         self.engine.stop();
     }
+}
+
+enum SelectorState {
+    Ready,
+    Wait,
+    Fail(String),
 }
 
 fn text_runs(text: &nlayer_core::text::AttributedText) -> Vec<TextRun> {

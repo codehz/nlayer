@@ -15,6 +15,27 @@ function holder(nodes, text) {
   return nodes.find((node) => node.children.some((child) => child.text === text));
 }
 
+function locate(node, pred, top, scrollY) {
+  const y = top + node.frame.y - scrollY;
+  if (pred(node)) return { node, y };
+  const childScroll = node.kind === "scroll" && node.offset ? node.offset.y : 0;
+  for (const child of node.children) {
+    const hit = locate(child, pred, y, childScroll);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function reveal(app, pred) {
+  const root = app.tree();
+  const hit = locate(root, pred, 0, 0);
+  const page = locate(root, (node) => node.testID === "page", 0, 0);
+  const center = hit.y + hit.node.frame.height / 2;
+  const mid = page.y + page.node.frame.height / 2;
+  const distance = center - mid;
+  if (distance > 1 || distance < -1) app.scroll("page", distance);
+}
+
 test("column, row, and grid place their children", () => {
   const app = open("./App.tsx", { width: 390, height: 844, safeArea: { top: 22, right: 0, bottom: 0, left: 10 } });
   const nodes = flat(app.tree(), []);
@@ -120,14 +141,17 @@ test("inputs take text, keyboards, a password, and a disabled value", () => {
   expect(input("Locked").disabled).toBe(true);
   expect(input("Locked").value).toBe("locked");
   expect(app.texts()).toContain("Locked: locked");
-  app.type("ada", "Name");
+  reveal(app, (node) => node.kind === "input" && node.placeholder === "Name");
+  app.type("Name", "ada");
   expect(app.texts()).toContain("Name: ada");
   expect(app.inputs()).toContain("ada");
-  app.type("nope", "Locked");
+  reveal(app, (node) => node.kind === "input" && node.placeholder === "Locked");
+  expect(() => app.type("locked", "nope")).toThrow("disabled");
   expect(app.texts()).toContain("Locked: locked");
 });
 
 test("fetch renders the JSON", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
+  reveal(app, (node) => node.text === "Loading quote");
   app.waitFor("Gallery: 5");
 });

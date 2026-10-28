@@ -78,7 +78,7 @@ const APP_TEST: &str = r#"import { expect, open, test } from "@nlayer/test";
 test("a press increases the count", () => {
   const app = open("./App.tsx");
   expect(app.texts()).toEqual(["Count: 0"]);
-  app.press("Count");
+  app.press("Count: 0");
   expect(app.texts()).toEqual(["Count: 1"]);
 });
 "#;

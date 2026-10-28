@@ -380,21 +380,27 @@ struct SafeArea {
 #[derive(Deserialize)]
 struct PressRequest {
     id: usize,
-    text: String,
+    selector: String,
 }
 
 #[derive(Deserialize)]
 struct TypeRequest {
     id: usize,
-    value: String,
-    /// Selects the input whose placeholder equals this. Absent: the first input.
-    placeholder: Option<String>,
+    selector: String,
+    text: String,
+}
+
+#[derive(Deserialize)]
+struct ScrollRequest {
+    id: usize,
+    selector: String,
+    distance: f64,
 }
 
 #[derive(Deserialize)]
 struct WaitRequest {
     id: usize,
-    text: String,
+    selector: String,
 }
 
 impl Session {
@@ -413,9 +419,7 @@ impl Session {
                 let request: PressRequest =
                     serde_json::from_str(payload).map_err(|e| e.to_string())?;
                 let app = self.app_mut(request.id)?;
-                if !app.press_text(&request.text) {
-                    return Err(format!("no view shows \"{}\"", request.text));
-                }
+                app.press_selector(&request.selector)?;
                 let _ = app.next_frame(Duration::from_secs(2));
                 Ok("null".to_owned())
             }
@@ -423,45 +427,21 @@ impl Session {
                 let request: TypeRequest =
                     serde_json::from_str(payload).map_err(|e| e.to_string())?;
                 let app = self.app_mut(request.id)?;
-                let wanted = request
-                    .placeholder
-                    .as_deref()
-                    .filter(|text| !text.is_empty());
-                let mut ids: Vec<_> = app
-                    .screen()
-                    .views()
-                    .filter(|(_, view)| view.kind == ViewKind::Input)
-                    .filter(|(_, view)| match wanted {
-                        None => true,
-                        Some(placeholder) => view
-                            .input
-                            .as_ref()
-                            .is_some_and(|input| input.config.placeholder == placeholder),
-                    })
-                    .map(|(id, _)| id)
-                    .collect();
-                ids.sort_unstable();
-                let Some(input) = ids.first().copied() else {
-                    return Err(match wanted {
-                        Some(placeholder) => format!("no input shows \"{placeholder}\""),
-                        None => "no input".to_owned(),
-                    });
-                };
-                app.type_text(input, request.value);
-                let _ = app.next_frame(Duration::from_secs(2));
+                app.type_selector(&request.selector, &request.text)?;
+                Ok("null".to_owned())
+            }
+            "scroll" => {
+                let request: ScrollRequest =
+                    serde_json::from_str(payload).map_err(|e| e.to_string())?;
+                let app = self.app_mut(request.id)?;
+                app.scroll_selector(&request.selector, request.distance as f32)?;
                 Ok("null".to_owned())
             }
             "waitFor" => {
                 let request: WaitRequest =
                     serde_json::from_str(payload).map_err(|e| e.to_string())?;
                 let app = self.app_mut(request.id)?;
-                if !app.wait_for(&request.text, Duration::from_secs(5)) {
-                    let texts = app.texts();
-                    return Err(format!(
-                        "timed out waiting for \"{}\" in {texts:?}",
-                        request.text
-                    ));
-                }
+                app.wait_selector(&request.selector, Duration::from_secs(5))?;
                 Ok("null".to_owned())
             }
             "tree" => {
@@ -596,6 +576,9 @@ fn node_json(node: &TreeNode, screen: &Screen) -> serde_json::Value {
     if let Some(text) = &node.text {
         map.insert("text".into(), text.clone().into());
     }
+    if let Some(test_id) = view.and_then(|view| view.test_id.as_ref()) {
+        map.insert("testID".into(), test_id.as_ref().into());
+    }
     if let Some(view) = view {
         if !view.spans.is_empty() {
             map.insert(
@@ -624,6 +607,10 @@ fn node_json(node: &TreeNode, screen: &Screen) -> serde_json::Value {
             map.insert(
                 "horizontal".into(),
                 view.scroll_horizontal.unwrap_or(false).into(),
+            );
+            map.insert(
+                "offset".into(),
+                serde_json::json!({ "x": view.scroll_x, "y": view.scroll_y }),
             );
             if let Some(size) = view.scroll_content {
                 map.insert(

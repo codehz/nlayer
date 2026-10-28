@@ -370,6 +370,8 @@ export interface Frame {
 export interface Node {
   kind: "view" | "text" | "image" | "scroll" | "input";
   frame: Frame;
+  /** A view's `testID`, when it has one. */
+  testID?: string;
   text?: string;
   /** Style runs of a text view, in order. `color` is `#rrggbb` or `#rrggbbaa`. */
   spans?: Array<{
@@ -389,6 +391,8 @@ export interface Node {
   fit?: "fill" | "contain" | "cover" | "none" | "scale-down";
   /** A scroll view scrolls along x. */
   horizontal?: boolean;
+  /** A scroll view's content offset, toward the end of the content. */
+  offset?: { x: number; y: number };
   /** A scroll view's content size. */
   content?: { width: number; height: number };
   /** A view's static transform steps. Angles are degrees. */
@@ -409,13 +413,14 @@ export interface OpenOptions {
 export interface App {
   texts(): string[];
   inputs(): string[];
-  /** Presses the view showing `text` (a text view whose content contains it) and waits for the frame. */
-  press(text: string): void;
-  /** Types `value` into an input (the whole new text) and waits for the frame.
-   * `placeholder` selects that field; without it, the first input. */
-  type(value: string, placeholder?: string): void;
-  /** Waits until some text view contains `text`. */
-  waitFor(text: string): void;
+  /** Presses what `selector` names and waits for the frame. */
+  press(selector: string): void;
+  /** Types `text` into the input `selector` names, one change per character. */
+  type(selector: string, text: string): void;
+  /** Scrolls the scroll view `selector` names by `distance` points toward its content's end. */
+  scroll(selector: string, distance: number): void;
+  /** Waits until `selector` names one view that is on screen. */
+  waitFor(selector: string): void;
   /** The mount tree from the surface root, with each view's frame. */
   tree(): Node;
   close(): void;
