@@ -114,7 +114,7 @@ mod field {
     use nlayer_core::style::Color;
     use objc2::rc::Retained;
     use objc2::runtime::{AnyObject, NSObject};
-    use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
+    use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, ffi, msg_send, sel};
     use objc2_core_foundation::{CGFloat, CGPoint, CGRect, CGSize};
     use objc2_foundation::NSString;
     use objc2_ui_kit::{
@@ -207,16 +207,18 @@ mod field {
             });
             let keyboard = keyboard_type(config.keyboard);
             let align = text_alignment(config.align);
-            // SAFETY: UITextInputTraits setters. The integers are the UIKit enum values.
+            // SAFETY: UITextField adopts UITextInputTraits. UIKit implements
+            // those setters by forwarding, so the debug signature check
+            // cannot find them on the class. `textAlignment` is a real
+            // UITextField method, so the checked send is fine.
             unsafe {
-                let _: () = msg_send![self, setSecureTextEntry: config.secure];
-                let _: () = msg_send![self, setKeyboardType: keyboard];
+                send_trait(self, sel!(setSecureTextEntry:), config.secure);
+                send_trait(self, sel!(setKeyboardType:), keyboard);
                 let _: () = msg_send![self, setTextAlignment: align];
             }
             // A field that is already editing keeps the previous keyboard until reloaded.
             if self.isFirstResponder() {
-                // SAFETY: UIResponder's method.
-                let _: () = unsafe { msg_send![self, reloadInputViews] };
+                self.reloadInputViews();
             }
             // Secure entry resets the font. Set it again after the traits.
             self.setFont(Some(&ui_font(&config.style)));
@@ -292,6 +294,19 @@ mod field {
                 (rect.size.height - insets.top - insets.bottom).max(0.0),
             ),
         )
+    }
+
+    /// One-argument `UITextInputTraits` setter. See [`Field::configure`].
+    ///
+    /// # Safety
+    ///
+    /// `sel` is a setter the field forwards, and `value` matches its argument.
+    unsafe fn send_trait<A: Copy>(view: &Field, sel: objc2::runtime::Sel, value: A) {
+        unsafe {
+            let send: unsafe extern "C-unwind" fn(&Field, objc2::runtime::Sel, A) =
+                std::mem::transmute(ffi::objc_msgSend as unsafe extern "C-unwind" fn());
+            send(view, sel, value);
+        }
     }
 }
 
