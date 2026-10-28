@@ -335,8 +335,12 @@ fn steps_source(entry: &Path, steps: &str) -> Result<String, String> {
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "app".to_owned());
-    let entry_js = serde_json::to_string(&entry.to_string_lossy().replace('\\', "/"))
-        .map_err(|error| error.to_string())?;
+    // `open` joins a relative path onto the session directory, which is the
+    // entry's parent. A relative entry would be joined twice
+    // (`examples/gallery` + `examples/gallery/App.tsx`). The canonical path
+    // is absolute, so `open` uses it as given.
+    let entry_js =
+        serde_json::to_string(&entry_literal(entry)?).map_err(|error| error.to_string())?;
     Ok(format!(
         "// Made by `nlayer test {shown}`: the steps of standard input.\n\
          // `app` is the opened app. `entry` is its path. `expect` and `open` are in scope.\n\
@@ -348,6 +352,19 @@ fn steps_source(entry: &Path, steps: &str) -> Result<String, String> {
          {steps}\n\
          }});\n"
     ))
+}
+
+/// Absolute path embedded for `open`. Windows `canonicalize` adds `\\?\`;
+/// after the slash rewrite that prefix is not a path `open` can use.
+fn entry_literal(entry: &Path) -> Result<String, String> {
+    let absolute = fs::canonicalize(entry)
+        .map_err(|error| format!("entry not found: {}: {error}", entry.display()))?;
+    let text = absolute.to_string_lossy().replace('\\', "/");
+    let text = text
+        .strip_prefix("//?/UNC/")
+        .map(|rest| format!("//{rest}"))
+        .unwrap_or_else(|| text.strip_prefix("//?/").unwrap_or(&text).to_owned());
+    Ok(text)
 }
 
 /// The generated steps file. Dropping it deletes the file.
@@ -1149,6 +1166,40 @@ mount(App);
         assert_eq!(report.files[0].name, "App.tsx");
         assert_eq!(report.files[0].cases[0].name, "steps");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Deletes `path` when dropped, including after a panic.
+    struct Remove(std::path::PathBuf);
+
+    impl Drop for Remove {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn a_relative_entry_is_not_joined_onto_its_parent() {
+        let root =
+            std::path::PathBuf::from(format!("target/nlayer-steps-rel-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let dir = root.join("gallery");
+        fs::create_dir_all(&dir).unwrap();
+        let _remove = Remove(root);
+        fs::write(dir.join("App.tsx"), APP).unwrap();
+        let entry = dir.join("App.tsx");
+        assert!(entry.is_relative(), "{}", entry.display());
+        let report = with_host(|| {
+            run_path(
+                &entry,
+                None,
+                Some(
+                    "expect(app.texts()).toEqual([\"Count: 0\"]);\napp.close();\nconst again = open(\"./App.tsx\");\nexpect(again.texts()).toEqual([\"Count: 0\"]);\n",
+                ),
+            )
+        })
+        .expect("steps run");
+        assert!(report.ok(), "{report}");
+        assert_eq!(report.files[0].name, "App.tsx");
     }
 
     #[test]
