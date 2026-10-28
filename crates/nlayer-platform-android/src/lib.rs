@@ -20,6 +20,10 @@ mod snapshot;
 mod driver;
 #[cfg(target_os = "android")]
 mod host;
+#[cfg(target_os = "android")]
+mod java;
+#[cfg(target_os = "android")]
+mod text;
 
 pub use encode::{Encoded, Object, encode};
 
