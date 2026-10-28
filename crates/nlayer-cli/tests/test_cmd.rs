@@ -38,6 +38,7 @@ test("shows hello", () => {
     let report = test(&TestOptions {
         path: dir.join("App.test.tsx"),
         filter: None,
+        target: None,
     })
     .expect("it runs");
     assert!(report.ok(), "{report}");

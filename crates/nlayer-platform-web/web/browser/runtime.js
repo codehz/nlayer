@@ -360,14 +360,20 @@ export function loadBundle(source, namespaces) {
   const app = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
   urls.push(app);
   return new Promise((resolve, reject) => {
+    realm.__nlayerBundle = (error) => {
+      if (error) reject(new Error(String(error)));
+      else {
+        resolve(() => {
+          frame.remove();
+          for (const url of urls) URL.revokeObjectURL(url);
+        });
+      }
+    };
     const script = doc.createElement("script");
     script.type = "module";
-    script.textContent = `import ${JSON.stringify(app)};`;
-    script.onload = () => resolve(() => {
-      frame.remove();
-      for (const url of urls) URL.revokeObjectURL(url);
-    });
-    script.onerror = () => reject(new Error("could not load the app module"));
+    // An inline module's `load` event does not fire in headless Chrome, so
+    // the module reports completion itself.
+    script.textContent = `import(${JSON.stringify(app)}).then(() => globalThis.__nlayerBundle(), (error) => globalThis.__nlayerBundle(String(error && (error.stack || error.message) || error)));`;
     doc.head.append(script);
   });
 }

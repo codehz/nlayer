@@ -145,6 +145,7 @@ fn run_serves_the_page_and_keeps_it_across_a_failed_rebuild() {
     );
     assert!(text(&get(port, "/bundle.js.map")).contains("App.tsx"));
     assert!(text(&get(port, "/boot.js")).contains("startPage"));
+    assert!(text(&get(port, "/host.js")).contains("installHost"));
     assert!(text(&get(port, "/browser/runtime.js")).contains("createFacade"));
     assert!(text(&get(port, "/base.css")).contains("nl-root"));
 

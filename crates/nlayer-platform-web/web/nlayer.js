@@ -173,6 +173,12 @@ export class Player {
       });
     }
     el.addEventListener("click", (event) => {
+      const link = linkAt(el, event);
+      if (link != null) {
+        event.stopPropagation?.();
+        this.host.press?.(link);
+        return;
+      }
       if (!el._events.has("onPress")) return;
       event.stopPropagation?.();
       this.host.press?.(id);
@@ -250,7 +256,7 @@ export class Player {
     if (el._border) el.append(el._border);
   }
 
-  op_t([, id, x, y, w, h, align, rtl, runs, spanIds]) {
+  op_t([, id, x, y, w, h, align, rtl, runs, spanIds, links]) {
     const el = this.view(id);
     if (!el) return;
     let box = el._text;
@@ -276,6 +282,7 @@ export class Player {
       box.append(span);
     }
     el._spanIds = spanIds || [];
+    el._links = links || [];
   }
 
   op_e([, id, events]) {
@@ -343,6 +350,8 @@ export class Player {
     field.type = config.secure ? "password" : config.keyboard === "email" ? "email" : config.keyboard === "phone" ? "tel" : "text";
     field.inputMode = config.keyboard === "number" ? "numeric" : config.keyboard === "phone" ? "tel" : config.keyboard === "email" ? "email" : "text";
     field.disabled = !!config.disabled;
+    field._keyboard = config.keyboard || "text";
+    field._secure = !!config.secure;
     el.classList.toggle("nl-disabled", !!config.disabled);
     field.dir = config.rtl ? "rtl" : "ltr";
   }
@@ -381,4 +390,71 @@ export class Player {
       el.scrollTop = y;
     }
   }
+}
+
+/**
+ * The pressable span under a click, or null. `_utf16` is a test stand-in
+ * for the caret. A real click uses the document's caret at that point.
+ * The innermost range wins.
+ */
+function linkAt(el, event) {
+  const links = el._links;
+  if (!links?.length) return null;
+  const index = utf16At(el, event);
+  if (index == null) return null;
+  let node = null;
+  let width = Infinity;
+  for (const [start, end, id] of links) {
+    if (index >= start && index < end && end - start < width) {
+      node = id;
+      width = end - start;
+    }
+  }
+  return node;
+}
+
+function utf16At(el, event) {
+  if (event._utf16 != null) return event._utf16;
+  const doc = el.ownerDocument;
+  const x = event.clientX;
+  const y = event.clientY;
+  if (typeof x !== "number" || typeof y !== "number" || !doc) return null;
+  let node = null;
+  let offset = 0;
+  const pos = doc.caretPositionFromPoint?.(x, y);
+  if (pos) {
+    node = pos.offsetNode;
+    offset = pos.offset;
+  } else if (typeof doc.caretRangeFromPoint === "function") {
+    const range = doc.caretRangeFromPoint(x, y);
+    if (!range) return null;
+    node = range.startContainer;
+    offset = range.startOffset;
+  } else {
+    return null;
+  }
+  const box = el._text;
+  if (!box || typeof box.contains !== "function" || !box.contains(node)) return null;
+  if (node.nodeType === 3) {
+    return utf16Before(box, node) + offset;
+  }
+  const child = node.childNodes?.[offset];
+  return child ? utf16Before(box, child) : utf16Before(box, null);
+}
+
+function utf16Before(root, stop) {
+  let count = 0;
+  const walk = (node) => {
+    if (node === stop) return true;
+    if (node.nodeType === 3) {
+      count += node.textContent.length;
+      return false;
+    }
+    for (const child of node.childNodes ?? []) {
+      if (walk(child)) return true;
+    }
+    return false;
+  };
+  walk(root);
+  return count;
 }

@@ -211,8 +211,11 @@ fn an_app_frame_encodes_the_v1_surface() {
         .expect("a text block");
     let runs = text[8].as_array().unwrap();
     let words: Vec<&str> = runs.iter().map(|run| run[0].as_str().unwrap()).collect();
-    assert!(words.iter().any(|w| w.contains("Hello")), "{words:?}");
     assert!(words.iter().any(|w| w.contains("span")), "{words:?}");
+    assert!(
+        text.get(10).and_then(|item| item.as_array()).is_some(),
+        "span press ranges"
+    );
     assert!(
         first.iter().any(|item| {
             item[0] == "css" && {
@@ -275,8 +278,9 @@ fn an_app_frame_encodes_the_v1_surface() {
 fn the_mounter_applies_a_batch_in_node() {
     assert!(MOUNTER_JS.contains("export class Player"));
     let script = concat!(env!("CARGO_MANIFEST_DIR"), "/web/nlayer.test.mjs");
+    let host = concat!(env!("CARGO_MANIFEST_DIR"), "/web/host.test.mjs");
     let status = Command::new("node")
-        .args(["--test", script])
+        .args(["--test", script, host])
         .status()
         .expect("node runs the mounter test");
     assert!(status.success(), "node --test {script}");

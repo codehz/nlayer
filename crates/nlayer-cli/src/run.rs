@@ -33,6 +33,7 @@ const BASE_CSS: &str = include_str!("../../nlayer-platform-web/web/base.css");
 const PAGE_HTML: &str = include_str!("../../nlayer-platform-web/web/index.html");
 const RUNTIME_JS: &str = include_str!("../../nlayer-platform-web/web/browser/runtime.js");
 const VALUES_JS: &str = include_str!("../../nlayer-platform-web/web/browser/values.js");
+const HOST_JS: &str = include_str!("../../nlayer-platform-web/web/host.js");
 
 /// How often the app's sources are checked. A save lands on the next poll.
 const POLL: Duration = Duration::from_millis(150);
@@ -254,9 +255,11 @@ pub fn serve(options: RunOptions) -> Result<DevServer, RunError> {
 /// The wasm the page instantiates.
 ///
 /// `NLAYER_WASM` wins, then `nlayer.wasm` beside the binary, then a fresh
-/// workspace build of `nlayer-platform-web` for `wasm32-unknown-unknown`.
-/// A build uses `target/nlayer-wasm` so it does not take the target-dir lock
-/// a surrounding `cargo run` already holds.
+/// build of `nlayer-platform-web` for `wasm32-unknown-unknown`. The build
+/// uses `target/nlayer-wasm` so it does not take the target-dir lock a
+/// surrounding `cargo run` already holds, and it turns debug info off: the
+/// default dev profile embeds hundreds of megabytes of it, which the
+/// browser then has to instantiate.
 pub fn web_module() -> Result<Vec<u8>, RunError> {
     if let Some(path) = std::env::var_os("NLAYER_WASM") {
         return fs::read(&path).map_err(|error| {
@@ -280,22 +283,17 @@ pub fn web_module() -> Result<Vec<u8>, RunError> {
         ));
     };
     let sources = newest_source(&workspace);
-    let mut fresh: Option<(SystemTime, PathBuf)> = None;
-    for path in wasm_artifacts(&workspace) {
-        let Ok(modified) = fs::metadata(&path).and_then(|meta| meta.modified()) else {
-            continue;
-        };
-        if modified >= sources && fresh.as_ref().is_none_or(|(when, _)| modified > *when) {
-            fresh = Some((modified, path));
-        }
-    }
-    if let Some((_, path)) = fresh {
-        return fs::read(&path).map_err(RunError::from);
+    let artifact = wasm_artifact(&workspace);
+    if let Ok(modified) = fs::metadata(&artifact).and_then(|meta| meta.modified())
+        && modified >= sources
+    {
+        return fs::read(&artifact).map_err(RunError::from);
     }
     let target = workspace.join("target/nlayer-wasm");
     eprintln!("building the web runtime");
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let status = std::process::Command::new(cargo)
+        .env("CARGO_PROFILE_DEV_DEBUG", "0")
         .args([
             "build",
             "-p",
@@ -319,11 +317,8 @@ pub fn web_module() -> Result<Vec<u8>, RunError> {
     })
 }
 
-fn wasm_artifacts(workspace: &Path) -> [PathBuf; 2] {
-    [
-        workspace.join("target/wasm32-unknown-unknown/debug/nlayer_platform_web.wasm"),
-        workspace.join("target/nlayer-wasm/wasm32-unknown-unknown/debug/nlayer_platform_web.wasm"),
-    ]
+fn wasm_artifact(workspace: &Path) -> PathBuf {
+    workspace.join("target/nlayer-wasm/wasm32-unknown-unknown/debug/nlayer_platform_web.wasm")
 }
 
 pub(crate) fn workspace_root() -> Option<PathBuf> {
@@ -517,6 +512,7 @@ fn reserved(path: &str) -> bool {
     path == "index.html"
         || path == "boot.js"
         || path == "nlayer.js"
+        || path == "host.js"
         || path == "base.css"
         || path == "nlayer.wasm"
         || path == "bundle.js"
@@ -721,6 +717,7 @@ fn host(path: &str) -> Option<(&'static str, &'static str)> {
         "" | "index.html" => ("text/html; charset=utf-8", dev_page()),
         "boot.js" => ("text/javascript; charset=utf-8", BOOT_JS),
         "nlayer.js" => ("text/javascript; charset=utf-8", MOUNTER_JS),
+        "host.js" => ("text/javascript; charset=utf-8", HOST_JS),
         "base.css" => ("text/css; charset=utf-8", BASE_CSS),
         "browser/runtime.js" => ("text/javascript; charset=utf-8", RUNTIME_JS),
         "browser/values.js" => ("text/javascript; charset=utf-8", VALUES_JS),

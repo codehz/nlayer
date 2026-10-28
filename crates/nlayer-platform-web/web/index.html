@@ -24,33 +24,50 @@
   const status = document.getElementById("status");
   const root = document.getElementById("app");
   try {
-    const [wasm, bundle, baseCSS] = await Promise.all([
-      fetch("./nlayer.wasm").then((response) => {
-        if (!response.ok) throw new Error("no nlayer.wasm");
-        return response.arrayBuffer();
-      }),
-      fetch("./bundle.js").then((response) => {
-        if (!response.ok) throw new Error("no bundle.js");
-        return response.text();
-      }),
-      fetch("./base.css").then((response) => {
-        if (!response.ok) throw new Error("no base.css");
-        return response.text();
-      }),
-    ]);
+    const wasm = await load("./nlayer.wasm", (response) => response.arrayBuffer());
+    const bundle = await load("./bundle.js", (response) => response.text());
+    const baseCSS = await load("./base.css", (response) => response.text());
     status.style.display = "none";
+    const q = new URLSearchParams(location.search);
+    const pin = q.has("pin")
+      ? {
+          width: Number(q.get("w")),
+          height: Number(q.get("h")),
+          safeArea: {
+            top: Number(q.get("sat") || 0),
+            right: Number(q.get("sar") || 0),
+            bottom: Number(q.get("sab") || 0),
+            left: Number(q.get("sal") || 0),
+          },
+          keyboard: Number(q.get("kb") || 0),
+        }
+      : null;
     await startPage(root, {
       wasm,
       bundle,
       baseCSS,
       assetBase: "./",
+      pin,
       onError(message) {
         status.style.display = "";
         status.textContent = message;
       },
     });
   } catch (error) {
-    status.textContent = String(error.message ?? error);
+    const message = String(error && error.message ? error.message : error);
+    globalThis.__nlayerFailed = message;
+    status.textContent = message;
+  }
+
+  async function load(path, read) {
+    let response;
+    try {
+      response = await fetch(path);
+    } catch (error) {
+      throw new Error(`${path}: ${error && error.message ? error.message : error}`);
+    }
+    if (!response.ok) throw new Error(`${path}: ${response.status}`);
+    return read(response);
   }
 </script>
 </body>

@@ -12,6 +12,7 @@
 // by the engine's stand-in, not the browser's fonts.
 
 import { Player } from "./nlayer.js";
+import { installHost } from "./host.js";
 import { createFacade, loadBundle } from "./browser/runtime.js";
 
 const encoder = new TextEncoder();
@@ -141,7 +142,13 @@ async function instantiate(source, options) {
   return instance.exports;
 }
 
+let pinned = null;
+
 function readInsets(root) {
+  if (pinned) {
+    const area = pinned.safeArea ?? {};
+    return [area.top || 0, area.right || 0, area.bottom || 0, area.left || 0];
+  }
   const probe = root.ownerDocument.createElement("div");
   probe.style.cssText =
     "position:absolute;visibility:hidden;padding:" +
@@ -156,12 +163,14 @@ function readInsets(root) {
 }
 
 function keyboardInset() {
+  if (pinned) return pinned.keyboard || 0;
   const viewport = globalThis.visualViewport;
   if (!viewport) return 0;
   return Math.max(0, globalThis.innerHeight - viewport.height - viewport.offsetTop);
 }
 
 function surfaceSize(root) {
+  if (pinned?.width > 0 && pinned?.height > 0) return [pinned.width, pinned.height];
   const width = root.clientWidth || globalThis.innerWidth || 0;
   const height = root.clientHeight || globalThis.innerHeight || 0;
   return [width, height];
@@ -192,6 +201,7 @@ function watchSurface(root) {
  * its state is dropped. Returns when the first frame has been applied.
  */
 export async function startPage(root, options = {}) {
+  if (options.pin) pinned = options.pin;
   if (!wasm) {
     wasm = await instantiate(options.wasm, options);
     watchSurface(root);
@@ -239,6 +249,9 @@ export async function startPage(root, options = {}) {
     "nlayer:rt": facade.rt,
   });
   enter(() => wasm.nlayer_pump());
+  installHost(player, root);
+  globalThis.__nlayerReady = true;
+  globalThis.__nlayerFailed = "";
 }
 
 /** Stops the running app. The module stays loaded. */

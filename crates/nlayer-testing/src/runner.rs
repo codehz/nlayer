@@ -1,7 +1,7 @@
 //! `nlayer test`: each `*.test.tsx` (and `.test.ts` / `.test.js` /
 //! `.test.jsx`) on a VM of its own, importing `@nlayer/test`. `open` starts
-//! the app on a headless engine. The app host does not serve that module.
-
+//! the app on a [`AppHost`]. The default host is headless. The app bundle
+//! does not serve that module.
 use std::{
     cell::RefCell,
     fs,
@@ -33,6 +33,7 @@ const VIEWPORT_HEIGHT: f32 = 844.0;
 
 thread_local! {
     static SESSION: RefCell<Option<Session>> = const { RefCell::new(None) };
+    static HOST: RefCell<Option<*mut (dyn AppHost + 'static)>> = const { RefCell::new(None) };
 }
 
 static ENTRIES: AtomicU64 = AtomicU64::new(0);
@@ -46,10 +47,15 @@ pub struct RunError {
 }
 
 impl RunError {
-    fn new(message: impl Into<String>) -> Self {
+    /// A failure before any test ran.
+    pub fn message(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
         }
+    }
+
+    fn new(message: impl Into<String>) -> Self {
+        Self::message(message)
     }
 }
 
@@ -157,10 +163,89 @@ fn write_block(f: &mut std::fmt::Formatter<'_>, text: &str) -> std::fmt::Result 
     Ok(())
 }
 
+/// Safe area pinned for one `open`, in points.
+#[derive(Debug, Clone, Copy)]
+pub struct HostInsets {
+    /// Top inset.
+    pub top: f32,
+    /// Right inset.
+    pub right: f32,
+    /// Bottom inset.
+    pub bottom: f32,
+    /// Left inset.
+    pub left: f32,
+}
+
+/// What `open` asks the host to run.
+#[derive(Debug, Clone)]
+pub struct HostOpen {
+    /// The app entry.
+    pub entry: PathBuf,
+    /// Viewport width, in points.
+    pub width: f32,
+    /// Viewport height, in points.
+    pub height: f32,
+    /// Pinned safe area. `None` is zero.
+    pub safe_area: Option<HostInsets>,
+    /// Pinned keyboard inset. `None` is zero.
+    pub keyboard: Option<f32>,
+}
+
+/// One app a test has opened. Dropping it closes the app.
+pub trait HostedApp {
+    /// Text of every text view, in mount order.
+    fn texts(&mut self) -> Result<Vec<String>, String>;
+    /// Value of every input, in mount order.
+    fn inputs(&mut self) -> Result<Vec<String>, String>;
+    /// Presses what `selector` names, through this host's input.
+    fn press(&mut self, selector: &str) -> Result<(), String>;
+    /// Types `text` into the input `selector` names.
+    fn type_text(&mut self, selector: &str, text: &str) -> Result<(), String>;
+    /// Scrolls toward the end of the content by `distance` points.
+    fn scroll(&mut self, selector: &str, distance: f32) -> Result<(), String>;
+    /// Waits until `selector` names one view that is on screen.
+    fn wait_for(&mut self, selector: &str) -> Result<(), String>;
+    /// The mounted tree: kind, text, input, frame.
+    fn tree(&mut self) -> Result<serde_json::Value, String>;
+    /// Closes the app.
+    fn close(&mut self);
+}
+
+/// Where `open` starts the app. The test file still runs in QuickJS.
+pub trait AppHost {
+    /// Starts `request` and returns the app the later steps drive.
+    fn open(&mut self, request: HostOpen) -> Result<Box<dyn HostedApp>, String>;
+}
+
 /// Runs the test file `path`, or every test file under the directory
 /// `path` (not under `node_modules`, `target` or a hidden directory).
-/// `filter` runs only tests whose name contains it.
+/// `filter` runs only tests whose name contains it. The app opens on the
+/// headless engine.
 pub fn run(path: &Path, filter: Option<&str>) -> Result<Report, RunError> {
+    run_with(path, filter, &mut HeadlessHost)
+}
+
+/// [`run`], but `open` starts the app on `host`. The same steps and the
+/// same report. A step the host cannot do fails; it does not fall back.
+pub fn run_with(
+    path: &Path,
+    filter: Option<&str>,
+    host: &mut dyn AppHost,
+) -> Result<Report, RunError> {
+    HOST.with(|cell| *cell.borrow_mut() = Some(host_ptr(host)));
+    let _guard = HostGuard;
+    run_in(path, filter)
+}
+
+struct HostGuard;
+
+impl Drop for HostGuard {
+    fn drop(&mut self) {
+        HOST.with(|cell| *cell.borrow_mut() = None);
+    }
+}
+
+fn run_in(path: &Path, filter: Option<&str>) -> Result<Report, RunError> {
     let mut files = Vec::new();
     if path.is_file() {
         if !is_test_file(path) {
@@ -345,7 +430,7 @@ fn parse_cases(raw: &str) -> Result<Vec<CaseResult>, String> {
 
 struct Session {
     dir: PathBuf,
-    apps: Vec<Option<Headless>>,
+    apps: Vec<Option<Box<dyn HostedApp>>>,
 }
 
 impl Drop for Session {
@@ -409,49 +494,46 @@ impl Session {
             "open" => self.open(payload),
             "texts" => {
                 let app = self.app_mut(parse_id(payload)?)?;
-                json(&app.texts())
+                json(&app.texts()?)
             }
             "inputs" => {
                 let app = self.app_mut(parse_id(payload)?)?;
-                json(&app.screen().input_values())
+                json(&app.inputs()?)
             }
             "press" => {
                 let request: PressRequest =
                     serde_json::from_str(payload).map_err(|e| e.to_string())?;
-                let app = self.app_mut(request.id)?;
-                app.press_selector(&request.selector)?;
-                let _ = app.next_frame(Duration::from_secs(2));
+                self.app_mut(request.id)?.press(&request.selector)?;
                 Ok("null".to_owned())
             }
             "type" => {
                 let request: TypeRequest =
                     serde_json::from_str(payload).map_err(|e| e.to_string())?;
-                let app = self.app_mut(request.id)?;
-                app.type_selector(&request.selector, &request.text)?;
+                self.app_mut(request.id)?
+                    .type_text(&request.selector, &request.text)?;
                 Ok("null".to_owned())
             }
             "scroll" => {
                 let request: ScrollRequest =
                     serde_json::from_str(payload).map_err(|e| e.to_string())?;
-                let app = self.app_mut(request.id)?;
-                app.scroll_selector(&request.selector, request.distance as f32)?;
+                self.app_mut(request.id)?
+                    .scroll(&request.selector, request.distance as f32)?;
                 Ok("null".to_owned())
             }
             "waitFor" => {
                 let request: WaitRequest =
                     serde_json::from_str(payload).map_err(|e| e.to_string())?;
-                let app = self.app_mut(request.id)?;
-                app.wait_selector(&request.selector, Duration::from_secs(5))?;
+                self.app_mut(request.id)?.wait_for(&request.selector)?;
                 Ok("null".to_owned())
             }
             "tree" => {
                 let app = self.app_mut(parse_id(payload)?)?;
-                tree_json(app)
+                json(&app.tree()?)
             }
             "close" => {
                 let id = parse_id(payload)?;
-                if let Some(app) = self.apps.get_mut(id).and_then(Option::take) {
-                    app.stop();
+                if let Some(mut app) = self.apps.get_mut(id).and_then(Option::take) {
+                    app.close();
                 }
                 Ok("null".to_owned())
             }
@@ -466,24 +548,78 @@ impl Session {
     fn open(&mut self, payload: &str) -> Result<String, String> {
         let request: OpenRequest = serde_json::from_str(payload).map_err(|e| e.to_string())?;
         let entry = resolve_entry(&self.dir, &request.entry)?;
-        let app_dir = entry.parent().unwrap_or(Path::new(".")).to_path_buf();
-        let bundled = bundle(&BundleOptions {
+        let options = request.options.unwrap_or_default();
+        let opened = HostOpen {
             entry,
+            width: options.width.unwrap_or(VIEWPORT_WIDTH),
+            height: options.height.unwrap_or(VIEWPORT_HEIGHT),
+            safe_area: options.safe_area.map(|area| HostInsets {
+                top: area.top,
+                right: area.right,
+                bottom: area.bottom,
+                left: area.left,
+            }),
+            keyboard: options.keyboard,
+        };
+        let app = with_host(|host| host.open(opened))??;
+        let id = self.apps.len();
+        self.apps.push(Some(app));
+        Ok(id.to_string())
+    }
+
+    fn app_mut<'a>(&'a mut self, id: usize) -> Result<&'a mut dyn HostedApp, String> {
+        match self.apps.get_mut(id) {
+            Some(Some(app)) => Ok(app.as_mut()),
+            _ => Err("the app is closed".to_owned()),
+        }
+    }
+
+    fn end(&mut self) {
+        for slot in &mut self.apps {
+            if let Some(mut app) = slot.take() {
+                app.close();
+            }
+        }
+    }
+}
+
+fn host_ptr(host: &mut dyn AppHost) -> *mut (dyn AppHost + 'static) {
+    let ptr = host as *mut (dyn AppHost + '_);
+    // SAFETY: the pointer is only used on this thread until `run_with` clears it,
+    // while `host` is still borrowed.
+    unsafe { std::mem::transmute(ptr) }
+}
+
+fn with_host<T>(body: impl FnOnce(&mut dyn AppHost) -> T) -> Result<T, String> {
+    let ptr = HOST
+        .with(|cell| *cell.borrow())
+        .ok_or_else(|| "no test host".to_owned())?;
+    // SAFETY: `run_with` set this for the calling thread and clears it on return.
+    Ok(body(unsafe { &mut *ptr }))
+}
+
+struct HeadlessHost;
+
+impl AppHost for HeadlessHost {
+    fn open(&mut self, request: HostOpen) -> Result<Box<dyn HostedApp>, String> {
+        let app_dir = request
+            .entry
+            .parent()
+            .unwrap_or(Path::new("."))
+            .to_path_buf();
+        let bundled = bundle(&BundleOptions {
+            entry: request.entry,
             minify: false,
             test: false,
         })
         .map_err(|e| e.plain)?;
-        let options = request.options.unwrap_or_default();
         let mut app = Headless::start(
             with_fixture_origin(&bundled.code, &app_dir),
-            Size::new(
-                px(options.width.unwrap_or(VIEWPORT_WIDTH)),
-                px(options.height.unwrap_or(VIEWPORT_HEIGHT)),
-            ),
+            Size::new(px(request.width), px(request.height)),
         )
         .map_err(engine_error)?;
         let mut nudges = 0;
-        if let Some(area) = options.safe_area {
+        if let Some(area) = request.safe_area {
             app.control().set_safe_area(Edges {
                 top: px(area.top),
                 right: px(area.right),
@@ -492,29 +628,74 @@ impl Session {
             });
             nudges += 1;
         }
-        if let Some(height) = options.keyboard {
+        if let Some(height) = request.keyboard {
             app.control().set_keyboard_inset(px(height));
             nudges += 1;
         }
         settle(&mut app, nudges);
-        let id = self.apps.len();
-        self.apps.push(Some(app));
-        Ok(id.to_string())
+        Ok(Box::new(HeadlessApp { app: Some(app) }))
     }
+}
 
-    fn app_mut(&mut self, id: usize) -> Result<&mut Headless, String> {
-        self.apps
-            .get_mut(id)
-            .and_then(Option::as_mut)
+struct HeadlessApp {
+    app: Option<Headless>,
+}
+
+impl HeadlessApp {
+    fn app(&mut self) -> Result<&mut Headless, String> {
+        self.app
+            .as_mut()
             .ok_or_else(|| "the app is closed".to_owned())
     }
+}
 
-    fn end(&mut self) {
-        for slot in &mut self.apps {
-            if let Some(app) = slot.take() {
-                app.stop();
-            }
+impl HostedApp for HeadlessApp {
+    fn texts(&mut self) -> Result<Vec<String>, String> {
+        Ok(self.app()?.texts())
+    }
+
+    fn inputs(&mut self) -> Result<Vec<String>, String> {
+        Ok(self.app()?.screen().input_values())
+    }
+
+    fn press(&mut self, selector: &str) -> Result<(), String> {
+        let app = self.app()?;
+        app.press_selector(selector)?;
+        let _ = app.next_frame(Duration::from_secs(2));
+        Ok(())
+    }
+
+    fn type_text(&mut self, selector: &str, text: &str) -> Result<(), String> {
+        self.app()?.type_selector(selector, text)
+    }
+
+    fn scroll(&mut self, selector: &str, distance: f32) -> Result<(), String> {
+        self.app()?.scroll_selector(selector, distance)
+    }
+
+    fn wait_for(&mut self, selector: &str) -> Result<(), String> {
+        self.app()?.wait_selector(selector, Duration::from_secs(5))
+    }
+
+    fn tree(&mut self) -> Result<serde_json::Value, String> {
+        let app = self.app()?;
+        let screen = app.screen();
+        let root = screen
+            .tree(ROOT_ID)
+            .ok_or_else(|| "the screen has no root".to_owned())?;
+        Ok(node_json(&root, screen))
+    }
+
+    fn close(&mut self) {
+        if let Some(app) = self.app.take() {
+            app.stop();
         }
+    }
+}
+
+impl Drop for HeadlessApp {
+    fn drop(&mut self) {
+        self.close();
     }
 }
 
@@ -558,14 +739,6 @@ fn settle(app: &mut Headless, nudges: u32) {
         }
         left -= 1;
     }
-}
-
-fn tree_json(app: &mut Headless) -> Result<String, String> {
-    let screen = app.screen();
-    let root = screen
-        .tree(ROOT_ID)
-        .ok_or_else(|| "the screen has no root".to_owned())?;
-    json(&node_json(&root, screen))
 }
 
 fn node_json(node: &TreeNode, screen: &Screen) -> serde_json::Value {

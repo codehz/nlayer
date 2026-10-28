@@ -4,8 +4,8 @@ use std::{path::PathBuf, process::ExitCode, sync::Arc};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use nlayer_cli::{
-    BuildOptions, BuildOutcome, InitOptions, IosOptions, RunOptions, TestOptions, build, init,
-    run_ios, serve, test, web_module,
+    BuildOptions, BuildOutcome, InitOptions, IosOptions, RunOptions, TestOptions, TestTarget,
+    build, init, run_ios, serve, test, web_module,
 };
 
 #[derive(Parser)]
@@ -29,7 +29,9 @@ enum Command {
         #[arg(long)]
         release: bool,
     },
-    /// Run `*.test.tsx` files headless (`@nlayer/test`).
+    /// Run `*.test.tsx` files (`@nlayer/test`).
+    /// The default engine is headless. `--target web` runs the opened app
+    /// in a headless browser; the steps go through that page.
     Test {
         /// A test file, or a directory (default: the current one).
         #[arg(default_value = ".")]
@@ -37,6 +39,9 @@ enum Command {
         /// Run only tests whose name contains this.
         #[arg(long)]
         filter: Option<String>,
+        /// Host that runs the app `open` starts.
+        #[arg(long, value_enum)]
+        target: Option<TestHost>,
     },
     /// Create a TSX app: `App.tsx`, its test, `tsconfig.json` and the editor's declarations.
     Init {
@@ -66,6 +71,13 @@ enum Command {
     },
 }
 
+/// A host `test` can drive.
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum TestHost {
+    /// A headless browser. The page executes the app.
+    Web,
+}
+
 /// A host `run` can start.
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum Target {
@@ -93,20 +105,33 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        Command::Test { path, filter } => match test(&TestOptions { path, filter }) {
-            Ok(report) => {
-                println!("{report}");
-                if report.ok() {
-                    ExitCode::SUCCESS
-                } else {
+        Command::Test {
+            path,
+            filter,
+            target,
+        } => {
+            let target = target.map(|target| match target {
+                TestHost::Web => TestTarget::Web,
+            });
+            match test(&TestOptions {
+                path,
+                filter,
+                target,
+            }) {
+                Ok(report) => {
+                    println!("{report}");
+                    if report.ok() {
+                        ExitCode::SUCCESS
+                    } else {
+                        ExitCode::FAILURE
+                    }
+                }
+                Err(err) => {
+                    eprintln!("{err}");
                     ExitCode::FAILURE
                 }
             }
-            Err(err) => {
-                eprintln!("{err}");
-                ExitCode::FAILURE
-            }
-        },
+        }
         Command::Init { dir } => match init(&InitOptions { dir }) {
             Ok(report) => {
                 print!("{report}");
@@ -211,7 +236,7 @@ fn browser(url: &str) -> std::process::Command {
 mod tests {
     use clap::Parser;
 
-    use super::{Cli, Command, Target};
+    use super::{Cli, Command, Target, TestHost};
 
     #[test]
     fn run_defaults_to_the_browser() {
@@ -236,5 +261,14 @@ mod tests {
             }
         ));
         assert!(Cli::try_parse_from(["nlayer", "run", "--target", "android"]).is_err());
+        assert!(matches!(
+            Cli::try_parse_from(["nlayer", "test", "--target", "web"])
+                .unwrap()
+                .command,
+            Command::Test {
+                target: Some(TestHost::Web),
+                ..
+            }
+        ));
     }
 }

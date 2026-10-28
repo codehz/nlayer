@@ -79,10 +79,10 @@ class Element {
   addEventListener(type, fn) {
     (this.listeners[type] ??= []).push(fn);
   }
-  dispatch(type) {
-    const event = { stopPropagation() { event.stopped = true; } };
+  dispatch(type, extra) {
+    const event = { stopPropagation() { event.stopped = true; }, ...(extra ?? {}) };
     for (const fn of this.listeners[type] ?? []) fn(event);
-    if (!event.stopped) this.parentNode?.dispatch(type);
+    if (!event.stopped) this.parentNode?.dispatch(type, extra);
   }
   setAttribute(name, value) {
     this.attributes[name] = value;
@@ -237,4 +237,17 @@ test("active, hover and focus styles are rules on the view", () => {
     ["in", 3, null, { placeholder: "", secure: false, keyboard: "text", disabled: true, rtl: false }],
   ]);
   assert.ok(player.view(3).classList.contains("nl-disabled"));
+});
+
+test("a click on a pressable span presses that span", () => {
+  const { host, player } = page();
+  player.apply([
+    ["c", 2, "text"],
+    ["t", 2, 0, 0, 80, 16, null, false, [["see "], ["docs"]], [], [[4, 8, 9]]],
+    ["f", 2, 0, 0, 80, 16],
+  ]);
+  player.view(2).dispatch("click", { _utf16: 5 });
+  assert.deepEqual(host.presses, [9]);
+  player.view(2).dispatch("click", { _utf16: 1 });
+  assert.deepEqual(host.presses, [9]);
 });

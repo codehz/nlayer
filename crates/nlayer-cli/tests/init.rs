@@ -33,6 +33,7 @@ fn init_writes_an_app_that_builds_and_tests() {
     let tested = test(&TestOptions {
         path: dir.clone(),
         filter: None,
+        target: None,
     })
     .expect("the test runs");
     assert!(tested.ok(), "{tested}");
