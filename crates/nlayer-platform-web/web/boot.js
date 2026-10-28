@@ -232,9 +232,9 @@ export async function startPage(root, options = {}) {
           }),
         );
       },
-      scroll(id) {
+      scroll(id, x, y, contentW, contentH, width, height) {
         enter(() => {
-          wasm.nlayer_scroll(id);
+          wasm.nlayer_scroll(id, x, y, contentW, contentH, width, height);
           return wasm.nlayer_pump();
         });
       },

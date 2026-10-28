@@ -1961,6 +1961,45 @@ unsafe extern "C" fn unmount(
 
 // --- Events -------------------------------------------------------------------
 
+fn scroll_payload(
+    cx: *mut JsContext,
+    x: f32,
+    y: f32,
+    content_w: f32,
+    content_h: f32,
+    width: f32,
+    height: f32,
+) -> qjs::JSValue {
+    let point = |a: f32, b: f32, first: &CStr, second: &CStr| unsafe {
+        let object = qjs::JS_NewObject(cx);
+        qjs::JS_SetPropertyStr(cx, object, first.as_ptr(), qjs::JS_NewFloat64(f64::from(a)));
+        qjs::JS_SetPropertyStr(
+            cx,
+            object,
+            second.as_ptr(),
+            qjs::JS_NewFloat64(f64::from(b)),
+        );
+        object
+    };
+    unsafe {
+        let object = qjs::JS_NewObject(cx);
+        qjs::JS_SetPropertyStr(cx, object, c"offset".as_ptr(), point(x, y, c"x", c"y"));
+        qjs::JS_SetPropertyStr(
+            cx,
+            object,
+            c"contentSize".as_ptr(),
+            point(content_w, content_h, c"width", c"height"),
+        );
+        qjs::JS_SetPropertyStr(
+            cx,
+            object,
+            c"size".as_ptr(),
+            point(width, height, c"width", c"height"),
+        );
+        object
+    }
+}
+
 /// Calls node `id`'s handler of `event` with `payload`.
 pub(crate) fn dispatch(
     cx: *mut JsContext,
@@ -1976,6 +2015,14 @@ pub(crate) fn dispatch(
         crate::EventPayload::Text(text) => unsafe {
             qjs::JS_NewStringLen(cx, text.as_ptr().cast(), text.len() as _)
         },
+        crate::EventPayload::Scroll {
+            x,
+            y,
+            content_w,
+            content_h,
+            width,
+            height,
+        } => scroll_payload(cx, *x, *y, *content_w, *content_h, *width, *height),
     };
     let mut args = [value];
     let r = unsafe { qjs::JS_Call(cx, handler, UNDEFINED, 1, args.as_mut_ptr()) };

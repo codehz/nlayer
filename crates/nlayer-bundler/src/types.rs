@@ -311,15 +311,24 @@ export interface ImageProps {
   onPress?: () => void;
 }
 
+export interface ScrollEvent {
+  /** Content offset in points. Negative while the view bounces on iOS. */
+  offset: { x: number; y: number };
+  /** Content size in points. */
+  contentSize: { width: number; height: number };
+  /** The scroll view's visible size in points. */
+  size: { width: number; height: number };
+}
+
 export interface ScrollProps extends ViewProps {
   /** Scroll along x instead of y. */
   horizontal?: boolean;
-  onScroll?: () => void;
-  onScrollEnd?: () => void;
-  onScrollDragStart?: () => void;
-  onScrollDragEnd?: () => void;
-  onMomentumStart?: () => void;
-  onMomentumEnd?: () => void;
+  onScroll?: (e: ScrollEvent) => void;
+  onScrollEnd?: (e: ScrollEvent) => void;
+  onScrollDragStart?: (e: ScrollEvent) => void;
+  onScrollDragEnd?: (e: ScrollEvent) => void;
+  onMomentumStart?: (e: ScrollEvent) => void;
+  onMomentumEnd?: (e: ScrollEvent) => void;
 }
 
 export interface InputProps {

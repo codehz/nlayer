@@ -299,19 +299,26 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_press(
     handle: jlong,
     id: jint,
 ) {
-    dispatch(handle, id, EventKind::Press);
+    dispatch(handle, id, EventKind::Press, EventPayload::None);
 }
 
 /// # Safety
 ///
-/// `handle` is live. `kind` is an [`EventKind`] discriminant.
+/// `handle` is live. `kind` is an [`EventKind`] discriminant. Lengths are
+/// points: content offset, content size, then the view's visible size.
 #[unsafe(no_mangle)]
-pub unsafe extern "system" fn Java_dev_nlayer_android_Native_event(
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_scroll(
     _env: JNIEnv<'_>,
     _class: JClass<'_>,
     handle: jlong,
     id: jint,
     kind: jint,
+    x: jfloat,
+    y: jfloat,
+    content_w: jfloat,
+    content_h: jfloat,
+    width: jfloat,
+    height: jfloat,
 ) {
     let Ok(raw) = u8::try_from(kind) else {
         return;
@@ -319,7 +326,19 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_event(
     let Some(event) = EventKind::from_raw(raw) else {
         return;
     };
-    dispatch(handle, id, event);
+    dispatch(
+        handle,
+        id,
+        event,
+        EventPayload::Scroll {
+            x,
+            y,
+            content_w,
+            content_h,
+            width,
+            height,
+        },
+    );
 }
 
 /// # Safety
@@ -351,7 +370,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_input(
     }
 }
 
-fn dispatch(handle: jlong, id: jint, event: EventKind) {
+fn dispatch(handle: jlong, id: jint, event: EventKind, payload: EventPayload) {
     if handle == 0 {
         return;
     }
@@ -362,6 +381,6 @@ fn dispatch(handle: jlong, id: jint, event: EventKind) {
         .unwrap_or_else(|err| err.into_inner())
         .as_ref()
     {
-        control.dispatch_event(id as NodeId, event, EventPayload::None);
+        control.dispatch_event(id as NodeId, event, payload);
     }
 }

@@ -100,12 +100,30 @@ impl PageSession {
         self.engine.control().input_changed(id, text);
     }
 
-    /// Scroll view `id` scrolled. The page already moved; this fires
-    /// `onScroll` (the payload is empty, as the runtime reports it).
-    pub fn scroll(&self, id: NodeId) {
-        self.engine
-            .control()
-            .dispatch_event(id, EventKind::Scroll, EventPayload::None);
+    /// Scroll view `id` moved. The page already moved; this fires `onScroll`
+    /// with the content offset, content size and visible size, in points.
+    pub fn scroll(
+        &self,
+        id: NodeId,
+        x: f32,
+        y: f32,
+        content_w: f32,
+        content_h: f32,
+        width: f32,
+        height: f32,
+    ) {
+        self.engine.control().dispatch_event(
+            id,
+            EventKind::Scroll,
+            EventPayload::Scroll {
+                x,
+                y,
+                content_w,
+                content_h,
+                width,
+                height,
+            },
+        );
     }
 
     /// The surface changed size (CSS pixels, one point each).

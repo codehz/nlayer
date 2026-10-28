@@ -84,6 +84,13 @@ impl Value {
         Ok(Value(owned(invoke(23, 0, 0, 0, 0.0))?))
     }
 
+    /// Sets `key` to `value`. The page keeps `value`; this releases the key.
+    pub(super) fn set(&self, key: &str, value: Self) -> Result<(), PropError> {
+        let key = Self::string(key)?;
+        invoke(24, self.0, key.into_raw(), value.into_raw(), 0.0);
+        Ok(())
+    }
+
     pub(super) fn kind(&self) -> u32 {
         invoke(0, self.0, 0, 0, 0.0) as u32
     }

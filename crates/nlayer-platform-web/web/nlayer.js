@@ -102,8 +102,8 @@ export function installBase(doc, css) {
 /**
  * One surface. `root` is the platform's root view (node 1). `host` hears
  * what the page must send back to the engine: `press(id)`,
- * `change(id, text)`, `scroll(id, x, y)`. `assetBase` is prepended to an
- * `asset:/` URI.
+ * `change(id, text)`, `scroll(id, x, y, contentWidth, contentHeight, width, height)`.
+ * Lengths are CSS pixels. `assetBase` is prepended to an `asset:/` URI.
  */
 export class Player {
   constructor(root, host = {}, options = {}) {
@@ -169,7 +169,16 @@ export class Player {
       el.append(el._spacer);
       el._horizontal = false;
       el.addEventListener("scroll", () => {
-        if (el._events.has("onScroll")) this.host.scroll?.(id, el.scrollLeft, el.scrollTop);
+        if (!el._events.has("onScroll")) return;
+        this.host.scroll?.(
+          id,
+          el.scrollLeft,
+          el.scrollTop,
+          el.scrollWidth,
+          el.scrollHeight,
+          el.clientWidth,
+          el.clientHeight,
+        );
       });
     }
     el.addEventListener("click", (event) => {

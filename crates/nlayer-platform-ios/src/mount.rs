@@ -4,7 +4,7 @@
 //! matrix, insert-below-sibling), `decor.rs` (the clipping image layer) and
 //! `input.rs` (the single-line field). Animation and gestures beyond press
 //! and hover are not applied. A scroll view's delegate reports the scroll
-//! events; the payload is empty.
+//! events with the content offset, the content size and the view's size.
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -17,7 +17,7 @@ use nlayer_core::{
     EventKind, EventMask, ImageSource, Interaction, MountBatch, MountItem, NodeId, ROOT_ID,
     ResizeMode, ViewKind,
 };
-use nlayer_engine::EngineControl;
+use nlayer_engine::{EngineControl, EventPayload};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel};
@@ -232,19 +232,34 @@ impl Relay {
     /// calls `scrollViewDidScroll:` at most once per frame while tracking.
     fn scroll_event(&self, scroll: &UIScrollView, event: EventKind) {
         let id = scroll.tag() as NodeId;
+        let payload = scroll_metrics(scroll);
         let Some(shared) = self.ivars().mounter.borrow().upgrade() else {
             return;
         };
         if let Ok(mounter) = shared.try_borrow() {
-            mounter.dispatch_scroll(id, event);
+            mounter.dispatch_scroll(id, event, payload);
             return;
         }
         DispatchQueue::main().exec_async(move || {
             let Some(mounter) = current() else {
                 return;
             };
-            mounter.borrow().dispatch_scroll(id, event);
+            mounter.borrow().dispatch_scroll(id, event, payload);
         });
+    }
+}
+
+fn scroll_metrics(scroll: &UIScrollView) -> EventPayload {
+    let offset = scroll.contentOffset();
+    let content = scroll.contentSize();
+    let size = scroll.bounds().size;
+    EventPayload::Scroll {
+        x: offset.x as f32,
+        y: offset.y as f32,
+        content_w: content.width as f32,
+        content_h: content.height as f32,
+        width: size.width as f32,
+        height: size.height as f32,
     }
 }
 
@@ -584,7 +599,7 @@ impl Mounter {
         self.sync_hover(id);
     }
 
-    fn dispatch_scroll(&self, id: NodeId, event: EventKind) {
+    fn dispatch_scroll(&self, id: NodeId, event: EventKind, payload: EventPayload) {
         let listens = self
             .slot(id)
             .is_some_and(|slot| slot.events.contains(event));
@@ -594,7 +609,7 @@ impl Mounter {
         let Some(control) = &self.control else {
             return;
         };
-        control.dispatch_event(id, event, nlayer_engine::EventPayload::None);
+        control.dispatch_event(id, event, payload);
     }
 
     fn sync_press(&mut self, id: NodeId) {

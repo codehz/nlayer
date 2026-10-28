@@ -184,11 +184,20 @@ pub unsafe extern "C" fn nlayer_input(id: u32, ptr: *const u8, len: usize) {
     });
 }
 
-/// Scroll view `id` scrolled (`onScroll`). Applied at the next [`nlayer_pump`].
+/// Scroll view `id` moved (`onScroll`). Lengths are CSS pixels. Applied at
+/// the next [`nlayer_pump`].
 #[unsafe(no_mangle)]
-pub extern "C" fn nlayer_scroll(id: u32) {
+pub extern "C" fn nlayer_scroll(
+    id: u32,
+    x: f32,
+    y: f32,
+    content_w: f32,
+    content_h: f32,
+    width: f32,
+    height: f32,
+) {
     with_session(|session| {
-        session.scroll(NodeId::from(id));
+        session.scroll(NodeId::from(id), x, y, content_w, content_h, width, height);
         -1.0
     });
 }

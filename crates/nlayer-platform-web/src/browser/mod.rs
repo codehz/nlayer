@@ -78,6 +78,17 @@ impl Bridge for Runtime {
         let payload = match payload {
             EventPayload::None => Value::null(),
             EventPayload::Text(text) => Value::string(text).unwrap_or_else(|_| Value::null()),
+            EventPayload::Scroll {
+                x,
+                y,
+                content_w,
+                content_h,
+                width,
+                height,
+            } => match scroll_payload(*x, *y, *content_w, *content_h, *width, *height) {
+                Ok(value) => value,
+                Err(_) => return,
+            },
         };
         let Ok(id) = Value::number(id as f64) else {
             return;
@@ -91,6 +102,30 @@ impl Bridge for Runtime {
     fn set_os(&self, os: Os) {
         self.os.set(os);
     }
+}
+
+fn scroll_payload(
+    x: f32,
+    y: f32,
+    content_w: f32,
+    content_h: f32,
+    width: f32,
+    height: f32,
+) -> Result<Value, PropError> {
+    let point = |a: f32, b: f32, first: &str, second: &str| -> Result<Value, PropError> {
+        let object = Value::object()?;
+        object.set(first, Value::number(f64::from(a))?)?;
+        object.set(second, Value::number(f64::from(b))?)?;
+        Ok(object)
+    };
+    let object = Value::object()?;
+    object.set("offset", point(x, y, "x", "y")?)?;
+    object.set(
+        "contentSize",
+        point(content_w, content_h, "width", "height")?,
+    )?;
+    object.set("size", point(width, height, "width", "height")?)?;
+    Ok(object)
 }
 
 thread_local! {

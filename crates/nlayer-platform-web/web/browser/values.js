@@ -159,6 +159,11 @@ export class Values {
               return 0;
             case 23:
               return this.put({});
+            case 24:
+              this.get(a)[this.get(b)] = this.get(c);
+              this.release(b);
+              this.release(c);
+              return 0;
             case 26:
               return this.put(Reflect.apply(this.get(a), this.get(b), this.get(c)));
             case 32:

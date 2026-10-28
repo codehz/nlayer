@@ -9,9 +9,10 @@ import android.widget.ScrollView;
 
 /**
  * One-axis scroll view. Drag and fling callbacks match UIKit's scroll delegate, cut to no refresh,
- * zoom or paging. Event kinds are {@code EventKind} discriminants. {@code onScroll} is the native
- * scroll callback, at most once per frame while tracking. There is no decelerating callback: rest
- * is no movement for a moment after the finger lifts.
+ * zoom or paging. Event kinds are {@code EventKind} discriminants. Each callback carries the
+ * content offset, the content size and this view's visible size, in points. {@code onScroll} is at
+ * most once per frame while tracking. There is no decelerating callback: rest is no movement for a
+ * moment after the finger lifts. An iOS bounce can report a negative offset; this view does not.
  */
 final class ScrollBox extends FrameLayout {
   private static final int SCROLL = 1;
@@ -165,7 +166,22 @@ final class ScrollBox extends FrameLayout {
 
   private void emit(int kind) {
     if ((pressMask & (1 << kind)) == 0) return;
-    Native.send(this, id, kind);
+    float x = 0;
+    float y = 0;
+    if (scroller != null) {
+      x = scroller.getScrollX() / density;
+      y = scroller.getScrollY() / density;
+    }
+    Native.sendScroll(
+        this,
+        id,
+        kind,
+        x,
+        y,
+        contentPointsW,
+        contentPointsH,
+        getWidth() / density,
+        getHeight() / density);
   }
 
   private void noteFling(int velocity) {

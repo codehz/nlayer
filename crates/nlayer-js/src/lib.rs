@@ -34,10 +34,27 @@ pub use crate::net::{HttpRequest, HttpResponse, NetworkRequest};
 /// What a native view reports to JS with an event.
 #[derive(Debug, Clone, PartialEq)]
 pub enum EventPayload {
-    /// Nothing (`onPress`, scroll events).
+    /// Nothing (`onPress`).
     None,
     /// The input's text (`onChange`).
     Text(String),
+    /// Where a scroll view is, in points. `x` and `y` are the content
+    /// offset (negative while iOS bounces). `content_w` and `content_h` are
+    /// the content size. `width` and `height` are the visible size.
+    Scroll {
+        /// Content offset x.
+        x: f32,
+        /// Content offset y.
+        y: f32,
+        /// Content width.
+        content_w: f32,
+        /// Content height.
+        content_h: f32,
+        /// Visible width.
+        width: f32,
+        /// Visible height.
+        height: f32,
+    },
 }
 
 /// The operating system a surface runs on (`platform.os`).

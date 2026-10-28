@@ -619,9 +619,22 @@ impl Headless {
             .ok_or_else(|| format!("`{selector}` is not in a scroll view"))?;
         selector::scroll_by(&mut self.screen, id, distance)
             .map_err(|_| format!("`{selector}` is not in a scroll view"))?;
+        let view = self
+            .screen
+            .view(id)
+            .ok_or_else(|| format!("`{selector}` is not in a scroll view"))?;
+        let content = view.scroll_content.unwrap_or(view.frame.size);
+        let payload = EventPayload::Scroll {
+            x: view.scroll_x,
+            y: view.scroll_y,
+            content_w: content.width.0,
+            content_h: content.height.0,
+            width: view.frame.size.width.0,
+            height: view.frame.size.height.0,
+        };
         self.engine
             .control()
-            .dispatch_event(id, EventKind::Scroll, EventPayload::None);
+            .dispatch_event(id, EventKind::Scroll, payload);
         Ok(())
     }
 
