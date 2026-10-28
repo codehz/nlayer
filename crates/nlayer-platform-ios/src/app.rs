@@ -1,8 +1,5 @@
 //! The process's `UIApplication` and the one window it owns.
 
-use std::cell::RefCell;
-use std::sync::Mutex;
-
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol};
 use objc2::{ClassType, MainThreadMarker, MainThreadOnly, define_class, msg_send};
@@ -12,10 +9,18 @@ use objc2_ui_kit::{
     UISceneConnectionOptions, UISceneDelegate, UISceneSession, UIViewController, UIWindow,
     UIWindowScene, UIWindowSceneDelegate, UIWindowSceneSessionRoleApplication,
 };
+use std::cell::RefCell;
+use std::path::PathBuf;
+use std::sync::Mutex;
 
 use crate::host;
 
-static LAUNCH: Mutex<Option<String>> = Mutex::new(None);
+struct Launch {
+    bundle: String,
+    assets: PathBuf,
+}
+
+static LAUNCH: Mutex<Option<Launch>> = Mutex::new(None);
 
 struct AppState {
     _window: Retained<UIWindow>,
@@ -98,11 +103,11 @@ impl RootController {
 }
 
 fn connect(mtm: MainThreadMarker, scene: &UIWindowScene) {
-    let bundle = LAUNCH
-        .lock()
-        .expect("launch lock")
-        .take()
-        .unwrap_or_default();
+    let launch = LAUNCH.lock().expect("launch lock").take();
+    let (bundle, assets) = match launch {
+        Some(launch) => (launch.bundle, launch.assets),
+        None => (String::new(), PathBuf::new()),
+    };
     let window = UIWindow::initWithWindowScene(UIWindow::alloc(mtm), scene);
     let controller = RootController::new(mtm);
     let root = controller.view().expect("view controller has a view");
@@ -111,7 +116,7 @@ fn connect(mtm: MainThreadMarker, scene: &UIWindowScene) {
     root.setBackgroundColor(Some(&UIColor::whiteColor()));
     window.setRootViewController(Some(&controller));
     window.makeKeyAndVisible();
-    let session = host::start(mtm, &root, &bundle);
+    let session = host::start(mtm, &root, &bundle, assets);
     APP.with(|app| {
         *app.borrow_mut() = Some(AppState {
             _window: window,
@@ -120,10 +125,11 @@ fn connect(mtm: MainThreadMarker, scene: &UIWindowScene) {
     });
 }
 
-/// Runs `bundle` full-window. Never returns.
-pub(crate) fn run_app(bundle: String) -> ! {
+/// Runs `bundle` full-window. `assets` is the directory of bundled images
+/// (`asset:/` paths). Never returns.
+pub(crate) fn run_app(bundle: String, assets: PathBuf) -> ! {
     let mtm = MainThreadMarker::new().expect("run_app must be called on the main thread");
-    *LAUNCH.lock().expect("launch lock") = Some(bundle);
+    *LAUNCH.lock().expect("launch lock") = Some(Launch { bundle, assets });
     let delegate = NSString::from_str(
         AppDelegate::class()
             .name()

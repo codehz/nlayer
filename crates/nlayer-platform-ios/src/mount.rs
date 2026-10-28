@@ -1,23 +1,30 @@
 //! Applies one mount batch to UIKit views.
 //!
 //! Extracted from `nsh-platform-ios/src/mount.rs` (`set_frame`, the transform
-//! matrix, insert-below-sibling). Animation, gestures beyond press and hover,
-//! images and inputs are not applied.
+//! matrix, insert-below-sibling) and `decor.rs` (the clipping image layer and
+//! the picture layer inside it). Animation, gestures beyond press and hover,
+//! and inputs are not applied.
 
+use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 
-use nlayer_core::geometry::{Bounds, Points, Size};
+use nlayer_core::geometry::{Bounds, Point, Points, Size};
 use nlayer_core::style::{BorderStyle, Color, TextStyle, TransformOrigin, ViewStyle};
-use nlayer_core::{EventKind, Interaction, MountBatch, MountItem, NodeId, ROOT_ID, ViewKind};
+use nlayer_core::{
+    EventKind, ImageSource, Interaction, MountBatch, MountItem, NodeId, ROOT_ID, ResizeMode,
+    ViewKind,
+};
 use nlayer_engine::EngineControl;
 use objc2::rc::Retained;
-use objc2::runtime::{NSObject, NSObjectProtocol};
+use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_core_foundation::{CGFloat, CGPoint, CGRect, CGSize};
-use objc2_quartz_core::{CALayer, CAShapeLayer, CATransform3D};
+use objc2_core_graphics::CGImage;
+use objc2_quartz_core::{CALayer, CAShapeLayer, CATransaction, CATransform3D, kCAGravityResize};
 use objc2_ui_kit::{
-    UIGestureRecognizerState, UIHoverGestureRecognizer, UILongPressGestureRecognizer, UIScrollView,
-    UIScrollViewContentInsetAdjustmentBehavior, UIView,
+    UIGestureRecognizerState, UIHoverGestureRecognizer, UILongPressGestureRecognizer, UIScreen,
+    UIScrollView, UIScrollViewContentInsetAdjustmentBehavior, UIView,
 };
 
 use crate::text_view::TextView;
@@ -36,6 +43,8 @@ struct Slot {
     dash: Option<Retained<CAShapeLayer>>,
     /// Per-side borders when the four sides are not one width and color.
     sides: [Option<Retained<CALayer>>; 4],
+    /// The fitted bitmap, present only for an image view.
+    picture: Option<Picture>,
 }
 
 struct Paint {
@@ -46,13 +55,14 @@ struct Paint {
 enum Native {
     View(Retained<UIView>),
     Text(Retained<TextView>),
+    Image(Retained<UIView>),
     Scroll(Retained<UIScrollView>),
 }
 
 impl Native {
     fn view(&self) -> &UIView {
         match self {
-            Native::View(view) => view,
+            Native::View(view) | Native::Image(view) => view,
             Native::Text(view) => view,
             Native::Scroll(view) => view,
         }
@@ -121,12 +131,15 @@ pub(crate) struct Mounter {
     control: Option<EngineControl>,
     viewport: Size<Points>,
     insets: nlayer_core::geometry::Edges<Points>,
+    /// Directory `asset:/` paths are read from (the directory of `app.js`).
+    assets: PathBuf,
 }
 
 impl Mounter {
     pub(crate) fn new(
         mtm: MainThreadMarker,
         root: Retained<UIView>,
+        assets: PathBuf,
     ) -> Rc<std::cell::RefCell<Self>> {
         let relay = Relay::new(mtm);
         let mut slots = Vec::new();
@@ -140,7 +153,9 @@ impl Mounter {
             control: None,
             viewport: Size::default(),
             insets: nlayer_core::geometry::Edges::default(),
+            assets,
         }));
+        CURRENT.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&mounter)));
         relay.bind(Rc::downgrade(&mounter));
         mounter
     }
@@ -282,17 +297,21 @@ impl Mounter {
                     animated,
                 );
             }
-            MountItem::Image { .. }
-            | MountItem::Input { .. }
+            MountItem::Image {
+                id,
+                source,
+                resize_mode,
+            } => self.set_image(id, source, resize_mode),
+            MountItem::Input { .. }
             | MountItem::InputValue { .. }
             | MountItem::InputContent { .. } => {}
         }
     }
 
     fn create(&mut self, id: NodeId, kind: ViewKind) {
-        let native = match kind {
-            ViewKind::View => Native::View(UIView::new(self.mtm)),
-            ViewKind::Text => Native::Text(TextView::new(self.mtm)),
+        let (native, picture) = match kind {
+            ViewKind::View => (Native::View(UIView::new(self.mtm)), None),
+            ViewKind::Text => (Native::Text(TextView::new(self.mtm)), None),
             ViewKind::Scroll => {
                 let scroll =
                     UIScrollView::initWithFrame(UIScrollView::alloc(self.mtm), CGRect::ZERO);
@@ -300,18 +319,24 @@ impl Mounter {
                     UIScrollViewContentInsetAdjustmentBehavior::Never,
                 );
                 scroll.setDelaysContentTouches(false);
-                Native::Scroll(scroll)
+                (Native::Scroll(scroll), None)
             }
-            // Images and inputs are not mounted. Their frames are ignored;
-            // children are not parented under them.
-            ViewKind::Image | ViewKind::Input => return,
+            ViewKind::Image => {
+                let (view, picture) = image_layers(self.mtm);
+                (Native::Image(view), Some(picture))
+            }
+            // Inputs are not mounted. Their frames are ignored; children
+            // are not parented under them.
+            ViewKind::Input => return,
         };
         let view = native.view();
         view.setTag(id as isize);
         view.setOpaque(false);
         view.setBackgroundColor(Some(&objc2_ui_kit::UIColor::clearColor()));
         self.ensure(id);
-        self.slots[id as usize] = Some(Slot::plain(native));
+        let mut slot = Slot::plain(native);
+        slot.picture = picture;
+        self.slots[id as usize] = Some(slot);
     }
 
     fn insert(&mut self, parent: NodeId, child: NodeId, before: Option<NodeId>) {
@@ -428,6 +453,7 @@ impl Mounter {
         };
         if let Some(slot) = self.slot_mut(id) {
             paint_view(&view, &paint, slot);
+            place_image(&view, &paint, slot);
         }
         if let Some(Native::Text(text)) = self.native(id) {
             text.set_color(text_color);
@@ -473,6 +499,7 @@ impl Slot {
             hover: None,
             dash: None,
             sides: [None, None, None, None],
+            picture: None,
         }
     }
 }
@@ -820,4 +847,193 @@ fn mat_mul(a: &[CGFloat; 16], b: &[CGFloat; 16]) -> [CGFloat; 16] {
         }
     }
     out
+}
+
+/// The bitmap layer of an image view, clipped to the view's box.
+struct Picture {
+    clip: Retained<CALayer>,
+    layer: Retained<CALayer>,
+    mode: ResizeMode,
+    uri: Option<Arc<str>>,
+    generation: u64,
+    /// Natural size in points, once decoded (`None` until then).
+    natural: Option<Size<Points>>,
+}
+
+impl Mounter {
+    fn set_image(&mut self, id: NodeId, source: Option<ImageSource>, mode: ResizeMode) {
+        let scale = screen_scale(self.mtm);
+        let assets = self.assets.clone();
+        let reload = {
+            let Some(slot) = self.slot_mut(id) else {
+                return;
+            };
+            let Some(picture) = &mut slot.picture else {
+                return;
+            };
+            picture.mode = mode;
+            let next = source.and_then(|source| (!source.uri.is_empty()).then_some(source.uri));
+            if picture.uri == next {
+                None
+            } else {
+                picture.uri = next.clone();
+                picture.generation = picture.generation.wrapping_add(1);
+                picture.natural = None;
+                let generation = picture.generation;
+                let layer = picture.layer.clone();
+                quiet(|| unsafe { layer.setContents(None) });
+                Some((generation, next))
+            }
+        };
+        if let Some((generation, Some(uri))) = reload {
+            load_image(id, generation, uri, assets, scale);
+        }
+        self.repaint(id);
+    }
+
+    fn finish_image(
+        &mut self,
+        id: NodeId,
+        generation: u64,
+        scale: f32,
+        loaded: Result<crate::image::Decoded, String>,
+    ) {
+        let decoded = match loaded {
+            Ok(decoded) => Some(decoded),
+            Err(error) => {
+                eprintln!("nlayer: image: {error}");
+                None
+            }
+        };
+        {
+            let Some(slot) = self.slot_mut(id) else {
+                return;
+            };
+            let Some(picture) = &mut slot.picture else {
+                return;
+            };
+            if picture.generation != generation {
+                return;
+            }
+            let Some(decoded) = decoded else {
+                return;
+            };
+            picture.natural = Some(Size::new(
+                Points(decoded.width as f32 / scale),
+                Points(decoded.height as f32 / scale),
+            ));
+            let layer = picture.layer.clone();
+            quiet(|| {
+                layer.setContentsScale(scale as CGFloat);
+                // SAFETY: a CGImage is a valid layer `contents` object, and
+                // the layer retains it.
+                unsafe {
+                    layer.setContents(Some(
+                        &*(&*decoded.image as *const CGImage as *const AnyObject),
+                    ));
+                }
+            });
+        }
+        self.repaint(id);
+    }
+}
+
+fn load_image(id: NodeId, generation: u64, uri: Arc<str>, assets: PathBuf, scale: f32) {
+    use dispatch2::{DispatchQueue, DispatchQueueGlobalPriority, GlobalQueueIdentifier};
+    DispatchQueue::global_queue(GlobalQueueIdentifier::Priority(
+        DispatchQueueGlobalPriority::Default,
+    ))
+    .exec_async(move || {
+        let loaded = crate::image::load(&assets, &uri).map_err(|error| format!("{uri}: {error}"));
+        DispatchQueue::main().exec_async(move || {
+            let Some(mounter) = current() else {
+                return;
+            };
+            mounter
+                .borrow_mut()
+                .finish_image(id, generation, scale, loaded);
+        });
+    });
+}
+
+thread_local! {
+    static CURRENT: std::cell::RefCell<Option<Rc<std::cell::RefCell<Mounter>>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn current() -> Option<Rc<std::cell::RefCell<Mounter>>> {
+    CURRENT.with(|slot| slot.borrow().clone())
+}
+
+fn image_layers(mtm: MainThreadMarker) -> (Retained<UIView>, Picture) {
+    let view = UIView::new(mtm);
+    let clip = CALayer::layer();
+    clip.setMasksToBounds(true);
+    let layer = CALayer::layer();
+    // SAFETY: an immutable Core Animation constant.
+    unsafe { layer.setContentsGravity(kCAGravityResize) };
+    clip.addSublayer(&layer);
+    view.layer().insertSublayer_atIndex(&clip, 0);
+    (
+        view,
+        Picture {
+            clip,
+            layer,
+            mode: ResizeMode::Cover,
+            uri: None,
+            generation: 0,
+            natural: None,
+        },
+    )
+}
+
+/// Frames the picture where `objectFit` puts it, and clips that to the view.
+fn place_image(view: &UIView, style: &ViewStyle, slot: &Slot) {
+    let Some(picture) = &slot.picture else {
+        return;
+    };
+    let bounds = view.bounds();
+    let size = Size::new(
+        Points(bounds.size.width as f32),
+        Points(bounds.size.height as f32),
+    );
+    let radii = style.radii().fit(size);
+    let fitted = match picture.natural {
+        Some(natural) => picture.mode.fit(natural, size, style.object_position),
+        None => Bounds {
+            origin: Point::default(),
+            size: Size::default(),
+        },
+    };
+    let clip = picture.clip.clone();
+    let layer = picture.layer.clone();
+    quiet(|| {
+        clip.setFrame(bounds);
+        apply_corners(&clip, radii, clip.bounds());
+        layer.setFrame(CGRect::new(
+            CGPoint::new(fitted.origin.x.0 as CGFloat, fitted.origin.y.0 as CGFloat),
+            CGSize::new(
+                fitted.size.width.0 as CGFloat,
+                fitted.size.height.0 as CGFloat,
+            ),
+        ));
+    });
+}
+
+fn quiet<R>(f: impl FnOnce() -> R) -> R {
+    CATransaction::begin();
+    CATransaction::setDisableActions(true);
+    let result = f();
+    CATransaction::commit();
+    result
+}
+
+#[allow(deprecated)]
+fn screen_scale(mtm: MainThreadMarker) -> f32 {
+    let scale = UIScreen::mainScreen(mtm).scale() as f32;
+    if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    }
 }

@@ -1,9 +1,5 @@
 //! One running surface: the engine thread and the main-thread mounter.
 
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::sync::{Arc, Mutex};
-
 use crate::mount::Mounter;
 use crate::text::CoreTextEngine;
 use dispatch2::DispatchQueue;
@@ -14,6 +10,10 @@ use objc2::runtime::{NSObject, NSObjectProtocol};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send};
 use objc2_core_foundation::CGRect;
 use objc2_ui_kit::{UILabel, UIResponder, UIView, UIViewAutoresizing};
+use std::cell::RefCell;
+use std::path::PathBuf;
+use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 struct RootIvars {
     mounter: RefCell<std::rc::Weak<RefCell<Mounter>>>,
@@ -137,10 +137,16 @@ pub(crate) struct Session {
 }
 
 /// Starts the engine on `bundle` inside `container` (the window's root view).
-pub(crate) fn start(mtm: MainThreadMarker, container: &UIView, bundle: &str) -> Session {
+/// `assets` is the directory bundled `asset:/` images are read from.
+pub(crate) fn start(
+    mtm: MainThreadMarker,
+    container: &UIView,
+    bundle: &str,
+    assets: PathBuf,
+) -> Session {
     let root = RootView::new(mtm, container.bounds());
     container.addSubview(&root);
-    let mounter = Mounter::new(mtm, root.retain().into_super());
+    let mounter = Mounter::new(mtm, root.retain().into_super(), assets);
     root.bind(Rc::downgrade(&mounter));
     MOUNTER.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&mounter)));
     let queue = Arc::new(Queue(Mutex::new(Vec::new())));

@@ -109,8 +109,10 @@ Copied files:
   wasm module does not link QuickJS. The opcode facade is written for nlayer's v1
   modules; nsh's canvas, list, gesture and animation facades are not copied.
 - `crates/nlayer-platform-ios` from `crates/nsh-platform-ios`
-  (`app.rs`, `surface.rs`, `mount.rs`, `text.rs`, `text_view.rs`): one
-  window, frames, fill, radius, opacity, overflow, a static transform,
-  solid and dashed borders, `onPress`, `activeStyle` / `hoverStyle`, safe
-  area, CoreText measurement and one-axis scroll. Images, inputs, refresh,
-  zoom and paging are not mounted. The runner binary is `nlayer-ios-app`.
+  (`app.rs`, `surface.rs`, `mount.rs`, `text.rs`, `text_view.rs`,
+  `decor.rs`, `image.rs`): one window, frames, fill, radius, opacity,
+  overflow, a static transform, solid and dashed borders, `onPress`,
+  `activeStyle` / `hoverStyle`, safe area, CoreText measurement, one-axis
+  scroll and PNG / JPEG / WebP from a bundled file or `http(s)`. Inputs,
+  refresh, zoom, paging, disk cache, SVG and GIF frames are not mounted.
+  The runner binary is `nlayer-ios-app`.

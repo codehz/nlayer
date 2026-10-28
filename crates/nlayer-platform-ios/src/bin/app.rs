@@ -15,11 +15,21 @@ fn main() {
         let paths = nlayer_platform_ios::bundle_paths(home.as_deref(), exe_dir.as_deref());
         for path in &paths {
             match std::fs::read_to_string(path) {
-                Ok(bundle) => nlayer_platform_ios::run_app(bundle),
+                Ok(bundle) => {
+                    let assets = path
+                        .parent()
+                        .unwrap_or(std::path::Path::new("."))
+                        .to_path_buf();
+                    nlayer_platform_ios::run_app(bundle, assets);
+                }
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(err) => {
                     eprintln!("cannot read {}: {err}", path.display());
-                    nlayer_platform_ios::run_app(String::new());
+                    let assets = path
+                        .parent()
+                        .unwrap_or(std::path::Path::new("."))
+                        .to_path_buf();
+                    nlayer_platform_ios::run_app(String::new(), assets);
                 }
             }
         }
@@ -29,7 +39,7 @@ fn main() {
             .collect::<Vec<_>>()
             .join(", ");
         eprintln!("cannot read app.js ({tried})");
-        nlayer_platform_ios::run_app(String::new());
+        nlayer_platform_ios::run_app(String::new(), std::path::PathBuf::new());
     }
     #[cfg(not(target_os = "ios"))]
     {
