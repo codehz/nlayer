@@ -20,6 +20,9 @@ final class Native {
 
   static native void press(long handle, int id);
 
+  /** `kind` is an `EventKind` discriminant (`onScroll` is 1). */
+  static native void event(long handle, int id, int kind);
+
   static native void input(long handle, int id, String text);
 
   private Native() {}
@@ -32,6 +35,11 @@ final class Native {
   static void sendInput(android.view.View view, int id, String text) {
     HostView host = host(view);
     if (host != null) input(host.handle(), id, text);
+  }
+
+  static void send(android.view.View view, int id, int kind) {
+    HostView host = host(view);
+    if (host != null) event(host.handle(), id, kind);
   }
 
   private static HostView host(android.view.View view) {

@@ -1,8 +1,8 @@
 //! One running surface: the engine thread and the UI-thread mounter.
 //!
 //! Extracted from `nsh-platform-android/src/host.rs` and cut to one surface,
-//! press, input and safe area. There is no dev server, grant or animation
-//! tick.
+//! press, input, scroll events and safe area. There is no dev server, grant
+//! or animation tick.
 #![allow(unreachable_pub)]
 
 use std::sync::{Arc, Mutex};
@@ -300,6 +300,26 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_press(
     id: jint,
 ) {
     dispatch(handle, id, EventKind::Press);
+}
+
+/// # Safety
+///
+/// `handle` is live. `kind` is an [`EventKind`] discriminant.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_event(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    id: jint,
+    kind: jint,
+) {
+    let Ok(raw) = u8::try_from(kind) else {
+        return;
+    };
+    let Some(event) = EventKind::from_raw(raw) else {
+        return;
+    };
+    dispatch(handle, id, event);
 }
 
 /// # Safety

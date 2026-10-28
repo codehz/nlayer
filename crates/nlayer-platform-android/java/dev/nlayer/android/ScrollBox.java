@@ -1,12 +1,27 @@
 package dev.nlayer.android;
 
 import android.content.Context;
+import android.view.MotionEvent;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ScrollView;
 
+/**
+ * One-axis scroll view. Drag and fling callbacks match UIKit's scroll delegate, cut to no refresh,
+ * zoom or paging. Event kinds are {@code EventKind} discriminants. {@code onScroll} is the native
+ * scroll callback, at most once per frame while tracking. There is no decelerating callback: rest
+ * is no movement for a moment after the finger lifts.
+ */
 final class ScrollBox extends FrameLayout {
+  private static final int SCROLL = 1;
+  private static final int SCROLL_END = 2;
+  private static final int DRAG_START = 3;
+  private static final int DRAG_END = 4;
+  private static final int MOMENTUM_START = 5;
+  private static final int MOMENTUM_END = 6;
+  private static final int REST_MS = 120;
+
   final int id;
   final Decor decor = new Decor();
   boolean horizontal;
@@ -15,19 +30,32 @@ final class ScrollBox extends FrameLayout {
   int contentW, contentH;
   float contentPointsW, contentPointsH, offsetX, offsetY;
   int pressMask;
+  private final float density;
   private boolean armed;
   private float downX, downY;
+  private boolean touching, dragging, flung, momentum, applying;
+  private final Runnable rest = this::cameToRest;
 
   ScrollBox(Context c, Mounter m, int id) {
     super(c);
     this.id = id;
+    density = c.getResources().getDisplayMetrics().density;
     setBackground(decor);
     content = new Content(c, m, id);
     build(c);
   }
 
   private void build(Context c) {
-    scroller = horizontal ? new HorizontalScrollView(c) : new ScrollView(c);
+    if (scroller != null) {
+      scroller.removeView(content);
+      removeView(scroller);
+    }
+    dragging = false;
+    flung = false;
+    momentum = false;
+    touching = false;
+    removeCallbacks(rest);
+    scroller = horizontal ? new HScroll(c) : new VScroll(c);
     scroller.setClipToPadding(false);
     // A scroll view inside another scrolls first, then hands the rest to its
     // parent. Nested scrolling off, the outer ScrollView intercepts every drag
@@ -37,32 +65,33 @@ final class ScrollBox extends FrameLayout {
     scroller.setHorizontalScrollBarEnabled(horizontal);
     scroller.setOnTouchListener(
         new android.view.View.OnTouchListener() {
-          public boolean onTouch(android.view.View v, android.view.MotionEvent e) {
+          public boolean onTouch(android.view.View v, MotionEvent e) {
             return tap(e);
           }
         });
+    scroller.setOnScrollChangeListener((v, x, y, ox, oy) -> onScrolled(x, y));
     scroller.addView(content, new ViewGroup.LayoutParams(-2, -2));
     addView(scroller, 0, new LayoutParams(-1, -1));
     size(contentW, contentH);
   }
 
   /** A tap on the scroller, not a drag. A child that takes the touch never reaches here. */
-  private boolean tap(android.view.MotionEvent e) {
+  private boolean tap(MotionEvent e) {
     if ((pressMask & 1) == 0) return false;
     int action = e.getActionMasked();
-    if (action == android.view.MotionEvent.ACTION_DOWN) {
+    if (action == MotionEvent.ACTION_DOWN) {
       armed = true;
       downX = e.getX();
       downY = e.getY();
       Mounter.pressed(this, id, true);
-    } else if (action == android.view.MotionEvent.ACTION_MOVE) {
+    } else if (action == MotionEvent.ACTION_MOVE) {
       if (armed && moved(e)) cancel();
-    } else if (action == android.view.MotionEvent.ACTION_UP) {
+    } else if (action == MotionEvent.ACTION_UP) {
       if (armed) {
         cancel();
         Native.sendPress(this, id);
       }
-    } else if (action == android.view.MotionEvent.ACTION_CANCEL) cancel();
+    } else if (action == MotionEvent.ACTION_CANCEL) cancel();
     return false;
   }
 
@@ -71,19 +100,81 @@ final class ScrollBox extends FrameLayout {
     Mounter.pressed(this, id, false);
   }
 
-  private boolean moved(android.view.MotionEvent e) {
+  private boolean moved(MotionEvent e) {
     float slop = android.view.ViewConfiguration.get(getContext()).getScaledTouchSlop();
     float dx = e.getX() - downX, dy = e.getY() - downY;
     return dx * dx + dy * dy > slop * slop;
   }
 
+  /** Before the scroll view sees {@code e}: whether the finger lifted. */
+  private boolean beforeTouch(MotionEvent e) {
+    int action = e.getActionMasked();
+    boolean up = action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL;
+    if (up) flung = false;
+    touching = !up;
+    return up;
+  }
+
+  private void released() {
+    touching = false;
+    removeCallbacks(rest);
+    if (!dragging) return;
+    dragging = false;
+    emit(DRAG_END);
+    if (flung) {
+      momentum = true;
+      emit(MOMENTUM_START);
+      armRest();
+    } else emit(SCROLL_END);
+  }
+
+  private void onScrolled(int x, int y) {
+    if (!applying) {
+      offsetX = x / density;
+      offsetY = y / density;
+    }
+    if (touching && !dragging) {
+      dragging = true;
+      // Caught while gliding: the glide ended.
+      if (momentum) {
+        momentum = false;
+        emit(MOMENTUM_END);
+      }
+      emit(DRAG_START);
+    }
+    emit(SCROLL);
+    if (dragging || momentum) armRest();
+  }
+
+  private void armRest() {
+    removeCallbacks(rest);
+    postDelayed(rest, REST_MS);
+  }
+
+  private void cameToRest() {
+    if (touching) {
+      postDelayed(rest, REST_MS);
+      return;
+    }
+    if (momentum) {
+      momentum = false;
+      emit(MOMENTUM_END);
+    }
+    emit(SCROLL_END);
+  }
+
+  private void emit(int kind) {
+    if ((pressMask & (1 << kind)) == 0) return;
+    Native.send(this, id, kind);
+  }
+
+  private void noteFling(int velocity) {
+    if (velocity != 0) flung = true;
+  }
+
   void configure(boolean h, boolean indicator, Context c, Mounter m) {
     if (horizontal != h) {
       horizontal = h;
-      if (scroller != null) {
-        scroller.removeView(content);
-        removeView(scroller);
-      }
       build(c);
     }
     scroller.setVerticalScrollBarEnabled(indicator && !horizontal);
@@ -107,16 +198,20 @@ final class ScrollBox extends FrameLayout {
   void scrollByPoints(float dx, float dy, float density) {
     offsetX += dx;
     offsetY += dy;
+    applying = true;
     if (horizontal) scroller.scrollBy(Math.round(dx * density), 0);
     else scroller.scrollBy(0, Math.round(dy * density));
+    applying = false;
   }
 
   void scrollToPoints(float x, float y, float density) {
     offsetX = x;
     offsetY = y;
+    applying = true;
     int px = Math.round(x * density), py = Math.round(y * density);
     if (horizontal) scroller.scrollTo(px, 0);
     else scroller.scrollTo(0, py);
+    applying = false;
   }
 
   /**
@@ -136,6 +231,46 @@ final class ScrollBox extends FrameLayout {
         setMeasuredDimension(
             contentW > 0 ? contentW : getMeasuredWidth(),
             contentH > 0 ? contentH : getMeasuredHeight());
+    }
+  }
+
+  private final class VScroll extends ScrollView {
+    VScroll(Context c) {
+      super(c);
+    }
+
+    @Override
+    public boolean onTouchEvent(MotionEvent e) {
+      boolean up = beforeTouch(e);
+      boolean handled = super.onTouchEvent(e);
+      if (up) released();
+      return handled;
+    }
+
+    @Override
+    public void fling(int velocity) {
+      noteFling(velocity);
+      super.fling(velocity);
+    }
+  }
+
+  private final class HScroll extends HorizontalScrollView {
+    HScroll(Context c) {
+      super(c);
+    }
+
+    @Override
+    public boolean onTouchEvent(MotionEvent e) {
+      boolean up = beforeTouch(e);
+      boolean handled = super.onTouchEvent(e);
+      if (up) released();
+      return handled;
+    }
+
+    @Override
+    public void fling(int velocity) {
+      noteFling(velocity);
+      super.fling(velocity);
     }
   }
 }

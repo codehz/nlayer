@@ -95,6 +95,23 @@ impl EventKind {
         }
     }
 
+    /// The [`EventMask`] bit index. Platforms pass this across JNI.
+    /// `None` if `raw` is not a kind.
+    #[inline]
+    pub const fn from_raw(raw: u8) -> Option<EventKind> {
+        match raw {
+            0 => Some(EventKind::Press),
+            1 => Some(EventKind::Scroll),
+            2 => Some(EventKind::ScrollEnd),
+            3 => Some(EventKind::ScrollDragStart),
+            4 => Some(EventKind::ScrollDragEnd),
+            5 => Some(EventKind::MomentumStart),
+            6 => Some(EventKind::MomentumEnd),
+            7 => Some(EventKind::Change),
+            _ => None,
+        }
+    }
+
     /// The protocol name of this event.
     #[inline]
     pub const fn prop_name(self) -> &'static str {

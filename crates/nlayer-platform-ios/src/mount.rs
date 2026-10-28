@@ -3,28 +3,30 @@
 //! Extracted from `nsh-platform-ios/src/mount.rs` (`set_frame`, the transform
 //! matrix, insert-below-sibling), `decor.rs` (the clipping image layer) and
 //! `input.rs` (the single-line field). Animation and gestures beyond press
-//! and hover are not applied.
+//! and hover are not applied. A scroll view's delegate reports the scroll
+//! events; the payload is empty.
 
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use dispatch2::DispatchQueue;
 use nlayer_core::geometry::{Bounds, Point, Points, Size};
 use nlayer_core::style::{BorderStyle, Color, TextStyle, TransformOrigin, ViewStyle};
 use nlayer_core::{
-    EventKind, ImageSource, Interaction, MountBatch, MountItem, NodeId, ROOT_ID, ResizeMode,
-    ViewKind,
+    EventKind, EventMask, ImageSource, Interaction, MountBatch, MountItem, NodeId, ROOT_ID,
+    ResizeMode, ViewKind,
 };
 use nlayer_engine::EngineControl;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
+use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_core_foundation::{CGFloat, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::CGImage;
 use objc2_quartz_core::{CALayer, CAShapeLayer, CATransaction, CATransform3D, kCAGravityResize};
 use objc2_ui_kit::{
     UIGestureRecognizerState, UIHoverGestureRecognizer, UILongPressGestureRecognizer, UIScreen,
-    UIScrollView, UIScrollViewContentInsetAdjustmentBehavior, UIView,
+    UIScrollView, UIScrollViewContentInsetAdjustmentBehavior, UIScrollViewDelegate, UIView,
 };
 
 use crate::input::Field;
@@ -43,6 +45,9 @@ struct Slot {
     press: Option<Retained<UILongPressGestureRecognizer>>,
     /// The view itself listens to `onPress` (not only a span inside it).
     own_press: bool,
+    /// Listeners, including the scroll events. A scroll callback fires only
+    /// a kind this contains.
+    events: EventMask,
     /// A nested span listens to `onPress`.
     link_press: bool,
     hover: Option<Retained<UIHoverGestureRecognizer>>,
@@ -80,8 +85,8 @@ impl Native {
     }
 }
 
-/// Gesture target shared by every press and hover recognizer. The view's
-/// tag is the node id.
+/// Gesture target shared by every press and hover recognizer, and the
+/// scroll views' delegate. The view's tag is the node id.
 struct RelayIvars {
     mounter: std::cell::RefCell<std::rc::Weak<std::cell::RefCell<Mounter>>>,
 }
@@ -132,6 +137,48 @@ define_class!(
         }
     }
 
+    unsafe impl UIScrollViewDelegate for Relay {
+        #[unsafe(method(scrollViewDidScroll:))]
+        fn scroll_view_did_scroll(&self, scroll: &UIScrollView) {
+            self.scroll_event(scroll, EventKind::Scroll);
+        }
+
+        #[unsafe(method(scrollViewWillBeginDragging:))]
+        fn scroll_view_will_begin_dragging(&self, scroll: &UIScrollView) {
+            // Caught while gliding: the glide ended.
+            if scroll.isDecelerating() {
+                self.scroll_event(scroll, EventKind::MomentumEnd);
+            }
+            self.scroll_event(scroll, EventKind::ScrollDragStart);
+        }
+
+        #[unsafe(method(scrollViewDidEndDragging:willDecelerate:))]
+        fn scroll_view_did_end_dragging(&self, scroll: &UIScrollView, decelerate: bool) {
+            self.scroll_event(scroll, EventKind::ScrollDragEnd);
+            self.scroll_event(
+                scroll,
+                if decelerate {
+                    EventKind::MomentumStart
+                } else {
+                    EventKind::ScrollEnd
+                },
+            );
+        }
+
+        #[unsafe(method(scrollViewDidEndDecelerating:))]
+        fn scroll_view_did_end_decelerating(&self, scroll: &UIScrollView) {
+            self.scroll_event(scroll, EventKind::MomentumEnd);
+            self.scroll_event(scroll, EventKind::ScrollEnd);
+        }
+
+        /// An animated `scrollTo` came to rest. A drag uses the decelerating
+        /// callbacks instead.
+        #[unsafe(method(scrollViewDidEndScrollingAnimation:))]
+        fn scroll_view_did_end_scrolling_animation(&self, scroll: &UIScrollView) {
+            self.scroll_event(scroll, EventKind::ScrollEnd);
+        }
+    }
+
     unsafe impl NSObjectProtocol for Relay {}
 );
 
@@ -178,6 +225,26 @@ impl Relay {
         } else {
             mounter.borrow_mut().end_focus(id);
         }
+    }
+
+    /// A scroll callback. Setting `contentOffset` while a batch is applied
+    /// re-enters this; that report waits until the apply returns. UIKit
+    /// calls `scrollViewDidScroll:` at most once per frame while tracking.
+    fn scroll_event(&self, scroll: &UIScrollView, event: EventKind) {
+        let id = scroll.tag() as NodeId;
+        let Some(shared) = self.ivars().mounter.borrow().upgrade() else {
+            return;
+        };
+        if let Ok(mounter) = shared.try_borrow() {
+            mounter.dispatch_scroll(id, event);
+            return;
+        }
+        DispatchQueue::main().exec_async(move || {
+            let Some(mounter) = current() else {
+                return;
+            };
+            mounter.borrow().dispatch_scroll(id, event);
+        });
     }
 }
 
@@ -470,6 +537,11 @@ impl Mounter {
                     UIScrollViewContentInsetAdjustmentBehavior::Never,
                 );
                 scroll.setDelaysContentTouches(false);
+                // SAFETY: `Relay` implements `UIScrollViewDelegate`. UIKit
+                // holds the delegate weakly; the mounter keeps the relay.
+                unsafe {
+                    scroll.setDelegate(Some(ProtocolObject::from_ref(&*self.relay)));
+                }
                 (Native::Scroll(scroll), None)
             }
             ViewKind::Image => {
@@ -505,10 +577,24 @@ impl Mounter {
 
     fn set_events(&mut self, id: NodeId, events: nlayer_core::EventMask) {
         if let Some(slot) = self.slot_mut(id) {
+            slot.events = events;
             slot.own_press = events.contains(EventKind::Press);
         }
         self.sync_press(id);
         self.sync_hover(id);
+    }
+
+    fn dispatch_scroll(&self, id: NodeId, event: EventKind) {
+        let listens = self
+            .slot(id)
+            .is_some_and(|slot| slot.events.contains(event));
+        if !listens {
+            return;
+        }
+        let Some(control) = &self.control else {
+            return;
+        };
+        control.dispatch_event(id, event, nlayer_engine::EventPayload::None);
     }
 
     fn sync_press(&mut self, id: NodeId) {
@@ -937,6 +1023,7 @@ impl Slot {
             focused: false,
             press: None,
             own_press: false,
+            events: EventMask::default(),
             link_press: false,
             hover: None,
             dash: None,

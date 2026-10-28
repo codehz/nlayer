@@ -9,8 +9,10 @@
 //! `java.rs`) and cut to views, text, images, one-axis scroll and a
 //! single-line field. `onPress` is the view's own touch: a nested span wins
 //! over its text view, and a view that does not take one leaves the touch
-//! for the nearest ancestor that does. `nlayer test` drives the mounted
-//! tree through the view system's own touch, input connection and scroll view.
+//! for the nearest ancestor that does. A scroll view reports `onScroll` (at
+//! most once per frame), drag and momentum; the payload is empty. `nlayer
+//! test` drives the mounted tree through the view system's own touch, input
+//! connection and scroll view.
 
 mod encode;
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]

@@ -3505,6 +3505,15 @@ mod tests {
             Some(EventKind::ScrollDragEnd)
         );
         assert_eq!(EventKind::MomentumEnd.prop_name(), "onMomentumEnd");
+        assert_eq!(
+            EventKind::from_raw(EventKind::Scroll as u8),
+            Some(EventKind::Scroll)
+        );
+        assert_eq!(
+            EventKind::from_raw(EventKind::MomentumEnd as u8),
+            Some(EventKind::MomentumEnd)
+        );
+        assert_eq!(EventKind::from_raw(99), None);
     }
 
     #[test]

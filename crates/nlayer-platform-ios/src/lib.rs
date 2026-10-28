@@ -9,12 +9,13 @@
 //! `text.rs`, `text_view.rs`, `decor.rs`, `image.rs`, `input.rs`) and cut to
 //! views, text, images, one-axis scroll views and single-line inputs: frames,
 //! fill, radius, opacity, overflow, a static transform, solid or dashed
-//! uniform borders, per-side solid borders, `onPress`, `activeStyle` /
-//! `hoverStyle` / `focusStyle`, safe area, the software keyboard's height
-//! (`env(keyboard-inset-height)`, applied at once, not animated), PNG, JPEG
-//! or WebP from a bundled file or `http(s)`, and a field with `value`,
-//! `onChange`, `placeholder`, `disabled`, `secureTextEntry` and `keyboardType`.
-//! Refresh, zoom, paging and text selection are not mounted.
+//! uniform borders, per-side solid borders, `onPress`, the scroll events
+//! (`onScroll` at most once per frame, drag and momentum, an empty payload),
+//! `activeStyle` / `hoverStyle` / `focusStyle`, safe area, the software
+//! keyboard's height (`env(keyboard-inset-height)`, applied at once, not
+//! animated), PNG, JPEG or WebP from a bundled file or `http(s)`, and a field
+//! with `value`, `onChange`, `placeholder`, `disabled`, `secureTextEntry` and
+//! `keyboardType`. Refresh, zoom, paging and text selection are not mounted.
 
 #![cfg_attr(target_os = "ios", deny(unsafe_op_in_unsafe_fn))]
 
