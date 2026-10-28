@@ -155,6 +155,14 @@ final class Mounter {
         throw new IllegalArgumentException("Unknown kind");
     }
     final int vid = id;
+    if (v instanceof InputBox)
+      ((InputBox) v)
+          .edit.setOnFocusChangeListener(
+              new View.OnFocusChangeListener() {
+                public void onFocusChange(View view, boolean has) {
+                  paint(vid);
+                }
+              });
     v.setOnHoverListener(
         new View.OnHoverListener() {
           public boolean onHover(View view, android.view.MotionEvent e) {
@@ -279,6 +287,7 @@ final class Mounter {
     if (v instanceof TextBox) return ((TextBox) v).decor;
     if (v instanceof ImageBox) return ((ImageBox) v).decor;
     if (v instanceof ScrollBox) return ((ScrollBox) v).decor;
+    if (v instanceof InputBox) return ((InputBox) v).decor;
     return null;
   }
 
@@ -310,6 +319,7 @@ final class Mounter {
     if (s.t[7] != 0) v.setCameraDistance(-density / s.t[7]);
     if (d != null) d.applyPivot(v);
     if (v instanceof Box) ((Box) v).clip = s.overflow;
+    if (v instanceof InputBox) ((InputBox) v).clip = s.overflow;
     if (v instanceof ImageBox)
       ((ImageBox) v)
           .setPosition(
@@ -459,19 +469,24 @@ final class Mounter {
     if (v == null || base == null) return;
     Style over = null;
     Integer color = null;
+    boolean focused = v.isFocused() || (v instanceof InputBox && ((InputBox) v).edit.isFocused());
     if (v.isPressed()) {
       over = active.get(id);
       color = activeColor.get(id);
     } else if (v.isHovered()) {
       over = hover.get(id);
       color = hoverColor.get(id);
-    } else if (v.isFocused()) {
+    } else if (focused) {
       over = focus.get(id);
       color = focusColor.get(id);
     }
     applyStyle(v, over == null ? base : merge(base, over));
     if (v instanceof TextBox) {
       if (color != null) ((TextBox) v).setTextColor(color);
+    } else if (v instanceof InputBox) {
+      InputBox in = (InputBox) v;
+      int next = color != null ? color : in.textColor;
+      if (in.edit.getCurrentTextColor() != next) in.edit.setTextColor(next);
     }
   }
 
@@ -553,7 +568,8 @@ final class Mounter {
               secure,
               keyboard,
               disabled,
-              rtl);
+              rtl,
+              density);
   }
 
   private void inputValue(ByteBuffer b, Object[] o) {

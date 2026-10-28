@@ -1,28 +1,44 @@
 package dev.nlayer.android;
 
 import android.content.Context;
-import android.graphics.Color;
+import android.graphics.Canvas;
+import android.graphics.Path;
+import android.graphics.Rect;
+import android.graphics.drawable.ColorDrawable;
+import android.os.Build;
 import android.text.InputType;
+import android.util.TypedValue;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 
+/** An EditText in a container that carries the decoration. */
 final class InputBox extends FrameLayout {
   final int id;
+  final Decor decor = new Decor();
   final EditText edit;
   int count;
   boolean setting;
   String placeholder = "", keyboardName = "text";
   boolean secure, disabled;
   int pressMask;
+  boolean clip;
+  int textColor;
   private boolean armed;
 
   InputBox(Context c, int id) {
     super(c);
     this.id = id;
+    setWillNotDraw(false);
+    // Borders over the field, as a view's border sits over its children.
+    decor.bordersAbove = true;
+    setBackground(decor);
     edit = new EditText(c);
     edit.setSingleLine(true);
     edit.setPadding(0, 0, 0, 0);
-    edit.setBackgroundColor(Color.TRANSPARENT);
+    edit.setBackground(new ColorDrawable(0));
+    edit.setIncludeFontPadding(false);
+    // The line's height from its own font, as Text's StaticLayout has it.
+    if (Build.VERSION.SDK_INT >= 28) edit.setFallbackLineSpacing(false);
     addView(edit, new LayoutParams(-1, -1));
     edit.setOnTouchListener(
         new android.view.View.OnTouchListener() {
@@ -65,6 +81,35 @@ final class InputBox extends FrameLayout {
     return false;
   }
 
+  @Override
+  protected void dispatchDraw(Canvas canvas) {
+    int save = -1;
+    if (clip) {
+      save = canvas.save();
+      Path p = new Path();
+      Rect bounds = new Rect(0, 0, getWidth(), getHeight());
+      Decor.roundedRect(
+          p,
+          new android.graphics.RectF(bounds),
+          new float[] {
+            decor.radii[0],
+            decor.radii[0],
+            decor.radii[1],
+            decor.radii[1],
+            decor.radii[2],
+            decor.radii[2],
+            decor.radii[3],
+            decor.radii[3]
+          },
+          decor.continuous);
+      canvas.clipPath(p);
+    }
+    super.dispatchDraw(canvas);
+    if (save >= 0) canvas.restoreToCount(save);
+    decor.setBounds(0, 0, getWidth(), getHeight());
+    decor.drawBorders(canvas);
+  }
+
   void configure(
       float size,
       int weight,
@@ -77,17 +122,20 @@ final class InputBox extends FrameLayout {
       boolean secure,
       int keyboard,
       boolean disabled,
-      boolean rtl) {
+      boolean rtl,
+      float density) {
     this.placeholder = placeholder == null ? "" : placeholder;
     this.secure = secure;
     this.disabled = disabled;
+    this.textColor = color;
     this.keyboardName =
         keyboard == 1 ? "email" : keyboard == 2 ? "number" : keyboard == 3 ? "phone" : "text";
-    edit.setTextSize(size);
+    edit.setTextSize(TypedValue.COMPLEX_UNIT_PX, size * density);
     edit.setTextColor(color);
-    edit.setTypeface(
-        android.graphics.Typeface.create(
-            android.graphics.Typeface.DEFAULT, Math.max(1, Math.min(1000, weight)), italic));
+    if (size > 0) edit.setLetterSpacing(spacing / size);
+    if (lineHeight > 0 && Build.VERSION.SDK_INT >= 28)
+      edit.setLineHeight(Math.round(lineHeight * density));
+    else edit.setLineSpacing(0, 1);
     edit.setHint(placeholder);
     edit.setEnabled(!disabled);
     int type =
@@ -99,6 +147,10 @@ final class InputBox extends FrameLayout {
                     ? InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL
                     : keyboard == 3 ? InputType.TYPE_CLASS_PHONE : InputType.TYPE_CLASS_TEXT;
     edit.setInputType(type);
+    // Password input types reset the typeface. Set it after.
+    edit.setTypeface(
+        android.graphics.Typeface.create(
+            android.graphics.Typeface.DEFAULT, Math.max(1, Math.min(1000, weight)), italic));
     edit.setGravity(
         (align == 2
                 ? android.view.Gravity.CENTER_HORIZONTAL
