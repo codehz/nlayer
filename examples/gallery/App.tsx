@@ -262,7 +262,14 @@ function Quote() {
 function App() {
   return (
     <Scroll testID="page" style={{ flex: 1, backgroundColor: "#f8fafc" }}>
-      <View style={{ padding: 16, paddingBottom: 32 }}>
+      <View
+        style={{
+          paddingTop: "calc(env(safe-area-inset-top) + 16px)",
+          paddingRight: "calc(env(safe-area-inset-right) + 16px)",
+          paddingBottom: "calc(env(safe-area-inset-bottom) + 32px)",
+          paddingLeft: "calc(env(safe-area-inset-left) + 16px)",
+        }}
+      >
         <Text style={{ fontSize: 28, fontWeight: "700", color: "#0f172a" }}>Gallery</Text>
         <Text style={{ fontSize: 14, color: "#64748b" }}>View, Text, Image, Scroll, and a single-line Input.</Text>
         <Layout />
