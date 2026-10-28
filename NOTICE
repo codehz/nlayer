@@ -120,3 +120,8 @@ Copied files:
   not mounted. `synth.rs` is the one-finger touch and the software keyboard
   from `crates/nsh-platform-ios/src/synth.rs` (no drag path, no hardware
   modifiers, no screenshot). The runner binary is `nlayer-ios-app`.
+- `crates/nlayer-platform-android/src/encode.rs` from
+  `crates/nsh-platform-android/src/encode.rs` (one little-endian batch for
+  the UI thread: views, text spans, images, one-axis scroll and a
+  single-line field. Animation, gestures, refresh, zoom, paging, shadows
+  and gradients are not encoded)

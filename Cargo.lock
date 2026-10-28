@@ -1254,6 +1254,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "nlayer-platform-android"
+version = "0.1.0"
+dependencies = [
+ "nlayer-core",
+]
+
+[[package]]
 name = "nlayer-platform-ios"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,13 @@
+[package]
+name = "nlayer-platform-android"
+description = "Android host: encodes mount batches for the UI thread."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+nlayer-core.workspace = true
