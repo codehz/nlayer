@@ -141,7 +141,7 @@ interface RequestInit {
 }
 
 declare class Request {
-  constructor(input: string | Request, init?: RequestInit);
+  constructor(input: string | URL | Request, init?: RequestInit);
   readonly url: string;
   readonly method: string;
   readonly headers: Headers;
@@ -161,7 +161,7 @@ declare class Response {
   blob(): Promise<Blob>;
 }
 
-declare function fetch(input: string | Request, init?: RequestInit): Promise<Response>;
+declare function fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
 
 // `If` and `Each` are renderer globals. No import, unless a binding of the name shadows them.
 
@@ -580,6 +580,11 @@ mod tests {
         assert!(text("@nlayer/jsx-runtime.d.ts").contains("export function jsx"));
         let globals = text("globals.d.ts");
         assert!(globals.contains("declare function fetch"));
+        assert!(
+            globals.contains("constructor(input: string | URL | Request"),
+            "Request accepts a URL"
+        );
+        assert!(globals.contains("fetch(input: string | URL | Request"));
         assert!(globals.contains("declare const console"));
         assert!(!globals.contains("subtle"), "crypto.subtle is absent in v1");
         assert!(
