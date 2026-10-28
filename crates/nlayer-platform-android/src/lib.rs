@@ -7,8 +7,10 @@
 //!
 //! Extracted from `nsh-platform-android` (`encode.rs`, `host.rs`, `text.rs`,
 //! `java.rs`) and cut to views, text, images, one-axis scroll and a
-//! single-line field. `nlayer test` drives the mounted tree through the
-//! view system's own touch, input connection and scroll view.
+//! single-line field. `onPress` is the view's own touch: a nested span wins
+//! over its text view, and a view that does not take one leaves the touch
+//! for the nearest ancestor that does. `nlayer test` drives the mounted
+//! tree through the view system's own touch, input connection and scroll view.
 
 mod encode;
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]

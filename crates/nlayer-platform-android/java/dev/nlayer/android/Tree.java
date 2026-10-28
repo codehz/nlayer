@@ -130,7 +130,14 @@ final class Tree {
             int lineEnd = Math.min(end, layout.getLineEnd(line));
             if (lineEnd <= offset) break;
             float a = layout.getPrimaryHorizontal(offset);
-            float b = layout.getPrimaryHorizontal(lineEnd);
+            // The offset after the last character of a line is not a caret
+            // `getPrimaryHorizontal` can place: it collapses onto the start.
+            int lineLimit = layout.getLineEnd(line);
+            float b = lineEnd < lineLimit
+                    ? layout.getPrimaryHorizontal(lineEnd)
+                    : layout.getParagraphDirection(line) < 0
+                    ? layout.getLineLeft(line)
+                    : layout.getLineRight(line);
             left = Math.min(left, Math.min(a, b));
             right = Math.max(right, Math.max(a, b));
             top = Math.min(top, layout.getLineTop(line));
@@ -228,6 +235,10 @@ final class Tree {
     }
 
     private static Frame frame(View v, float density, boolean root) {
+        if (!root && v.getTag() instanceof float[]) {
+            float[] points = (float[]) v.getTag();
+            return new Frame(points[0], points[1], points[2], points[3]);
+        }
         if (root) return new Frame(0, 0, v.getWidth() / density, v.getHeight() / density);
         ViewGroup.LayoutParams lp = v.getLayoutParams();
         float x = 0, y = 0, w = v.getWidth() / density, h = v.getHeight() / density;

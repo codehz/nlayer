@@ -21,6 +21,7 @@ final class TextBox extends ViewGroup {
     boolean[] runItalic = new boolean[0];
     float[] runSize = new float[0];
     boolean clip;
+    int pressMask;
     private int pressedLink = -1;
 
     TextBox(Context c, int id) {
@@ -42,9 +43,13 @@ final class TextBox extends ViewGroup {
     void setLinks(int[] data, boolean[] presses) {
         links = data;
         linkPress = presses;
-        boolean clickable = false;
-        for (boolean press : presses) clickable |= press;
-        setClickable(clickable);
+        setClickable(hasPressLink() || (pressMask & 1) != 0);
+    }
+
+    /** A nested span takes `onPress`. That wins over the text view's own. */
+    boolean hasPressLink() {
+        for (boolean press : linkPress) if (press) return true;
+        return false;
     }
 
     void setIds(int[] start, int[] end, String[] names) {
@@ -106,14 +111,25 @@ final class TextBox extends ViewGroup {
 
     @Override
     public boolean onTouchEvent(MotionEvent e) {
-        int action = e.getAction();
+        int action = e.getActionMasked();
         if (action == MotionEvent.ACTION_DOWN) {
             pressedLink = hitLink(e);
-            return pressedLink >= 0;
+            // A span wins. Otherwise the text view's own `onPress`. Neither:
+            // leave the touch for the nearest pressable ancestor.
+            if (pressedLink < 0 && (pressMask & 1) == 0) return false;
+            Mounter.pressed(this, id, true);
+            return true;
         }
-        if (pressedLink < 0) return false;
-        if (action == MotionEvent.ACTION_UP) Native.sendPress(this, links[pressedLink * 3 + 2]);
-        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) pressedLink = -1;
+        if (pressedLink < 0 && (pressMask & 1) == 0) return false;
+        if (action == MotionEvent.ACTION_UP) {
+            int target = pressedLink >= 0 ? links[pressedLink * 3 + 2] : id;
+            pressedLink = -1;
+            Mounter.pressed(this, id, false);
+            Native.sendPress(this, target);
+        } else if (action == MotionEvent.ACTION_CANCEL) {
+            pressedLink = -1;
+            Mounter.pressed(this, id, false);
+        }
         return true;
     }
 }
