@@ -211,6 +211,9 @@ fn rebuild(shared: &Shared) {
 
 /// Writes the bundle and its imported assets. Returns whether anything
 /// the running app would read was replaced.
+///
+/// Deletes `nlayer-test.json` when a previous `nlayer test` left one.
+/// That file pins the viewport; `run` follows the window.
 pub(crate) fn publish(docs: &Path, app_dir: &Path, bundled: &Bundle) -> Result<bool, RunError> {
     fs::create_dir_all(docs)?;
     let mut changed = write_if_different(&docs.join("app.js"), bundled.code.as_bytes())?;
@@ -229,6 +232,12 @@ pub(crate) fn publish(docs: &Path, app_dir: &Path, bundled: &Bundle) -> Result<b
         if write_if_different(&to, &bytes)? {
             changed = true;
         }
+    }
+    let pin = docs.join("nlayer-test.json");
+    match fs::remove_file(&pin) {
+        Ok(()) => changed = true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
     }
     Ok(changed)
 }
@@ -575,7 +584,8 @@ fn simctl_ok(args: &[&str]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{DeviceList, asset_rel, host_id, info_plist, select};
+    use super::{DeviceList, asset_rel, host_id, info_plist, publish, select};
+    use nlayer_bundler::Bundle;
 
     #[test]
     fn the_plist_opts_into_a_full_screen_ios_15_app() {
@@ -653,6 +663,32 @@ mod tests {
         assert_eq!(host_id(&left).unwrap(), host_id(&right).unwrap());
         std::fs::write(&right, b"host!").unwrap();
         assert_ne!(host_id(&left).unwrap(), host_id(&right).unwrap());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_drops_a_leftover_test_pin() {
+        let dir = std::env::temp_dir().join(format!("nlayer-ios-pin-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let docs = dir.join("Documents");
+        let app = dir.join("app");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::write(
+            docs.join("nlayer-test.json"),
+            b"{\"width\":390,\"height\":844}",
+        )
+        .unwrap();
+        let bundled = Bundle {
+            code: "app".to_owned(),
+            source_map: String::new(),
+            assets: Vec::new(),
+            watch_files: Vec::new(),
+            elapsed_ms: 0.0,
+        };
+        assert!(publish(&docs, &app, &bundled).unwrap());
+        assert!(!docs.join("nlayer-test.json").exists());
+        assert!(!publish(&docs, &app, &bundled).unwrap());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
