@@ -596,16 +596,17 @@ impl Mounter {
     }
 
     fn repaint(&mut self, id: NodeId) {
-        let (view, paint, text_color) = {
+        let (view, paint, text_color, scroll) = {
             let Some(slot) = self.slot(id) else { return };
             (
                 slot.native.view().retain(),
                 painted(slot),
                 text_override(slot),
+                matches!(slot.native, Native::Scroll(_)),
             )
         };
         if let Some(slot) = self.slot_mut(id) {
-            paint_view(&view, &paint, slot);
+            paint_view(&view, &paint, slot, scroll);
             place_image(&view, &paint, slot);
         }
         if let Some(Native::Text(text)) = self.native(id) {
@@ -965,7 +966,7 @@ fn winning(slot: &Slot) -> Option<&Paint> {
     }
 }
 
-fn paint_view(view: &UIView, style: &ViewStyle, slot: &mut Slot) {
+fn paint_view(view: &UIView, style: &ViewStyle, slot: &mut Slot, scroll: bool) {
     let layer = view.layer();
     view.setAlpha(style.opacity as CGFloat);
     view.setHidden(style.hidden);
@@ -982,7 +983,10 @@ fn paint_view(view: &UIView, style: &ViewStyle, slot: &mut Slot) {
     );
     let radii = style.radii().fit(size);
     apply_corners(&layer, radii, bounds);
-    layer.setMasksToBounds(style.overflow_hidden);
+    // A drag moves children with the content offset. The scroll viewport
+    // clips them, the way `overflow: auto` does. `overflow` only clips a
+    // plain view.
+    layer.setMasksToBounds(style.overflow_hidden || scroll);
     apply_border(view, style, slot);
     layer.setTransform(transform_3d(style, bounds.size));
 }
