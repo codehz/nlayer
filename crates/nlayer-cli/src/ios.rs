@@ -28,7 +28,7 @@ use crate::{
     run::{consider, consider_tree, stamp, watch_paths, workspace_root},
 };
 
-const BUNDLE_ID: &str = "dev.nlayer.ios";
+pub(crate) const BUNDLE_ID: &str = "dev.nlayer.ios";
 const EXECUTABLE: &str = "nlayer-ios-app";
 const POLL: Duration = Duration::from_millis(150);
 
@@ -211,7 +211,7 @@ fn rebuild(shared: &Shared) {
 
 /// Writes the bundle and its imported assets. Returns whether anything
 /// the running app would read was replaced.
-fn publish(docs: &Path, app_dir: &Path, bundled: &Bundle) -> Result<bool, RunError> {
+pub(crate) fn publish(docs: &Path, app_dir: &Path, bundled: &Bundle) -> Result<bool, RunError> {
     fs::create_dir_all(docs)?;
     let mut changed = write_if_different(&docs.join("app.js"), bundled.code.as_bytes())?;
     for rel in &bundled.assets {
@@ -263,14 +263,14 @@ fn asset_rel(path: &Path) -> Option<&Path> {
     }
 }
 
-fn relaunch(udid: &str) -> Result<(), RunError> {
+pub(crate) fn relaunch(udid: &str) -> Result<(), RunError> {
     simctl(&["launch", "--terminate-running-process", udid, BUNDLE_ID])?;
     Ok(())
 }
 
 /// The installed app is replaced only when it is missing or was installed
 /// from a different host binary. A JS rebuild does not come through here.
-fn host_changed(udid: &str, host: &Path) -> Result<bool, RunError> {
+pub(crate) fn host_changed(udid: &str, host: &Path) -> Result<bool, RunError> {
     if simctl_ok(&["get_app_container", udid, BUNDLE_ID]).is_none() {
         return Ok(true);
     }
@@ -278,7 +278,7 @@ fn host_changed(udid: &str, host: &Path) -> Result<bool, RunError> {
     Ok(recorded.trim() != host_id(host)?)
 }
 
-fn record_install(udid: &str, host: &Path) -> Result<(), RunError> {
+pub(crate) fn record_install(udid: &str, host: &Path) -> Result<(), RunError> {
     let path = install_stamp(udid);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -299,7 +299,7 @@ fn host_id(path: &Path) -> Result<String, RunError> {
     Ok(format!("{}:{}", bytes.len(), hasher.finish()))
 }
 
-fn ios_host() -> Result<PathBuf, RunError> {
+pub(crate) fn ios_host() -> Result<PathBuf, RunError> {
     if let Some(path) = std::env::var_os("NLAYER_IOS_APP") {
         let path = PathBuf::from(path);
         if path.is_file() {
@@ -389,7 +389,7 @@ fn fresh_host(workspace: &Path, sources: SystemTime) -> Option<PathBuf> {
     best.map(|(_, path)| path)
 }
 
-fn package(host: &Path) -> Result<PathBuf, RunError> {
+pub(crate) fn package(host: &Path) -> Result<PathBuf, RunError> {
     let root = std::env::temp_dir().join("nlayer-ios-host");
     let app = root.join("Nlayer.app");
     fs::create_dir_all(&app)?;
@@ -447,7 +447,7 @@ fn info_plist() -> String {
     )
 }
 
-fn simulator() -> Result<(String, String), RunError> {
+pub(crate) fn simulator() -> Result<(String, String), RunError> {
     let list: DeviceList =
         serde_json::from_str(&simctl(&["list", "devices", "available", "--json"])?)
             .map_err(|error| RunError::message(format!("simctl device list: {error}")))?;
@@ -535,7 +535,7 @@ fn select<'a>(list: &'a DeviceList, wanted: Option<&str>) -> Result<&'a Device, 
     Ok(device)
 }
 
-fn data_container(udid: &str) -> Result<PathBuf, RunError> {
+pub(crate) fn data_container(udid: &str) -> Result<PathBuf, RunError> {
     let out = simctl(&["get_app_container", udid, BUNDLE_ID, "data"])?;
     let path = PathBuf::from(out.trim());
     if path.is_dir() {
@@ -548,7 +548,7 @@ fn data_container(udid: &str) -> Result<PathBuf, RunError> {
     }
 }
 
-fn simctl(args: &[&str]) -> Result<String, RunError> {
+pub(crate) fn simctl(args: &[&str]) -> Result<String, RunError> {
     let output = Command::new("xcrun")
         .arg("simctl")
         .args(args)

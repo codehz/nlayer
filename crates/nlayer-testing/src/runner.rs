@@ -899,7 +899,7 @@ fn transform_name(kind: TransformKind) -> &'static str {
 
 /// Points the app's `fetch` at a loopback server of `root`, so a headless
 /// run can read the same files `nlayer run` serves next to the page.
-fn with_fixture_origin(code: &str, root: &Path) -> String {
+pub fn with_fixture_origin(code: &str, root: &Path) -> String {
     let origin = fixture_origin(root);
     format!("globalThis.__nlayerTestOrigin={origin:?};\n{code}")
 }

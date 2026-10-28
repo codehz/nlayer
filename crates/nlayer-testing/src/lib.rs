@@ -15,7 +15,7 @@ mod selector;
 
 pub use runner::{
     AppHost, CaseResult, FileResult, HostInsets, HostOpen, HostedApp, Report, RunError, run,
-    run_with,
+    run_with, with_fixture_origin,
 };
 use std::{
     collections::HashMap,

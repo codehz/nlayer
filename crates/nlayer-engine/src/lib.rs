@@ -91,6 +91,10 @@ pub struct EngineConfig {
     pub viewport: Size<Points>,
     /// What `platform.os` reports. [`EngineConfig::new`] is [`Os::Web`].
     pub os: Os,
+    /// Safe area applied before the first frame. [`EngineConfig::new`] is zero.
+    pub safe_area: Edges<Points>,
+    /// `env(keyboard-inset-height)` before the first frame.
+    pub keyboard: Points,
 }
 
 impl EngineConfig {
@@ -100,12 +104,21 @@ impl EngineConfig {
             bundle: bundle.into(),
             viewport,
             os: Os::Web,
+            safe_area: Edges::default(),
+            keyboard: Points::ZERO,
         }
     }
 
     /// `platform.os` on this surface.
     pub fn with_os(mut self, os: Os) -> Self {
         self.os = os;
+        self
+    }
+
+    /// Safe area and keyboard height for the first frame (`open`'s pin).
+    pub fn with_insets(mut self, safe_area: Edges<Points>, keyboard: Points) -> Self {
+        self.safe_area = safe_area;
+        self.keyboard = keyboard;
         self
     }
 }
@@ -432,7 +445,9 @@ impl<M: TextEngine> Session<M> {
         sink: Arc<dyn MountSink>,
         notify: Wake,
     ) -> Result<Self, EngineError> {
-        let core = Core::new(text_engine, config.viewport);
+        let mut core = Core::new(text_engine, config.viewport);
+        core.set_safe_area(config.safe_area);
+        core.set_keyboard_inset(config.keyboard);
         #[cfg(feature = "js")]
         let host = {
             let host = nlayer_js::Host::new().map_err(|error| EngineError::new(error.message))?;

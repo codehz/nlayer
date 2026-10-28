@@ -25,12 +25,20 @@ mod app;
 mod host;
 mod image;
 mod input;
+#[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+mod scene;
 #[cfg(target_os = "ios")]
 mod mount;
 #[cfg(target_os = "ios")]
 mod text;
 #[cfg(target_os = "ios")]
 mod text_view;
+#[cfg(target_os = "ios")]
+mod driver;
+#[cfg(target_os = "ios")]
+mod pin;
+#[cfg(target_os = "ios")]
+mod synth;
 
 /// Where the runner looks for `app.js`, in order.
 ///

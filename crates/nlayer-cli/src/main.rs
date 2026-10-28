@@ -31,7 +31,7 @@ enum Command {
     },
     /// Run `*.test.tsx` files (`@nlayer/test`).
     /// The default engine is headless. `--target web` runs the opened app
-    /// in a headless browser; the steps go through that page.
+    /// in a headless browser; `--target ios` runs it in the simulator.
     Test {
         /// A test file, or a directory (default: the current one).
         #[arg(default_value = ".")]
@@ -76,6 +76,8 @@ enum Command {
 enum TestHost {
     /// A headless browser. The page executes the app.
     Web,
+    /// The iOS simulator. The steps go through UIKit.
+    Ios,
 }
 
 /// A host `run` can start.
@@ -112,6 +114,7 @@ fn main() -> ExitCode {
         } => {
             let target = target.map(|target| match target {
                 TestHost::Web => TestTarget::Web,
+                TestHost::Ios => TestTarget::Ios,
             });
             match test(&TestOptions {
                 path,
@@ -267,6 +270,15 @@ mod tests {
                 .command,
             Command::Test {
                 target: Some(TestHost::Web),
+                ..
+            }
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["nlayer", "test", "--target", "ios"])
+                .unwrap()
+                .command,
+            Command::Test {
+                target: Some(TestHost::Ios),
                 ..
             }
         ));

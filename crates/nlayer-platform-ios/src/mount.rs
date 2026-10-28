@@ -41,6 +41,10 @@ struct Slot {
     /// This view, or a field inside it, has focus. `focusStyle` paints then.
     focused: bool,
     press: Option<Retained<UILongPressGestureRecognizer>>,
+    /// The view itself listens to `onPress` (not only a span inside it).
+    own_press: bool,
+    /// A nested span listens to `onPress`.
+    link_press: bool,
     hover: Option<Retained<UIHoverGestureRecognizer>>,
     /// A dashed or dotted uniform border, above the children.
     dash: Option<Retained<CAShapeLayer>>,
@@ -91,12 +95,15 @@ define_class!(
     impl Relay {
         #[unsafe(method(pressed:))]
         fn pressed(&self, gesture: &UILongPressGestureRecognizer) {
-            self.forward(gesture.view().as_deref(), gesture.state(), true);
+            let Some(view) = gesture.view() else { return };
+            // SAFETY: the touch, in the view's coordinates.
+            let point: CGPoint = unsafe { msg_send![gesture, locationInView: &*view] };
+            self.forward_press(&view, gesture.state(), point);
         }
 
         #[unsafe(method(hovered:))]
         fn hovered(&self, gesture: &UIHoverGestureRecognizer) {
-            self.forward(gesture.view().as_deref(), gesture.state(), false);
+            self.forward(gesture.view().as_deref(), gesture.state());
         }
 
         #[unsafe(method(edited:))]
@@ -141,17 +148,21 @@ impl Relay {
         *self.ivars().mounter.borrow_mut() = mounter;
     }
 
-    fn forward(&self, view: Option<&UIView>, state: UIGestureRecognizerState, press: bool) {
+    fn forward_press(&self, view: &UIView, state: UIGestureRecognizerState, point: CGPoint) {
+        let id = view.tag() as u32;
+        let Some(mounter) = self.ivars().mounter.borrow().upgrade() else {
+            return;
+        };
+        mounter.borrow_mut().pressed(id, state, point);
+    }
+
+    fn forward(&self, view: Option<&UIView>, state: UIGestureRecognizerState) {
         let Some(view) = view else { return };
         let id = view.tag() as u32;
         let Some(mounter) = self.ivars().mounter.borrow().upgrade() else {
             return;
         };
-        if press {
-            mounter.borrow_mut().pressed(id, state);
-        } else {
-            mounter.borrow_mut().hovered(id, state);
-        }
+        mounter.borrow_mut().hovered(id, state);
     }
 
     fn focus_edit(&self, sender: &AnyObject, on: bool) {
@@ -182,6 +193,8 @@ pub(crate) struct Mounter {
     assets: PathBuf,
     /// The field that is editing, if one is.
     focused: Option<NodeId>,
+    /// Set by `nlayer test`. Replaces the window's size and safe area.
+    pin: Option<crate::pin::Pin>,
 }
 
 impl Mounter {
@@ -204,6 +217,7 @@ impl Mounter {
             insets: nlayer_core::geometry::Edges::default(),
             assets,
             focused: None,
+            pin: None,
         }));
         CURRENT.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&mounter)));
         relay.bind(Rc::downgrade(&mounter));
@@ -214,8 +228,37 @@ impl Mounter {
         self.control = Some(control);
     }
 
+    pub(crate) fn set_pin(&mut self, pin: crate::pin::Pin) {
+        self.viewport = Size::new(Points(pin.width), Points(pin.height));
+        self.insets = nlayer_core::geometry::Edges {
+            top: Points(pin.safe_area.top),
+            right: Points(pin.safe_area.right),
+            bottom: Points(pin.safe_area.bottom),
+            left: Points(pin.safe_area.left),
+        };
+        self.pin = Some(pin);
+    }
+
+    pub(crate) fn pin_size(&self) -> Option<(f32, f32)> {
+        self.pin.as_ref().map(|pin| (pin.width, pin.height))
+    }
+
     /// Tells the engine the surface size and safe area, when either changed.
     pub(crate) fn publish(&mut self, size: CGSize, insets: objc2_ui_kit::UIEdgeInsets) {
+        let (size, insets) = if let Some(pin) = &self.pin {
+            (
+                CGSize::new(pin.width as CGFloat, pin.height as CGFloat),
+                objc2_ui_kit::UIEdgeInsets {
+                    top: pin.safe_area.top as CGFloat,
+                    left: pin.safe_area.left as CGFloat,
+                    bottom: pin.safe_area.bottom as CGFloat,
+                    right: pin.safe_area.right as CGFloat,
+                },
+            )
+        } else {
+            (size, insets)
+        };
+        let keyboard = self.pin.as_ref().map(|pin| pin.keyboard);
         let size = Size::new(Points(size.width as f32), Points(size.height as f32));
         let insets = nlayer_core::geometry::Edges {
             top: Points(insets.top as f32),
@@ -235,6 +278,9 @@ impl Mounter {
         if insets != self.insets {
             self.insets = insets;
             control.set_safe_area(insets);
+        }
+        if let Some(height) = keyboard {
+            control.set_keyboard_inset(Points(height));
         }
     }
 
@@ -305,10 +351,20 @@ impl Mounter {
                 layout,
                 content,
             } => {
-                let Some(Native::Text(view)) = self.native(id) else {
-                    return;
-                };
-                view.set_text(text, layout, content);
+                let links = text
+                    .links
+                    .iter()
+                    .any(|link| link.events.contains(EventKind::Press));
+                {
+                    let Some(Native::Text(view)) = self.native(id) else {
+                        return;
+                    };
+                    view.set_text(text, layout, content);
+                }
+                if let Some(slot) = self.slot_mut(id) {
+                    slot.link_press = links;
+                }
+                self.sync_press(id);
             }
             MountItem::Events { id, events } => self.set_events(id, events),
             MountItem::ScrollConfig { id, horizontal } => {
@@ -424,14 +480,23 @@ impl Mounter {
     }
 
     fn set_events(&mut self, id: NodeId, events: nlayer_core::EventMask) {
+        if let Some(slot) = self.slot_mut(id) {
+            slot.own_press = events.contains(EventKind::Press);
+        }
+        self.sync_press(id);
+        self.sync_hover(id);
+    }
+
+    fn sync_press(&mut self, id: NodeId) {
         let mtm = self.mtm;
         let relay = self.relay.clone();
         let Some(slot) = self.slot_mut(id) else {
             return;
         };
+        let want = slot.own_press || slot.link_press;
         let view = slot.native.view().retain();
-        let want_press = events.contains(EventKind::Press);
-        match (&slot.press, want_press) {
+        let input = matches!(slot.native, Native::Input(_));
+        match (&slot.press, want) {
             (None, true) => {
                 // SAFETY: the relay implements `pressed:`.
                 let gesture = unsafe {
@@ -442,8 +507,7 @@ impl Mounter {
                     )
                 };
                 gesture.setMinimumPressDuration(0.0);
-                // A press on a field must still start editing.
-                if matches!(slot.native, Native::Input(_)) {
+                if input {
                     gesture.setCancelsTouchesInView(false);
                 }
                 view.addGestureRecognizer(&gesture);
@@ -456,7 +520,6 @@ impl Mounter {
             }
             _ => {}
         }
-        self.sync_hover(id);
     }
 
     fn sync_hover(&mut self, id: NodeId) {
@@ -489,7 +552,7 @@ impl Mounter {
         }
     }
 
-    fn pressed(&mut self, id: NodeId, state: UIGestureRecognizerState) {
+    fn pressed(&mut self, id: NodeId, state: UIGestureRecognizerState, point: CGPoint) {
         let on = matches!(
             state,
             UIGestureRecognizerState::Began | UIGestureRecognizerState::Changed
@@ -499,9 +562,26 @@ impl Mounter {
             slot.pressed = on;
         }
         self.repaint(id);
-        if ended && let Some(control) = &self.control {
+        if !ended {
+            return;
+        }
+        let target = self.link_target(id, point);
+        let own = self.slot(id).is_some_and(|slot| slot.own_press);
+        let Some(control) = self.control.clone() else {
+            return;
+        };
+        if let Some(link) = target {
+            control.dispatch_event(link, EventKind::Press, nlayer_engine::EventPayload::None);
+        } else if own {
             control.dispatch_event(id, EventKind::Press, nlayer_engine::EventPayload::None);
         }
+    }
+
+    fn link_target(&self, id: NodeId, point: CGPoint) -> Option<NodeId> {
+        let Native::Text(view) = self.native(id)? else {
+            return None;
+        };
+        view.link_at(point)
     }
 
     fn hovered(&mut self, id: NodeId, state: UIGestureRecognizerState) {
@@ -615,6 +695,195 @@ impl Mounter {
             self.slots.resize_with(id as usize + 1, || None);
         }
     }
+
+    pub(crate) fn field(&self, id: NodeId) -> Option<Retained<Field>> {
+        match self.native(id)? {
+            Native::Input(field) => Some(field.retain()),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn scroll(&self, id: NodeId) -> Option<Retained<UIScrollView>> {
+        match self.native(id)? {
+            Native::Scroll(scroll) => Some(scroll.retain()),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn text(&self, id: NodeId) -> Option<Retained<TextView>> {
+        match self.native(id)? {
+            Native::Text(view) => Some(view.retain()),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn scene(&self) -> crate::scene::Scene {
+        use crate::scene::{ImageSnap, InputSnap, Kind, Node, Rect, ScrollSnap};
+
+        let mut nodes = Vec::new();
+        for id in 0..self.slots.len() as u32 {
+            let Some(slot) = self.slot(id) else { continue };
+            let view = slot.native.view();
+            let frame = view.frame();
+            let mut node = Node {
+                id,
+                parent: self.parent_id(view),
+                children: Vec::new(),
+                kind: match slot.native {
+                    Native::View(_) => Kind::View,
+                    Native::Text(_) => Kind::Text,
+                    Native::Image(_) => Kind::Image,
+                    Native::Scroll(_) => Kind::Scroll,
+                    Native::Input(_) => Kind::Input,
+                },
+                test_id: slot.test_id.as_ref().map(|id| id.to_string()),
+                text: None,
+                frame: Rect {
+                    x: frame.origin.x as f32,
+                    y: frame.origin.y as f32,
+                    w: frame.size.width as f32,
+                    h: frame.size.height as f32,
+                },
+                hidden: slot.style.hidden,
+                opacity: slot.style.opacity,
+                pressable: slot.own_press,
+                input: None,
+                runs: Vec::new(),
+                spans: Vec::new(),
+                scroll: None,
+                image: None,
+                transform: Vec::new(),
+            };
+            if let Native::Text(text) = &slot.native
+                && let Some(attributed) = text.attributed()
+            {
+                node.text = Some(attributed.text.clone());
+                node.runs = style_runs(&attributed);
+                node.spans = selector_spans(text, &attributed);
+            }
+            if let Native::Input(field) = &slot.native {
+                node.input = Some(InputSnap {
+                    value: field.shown(),
+                    placeholder: field.placeholder_text(),
+                    secure: field.secure(),
+                    keyboard: field.keyboard_name().to_owned(),
+                    disabled: field.disabled(),
+                });
+            }
+            if let Native::Scroll(scroll) = &slot.native {
+                let offset = scroll.contentOffset();
+                let content = scroll.contentSize();
+                node.scroll = Some(ScrollSnap {
+                    horizontal: scroll.alwaysBounceHorizontal(),
+                    x: offset.x as f32,
+                    y: offset.y as f32,
+                    content_w: content.width as f32,
+                    content_h: content.height as f32,
+                });
+            }
+            if let Some(picture) = &slot.picture {
+                node.image = Some(ImageSnap {
+                    src: picture.uri.as_deref().unwrap_or("").to_owned(),
+                    fit: fit_name(picture.mode).to_owned(),
+                });
+            }
+            if !slot.style.transform.is_identity() {
+                node.transform = slot.style.transform.ops().to_vec();
+            }
+            let subs = view.subviews();
+            for index in 0..subs.count() {
+                let child = subs.objectAtIndex(index);
+                let child_id = child.tag() as u32;
+                if self.slot(child_id).is_some() {
+                    node.children.push(child_id);
+                }
+            }
+            nodes.push(node);
+        }
+        let (width, height) = self
+            .view(ROOT_ID)
+            .map(|view| {
+                let bounds = view.bounds();
+                (bounds.size.width as f32, bounds.size.height as f32)
+            })
+            .unwrap_or((self.viewport.width.0, self.viewport.height.0));
+        crate::scene::Scene::from_nodes(nodes, width, height)
+    }
+
+    fn parent_id(&self, view: &UIView) -> Option<u32> {
+        let parent = view.superview()?;
+        let id = parent.tag() as u32;
+        let ours = self.view(id)?;
+        std::ptr::eq(ours, &*parent).then_some(id)
+    }
+}
+
+fn style_runs(text: &nlayer_core::text::AttributedText) -> Vec<crate::scene::Run> {
+    text.spans
+        .iter()
+        .map(|span| crate::scene::Run {
+            text: crate::scene::utf16_slice(&text.text, span.start, span.end),
+            font_size: span.style.font_size.0,
+            font_weight: span.style.font_weight,
+            italic: span.style.italic,
+            color: span.style.color.0,
+        })
+        .collect()
+}
+
+fn selector_spans(
+    view: &TextView,
+    text: &nlayer_core::text::AttributedText,
+) -> Vec<crate::scene::Span> {
+    let mut spans = Vec::new();
+    for id in &text.test_ids {
+        let node = text.links.iter().find_map(|link| {
+            (link.start == id.start
+                && link.end == id.end
+                && link.events.contains(EventKind::Press))
+            .then_some(link.node)
+        });
+        spans.push(span_snap(view, text, id.start, id.end, Some(id.test_id.to_string()), node));
+    }
+    for link in &text.links {
+        if !link.events.contains(EventKind::Press) {
+            continue;
+        }
+        if spans.iter().any(|span| span.start == link.start && span.end == link.end) {
+            continue;
+        }
+        spans.push(span_snap(view, text, link.start, link.end, None, Some(link.node)));
+    }
+    spans
+}
+
+fn span_snap(
+    view: &TextView,
+    text: &nlayer_core::text::AttributedText,
+    start: u32,
+    end: u32,
+    test_id: Option<String>,
+    node: Option<NodeId>,
+) -> crate::scene::Span {
+    let (x, y, w, h) = view.span_frame(start, end).unwrap_or((0.0, 0.0, 0.0, 0.0));
+    crate::scene::Span {
+        start,
+        end,
+        test_id,
+        node,
+        text: crate::scene::utf16_slice(&text.text, start, end),
+        frame: crate::scene::Rect { x, y, w, h },
+    }
+}
+
+fn fit_name(mode: ResizeMode) -> &'static str {
+    match mode {
+        ResizeMode::Cover => "cover",
+        ResizeMode::Contain => "contain",
+        ResizeMode::Stretch => "fill",
+        ResizeMode::Center => "none",
+        ResizeMode::ScaleDown => "scale-down",
+    }
 }
 
 impl Slot {
@@ -627,6 +896,8 @@ impl Slot {
             hovered: false,
             focused: false,
             press: None,
+            own_press: false,
+            link_press: false,
             hover: None,
             dash: None,
             sides: [None, None, None, None],

@@ -8,7 +8,7 @@ use nlayer_engine::{Engine, EngineConfig, EngineError, MountSink};
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send};
-use objc2_core_foundation::CGRect;
+use objc2_core_foundation::{CGFloat, CGPoint, CGRect, CGSize};
 use objc2_ui_kit::{UILabel, UIResponder, UIView, UIViewAutoresizing};
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -29,6 +29,22 @@ define_class!(
     impl RootView {
         #[unsafe(method(layoutSubviews))]
         fn layout_subviews(&self) {
+            if let Some((width, height)) = self.pinned() {
+                let frame = self.frame();
+                let wanted_w = width as CGFloat;
+                let wanted_h = height as CGFloat;
+                if (frame.size.width - wanted_w).abs() > 0.5
+                    || (frame.size.height - wanted_h).abs() > 0.5
+                    || frame.origin.x != 0.0
+                    || frame.origin.y != 0.0
+                {
+                    self.setFrame(CGRect::new(
+                        CGPoint::new(0.0, 0.0),
+                        CGSize::new(wanted_w, wanted_h),
+                    ));
+                    return;
+                }
+            }
             // SAFETY: the superclass lays the subviews out.
             let _: () = unsafe { msg_send![super(self), layoutSubviews] };
             self.publish();
@@ -60,6 +76,14 @@ impl RootView {
 
     fn bind(&self, mounter: std::rc::Weak<RefCell<Mounter>>) {
         *self.ivars().mounter.borrow_mut() = mounter;
+    }
+
+    fn pinned(&self) -> Option<(f32, f32)> {
+        self.ivars()
+            .mounter
+            .borrow()
+            .upgrade()
+            .and_then(|mounter| mounter.borrow().pin_size())
     }
 
     fn publish(&self) {
@@ -99,9 +123,10 @@ thread_local! {
     static MOUNTER: RefCell<Option<Rc<RefCell<Mounter>>>> = const { RefCell::new(None) };
     static QUEUE: RefCell<Option<Arc<Queue>>> = const { RefCell::new(None) };
     static ERROR: RefCell<Option<Retained<UILabel>>> = const { RefCell::new(None) };
+    static ERROR_TEXT: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
-fn mounter() -> Option<Rc<RefCell<Mounter>>> {
+pub(crate) fn mounter() -> Option<Rc<RefCell<Mounter>>> {
     MOUNTER.with(|slot| slot.borrow().clone())
 }
 
@@ -110,6 +135,7 @@ fn queue() -> Option<Arc<Queue>> {
 }
 
 fn show_error(message: &str) {
+    ERROR_TEXT.with(|slot| *slot.borrow_mut() = Some(message.to_owned()));
     eprintln!("nlayer: {message}");
     let Some(mounter) = mounter() else { return };
     let mounter = mounter.borrow();
@@ -130,6 +156,10 @@ fn mounter_root(mounter: &Mounter) -> Option<Retained<UIView>> {
     mounter.view_of(nlayer_core::ROOT_ID)
 }
 
+pub(crate) fn boot_error() -> Option<String> {
+    ERROR_TEXT.with(|slot| slot.borrow().clone())
+}
+
 /// A running app. Dropping it stops the engine.
 pub(crate) struct Session {
     _engine: Option<Engine>,
@@ -137,16 +167,33 @@ pub(crate) struct Session {
 }
 
 /// Starts the engine on `bundle` inside `container` (the window's root view).
-/// `assets` is the directory bundled `asset:/` images are read from.
+/// `assets` is the directory bundled `asset:/` images are read from. A pin
+/// file there replaces the window size and safe area for `nlayer test`.
 pub(crate) fn start(
     mtm: MainThreadMarker,
     container: &UIView,
     bundle: &str,
     assets: PathBuf,
 ) -> Session {
-    let root = RootView::new(mtm, container.bounds());
+    let pin = crate::pin::load(&assets);
+    let frame = pin.as_ref().map_or_else(
+        || container.bounds(),
+        |pin| {
+            CGRect::new(
+                CGPoint::new(0.0, 0.0),
+                CGSize::new(pin.width as CGFloat, pin.height as CGFloat),
+            )
+        },
+    );
+    let root = RootView::new(mtm, frame);
+    if pin.is_some() {
+        root.setAutoresizingMask(UIViewAutoresizing::empty());
+    }
     container.addSubview(&root);
     let mounter = Mounter::new(mtm, root.retain().into_super(), assets);
+    if let Some(pin) = pin.clone() {
+        mounter.borrow_mut().set_pin(pin);
+    }
     root.bind(Rc::downgrade(&mounter));
     MOUNTER.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&mounter)));
     let queue = Arc::new(Queue(Mutex::new(Vec::new())));
@@ -154,6 +201,9 @@ pub(crate) fn start(
 
     if bundle.is_empty() {
         show_error("no app.js next to the runner");
+        if let Some(pin) = pin {
+            crate::driver::start(pin);
+        }
         return Session {
             _engine: None,
             _root: root,
@@ -162,11 +212,19 @@ pub(crate) fn start(
 
     let bounds = root.bounds().size;
     let viewport = Size::new(Points(bounds.width as f32), Points(bounds.height as f32));
-    let engine = Engine::start(
-        EngineConfig::new(bundle, viewport).with_os(nlayer_engine::Os::Ios),
-        CoreTextEngine::default,
-        queue,
-    );
+    let mut config = EngineConfig::new(bundle, viewport).with_os(nlayer_engine::Os::Ios);
+    if let Some(pin) = &pin {
+        config = config.with_insets(
+            nlayer_core::geometry::Edges {
+                top: Points(pin.safe_area.top),
+                right: Points(pin.safe_area.right),
+                bottom: Points(pin.safe_area.bottom),
+                left: Points(pin.safe_area.left),
+            },
+            Points(pin.keyboard),
+        );
+    }
+    let engine = Engine::start(config, CoreTextEngine::default, queue);
     let engine = match engine {
         Ok(engine) => {
             mounter.borrow_mut().set_control(engine.control());
@@ -178,6 +236,9 @@ pub(crate) fn start(
             None
         }
     };
+    if let Some(pin) = pin {
+        crate::driver::start(pin);
+    }
     Session {
         _engine: engine,
         _root: root,

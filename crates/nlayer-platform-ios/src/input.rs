@@ -267,6 +267,38 @@ mod field {
             update
         }
 
+        pub(crate) fn shown(&self) -> String {
+            self.string()
+        }
+
+        pub(crate) fn placeholder_text(&self) -> String {
+            self.placeholder()
+                .map(|text| text.to_string())
+                .unwrap_or_default()
+        }
+
+        pub(crate) fn secure(&self) -> bool {
+            // SAFETY: `isSecureTextEntry`, forwarded by UITextField. `msg_send!`
+            // rejects it: the method is declared on the protocol, not the class.
+            let bit: i8 = unsafe { recv_trait(self, sel!(isSecureTextEntry)) };
+            bit != 0
+        }
+
+        pub(crate) fn keyboard_name(&self) -> &'static str {
+            // SAFETY: `keyboardType`, same protocol as [`Self::secure`].
+            let kind: isize = unsafe { recv_trait(self, sel!(keyboardType)) };
+            match kind {
+                4 => "number",
+                5 => "phone",
+                7 => "email",
+                _ => "text",
+            }
+        }
+
+        pub(crate) fn disabled(&self) -> bool {
+            !self.isEnabled()
+        }
+
         fn string(&self) -> String {
             UITextField::text(self)
                 .map(|text| text.to_string())
@@ -306,6 +338,19 @@ mod field {
             let send: unsafe extern "C-unwind" fn(&Field, objc2::runtime::Sel, A) =
                 std::mem::transmute(ffi::objc_msgSend as unsafe extern "C-unwind" fn());
             send(view, sel, value);
+        }
+    }
+
+    /// A zero-argument `UITextInputTraits` getter. See [`Field::secure`].
+    ///
+    /// # Safety
+    ///
+    /// `sel` is a getter the field forwards, and `R` matches its return.
+    unsafe fn recv_trait<R: Copy>(view: &Field, sel: objc2::runtime::Sel) -> R {
+        unsafe {
+            let send: unsafe extern "C-unwind" fn(&Field, objc2::runtime::Sel) -> R =
+                std::mem::transmute(ffi::objc_msgSend as unsafe extern "C-unwind" fn());
+            send(view, sel)
         }
     }
 }

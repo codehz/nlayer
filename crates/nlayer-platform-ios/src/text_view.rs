@@ -5,16 +5,17 @@ use std::{
     sync::Arc,
 };
 
-use crate::text::CoreTextLayout;
+use crate::text::{CoreTextEngine, CoreTextLayout};
 use nlayer_core::{
-    geometry::{Bounds, Points},
+    NodeId,
+    geometry::{Bounds, Points, point},
     style::Color,
-    text::{AttributedText, TextLayout},
+    text::{AttributedText, TextEngine, TextLayout},
 };
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol};
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
-use objc2_core_foundation::{CGAffineTransform, CGFloat, CGRect};
+use objc2_core_foundation::{CGAffineTransform, CGFloat, CGPoint, CGRect};
 use objc2_core_graphics::CGContext;
 use objc2_ui_kit::{UIColor, UIGraphicsGetCurrentContext, UIResponder, UIView};
 
@@ -129,5 +130,47 @@ impl TextView {
         if self.ivars().color.replace(bits) != bits {
             self.setNeedsDisplay();
         }
+    }
+
+    pub(crate) fn attributed(&self) -> Option<Arc<AttributedText>> {
+        self.ivars().text.borrow().clone()
+    }
+
+    /// The pressable span under `point` (the view's coordinates).
+    pub(crate) fn link_at(&self, at: CGPoint) -> Option<NodeId> {
+        let layout = self.ivars().layout.borrow().clone()?;
+        let text = self.attributed()?;
+        let local = point(
+            Points(at.x as f32 - layout.1.origin.x.0),
+            Points(at.y as f32 - layout.1.origin.y.0),
+        );
+        let position = CoreTextEngine::default().hit_test(&layout.0, local);
+        text.link_at(position.offset).map(|link| link.node)
+    }
+
+    /// The center of the span `start..end`, in the view's coordinates.
+    pub(crate) fn span_point(&self, start: u32, end: u32) -> Option<CGPoint> {
+        let (layout, content) = self.ivars().layout.borrow().clone()?;
+        let mut rects = Vec::new();
+        CoreTextEngine::default().range_rects(&layout, start..end, &mut rects);
+        let rect = rects.first().copied()?;
+        Some(CGPoint::new(
+            (content.origin.x.0 + rect.origin.x.0 + rect.size.width.0 / 2.0) as CGFloat,
+            (content.origin.y.0 + rect.origin.y.0 + rect.size.height.0 / 2.0) as CGFloat,
+        ))
+    }
+
+    /// The span's box in the view's coordinates.
+    pub(crate) fn span_frame(&self, start: u32, end: u32) -> Option<(f32, f32, f32, f32)> {
+        let (layout, content) = self.ivars().layout.borrow().clone()?;
+        let mut rects = Vec::new();
+        CoreTextEngine::default().range_rects(&layout, start..end, &mut rects);
+        let rect = rects.first().copied()?;
+        Some((
+            content.origin.x.0 + rect.origin.x.0,
+            content.origin.y.0 + rect.origin.y.0,
+            rect.size.width.0,
+            rect.size.height.0,
+        ))
     }
 }

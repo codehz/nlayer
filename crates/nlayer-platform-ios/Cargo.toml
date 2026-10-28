@@ -18,6 +18,8 @@ nlayer-core.workspace = true
 nlayer-engine.workspace = true
 log.workspace = true
 rustc-hash.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
 
 [target.'cfg(target_os = "ios")'.dependencies]
 dispatch2 = "0.3.1"
@@ -109,3 +111,4 @@ objc2-image-io = { version = "0.3.2", default-features = false, features = [
   "objc2-core-graphics",
   "CGImageSource",
 ] }
+libc = "0.2"

@@ -152,6 +152,6 @@ test("inputs take text, keyboards, a password, and a disabled value", () => {
 
 test("fetch renders the JSON", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
-  reveal(app, (node) => node.text === "Loading quote");
+  reveal(app, (node) => node.text === "Loading quote" || node.text === "Gallery: 5");
   app.waitFor("Gallery: 5");
 });
