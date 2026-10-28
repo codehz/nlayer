@@ -281,6 +281,22 @@ impl Plugin for NlayerPlugin {
             return Ok(None);
         }
         let path = Path::new(args.id);
+        if matches!(args.module_type, ModuleType::Tsx | ModuleType::Jsx) {
+            let rel = self.rel(path);
+            let source_type = match args.module_type {
+                ModuleType::Tsx => SourceType::tsx(),
+                _ => SourceType::jsx(),
+            };
+            for unknown in crate::classes::check(args.code, source_type) {
+                log::warn!(
+                    target: "nlayer::build",
+                    "{rel}:{}:{}: unknown class `{}`",
+                    unknown.line,
+                    unknown.column,
+                    unknown.class
+                );
+            }
+        }
         let source_type = match args.module_type {
             ModuleType::Tsx => SourceType::tsx(),
             ModuleType::Jsx => SourceType::jsx(),

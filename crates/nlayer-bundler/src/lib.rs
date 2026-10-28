@@ -6,6 +6,7 @@
 //! own modules into one ES module of the app's code.
 
 mod bundle;
+mod classes;
 mod compile;
 mod jsx;
 mod plugin;

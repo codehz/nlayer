@@ -6,6 +6,7 @@
 //! target this exits: UIKit is not there.
 
 fn main() {
+    init_log();
     #[cfg(target_os = "ios")]
     {
         let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
@@ -46,4 +47,30 @@ fn main() {
         eprintln!("nlayer-ios-app is the iOS runner; build it for an iOS target");
         std::process::exit(1);
     }
+}
+
+struct StderrLog;
+
+impl log::Log for StderrLog {
+    fn enabled(&self, meta: &log::Metadata<'_>) -> bool {
+        meta.level() <= log::Level::Warn
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if self.enabled(record.metadata()) {
+            eprintln!(
+                "{} {} {}",
+                record.level().as_str().to_lowercase(),
+                record.target(),
+                record.args()
+            );
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+fn init_log() {
+    let _ = log::set_logger(&StderrLog);
+    log::set_max_level(log::LevelFilter::Warn);
 }

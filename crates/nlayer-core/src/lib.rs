@@ -33,3 +33,4 @@ pub use ops::{
     Prop, Tag,
 };
 pub use style::Color;
+pub use tailwind::{class_tokens, unknown_classes_warning};

@@ -50,7 +50,7 @@ mount(App);
 
     let styles = fs::read_to_string(out.join("types/styles.d.ts")).unwrap();
     assert!(styles.contains("gridTemplateColumns?:"));
-    assert!(!styles.contains("boxShadow?:"));
+    assert!(styles.contains("boxShadow?:"));
     let ui = fs::read_to_string(out.join("types/@nlayer/ui.d.ts")).unwrap();
     assert!(ui.contains("export function Image"));
     assert!(

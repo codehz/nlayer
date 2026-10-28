@@ -59,6 +59,21 @@ pub(super) fn decode_prop(
             prop: Prop::TestId(test_id),
         }));
     }
+    if name == "class" || name == "classList" {
+        let names = if name == "class" {
+            nlayer_core::class_tokens(&string(value))
+                .map(str::to_owned)
+                .collect()
+        } else {
+            class_list_names(value)?
+        };
+        if let Some(message) =
+            nlayer_core::unknown_classes_warning(names.iter().map(String::as_str))
+        {
+            warnings.warn(message);
+        }
+        return Ok(None);
+    }
     let prop = match (tag, name) {
         (Some(Tag::Image), "src") => Prop::Source(image_source(value)?),
         (Some(Tag::Scroll), "horizontal") => Prop::Horizontal(value.bool()),
@@ -110,6 +125,23 @@ fn state_style(id: NodeId, name: &str, paint: Option<Box<(ViewStyle, TextStyle)>
 
 fn string(value: &Value) -> String {
     value.as_string().unwrap_or_default()
+}
+
+/// `classList`: the names whose value is truthy.
+fn class_list_names(value: &Value) -> Result<Vec<String>, PropError> {
+    if value.kind() != 7 {
+        return Ok(Vec::new());
+    }
+    let keys = value.keys()?;
+    let n = keys.length().unwrap_or(0);
+    let mut names = Vec::new();
+    for i in 0..n {
+        let key = string(&keys.index(i)?);
+        if !key.is_empty() && value.get(&key)?.truthy() {
+            names.push(key);
+        }
+    }
+    Ok(names)
 }
 
 fn image_source(value: &Value) -> Result<Option<ImageSource>, PropError> {

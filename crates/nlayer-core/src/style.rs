@@ -1,10 +1,11 @@
 //! Styles: the keys a view stores, how they merge, and the Taffy layout they become.
 //!
-//! Extracted from `nsh_core::style`. The v1 public subset is the whitelist
-//! in `docs/v1.md`, including grid and static transform. Other fields stay
-//! in the IR so the copied apply path still type-checks. Shadow and
-//! gradient are later; the rest of those fields are not a commitment.
-//! v1 does not expose them.
+//! Extracted from `nsh_core::style`. A name [`StyleKey::parse`] knows is a
+//! style; one it does not know is a warning and does not apply. There is
+//! no second reject list. Shadow and gradient painting is later; those
+//! fields stay so the copied apply path still type-checks. The rest of
+//! the residual fields are not a commitment.
+
 #![allow(dead_code)] // the shadow tree is the caller, and it is not extracted yet
 use std::{rc::Rc, sync::Arc};
 

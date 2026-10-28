@@ -72,8 +72,10 @@ Copied files:
   compiled, PNG / JPEG / WebP imports with density variants; fonts, SVG
   and split handling are not copied)
 - `crates/nlayer-core/src/typescript.rs` from `crates/nsh-core/src/js/style.rs`
-  (style interfaces from the style table, cut to the v1 keys; animated
-  values, shadows, gradients and filters are not emitted)
+  (style interfaces from the style table; animated values are not emitted)
+- `crates/nlayer-bundler/src/classes.rs` from `crates/nsh-bundler/src/classes.rs`
+  (static `class` / `classList` checks; the utility table is not copied, so
+  every static class is unknown and warned, and the build does not fail)
 - `crates/nlayer-bundler/src/types.rs` (the module and asset declarations
   `build` writes; not the nsh element-registry generator)
 - `crates/nlayer-js/src/net.rs` from `crates/nsh-core/src/platform.rs`

@@ -14,8 +14,8 @@ v1 不做。做到那一层再搬，不留钩子。
 
 - 宿主：Nav、List、Canvas、Video、WebView、动画图、手势系统、长按
 - 深色模式、无障碍 API、SVG、GIF、多行输入、文本选择、链接、行内视图、IME 事件回 JS。`testID` 不是无障碍 API
-- 阴影、渐变。`AnimationProp` 跟动画图走，v1 不暴露
-- Tailwind utility 表。`class` / `classList` 仍并进同一套样式 IR；v1 解析器为空，未知 `class` 报错且不生效
+- 阴影、渐变的绘制。`AnimationProp` 跟动画图走，v1 不暴露
+- Tailwind utility 表。`class` / `classList` 仍并进同一套样式 IR；v1 解析器为空，未知 `class` 警告且不生效
 - `crypto.subtle`、WebSocket、storage。v1 里 `crypto.subtle` 是缺的，不是空桩
 - `resource`。滚动的刷新、缩放、分页。`fetch` 的 cookie
 - 嵌入 ABI、`nlayer package`、HMR、`nsh-dev` 协议
@@ -39,7 +39,7 @@ v1 不做。不写后期做不做，也不写后期方案。
 - 签名包
 - `nlayer check`
 
-拷来的 IR 可以残留白名单外的名字，避免重写 apply 路径。残留不是实现许可，也不是后期承诺。阴影、渐变、`AnimationProp` 是上面的「以后要做」；其余残留（filter、backdrop、mask、blend、outline、glass、transition、内置 keyframes，以及别的未点名 key）不预承诺。
+拷来的 IR 可以残留宿主不画的名字，避免重写 apply 路径。残留不是绘制承诺，也不是后期承诺。不认识的样式名警告且不生效，不另设拒绝白名单。阴影、渐变的绘制、`AnimationProp` 是上面的「以后要做」；其余残留（filter、backdrop、mask、blend、outline、glass、transition、内置 keyframes，以及别的未点名 key）不预承诺。
 
 ## 怎么搬
 

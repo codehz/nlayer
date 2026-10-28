@@ -447,3 +447,43 @@ fn active_style_is_paint_the_platform_applies() {
         "a cleared hover style that was never set is not sent"
     );
 }
+
+/// An unknown style name and a class warn and do not drop the styles that apply.
+#[test]
+fn unknown_style_and_class_do_not_drop_known_styles() {
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r#"
+        import { mount } from "@nlayer/runtime";
+        import { element, prop } from "nlayer:rt";
+
+        function App() {
+            const view = element("view");
+            prop(view, "style", { width: 10, height: 10, nope: 1 });
+            prop(view, "class", "p-4");
+            prop(view, "classList", { "m-2": true, off: false });
+            return view;
+        }
+        mount(App);
+        "#,
+    )
+    .unwrap();
+    let mut core = core();
+    let batch = frame(&host, &mut core);
+    let view = batch
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MountItem::Create {
+                id,
+                kind: ViewKind::View,
+                ..
+            } => Some(*id),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        frame_of(&batch, view).unwrap().size,
+        Size::new(Points(10.0), Points(10.0))
+    );
+}

@@ -87,6 +87,21 @@ pub(crate) fn decode_prop<'js>(
             prop: Prop::TestId(test_id),
         }));
     }
+    if name == "class" || name == "classList" {
+        let names = if name == "class" {
+            nlayer_core::class_tokens(&string(&value)?)
+                .map(str::to_owned)
+                .collect()
+        } else {
+            class_list_names(&value)?
+        };
+        if let Some(message) =
+            nlayer_core::unknown_classes_warning(names.iter().map(String::as_str))
+        {
+            warnings.warn(message);
+        }
+        return Ok(None);
+    }
     let prop = match (tag, name) {
         (Some(Tag::Image), "src") => Prop::Source(image_source(value)?),
         (Some(Tag::Scroll), "horizontal") => Prop::Horizontal(value.as_bool().unwrap_or(false)),
@@ -142,6 +157,37 @@ fn string(value: &Value<'_>) -> rquickjs::Result<String> {
         Some(s) => s.to_string(),
         None => Ok(String::new()),
     }
+}
+
+fn truthy(value: &Value<'_>) -> rquickjs::Result<bool> {
+    if value.is_null() || value.is_undefined() {
+        return Ok(false);
+    }
+    if let Some(on) = value.as_bool() {
+        return Ok(on);
+    }
+    if let Some(n) = value.as_number() {
+        return Ok(n != 0.0 && !n.is_nan());
+    }
+    if let Some(s) = value.as_string() {
+        return Ok(!s.to_string()?.is_empty());
+    }
+    Ok(true)
+}
+
+/// `classList`: the names whose value is truthy.
+fn class_list_names(value: &Value<'_>) -> rquickjs::Result<Vec<String>> {
+    let Some(obj) = value.as_object() else {
+        return Ok(Vec::new());
+    };
+    let mut names = Vec::new();
+    for prop in obj.props::<String, Value>() {
+        let (key, value) = prop?;
+        if truthy(&value)? {
+            names.push(key);
+        }
+    }
+    Ok(names)
 }
 
 /// `src`: a URL or a bundled asset (`{ url, size, scales }`).

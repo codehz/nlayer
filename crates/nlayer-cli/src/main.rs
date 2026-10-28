@@ -96,6 +96,7 @@ enum Target {
 }
 
 fn main() -> ExitCode {
+    init_log();
     let cli = Cli::parse();
     match cli.command {
         Command::Build {
@@ -230,6 +231,32 @@ fn open_browser(url: &str) {
     if let Err(error) = browser(url).spawn() {
         eprintln!("could not open a browser: {error}");
     }
+}
+
+struct StderrLog;
+
+impl log::Log for StderrLog {
+    fn enabled(&self, meta: &log::Metadata<'_>) -> bool {
+        meta.level() <= log::Level::Warn
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if self.enabled(record.metadata()) {
+            eprintln!(
+                "{} {} {}",
+                record.level().as_str().to_lowercase(),
+                record.target(),
+                record.args()
+            );
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+fn init_log() {
+    let _ = log::set_logger(&StderrLog);
+    log::set_max_level(log::LevelFilter::Warn);
 }
 
 #[cfg(target_os = "macos")]
