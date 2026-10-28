@@ -1,6 +1,6 @@
 [package]
 name = "nlayer-platform-android"
-description = "Android host: encodes mount batches for the UI thread."
+description = "Android host: measures text with StaticLayout and mounts the v1 views."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,5 +9,14 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[lib]
+name = "nlayer"
+crate-type = ["rlib", "cdylib"]
+
 [dependencies]
 nlayer-core.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+log.workspace = true
+nlayer-engine.workspace = true

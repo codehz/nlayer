@@ -20,9 +20,9 @@ base64 = "0.22"
 getrandom = "0.3"
 
 
-# Shipped bindings cover the desktop hosts and wasm, not iOS. Bindgen
-# generates them (nsh does this for every native target).
-[target.'cfg(target_os = "ios")'.dependencies]
+# Shipped bindings cover the desktop hosts and wasm, not iOS or Android.
+# Bindgen generates them (nsh does this for every native target).
+[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
 rquickjs = { workspace = true, features = ["bindgen"] }
 [dev-dependencies]
 rquickjs.workspace = true

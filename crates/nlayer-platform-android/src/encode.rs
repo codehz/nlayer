@@ -39,21 +39,29 @@ const INPUT_CONTENT: i32 = 15;
 const TEST_ID: i32 = 16;
 const COMMAND: i32 = 17;
 
+/// A `StaticLayout` measured on the engine thread and drawn on the UI thread.
+#[cfg(target_os = "android")]
+pub(crate) struct AndroidLayout(pub(crate) jni::objects::GlobalRef);
+
 /// One entry of the object table. Strings become Java `String`s. A text
 /// layout becomes the `StaticLayout` the UI thread draws; only the Android
 /// text engine produces one.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub enum Object {
     /// A string (an image URI, placeholder, input value or `testID`).
     Str(String),
+    /// A `StaticLayout` measured on the engine thread.
+    #[cfg(target_os = "android")]
+    Layout(jni::objects::GlobalRef),
 }
 
 /// An encoded batch.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Default)]
 pub struct Encoded {
     /// Little-endian 32-bit words.
     pub bytes: Vec<u8>,
-    /// Strings the stream indexes. A missing string is index `-1`.
+    /// Strings and, on Android, measured text layouts. A missing string is
+    /// index `-1`.
     pub objects: Vec<Object>,
 }
 
@@ -126,12 +134,19 @@ pub fn encode(batch: MountBatch) -> Encoded {
             MountItem::Text {
                 id,
                 text,
-                layout: _,
+                layout,
                 content,
             } => {
                 // The UI thread draws the `StaticLayout` measured on the
                 // engine thread. A stand-in layout is not that object.
-                let _ = (id, text, content);
+                #[cfg(target_os = "android")]
+                if let Some(measured) = layout.downcast::<AndroidLayout>() {
+                    let index = e.objects.len() as i32;
+                    e.objects.push(Object::Layout(measured.0.clone()));
+                    write_text(&mut e, id, index, content, &text);
+                }
+                #[cfg(not(target_os = "android"))]
+                let _ = (id, text, layout, content);
             }
             MountItem::Events { id, events } => {
                 e.int(EVENTS);

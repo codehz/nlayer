@@ -125,3 +125,12 @@ Copied files:
   the UI thread: views, text spans, images, one-axis scroll and a
   single-line field. Animation, gestures, refresh, zoom, paging, shadows
   and gradients are not encoded)
+- `crates/nlayer-platform-android/src/host.rs`, `src/text.rs`, `src/lib.rs`,
+  `src/java.rs` and `java/dev/nlayer/android/` from
+  `crates/nsh-platform-android/src/host.rs`, `src/text.rs`, `src/lib.rs` and
+  `java/com/longbridge/nsh/`: one surface, frames, fill, radius, opacity,
+  overflow, a static transform, solid and dashed borders, `onPress`,
+  `activeStyle` / `hoverStyle` / `focusStyle`, safe area, StaticLayout
+  measurement, one-axis scroll, PNG / JPEG / WebP from a bundled file or
+  `http(s)`, and a single-line field. Refresh, zoom, paging, shadows,
+  gradients and the dev server are not mounted.
