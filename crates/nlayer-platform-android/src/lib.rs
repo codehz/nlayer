@@ -7,16 +7,19 @@
 //!
 //! Extracted from `nsh-platform-android` (`encode.rs`, `host.rs`, `text.rs`,
 //! `java.rs`) and cut to views, text, images, one-axis scroll and a
-//! single-line field.
+//! single-line field. `nlayer test` drives the mounted tree through the
+//! view system's own touch, input connection and scroll view.
 
 mod encode;
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+mod scene;
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+mod snapshot;
 
 #[cfg(target_os = "android")]
+mod driver;
+#[cfg(target_os = "android")]
 mod host;
-#[cfg(target_os = "android")]
-mod java;
-#[cfg(target_os = "android")]
-mod text;
 
 pub use encode::{Encoded, Object, encode};
 

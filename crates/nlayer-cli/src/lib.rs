@@ -1,13 +1,15 @@
 //! `nlayer init` creates a TSX app. `nlayer build` writes its bundle, source
 //! map, imported images and TypeScript declarations. `nlayer test` runs its
 //! test files. The default is headless; `--target web` runs the opened app
-//! in a headless browser and `--target ios` in the simulator. `nlayer run --target web` serves the app to a
-//! browser and reloads it after a rebuild. `nlayer run --target ios` runs it
-//! in the simulator and restarts it after a rebuild, without reinstalling
-//! the host. `nlayer run --target android` does the same on an emulator or
-//! a connected device.
+//! in a headless browser, `--target ios` in the simulator, and `--target
+//! android` on an emulator or a connected device. `nlayer run --target web`
+//! serves the app to a browser and reloads it after a rebuild. `nlayer run
+//! --target ios` runs it in the simulator and restarts it after a rebuild,
+//! without reinstalling the host. `nlayer run --target android` does the same
+//! on an emulator or a connected device.
 
 mod android;
+mod android_test;
 mod init;
 mod ios;
 mod ios_test;
@@ -130,13 +132,16 @@ pub struct TestOptions {
     pub target: Option<TestTarget>,
 }
 
-/// A host `nlayer test --target` can drive. Android is a later slice.
+/// A host `nlayer test --target` can drive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestTarget {
     /// A headless browser. The page executes the app.
     Web,
     /// The iOS simulator. The steps go through UIKit.
     Ios,
+    /// An Android emulator or a connected device. The steps go through
+    /// the view system.
+    Android,
 }
 
 /// Runs the tests [`TestOptions`] names.
@@ -151,6 +156,10 @@ pub fn test(options: &TestOptions) -> Result<nlayer_testing::Report, nlayer_test
         }
         Some(TestTarget::Ios) => {
             let mut host = ios_test::IosHost::new();
+            nlayer_testing::run_with(&options.path, options.filter.as_deref(), &mut host)
+        }
+        Some(TestTarget::Android) => {
+            let mut host = android_test::AndroidHost::new();
             nlayer_testing::run_with(&options.path, options.filter.as_deref(), &mut host)
         }
     }

@@ -26,6 +26,10 @@ pub(crate) struct Java {
     /// `dev.nlayer.android.HostView`.
     pub(crate) view_submit: JMethodID,
     pub(crate) view_report_error: JMethodID,
+    pub(crate) view_snapshot: JMethodID,
+    pub(crate) view_tap: JMethodID,
+    pub(crate) view_type_char: JMethodID,
+    pub(crate) view_scroll_to: JMethodID,
 }
 
 static JAVA: OnceLock<Java> = OnceLock::new();
@@ -60,6 +64,10 @@ pub(crate) fn init(vm: JavaVM) -> jni::errors::Result<()> {
         text_lines: env.get_static_method_id(text_class, "lines", "(Ljava/lang/Object;F)[F")?,
         view_submit: env.get_method_id(view_class, "submit", "([B[Ljava/lang/Object;)V")?,
         view_report_error: env.get_method_id(view_class, "reportError", "(Ljava/lang/String;)V")?,
+        view_snapshot: env.get_method_id(view_class, "snapshot", "()Ljava/lang/String;")?,
+        view_tap: env.get_method_id(view_class, "tap", "(FFZ)V")?,
+        view_type_char: env.get_method_id(view_class, "typeChar", "(ILjava/lang/String;)V")?,
+        view_scroll_to: env.get_method_id(view_class, "scrollTo", "(IFF)V")?,
         text,
         vm,
     };

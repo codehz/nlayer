@@ -78,6 +78,9 @@ enum TestHost {
     Web,
     /// The iOS simulator. The steps go through UIKit.
     Ios,
+    /// An Android emulator or a connected device. The steps go through
+    /// the view system.
+    Android,
 }
 
 /// A host `run` can start.
@@ -118,6 +121,7 @@ fn main() -> ExitCode {
             let target = target.map(|target| match target {
                 TestHost::Web => TestTarget::Web,
                 TestHost::Ios => TestTarget::Ios,
+                TestHost::Android => TestTarget::Android,
             });
             match test(&TestOptions {
                 path,
@@ -301,6 +305,15 @@ mod tests {
                 .command,
             Command::Test {
                 target: Some(TestHost::Ios),
+                ..
+            }
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["nlayer", "test", "--target", "android"])
+                .unwrap()
+                .command,
+            Command::Test {
+                target: Some(TestHost::Android),
                 ..
             }
         ));

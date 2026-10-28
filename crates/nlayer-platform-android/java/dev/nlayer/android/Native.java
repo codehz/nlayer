@@ -7,6 +7,7 @@ final class Native {
     static native void load(long handle, byte[] code, String assetsDir);
     static native void resize(long handle, float widthDp, float heightDp);
     static native void insets(long handle, float top, float right, float bottom, float left, float keyboard);
+    static native void serve(long handle, String host, int port);
     static native void press(long handle, int id);
     static native void input(long handle, int id, String text);
     private Native() {}

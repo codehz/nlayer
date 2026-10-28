@@ -20,12 +20,13 @@ use crate::encode::{self, Object};
 use crate::java::{java, with_env};
 use crate::text::{AndroidTextEngine, Density};
 
-struct Host {
-    view: jni::objects::GlobalRef,
+pub(crate) struct Host {
+    pub(crate) view: jni::objects::GlobalRef,
     engine: Mutex<Option<Engine>>,
     control: Mutex<Option<EngineControl>>,
     density: Density,
     size: Mutex<Size<Points>>,
+    insets: Mutex<Option<(Edges<Points>, Points)>>,
 }
 
 struct Sink {
@@ -120,6 +121,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_create(
         control: Mutex::new(None),
         density: Density::new(density),
         size: Mutex::new(Size::new(px(0.0), px(0.0))),
+        insets: Mutex::new(None),
     });
     Box::into_raw(Box::new(host)) as jlong
 }
@@ -182,6 +184,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_load(
         Ok(engine) => {
             *host.control.lock().unwrap_or_else(|err| err.into_inner()) = Some(engine.control());
             *host.engine.lock().unwrap_or_else(|err| err.into_inner()) = Some(engine);
+            apply_insets(host);
         }
         Err(err) => report(&host.view, &err.message),
     }
@@ -232,6 +235,22 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_insets(
         return;
     }
     let host = unsafe { host(handle) };
+    *host.insets.lock().unwrap_or_else(|err| err.into_inner()) = Some((
+        Edges {
+            top: Points(top),
+            right: Points(right),
+            bottom: Points(bottom),
+            left: Points(left),
+        },
+        Points(keyboard),
+    ));
+    apply_insets(host);
+}
+
+fn apply_insets(host: &Host) {
+    let Some((edges, keyboard)) = *host.insets.lock().unwrap_or_else(|err| err.into_inner()) else {
+        return;
+    };
     let Some(control) = host
         .control
         .lock()
@@ -240,13 +259,34 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_insets(
     else {
         return;
     };
-    control.set_safe_area(Edges {
-        top: Points(top),
-        right: Points(right),
-        bottom: Points(bottom),
-        left: Points(left),
-    });
-    control.set_keyboard_inset(Points(keyboard));
+    control.set_safe_area(edges);
+    control.set_keyboard_inset(keyboard);
+}
+
+/// # Safety
+///
+/// `handle` is live. `address` is the test runner (`127.0.0.1` after
+/// `adb reverse`).
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_serve(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    address: JString<'_>,
+    port: jint,
+) {
+    if handle == 0 || port == 0 {
+        return;
+    }
+    let host = unsafe { host(handle) }.clone();
+    let address: String = env
+        .get_string(&address)
+        .map(|value| value.into())
+        .unwrap_or_default();
+    if address.is_empty() {
+        return;
+    }
+    crate::driver::start(host, format!("{address}:{port}"));
 }
 
 /// # Safety

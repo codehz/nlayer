@@ -207,13 +207,13 @@ fn rebuild(shared: &Shared) {
     *shared.stamp.lock().expect("android watch") = stamp;
 }
 
-struct Sdk {
+pub(crate) struct Sdk {
     root: PathBuf,
     build_tools: PathBuf,
 }
 
 impl Sdk {
-    fn find() -> Result<Self, RunError> {
+    pub(crate) fn find() -> Result<Self, RunError> {
         let root = ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
             .iter()
             .find_map(env::var_os)
@@ -231,7 +231,7 @@ impl Sdk {
         self.build_tools.join(name)
     }
 
-    fn adb(&self) -> PathBuf {
+    pub(crate) fn adb(&self) -> PathBuf {
         self.root.join("platform-tools/adb")
     }
 
@@ -270,7 +270,7 @@ fn newest(dir: &Path) -> Result<PathBuf, RunError> {
 }
 
 /// `serial` of an emulator, else the first connected device.
-fn device(sdk: &Sdk) -> Result<String, RunError> {
+pub(crate) fn device(sdk: &Sdk) -> Result<String, RunError> {
     let output = Command::new(sdk.adb())
         .arg("devices")
         .output()
@@ -300,7 +300,7 @@ fn device(sdk: &Sdk) -> Result<String, RunError> {
         .ok_or_else(|| RunError::message("no Android emulator or device. Start one, then re-run"))
 }
 
-fn device_abi(sdk: &Sdk, serial: &str) -> Result<Abi, RunError> {
+pub(crate) fn device_abi(sdk: &Sdk, serial: &str) -> Result<Abi, RunError> {
     let output = adb(sdk, serial, &["shell", "getprop", "ro.product.cpu.abi"])?;
     Abi::parse(output.trim()).ok_or_else(|| {
         RunError::message(format!(
@@ -309,7 +309,7 @@ fn device_abi(sdk: &Sdk, serial: &str) -> Result<Abi, RunError> {
     })
 }
 
-struct Abi {
+pub(crate) struct Abi {
     name: &'static str,
     triple: &'static str,
     clang: &'static str,
@@ -338,7 +338,7 @@ impl Abi {
     }
 }
 
-fn host_apk(sdk: &Sdk, abi: &Abi, release: bool) -> Result<PathBuf, RunError> {
+pub(crate) fn host_apk(sdk: &Sdk, abi: &Abi, release: bool) -> Result<PathBuf, RunError> {
     let workspace = workspace_root()
         .ok_or_else(|| RunError::message("no Android runtime. Run nlayer from a checkout"))?;
     let profile = if release { "release" } else { "debug" };
@@ -576,7 +576,7 @@ fn manifest_xml() -> String {
         android:extractNativeLibs="false" android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity android:name="{ACTIVITY}" android:exported="true"
-            android:windowSoftInputMode="adjustResize"
+            android:windowSoftInputMode="adjustNothing"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density|fontScale|locale|layoutDirection">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -655,7 +655,7 @@ fn debug_keystore() -> Result<PathBuf, RunError> {
     Ok(path)
 }
 
-fn install_if_needed(sdk: &Sdk, serial: &str, apk: &Path) -> Result<(), RunError> {
+pub(crate) fn install_if_needed(sdk: &Sdk, serial: &str, apk: &Path) -> Result<(), RunError> {
     let stamp = apk.with_extension(format!("installed-{serial}"));
     let apk_time = apk.metadata().and_then(|meta| meta.modified()).ok();
     let installed = stamp.metadata().and_then(|meta| meta.modified()).ok();
@@ -668,7 +668,24 @@ fn install_if_needed(sdk: &Sdk, serial: &str, apk: &Path) -> Result<(), RunError
     Ok(())
 }
 
-fn publish(sdk: &Sdk, serial: &str, app_dir: &Path, bundled: &Bundle) -> Result<(), RunError> {
+pub(crate) fn publish(
+    sdk: &Sdk,
+    serial: &str,
+    app_dir: &Path,
+    bundled: &Bundle,
+) -> Result<(), RunError> {
+    let _ = adb(
+        sdk,
+        serial,
+        &[
+            "shell",
+            "run-as",
+            PACKAGE,
+            "rm",
+            "-f",
+            "files/nlayer-test.json",
+        ],
+    );
     push_bytes(sdk, serial, "files/app.js", bundled.code.as_bytes())?;
     for rel in &bundled.assets {
         let Some(rel) = asset_rel(rel) else {
@@ -704,7 +721,12 @@ fn asset_rel(path: &Path) -> Option<&Path> {
 }
 
 /// Copies `bytes` into the app's private files via `run-as`.
-fn push_bytes(sdk: &Sdk, serial: &str, remote: &str, bytes: &[u8]) -> Result<(), RunError> {
+pub(crate) fn push_bytes(
+    sdk: &Sdk,
+    serial: &str,
+    remote: &str,
+    bytes: &[u8],
+) -> Result<(), RunError> {
     if let Some(parent) = Path::new(remote).parent()
         && parent != Path::new("")
     {
@@ -750,7 +772,7 @@ fn push_bytes(sdk: &Sdk, serial: &str, remote: &str, bytes: &[u8]) -> Result<(),
     Ok(())
 }
 
-fn relaunch(sdk: &Sdk, serial: &str) -> Result<(), RunError> {
+pub(crate) fn relaunch(sdk: &Sdk, serial: &str) -> Result<(), RunError> {
     let _ = adb(sdk, serial, &["shell", "am", "force-stop", PACKAGE]);
     adb(
         sdk,
@@ -766,7 +788,7 @@ fn relaunch(sdk: &Sdk, serial: &str) -> Result<(), RunError> {
     Ok(())
 }
 
-fn adb(sdk: &Sdk, serial: &str, args: &[&str]) -> Result<String, RunError> {
+pub(crate) fn adb(sdk: &Sdk, serial: &str, args: &[&str]) -> Result<String, RunError> {
     let output = Command::new(sdk.adb())
         .arg("-s")
         .arg(serial)

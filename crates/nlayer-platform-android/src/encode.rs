@@ -296,6 +296,12 @@ fn view_style(e: &mut Encoded, style: &ViewStyle) {
     length_axis(e, style.transform_origin.y);
     position_axis(e, style.object_position.x);
     position_axis(e, style.object_position.y);
+    let ops = style.transform.ops();
+    e.int(ops.len() as i32);
+    for op in ops {
+        e.int(transform_kind(op.kind));
+        e.float(op.value);
+    }
 }
 
 /// A transform list as Android view properties: translation x / y (dp),
@@ -321,6 +327,24 @@ fn view_transform(transform: &nlayer_core::transform::Transform) -> [f32; 8] {
     }
 }
 
+fn transform_kind(kind: nlayer_core::transform::TransformKind) -> i32 {
+    use nlayer_core::transform::TransformKind;
+    match kind {
+        TransformKind::TranslateX => 0,
+        TransformKind::TranslateY => 1,
+        TransformKind::Scale => 2,
+        TransformKind::ScaleX => 3,
+        TransformKind::ScaleY => 4,
+        TransformKind::Rotate => 5,
+        TransformKind::RotateX => 6,
+        TransformKind::RotateY => 7,
+        TransformKind::SkewX => 8,
+        TransformKind::SkewY => 9,
+        TransformKind::Perspective => 10,
+        TransformKind::TranslateXFraction => 11,
+        TransformKind::TranslateYFraction => 12,
+    }
+}
 fn degrees(angle: nlayer_core::geometry::Radians) -> f32 {
     (angle.to_degrees() * 1e4).round() / 1e4
 }
@@ -438,6 +462,15 @@ pub(crate) fn write_text(
         encoded.int(span.end as i32);
         encoded.string(span.test_id.to_string());
     }
+    encoded.int(text.spans.len() as i32);
+    for span in &text.spans {
+        encoded.int(span.start as i32);
+        encoded.int(span.end as i32);
+        encoded.int(span.style.font_weight as i32);
+        encoded.bool(span.style.italic);
+        encoded.int(argb(span.style.color));
+        encoded.float(span.style.font_size.0);
+    }
 }
 
 #[cfg(test)]
@@ -518,6 +551,10 @@ mod tests {
         }
         for _ in 0..2 {
             let _ = words.int();
+            let _ = words.float();
+        }
+        let ops = words.int();
+        for _ in 0..ops {
             let _ = words.int();
             let _ = words.float();
         }
@@ -634,6 +671,7 @@ mod tests {
         assert_eq!(words.int(), 0);
         assert_eq!(words.int(), 1);
         assert_eq!(words.float(), 0.5);
+        assert_eq!(words.int(), 0);
         assert!(words.done());
     }
 
@@ -847,6 +885,7 @@ mod tests {
         assert_eq!(words.int(), 1);
         assert_eq!((words.int(), words.int()), (1, 2));
         assert_eq!(object(&encoded, words.int()), "span");
+        assert_eq!(words.int(), 0);
         assert!(words.done());
     }
 }

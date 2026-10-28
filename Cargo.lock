@@ -1322,6 +1322,8 @@ dependencies = [
  "log",
  "nlayer-core",
  "nlayer-engine",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
