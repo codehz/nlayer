@@ -29,6 +29,10 @@ final class ScrollBox extends FrameLayout {
   private void build(Context c) {
     scroller = horizontal ? new HorizontalScrollView(c) : new ScrollView(c);
     scroller.setClipToPadding(false);
+    // A scroll view inside another scrolls first, then hands the rest to its
+    // parent. Nested scrolling off, the outer ScrollView intercepts every drag
+    // along its axis.
+    scroller.setNestedScrollingEnabled(true);
     scroller.setVerticalScrollBarEnabled(!horizontal);
     scroller.setHorizontalScrollBarEnabled(horizontal);
     scroller.setOnTouchListener(
