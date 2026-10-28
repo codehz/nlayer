@@ -1,0 +1,98 @@
+[package]
+name = "nlayer-platform-ios"
+description = "UIKit host: mounts views, text and one-axis scroll views from the engine's batches."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "nlayer-ios-app"
+path = "src/bin/app.rs"
+
+[dependencies]
+nlayer-core.workspace = true
+nlayer-engine.workspace = true
+log.workspace = true
+rustc-hash.workspace = true
+
+[target.'cfg(target_os = "ios")'.dependencies]
+dispatch2 = "0.3.1"
+objc2 = "0.6.5"
+block2 = "0.6.2"
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "NSArray",
+  "NSValue",
+  "NSObject",
+  "NSString",
+] }
+objc2-ui-kit = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "block2",
+  "objc2-core-foundation",
+  "objc2-core-graphics",
+  "objc2-quartz-core",
+  "UIApplication",
+  "UIBezierPath",
+  "UIColor",
+  "UIFont",
+  "UIFontDescriptor",
+  "UIGeometry",
+  "UIGestureRecognizer",
+  "UIGraphics",
+  "UILabel",
+  "UILongPressGestureRecognizer",
+  "UIHoverGestureRecognizer",
+  "UIResponder",
+  "UIScene",
+  "UISceneConfiguration",
+  "UISceneDefinitions",
+  "UISceneOptions",
+  "UISceneSession",
+  "UIScreen",
+  "UIScrollView",
+  "UIView",
+  "UIViewController",
+  "UIWindow",
+  "UIWindowScene",
+] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "CFArray",
+  "CFAttributedString",
+  "CFCGTypes",
+  "CFDictionary",
+  "CFNumber",
+  "CFString",
+] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "CGColor",
+  "CGContext",
+  "CGPath",
+] }
+objc2-core-text = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "objc2-core-graphics",
+  "CTFont",
+  "CTFontDescriptor",
+  "CTFontTraits",
+  "CTFrame",
+  "CTFramesetter",
+  "CTLine",
+  "CTParagraphStyle",
+  "CTStringAttributes",
+  "CTTypesetter",
+] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "objc2-core-foundation",
+  "objc2-core-graphics",
+  "CALayer",
+  "CATransform3D",
+  "CAShapeLayer",
+] }
