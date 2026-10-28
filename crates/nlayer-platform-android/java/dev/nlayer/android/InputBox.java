@@ -131,7 +131,7 @@ final class InputBox extends FrameLayout {
     this.keyboardName =
         keyboard == 1 ? "email" : keyboard == 2 ? "number" : keyboard == 3 ? "phone" : "text";
     edit.setTextSize(TypedValue.COMPLEX_UNIT_PX, size * density);
-    edit.setTextColor(color);
+    applyTextColor(color);
     if (size > 0) edit.setLetterSpacing(spacing / size);
     if (lineHeight > 0 && Build.VERSION.SDK_INT >= 28)
       edit.setLineHeight(Math.round(lineHeight * density));
@@ -168,5 +168,19 @@ final class InputBox extends FrameLayout {
     } finally {
       setting = false;
     }
+  }
+
+  /**
+   * The widget style's text appearance is the inverse one, so its hint is light. A light hint
+   * disappears on a light field. Mute the text color instead.
+   */
+  static int hintColor(int color) {
+    return (color & 0x00ffffff) | 0x99000000;
+  }
+
+  void applyTextColor(int color) {
+    if (edit.getCurrentTextColor() != color) edit.setTextColor(color);
+    int hint = hintColor(color);
+    if (edit.getCurrentHintTextColor() != hint) edit.setHintTextColor(hint);
   }
 }

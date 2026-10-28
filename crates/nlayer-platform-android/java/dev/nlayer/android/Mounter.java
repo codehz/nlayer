@@ -485,8 +485,7 @@ final class Mounter {
       if (color != null) ((TextBox) v).setTextColor(color);
     } else if (v instanceof InputBox) {
       InputBox in = (InputBox) v;
-      int next = color != null ? color : in.textColor;
-      if (in.edit.getCurrentTextColor() != next) in.edit.setTextColor(next);
+      in.applyTextColor(color != null ? color : in.textColor);
     }
   }
 
