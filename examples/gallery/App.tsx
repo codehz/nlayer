@@ -1,5 +1,5 @@
 import { cleanup, effect, mount, signal } from "@nlayer/runtime";
-import { Image, Input, Scroll, Text, View } from "@nlayer/ui";
+import { Image, Input, Scroll, Text, View, platform } from "@nlayer/ui";
 import mark from "./mark.png";
 
 declare global {
@@ -379,6 +379,17 @@ function Quote() {
   );
 }
 
+function Surface() {
+  return (
+    <Section title="Platform">
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+        <Text style={{ fontSize: 12, color: "#64748b" }}>platform.os</Text>
+        <Text>{platform.os}</Text>
+      </View>
+    </Section>
+  );
+}
+
 function App() {
   return (
     <Scroll testID="page" style={{ flex: 1, backgroundColor: "#f8fafc" }}>
@@ -393,8 +404,9 @@ function App() {
       >
         <Text style={{ fontSize: 28, fontWeight: "700", color: "#0f172a" }}>Gallery</Text>
         <Text style={{ fontSize: 14, color: "#64748b" }}>
-          View, Text, Image, Scroll, and a single-line Input.
+          View, Text, Image, Scroll, Input, and platform.os.
         </Text>
+        <Surface />
         <Layout />
         <Pointer />
         <Type />

@@ -213,3 +213,10 @@ test("fetch renders the JSON", () => {
   reveal(app, (node) => node.text === "Loading quote" || node.text === "Gallery: 5");
   app.waitFor("Gallery: 5");
 });
+
+test("platform.os is the surface", () => {
+  const app = open("./App.tsx", { width: 390, height: 844 });
+  expect(app.texts()).toContain("platform.os");
+  const os = app.texts().find((text) => text === "web" || text === "ios" || text === "android");
+  expect(["web", "ios", "android"]).toContain(os);
+});
