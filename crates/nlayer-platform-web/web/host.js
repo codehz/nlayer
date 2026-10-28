@@ -482,7 +482,8 @@ function nodeJson(el, parent, root) {
     node.disabled = !!field.disabled;
   }
   if (el._kind === "image" && el._img) {
-    node.src = el._img.getAttribute?.("src") ?? el._img.src ?? "";
+    node.src =
+      el._img._uri != null ? el._img._uri : (el._img.getAttribute?.("src") ?? el._img.src ?? "");
     node.fit = fitOf(el._img);
   }
   if (el._kind === "scroll") {

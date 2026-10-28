@@ -310,6 +310,8 @@ export class Player {
     const img = this.view(id)?._img;
     if (!img) return;
     img.className = `nl-fill nl-fit-${mode || "cover"}`;
+    // The page loads `asset()`'s URL. The test tree reports the engine URI.
+    img._uri = uri ?? "";
     const src = this.asset(uri ?? "");
     if (!src) img.removeAttribute("src");
     else img.src = src;

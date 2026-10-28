@@ -217,3 +217,22 @@ test("a span color is #rrggbb, not the browser's rgb()", () => {
   assert.equal(spans[0].color, "#c2410c");
   assert.equal(spans[1].color, "#c2410c80");
 });
+
+test("an image src is the engine URI, not the page URL", () => {
+  const { player, host } = harness();
+  player.assetBase = "./";
+  player.apply([
+    ["c", 2, "image"],
+    ["i", 1, 2, null],
+    ["img", 2, "asset:/mark.png", "cover"],
+    ["c", 3, "image"],
+    ["i", 1, 3, null],
+    ["img", 3, "https://example.com/photo.jpg", "contain"],
+  ]);
+  assert.equal(player.view(2)._img.src, "./mark.png");
+  const nodes = host.tree().children;
+  assert.equal(nodes[0].src, "asset:/mark.png");
+  assert.equal(nodes[0].fit, "cover");
+  assert.equal(nodes[1].src, "https://example.com/photo.jpg");
+  assert.equal(nodes[1].fit, "contain");
+});
