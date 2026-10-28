@@ -492,6 +492,7 @@ function nodeJson(el, parent, root) {
     const content = spacerSize(el);
     node.content = { width: content.width, height: content.height };
   }
+  if (el._transform) node.transform = el._transform;
   return node;
 }
 

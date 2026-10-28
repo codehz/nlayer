@@ -236,3 +236,19 @@ test("an image src is the engine URI, not the page URL", () => {
   assert.equal(nodes[1].src, "https://example.com/photo.jpg");
   assert.equal(nodes[1].fit, "contain");
 });
+
+test("a static transform is the engine steps, and an empty list clears it", () => {
+  const { player, host } = harness();
+  player.apply([
+    ["c", 2, "view"],
+    ["i", 1, 2, null],
+    ["xf", 2, [{ translateX: 12 }, { rotate: 15 }, { scale: 1.25 }]],
+  ]);
+  assert.deepEqual(host.tree().children[0].transform, [
+    { translateX: 12 },
+    { rotate: 15 },
+    { scale: 1.25 },
+  ]);
+  player.apply([["xf", 2, []]]);
+  assert.equal(host.tree().children[0].transform, undefined);
+});

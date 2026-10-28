@@ -13,6 +13,10 @@
 //! `WebLayout` glyph runs. `activeStyle`, `hoverStyle` and `focusStyle`
 //! are rules on the view (`["rule", ...]`) that the page applies; they do
 //! not replace the view's class.
+//! A view style also sends `["xf", id, steps]` (`{ translateX: 12 }`, angles
+//! in degrees), including an empty list that clears a previous one. The page
+//! paints the CSS and keeps the steps for the test tree.
+//!
 
 use std::fmt::Write as _;
 
@@ -109,6 +113,7 @@ impl Encoder {
                     .class_arg(class)
                     .class_arg(border)
                     .end();
+                push_transform(out, *id, &style.transform);
             }
             MountItem::Text {
                 id, text, content, ..
@@ -668,6 +673,37 @@ fn css_transform(t: &Transform) -> String {
     }
     out.pop();
     out
+}
+
+/// Static transform steps for the test tree. CSS still paints the transform.
+fn push_transform(out: &mut Out, id: NodeId, transform: &Transform) {
+    out.item("xf").num(id);
+    let mut steps = String::from("[");
+    for (i, op) in transform.ops().iter().enumerate() {
+        if i > 0 {
+            steps.push(',');
+        }
+        let value = (f64::from(op.value) * 1000.0).round() / 1000.0;
+        let _ = write!(steps, "{{\"{}\":{value}}}", transform_name(op.kind));
+    }
+    steps.push(']');
+    out.raw(&steps).end();
+}
+
+fn transform_name(kind: TransformKind) -> &'static str {
+    match kind {
+        TransformKind::TranslateX | TransformKind::TranslateXFraction => "translateX",
+        TransformKind::TranslateY | TransformKind::TranslateYFraction => "translateY",
+        TransformKind::Scale => "scale",
+        TransformKind::ScaleX => "scaleX",
+        TransformKind::ScaleY => "scaleY",
+        TransformKind::Rotate => "rotate",
+        TransformKind::RotateX => "rotateX",
+        TransformKind::RotateY => "rotateY",
+        TransformKind::SkewX => "skewX",
+        TransformKind::SkewY => "skewY",
+        TransformKind::Perspective => "perspective",
+    }
 }
 
 fn origin_css(o: TransformOrigin) -> Option<String> {

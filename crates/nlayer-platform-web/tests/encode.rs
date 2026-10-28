@@ -74,6 +74,43 @@ fn a_style_is_one_class_and_its_border_is_separate() {
 }
 
 #[test]
+fn a_view_style_carries_transform_steps() {
+    let mut style = ViewStyle::default();
+    let mut transform = Transform::default();
+    assert!(transform.push(TransformKind::TranslateX, 12.0).is_some());
+    assert!(transform.push(TransformKind::Rotate, 15.0).is_some());
+    assert!(transform.push(TransformKind::Scale, 1.25).is_some());
+    style.transform = transform;
+    let set = Encoder::new().encode(&MountBatch {
+        items: vec![MountItem::ViewStyle {
+            id: 2,
+            style: Box::new(style),
+        }],
+    });
+    let steps = items(&set)
+        .into_iter()
+        .find(|item| item[0] == "xf")
+        .expect("transform steps");
+    assert_eq!(steps[1], 2);
+    assert_eq!(
+        steps[2],
+        serde_json::json!([{"translateX": 12}, {"rotate": 15}, {"scale": 1.25}])
+    );
+
+    let cleared = Encoder::new().encode(&MountBatch {
+        items: vec![MountItem::ViewStyle {
+            id: 2,
+            style: Box::new(ViewStyle::default()),
+        }],
+    });
+    let empty = items(&cleared)
+        .into_iter()
+        .find(|item| item[0] == "xf")
+        .expect("a cleared transform");
+    assert_eq!(empty[2], serde_json::json!([]));
+}
+
+#[test]
 fn a_state_style_is_a_rule_the_page_applies() {
     let mut view = ViewStyle {
         background_color: Color::rgba(255, 0, 0, 255),

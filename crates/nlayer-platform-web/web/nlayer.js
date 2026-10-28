@@ -317,6 +317,12 @@ export class Player {
     else img.src = src;
   }
 
+  op_xf([, id, steps]) {
+    const el = this.view(id);
+    if (!el) return;
+    el._transform = Array.isArray(steps) && steps.length ? steps : null;
+  }
+
   /**
    * Touch scrolling is the browser's (nsh's `touchScroll` / `scrolled` /
    * `scrollEnded`, cut to no refresh, zoom, snap or custom bar). A
