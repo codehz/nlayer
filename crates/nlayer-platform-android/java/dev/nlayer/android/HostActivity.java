@@ -40,7 +40,10 @@ public class HostActivity extends Activity {
               right = s.right;
               bottom = s.bottom;
               left = s.left;
-              kb = Math.max(0, ime.bottom - s.bottom);
+              // How far the IME reaches into this edge-to-edge surface. The
+              // navigation bar under the keyboard is part of that overlap, as
+              // on iOS. Subtracting systemBars leaves that strip under the keys.
+              kb = Math.max(0, ime.bottom);
             } else {
               top = insets.getSystemWindowInsetTop();
               right = insets.getSystemWindowInsetRight();
