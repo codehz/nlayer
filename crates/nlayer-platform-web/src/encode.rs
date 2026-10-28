@@ -578,7 +578,8 @@ fn origin(o: DefiniteLength) -> String {
     }
 }
 
-/// The CSS `font` shorthand. The family is the system stack.
+/// The CSS `font` shorthand. The family is the system stack. `font`
+/// resets `line-height`, so callers write [`css_line_height`] after it.
 fn css_font(style: &ResolvedTextStyle) -> String {
     format!(
         "{}{} {}px {SYSTEM_FONT}",
@@ -586,6 +587,17 @@ fn css_font(style: &ResolvedTextStyle) -> String {
         style.font_weight,
         style.font_size.0
     )
+}
+
+/// Matches [`nlayer_core::text::ApproxTextEngine`]: an explicit
+/// `lineHeight`, otherwise `1.2` times the font size. The page's default
+/// line box is taller than that, and the text box clips what hangs out.
+fn css_line_height(style: &ResolvedTextStyle) -> String {
+    if style.line_height.0 > 0.0 {
+        format!("line-height:{}px;", style.line_height.0)
+    } else {
+        "line-height:1.2;".to_owned()
+    }
 }
 
 struct Run {
@@ -601,8 +613,9 @@ fn text_runs(text: &AttributedText) -> Vec<Run> {
         .map(|span| Run {
             text: utf16_slice(&text.text, span.start, span.end),
             css: format!(
-                "font:{};color:{};",
+                "font:{};{}color:{};",
                 css_font(&span.style),
+                css_line_height(&span.style),
                 css_color(span.style.color)
             ),
         })
@@ -639,8 +652,9 @@ fn align_css(align: TextAlign, rtl: bool) -> Option<&'static str> {
 
 fn field_css(config: &InputConfig) -> String {
     let mut css = format!(
-        "font:{};color:{};",
+        "font:{};{}color:{};",
         css_font(&config.style),
+        css_line_height(&config.style),
         css_color(config.style.color)
     );
     if let Some(align) = align_css(config.align, config.rtl) {

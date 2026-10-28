@@ -930,17 +930,35 @@ mod estimate {
 }
 
 /// A deterministic, platform-free [`TextEngine`] for headless runs and
-/// tests: every character is `0.55 × font size` wide and lines are
-/// `1.2 × font size` tall, their baseline at the bottom (the font's ascent
-/// is the line, its descent 0, its x height `0.5 × font size`), where
-/// attachments are placed by [`TextAttachment::ascent`] on the first line.
+/// tests: every character is `0.55 × font size` wide (the first span's
+/// size) and a line is as tall as its tallest span. A span's line is its
+/// `lineHeight`, or `1.2 ×` its font size when that is the font's own.
+/// The baseline sits at the bottom of the line (the font's ascent is the
+/// line, its descent 0, its x height `0.5 × font size`), where attachments
+/// are placed by [`TextAttachment::ascent`] on the first line.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ApproxTextEngine;
 
+/// One line of `text`: the tallest span. No spans: the 14pt default.
+fn block_line(text: &AttributedText) -> Points {
+    let mut line = px(14.0) * 1.2;
+    for (i, span) in text.spans.iter().enumerate() {
+        let h = if span.style.line_height.0 > 0.0 {
+            span.style.line_height
+        } else {
+            span.style.font_size * 1.2
+        };
+        if i == 0 || h.0 > line.0 {
+            line = h;
+        }
+    }
+    line
+}
+
 impl TextEngine for ApproxTextEngine {
-    /// `(character count, font size, max lines, attachments, the indices of
-    /// the characters two UTF-16 units long)`.
-    type Prepared = (usize, Points, u32, Vec<TextAttachment>, Vec<u32>);
+    /// `(character count, font size, line height, max lines, attachments,
+    /// the indices of the characters two UTF-16 units long)`.
+    type Prepared = (usize, Points, Points, u32, Vec<TextAttachment>, Vec<u32>);
 
     fn prepare(&self, text: &AttributedText) -> Self::Prepared {
         self.prepare_aligned(text, &AttachmentAlignments::default())
@@ -952,6 +970,7 @@ impl TextEngine for ApproxTextEngine {
         alignments: &AttachmentAlignments,
     ) -> Self::Prepared {
         let size = text.spans.first().map_or(px(14.0), |s| s.style.font_size);
+        let line = block_line(text);
         // Empty (no allocation) for text in the Basic Multilingual Plane.
         let astral = text
             .text
@@ -963,11 +982,12 @@ impl TextEngine for ApproxTextEngine {
         (
             text.text.chars().count(),
             size,
+            line,
             text.max_lines,
             text.attachments
                 .iter()
                 .map(|a| {
-                    let metrics = FontExtent::new(size * 1.2, Points::ZERO, size * 0.5);
+                    let metrics = FontExtent::new(line, Points::ZERO, size * 0.5);
                     TextAttachment {
                         height: a.ascent(metrics, alignments.get(a.index)),
                         ..*a
@@ -980,12 +1000,11 @@ impl TextEngine for ApproxTextEngine {
 
     fn measure(
         &self,
-        &(chars, font, max_lines, ..): &Self::Prepared,
+        &(chars, font, line, max_lines, ..): &Self::Prepared,
         max_width: Option<Points>,
     ) -> Size<Points> {
         // The order of the products is kept: it decides the last bit.
         let width = Points(chars as f32 * font.0 * 0.55);
-        let line = font * 1.2;
         let (width, mut lines) = match max_width {
             Some(max) if width > max && max > Points::ZERO => (max, (width / max).ceil()),
             _ => (width, 1.0),
@@ -998,8 +1017,8 @@ impl TextEngine for ApproxTextEngine {
 
     fn layout(&self, prepared: &Self::Prepared, size: Size<Points>) -> TextLayout {
         // On one line, each character as wide as the others.
-        let (chars, font, _, attachments, astral) = prepared;
-        let line = *font * 1.2;
+        let (chars, font, line, _, attachments, astral) = prepared;
+        let line = *line;
         let advance = *font * 0.55;
         let attachments = attachments
             .iter()
@@ -1316,6 +1335,31 @@ mod tests {
         assert_eq!(y(VerticalAlign::TextTop), Some((px(11.0), px(0.0))));
         assert_eq!(y(VerticalAlign::TextBottom), Some((px(11.0), px(6.0))));
         assert_eq!(y(VerticalAlign::Middle), Some((px(11.0), px(6.5))));
+    }
+
+    #[test]
+    fn approx_engine_line_is_the_tallest_span() {
+        let engine = ApproxTextEngine;
+        let mut t = AttributedText::default();
+        t.push(
+            "Plain",
+            ResolvedTextStyle {
+                font_size: px(16.0),
+                ..ResolvedTextStyle::default()
+            },
+        );
+        t.push(
+            " color",
+            ResolvedTextStyle {
+                font_size: px(22.0),
+                ..ResolvedTextStyle::default()
+            },
+        );
+        let prepared = engine.prepare(&t);
+        assert_eq!(engine.measure(&prepared, None).height, px(22.0) * 1.2);
+        t.spans[1].style.line_height = px(30.0);
+        let prepared = engine.prepare(&t);
+        assert_eq!(engine.measure(&prepared, None).height, px(30.0));
     }
 
     fn line(start: u32, end: u32, y: f32) -> TextLine {
