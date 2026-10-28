@@ -2,9 +2,12 @@
 //! ([`decode_style`]) and the v1 host props ([`decode_prop`]).
 
 use nlayer_core::{
-    ImageScales, ImageSource, KeyboardType, NodeId, Op, Prop, Tag,
+    ImageScales, ImageSource, Interaction, KeyboardType, NodeId, Op, Prop, Tag,
     geometry::{Points, Size},
-    style::{Style, StyleDecl, StyleError, StylePatch, StyleValue, TransformProperty},
+    style::{
+        Style, StyleDecl, StyleError, StylePatch, StyleValue, TextStyle, TransformProperty,
+        ViewStyle,
+    },
     transform::TransformKind,
 };
 use rquickjs::{Array, Object, Value};
@@ -60,11 +63,19 @@ pub(crate) fn decode_prop<'js>(
     value: Value<'js>,
     warnings: &mut Warnings,
 ) -> rquickjs::Result<Option<Op>> {
-    if name == "style" {
+    if name == "style" || is_state_style(name) {
+        if name != "style" && cleared(&value) {
+            return Ok(Some(state_style(id, name, None)));
+        }
         let mut entries = Vec::new();
         style_entries(&value, &mut entries)?;
         let (style, patch) = decode_style(entries, warnings)?;
-        return Ok(Some(Op::SetStyle { id, style, patch }));
+        if name == "style" {
+            return Ok(Some(Op::SetStyle { id, style, patch }));
+        }
+        let style = *style;
+        let paint = paints(&style).then(|| Box::new((style.view, style.text)));
+        return Ok(Some(state_style(id, name, paint)));
     }
     let prop = match (tag, name) {
         (Some(Tag::Image), "src") => Prop::Source(image_source(value)?),
@@ -89,6 +100,30 @@ pub(crate) fn decode_prop<'js>(
         }
     };
     Ok(Some(Op::SetProp { id, prop }))
+}
+
+fn is_state_style(name: &str) -> bool {
+    matches!(name, "activeStyle" | "hoverStyle" | "focusStyle")
+}
+
+fn cleared(value: &Value<'_>) -> bool {
+    value.is_null() || value.is_undefined() || value.as_bool() == Some(false)
+}
+
+fn paints(style: &Style) -> bool {
+    style.view != ViewStyle::default() || style.text != TextStyle::default()
+}
+
+fn state_style(id: NodeId, name: &str, paint: Option<Box<(ViewStyle, TextStyle)>>) -> Op {
+    let interaction = match name {
+        "hoverStyle" => Interaction::Hover,
+        "focusStyle" => Interaction::Focus,
+        _ => Interaction::Active,
+    };
+    Op::SetProp {
+        id,
+        prop: Prop::StateStyle { interaction, paint },
+    }
 }
 
 /// A string prop; anything else (null, undefined) is the empty string.

@@ -5,6 +5,8 @@
 //! Scroll ops are the axis lock only: no refresh, zoom or paging. `data:`
 //! image bytes are not part of v1. Input is a single line: `value`,
 //! `placeholder`, `disabled`, `secureTextEntry` and `keyboardType`.
+//! `activeStyle`, `hoverStyle` and `focusStyle` are paint the platform
+//! applies; they are not the node's layout style.
 
 use std::sync::Arc;
 
@@ -355,6 +357,45 @@ impl KeyboardType {
     }
 }
 
+/// Which pointer state a [`Prop::StateStyle`] paints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Interaction {
+    /// `activeStyle`: pressed.
+    Active,
+    /// `hoverStyle`: a pointer is over the view.
+    Hover,
+    /// `focusStyle`: the view or a field inside it has focus.
+    Focus,
+}
+
+impl Interaction {
+    /// Index of this state in a node's three slots.
+    pub(crate) fn index(self) -> usize {
+        match self {
+            Interaction::Active => 0,
+            Interaction::Hover => 1,
+            Interaction::Focus => 2,
+        }
+    }
+
+    /// The mount name (`"active"`, `"hover"`, `"focus"`).
+    pub fn name(self) -> &'static str {
+        match self {
+            Interaction::Active => "active",
+            Interaction::Hover => "hover",
+            Interaction::Focus => "focus",
+        }
+    }
+
+    pub(crate) fn from_index(index: usize) -> Interaction {
+        match index {
+            0 => Interaction::Active,
+            1 => Interaction::Hover,
+            _ => Interaction::Focus,
+        }
+    }
+}
+
 /// A non-style property of a host node.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Prop {
@@ -372,6 +413,14 @@ pub enum Prop {
     Keyboard(KeyboardType),
     /// `disabled`: the input ignores edits.
     Disabled(bool),
+    /// `activeStyle` / `hoverStyle` / `focusStyle`. `None` clears it.
+    /// Paint only: the platform applies it, and layout does not change.
+    StateStyle {
+        /// Which state.
+        interaction: Interaction,
+        /// The view and text paint. `None` clears the state.
+        paint: Option<Box<(crate::style::ViewStyle, crate::style::TextStyle)>>,
+    },
 }
 
 /// A mutation produced by the JS renderer.

@@ -328,3 +328,68 @@ fn platform_os_is_the_host() {
     .unwrap();
     assert_eq!(host.global_string("__os").as_deref(), Some("web"));
 }
+
+/// `activeStyle` is paint in the mount batch. Its `width` is not layout.
+#[test]
+fn active_style_is_paint_the_platform_applies() {
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r##"
+        import { mount } from "@nlayer/runtime";
+        import { element, prop, append, text } from "nlayer:rt";
+
+        function App() {
+            const view = element("view");
+            prop(view, "style", { width: 80, height: 40 });
+            prop(view, "activeStyle", { width: 10, backgroundColor: "red", color: "#00ff00" });
+            prop(view, "hoverStyle", false);
+            const block = element("text");
+            append(block, text("hi"));
+            append(view, block);
+            return view;
+        }
+        mount(App);
+        "##,
+    )
+    .unwrap();
+    let mut core = core();
+    let batch = frame(&host, &mut core);
+    let view = batch
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MountItem::Create {
+                id,
+                kind: ViewKind::View,
+                ..
+            } => Some(*id),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(frame_of(&batch, view).unwrap().size.width, Points(80.0));
+    let paint = batch.items.iter().find_map(|item| match item {
+        MountItem::StateStyle {
+            id,
+            interaction: nlayer_core::Interaction::Active,
+            view: paint,
+            text,
+        } if *id == view => Some((paint, text)),
+        _ => None,
+    });
+    let (view, text) = paint.expect("active paint");
+    assert_eq!(
+        view.background_color,
+        nlayer_core::Color::rgba(255, 0, 0, 255)
+    );
+    assert_eq!(text.color, Some(nlayer_core::Color::rgba(0, 255, 0, 255)));
+    assert!(
+        !batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::StateStyle {
+                interaction: nlayer_core::Interaction::Hover,
+                ..
+            }
+        )),
+        "a cleared hover style that was never set is not sent"
+    );
+}

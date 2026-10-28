@@ -73,6 +73,43 @@ fn a_style_is_one_class_and_its_border_is_separate() {
     );
 }
 
+#[test]
+fn a_state_style_is_a_rule_the_page_applies() {
+    let mut view = ViewStyle {
+        background_color: Color::rgba(255, 0, 0, 255),
+        ..ViewStyle::default()
+    };
+    view.borders.widths = Edges::all(px(2.0));
+    let text = nlayer_core::style::TextStyle {
+        color: Some(Color::rgba(0, 255, 0, 255)),
+        ..nlayer_core::style::TextStyle::default()
+    };
+    let batch = MountBatch {
+        items: vec![MountItem::StateStyle {
+            id: 2,
+            interaction: nlayer_core::Interaction::Hover,
+            view: Box::new(view),
+            text,
+        }],
+    };
+    let json = Encoder::new().encode(&batch);
+    let parsed = items(&json);
+    let rule = parsed.iter().find(|item| item[0] == "rule").unwrap();
+    assert_eq!(rule[1], "i2h");
+    assert_eq!(rule[2], 3);
+    assert_eq!(rule[3], ":hover");
+    assert!(
+        rule[5]
+            .as_str()
+            .unwrap()
+            .contains("background-color:#ff0000")
+    );
+    let applied = parsed.iter().find(|item| item[0] == "st").unwrap();
+    assert_eq!(applied[1], 2);
+    assert_eq!(applied[2], "hover");
+    assert_eq!(applied[3], "i2h");
+}
+
 const APP: &str = r#"
 import { mount } from "@nlayer/runtime";
 import { Image, Input, Scroll, Text, View } from "@nlayer/ui";

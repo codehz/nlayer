@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::{
     geometry::{Bounds, Points, Size},
-    ops::{Command, EventMask, ImageSource, KeyboardType, NodeId, ResizeMode},
+    ops::{Command, EventMask, ImageSource, Interaction, KeyboardType, NodeId, ResizeMode},
     style::{TextAlign, ViewStyle},
     text::{AttributedText, ResolvedTextStyle, TextLayout},
 };
@@ -74,6 +74,19 @@ pub enum MountItem {
         id: NodeId,
         /// New style.
         style: Box<ViewStyle>,
+    },
+    /// Paint for a pointer state (`activeStyle`, `hoverStyle`, `focusStyle`).
+    /// A default view style and text style clears it. Layout does not use
+    /// this item: the platform paints it over the view's own style.
+    StateStyle {
+        /// View.
+        id: NodeId,
+        /// Which state.
+        interaction: Interaction,
+        /// Visual style. The default clears the view paint.
+        view: Box<ViewStyle>,
+        /// Text paint. The default clears it.
+        text: crate::style::TextStyle,
     },
     /// Set the content of a text view.
     Text {

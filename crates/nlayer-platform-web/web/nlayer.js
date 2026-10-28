@@ -6,7 +6,8 @@
 // from nsh's DOM mounter and cut to views, text, images, one-axis scroll
 // views and single-line inputs: absolute frames, generated classes, a
 // border overlay, a scroll spacer and a field whose value ignores a stale
-// edit count.
+// edit count. `activeStyle`, `hoverStyle` and `focusStyle` are rules the
+// page applies (`rule`) while the pointer state holds (`st`).
 
 /**
  * The style classes of the document. A class named after its CSS
@@ -59,6 +60,34 @@ function swapClass(el, slot, name) {
   if (old) el.classList.remove(old);
   if (name) el.classList.add(name);
   el[slot] = name;
+}
+
+/**
+ * A state rule. `selector` already includes the class, the pseudo-class
+ * and whatever it beats. An empty `text` clears a rule the page already
+ * has and does not add one.
+ */
+function defineSelector(doc, selector, text) {
+  const rule = CLASSES.rules.get(selector);
+  if (!text) {
+    if (rule) rule.style.cssText = "";
+    return;
+  }
+  if (rule) {
+    rule.style.cssText = text;
+    return;
+  }
+  const sheet = classSheet(doc, "nl-states");
+  if (typeof sheet.insertRule === "function") {
+    const i = sheet.insertRule(`${selector}{${text}}`, sheet.cssRules.length);
+    CLASSES.rules.set(selector, sheet.cssRules[i]);
+  } else {
+    const entry = { style: { cssText: text }, cssText: `${selector}{${text}}` };
+    sheet.cssRules = sheet.cssRules ?? [];
+    sheet.cssRules.push(entry);
+    sheet.textContent = (sheet.textContent ?? "") + entry.cssText;
+    CLASSES.rules.set(selector, entry);
+  }
 }
 
 /** Installs the base rules once. */
@@ -149,6 +178,27 @@ export class Player {
       this.host.press?.(id);
     });
     this.views.set(id, el);
+  }
+
+  op_rule([, name, weight, pseudo, tail, text]) {
+    const cls = this.styleClass(name);
+    if (!cls) return;
+    const selector = `.${cls}`.repeat(weight) + pseudo + ":not(.nl-disabled)" + (tail ?? "");
+    defineSelector(this.doc, selector, text ?? "");
+  }
+
+  op_st([, id, which, name]) {
+    const el = this.view(id);
+    if (!el) return;
+    const slot = which === "active" ? "_active" : which === "focus" ? "_focus" : "_hover";
+    swapClass(el, slot, this.styleClass(name));
+    if (which === "focus") {
+      if (name && el._kind !== "input") el.tabIndex = 0;
+      else {
+        el.tabIndex = undefined;
+        el.removeAttribute?.("tabindex");
+      }
+    }
   }
 
   op_i([, parentId, childId, beforeId]) {
@@ -287,6 +337,7 @@ export class Player {
     field.type = config.secure ? "password" : config.keyboard === "email" ? "email" : config.keyboard === "phone" ? "tel" : "text";
     field.inputMode = config.keyboard === "number" ? "numeric" : config.keyboard === "phone" ? "tel" : config.keyboard === "email" ? "email" : "text";
     field.disabled = !!config.disabled;
+    el.classList.toggle("nl-disabled", !!config.disabled);
     field.dir = config.rtl ? "rtl" : "ltr";
   }
 

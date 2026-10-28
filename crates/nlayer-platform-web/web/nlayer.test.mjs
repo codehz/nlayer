@@ -199,3 +199,42 @@ test("a batch becomes views, text, an image, a scroll and an input", () => {
 
   assert.equal(root.children.length > 0, true);
 });
+
+test("active, hover and focus styles are rules on the view", () => {
+  const { player } = page();
+  player.apply([
+    ["c", 2, "view"],
+    ["i", 1, 2, null],
+    ["rule", "i2a", 4, ":active", "", "background-color:#ff0000;"],
+    ["rule", "i2a", 4, ":active", " > .nl-border", ""],
+    ["rule", "i2a", 4, ":active", " .nl-text span", "color:#00ff00;"],
+    ["rule", "i2a", 4, ":active", " > .nl-field", "color:#00ff00;"],
+    ["st", 2, "active", "i2a"],
+    ["rule", "i2f", 2, ":focus-within", "", ""],
+    ["rule", "i2f", 2, ":focus-within", " > .nl-border", ""],
+    ["rule", "i2f", 2, ":focus-within", " .nl-text span", ""],
+    ["rule", "i2f", 2, ":focus-within", " > .nl-field", ""],
+    ["st", 2, "focus", "i2f"],
+  ]);
+  const view = player.view(2);
+  assert.ok(view.classList.contains("nl-p-i2a"));
+  assert.ok(view.classList.contains("nl-p-i2f"));
+  assert.equal(view.tabIndex, 0);
+  const sheet = player.doc.head.children.find((el) => el.id === "nl-states");
+  const rules = sheet.sheet.cssRules.map((rule) => rule.cssText);
+  assert.ok(rules.some((rule) => rule.startsWith(".nl-p-i2a.nl-p-i2a.nl-p-i2a.nl-p-i2a:active:not(.nl-disabled){") && rule.includes("background-color:#ff0000")));
+  assert.ok(rules.some((rule) => rule.includes(".nl-text span") && rule.includes("color:#00ff00")));
+  player.apply([
+    ["rule", "i2a", 4, ":active", "", ""],
+    ["st", 2, "active", null],
+    ["st", 2, "focus", null],
+  ]);
+  assert.equal(view.classList.contains("nl-p-i2a"), false);
+  assert.equal(view.tabIndex, undefined);
+
+  player.apply([
+    ["c", 3, "input"],
+    ["in", 3, null, { placeholder: "", secure: false, keyboard: "text", disabled: true, rtl: false }],
+  ]);
+  assert.ok(player.view(3).classList.contains("nl-disabled"));
+});

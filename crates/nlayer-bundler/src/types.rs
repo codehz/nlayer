@@ -258,18 +258,36 @@ export type Children = unknown;
 
 export interface ViewProps {
   style?: StyleProp<ViewStyle>;
+  /** Painted while pressed. The platform applies it; layout does not change. */
+  activeStyle?: StyleProp<ViewStyle>;
+  /** Painted while a pointer is over it. The platform applies it; layout does not change. */
+  hoverStyle?: StyleProp<ViewStyle>;
+  /** Painted while it has focus. The platform applies it; layout does not change. */
+  focusStyle?: StyleProp<ViewStyle>;
   children?: Children;
   onPress?: () => void;
 }
 
 export interface TextProps {
   style?: StyleProp<TextStyle>;
+  /** Painted while pressed. The platform applies it; layout does not change. */
+  activeStyle?: StyleProp<TextStyle>;
+  /** Painted while a pointer is over it. The platform applies it; layout does not change. */
+  hoverStyle?: StyleProp<TextStyle>;
+  /** Painted while it has focus. The platform applies it; layout does not change. */
+  focusStyle?: StyleProp<TextStyle>;
   children?: Children;
   onPress?: () => void;
 }
 
 export interface ImageProps {
   style?: StyleProp<ViewStyle>;
+  /** Painted while pressed. The platform applies it; layout does not change. */
+  activeStyle?: StyleProp<ViewStyle>;
+  /** Painted while a pointer is over it. The platform applies it; layout does not change. */
+  hoverStyle?: StyleProp<ViewStyle>;
+  /** Painted while it has focus. The platform applies it; layout does not change. */
+  focusStyle?: StyleProp<ViewStyle>;
   /** A URL or a bundled image import. */
   src?: string | ImageAsset;
   onPress?: () => void;
@@ -288,6 +306,12 @@ export interface ScrollProps extends ViewProps {
 
 export interface InputProps {
   style?: StyleProp<TextStyle>;
+  /** Painted while pressed. The platform applies it; layout does not change. */
+  activeStyle?: StyleProp<TextStyle>;
+  /** Painted while a pointer is over it. The platform applies it; layout does not change. */
+  hoverStyle?: StyleProp<TextStyle>;
+  /** Painted while it has focus. The platform applies it; layout does not change. */
+  focusStyle?: StyleProp<TextStyle>;
   value?: string;
   onChange?: (value: string) => void;
   placeholder?: string;
@@ -442,6 +466,10 @@ mod tests {
             );
         }
         assert!(ui.contains("readonly os: \"web\" | \"ios\" | \"android\""));
+        assert!(ui.contains("activeStyle?:"));
+        assert!(ui.contains("hoverStyle?:"));
+        assert!(ui.contains("focusStyle?:"));
+        assert!(!ui.contains("disabledStyle"));
         assert!(!runtime.contains("resource"));
         assert!(text("styles.d.ts").contains("gridTemplateColumns?:"));
         assert!(!text("styles.d.ts").contains("boxShadow?:"));

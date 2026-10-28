@@ -3,8 +3,9 @@
 //! Apply, commit and frame emission for views, text, images, scroll views
 //! and single-line inputs, extracted from `nsh_core::core` and cut to those
 //! hosts. `env()` on padding and margin follows the surface safe area and
-//! the keyboard inset. Inline views inside text, text selection and links
-//! are not part of this slice.
+//! the keyboard inset. `activeStyle`, `hoverStyle` and `focusStyle` are
+//! stored and sent to the platform; they do not change layout. Inline views
+//! inside text, text selection and links are not part of this slice.
 
 mod layout_tree;
 
@@ -19,7 +20,9 @@ use rustc_hash::FxHashSet;
 use crate::{
     geometry::{Bounds, Edges, Percentage, Points, Size, rect},
     mount::{InputConfig, MountBatch, MountItem, ViewKind},
-    ops::{Command, EventMask, ImageSource, NodeId, Op, Prop, ROOT_ID, ResizeMode, Tag},
+    ops::{
+        Command, EventMask, ImageSource, Interaction, NodeId, Op, Prop, ROOT_ID, ResizeMode, Tag,
+    },
     style::{self, EllipsizeMode, EnvEdges, Style, TextAlign, TextStyle, ViewStyle},
     text::{AttributedText, MeasureCache, ResolvedTextStyle, TextEngine, TextLayout},
 };
@@ -48,6 +51,8 @@ mod dirty {
     pub(super) const INPUT: u32 = 1 << 6;
     /// Emit [`crate::MountItem::InputValue`].
     pub(super) const INPUT_VALUE: u32 = 1 << 7;
+    /// Emit [`crate::MountItem::StateStyle`] for the slots in `state_dirty`.
+    pub(super) const STATE: u32 = 1 << 8;
 }
 
 /// Host kind.
@@ -152,6 +157,13 @@ struct InputState {
     placeholder_measured: bool,
 }
 
+/// Paint for one pointer state. Not the node's layout style.
+#[derive(Debug, Clone, PartialEq)]
+struct StatePaint {
+    view: ViewStyle,
+    text: TextStyle,
+}
+
 struct Node {
     id: NodeId,
     kind: Kind,
@@ -199,6 +211,10 @@ struct Node {
     dirty: u32,
     queued: bool,
     text_queued: bool,
+    /// `activeStyle`, `hoverStyle`, `focusStyle`, in that order.
+    state: [Option<StatePaint>; 3],
+    /// Slots of [`Self::state`] to send on the next [`dirty::STATE`].
+    state_dirty: u8,
 }
 impl Node {
     fn new(id: NodeId, kind: Kind) -> Self {
@@ -230,6 +246,8 @@ impl Node {
             dirty: 0,
             queued: false,
             text_queued: false,
+            state: [None, None, None],
+            state_dirty: 0,
         }
     }
 }
@@ -727,6 +745,18 @@ impl<M: TextEngine> Core<M> {
                 input.config.disabled = disabled;
                 self.mark(key, dirty::INPUT);
             }
+            Prop::StateStyle { interaction, paint } => {
+                let slot = interaction.index();
+                let next = paint.map(|paint| StatePaint {
+                    view: paint.0,
+                    text: paint.1,
+                });
+                if self.nodes[key as usize].state[slot] != next {
+                    self.nodes[key as usize].state[slot] = next;
+                    self.nodes[key as usize].state_dirty |= 1 << slot;
+                    self.mark(key, dirty::STATE);
+                }
+            }
         }
         Ok(())
     }
@@ -1002,6 +1032,21 @@ impl<M: TextEngine> Core<M> {
                 flags |= dirty::INPUT_VALUE;
             }
         }
+        let slots = node
+            .state
+            .iter()
+            .enumerate()
+            .fold(node.state_dirty, |slots, (i, paint)| {
+                if paint.is_some() {
+                    slots | (1 << i)
+                } else {
+                    slots
+                }
+            });
+        if slots != 0 {
+            node.state_dirty = slots;
+            flags |= dirty::STATE;
+        }
         self.mount.push(MountItem::Create {
             id,
             kind: kind.view_kind(),
@@ -1097,6 +1142,14 @@ impl<M: TextEngine> Core<M> {
             if flags & (dirty::INPUT | dirty::INPUT_VALUE) != 0 {
                 self.emit_input(key, id, flags);
             }
+            if flags & dirty::STATE != 0 {
+                let slots = mem::take(&mut self.nodes[key as usize].state_dirty);
+                for slot in 0..3 {
+                    if slots & (1 << slot) != 0 {
+                        self.emit_state(key, id, slot);
+                    }
+                }
+            }
         }
     }
 
@@ -1114,6 +1167,33 @@ impl<M: TextEngine> Core<M> {
             style.transform = style.transform.resolve_fractions(size);
         }
         style
+    }
+
+    /// One pointer state's paint, with fractional translations resolved
+    /// against the current frame. A default style clears the state.
+    fn emit_state(&mut self, key: Key, id: NodeId, slot: usize) {
+        let node = &self.nodes[key as usize];
+        let (view, text) = match &node.state[slot] {
+            Some(paint) => {
+                let mut view = paint.view.clone();
+                if view.transform.has_fractions() {
+                    let size = if node.frame.size.width.is_nan() {
+                        Size::default()
+                    } else {
+                        node.frame.size
+                    };
+                    view.transform = view.transform.resolve_fractions(size);
+                }
+                (view, paint.text)
+            }
+            None => (ViewStyle::default(), TextStyle::default()),
+        };
+        self.mount.push(MountItem::StateStyle {
+            id,
+            interaction: Interaction::from_index(slot),
+            view: Box::new(view),
+            text,
+        });
     }
 
     fn positioning_parent(&self, layout: LayoutId) -> Option<LayoutId> {
@@ -1312,20 +1392,42 @@ impl<M: TextEngine> Core<M> {
     }
 
     fn set_frame(&mut self, key: Key, frame: Bounds<Points>) {
-        let node = &mut self.nodes[key as usize];
-        if node.frame != frame {
+        let (id, is_text, restyle, fractional) = {
+            let node = &mut self.nodes[key as usize];
+            if node.frame == frame {
+                return;
+            }
             node.frame = frame;
-            let (id, is_text) = (node.id, node.kind == Kind::Text);
-            self.mount.push(MountItem::Frame { id, frame });
-            if node.view_style.transform.has_fractions() {
-                let style = self.mounted_view_style(key);
-                self.mount.push(MountItem::ViewStyle { id, style });
-            }
-            // The content box is inside this frame. A size or padding change
-            // does not rebuild the string, so the text is sent again from here.
-            if is_text {
-                self.queue_text(key);
-            }
+            let fractional: Vec<usize> = node
+                .state
+                .iter()
+                .enumerate()
+                .filter_map(|(slot, paint)| {
+                    paint
+                        .as_ref()
+                        .is_some_and(|paint| paint.view.transform.has_fractions())
+                        .then_some(slot)
+                })
+                .collect();
+            (
+                node.id,
+                node.kind == Kind::Text,
+                node.view_style.transform.has_fractions(),
+                fractional,
+            )
+        };
+        self.mount.push(MountItem::Frame { id, frame });
+        if restyle {
+            let style = self.mounted_view_style(key);
+            self.mount.push(MountItem::ViewStyle { id, style });
+        }
+        for slot in fractional {
+            self.emit_state(key, id, slot);
+        }
+        // The content box is inside this frame. A size or padding change
+        // does not rebuild the string, so the text is sent again from here.
+        if is_text {
+            self.queue_text(key);
         }
     }
 
@@ -2179,8 +2281,8 @@ mod tests {
     use super::*;
     use crate::{
         geometry::{px, size, size_pt},
-        ops::{EventKind, ImageScales, ImageSource, KeyboardType, Prop, ResizeMode},
-        style::{StylePatch, StyleValue},
+        ops::{EventKind, ImageScales, ImageSource, Interaction, KeyboardType, Prop, ResizeMode},
+        style::{Color, StylePatch, StyleValue, TextStyle, ViewStyle},
         text::{AttributedText, TextEngine, TextLayout},
     };
 
@@ -3906,5 +4008,78 @@ mod tests {
         assert_eq!(scroll_content(&batch, 2), size_pt(220.0, 50.0));
         assert_eq!(frame(&batch, 3).origin.x, px(120.0));
         assert_eq!(frame(&batch, 4).origin.x, px(20.0));
+    }
+
+    #[test]
+    fn state_styles_paint_without_changing_layout() {
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::View,
+        })
+        .unwrap();
+        apply_style(&mut c, 2, sized(80.0, 40.0));
+        let mut active = Style::default();
+        active.set("width", StyleValue::Number(10.0)).unwrap();
+        active
+            .set("backgroundColor", StyleValue::Str("#ff0000"))
+            .unwrap();
+        active.text.color = Some(Color(0x00ff00ff));
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::StateStyle {
+                interaction: Interaction::Active,
+                paint: Some(Box::new((active.view, active.text))),
+            },
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        assert_eq!(frame(&batch, 2).size.width, px(80.0));
+        let (view, text) = batch
+            .items
+            .iter()
+            .find_map(|item| match item {
+                MountItem::StateStyle {
+                    id: 2,
+                    interaction: Interaction::Active,
+                    view,
+                    text,
+                } => Some((view, text)),
+                _ => None,
+            })
+            .expect("active paint");
+        assert_eq!(view.background_color, Color::rgba(255, 0, 0, 255));
+        assert_eq!(text.color, Some(Color(0x00ff00ff)));
+
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::StateStyle {
+                interaction: Interaction::Active,
+                paint: None,
+            },
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        assert!(batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::StateStyle {
+                id: 2,
+                interaction: Interaction::Active,
+                view,
+                text,
+            } if **view == ViewStyle::default() && *text == TextStyle::default()
+        )));
+        assert!(
+            batch
+                .items
+                .iter()
+                .all(|item| !matches!(item, MountItem::Frame { id: 2, .. }))
+        );
     }
 }

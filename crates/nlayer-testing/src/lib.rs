@@ -300,7 +300,9 @@ impl Screen {
                     input.value = text.clone();
                 }
             }
-            MountItem::InputContent { .. } | MountItem::Command { .. } => {}
+            MountItem::InputContent { .. }
+            | MountItem::Command { .. }
+            | MountItem::StateStyle { .. } => {}
         }
     }
 

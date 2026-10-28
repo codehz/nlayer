@@ -10,15 +10,17 @@
 //! Copied from `nsh-platform-web/src/encode.rs` and `text/css.rs`. The CSS
 //! is the v1 whitelist only (fill, radius, opacity, overflow, static
 //! transform, transform origin, border). Text is the attributed spans, not
-//! `WebLayout` glyph runs.
+//! `WebLayout` glyph runs. `activeStyle`, `hoverStyle` and `focusStyle`
+//! are rules on the view (`["rule", ...]`) that the page applies; they do
+//! not replace the view's class.
 
 use std::fmt::Write as _;
 
 use nlayer_core::{
-    Color, Command, EventKind, EventMask, InputConfig, KeyboardType, MountBatch, MountItem, NodeId,
-    ResizeMode, ViewKind,
+    Color, Command, EventKind, EventMask, InputConfig, Interaction, KeyboardType, MountBatch,
+    MountItem, NodeId, ResizeMode, ViewKind,
     geometry::{DefiniteLength, Points, REM_SIZE, relative},
-    style::{BorderStyle, TextAlign, TransformOrigin, ViewStyle},
+    style::{BorderStyle, TextAlign, TextStyle, TransformOrigin, ViewStyle},
     text::{AttributedText, ResolvedTextStyle},
     transform::{Transform, TransformKind},
 };
@@ -216,6 +218,12 @@ impl Encoder {
                     .bool(*animated)
                     .end();
             }
+            MountItem::StateStyle {
+                id,
+                interaction,
+                view,
+                text,
+            } => self.state(out, *id, *interaction, view, text),
         }
     }
 
@@ -253,6 +261,46 @@ impl Encoder {
             out.class_arg(class).str(css).end();
         }
         class
+    }
+
+    /// `activeStyle` / `hoverStyle` / `focusStyle`. The class stays on the
+    /// view; the page paints the rules while that state holds. Active beats
+    /// hover, which beats focus, whatever order the rules were defined in.
+    fn state(
+        &mut self,
+        out: &mut Out,
+        id: NodeId,
+        interaction: Interaction,
+        view: &ViewStyle,
+        text: &TextStyle,
+    ) {
+        let (token, pseudo, weight) = match interaction {
+            Interaction::Hover => ("h", ":hover", 3),
+            Interaction::Active => ("a", ":active", 4),
+            Interaction::Focus => ("f", ":focus-within", 2),
+        };
+        let name = format!("i{id}{token}");
+        let (view_css, border) = view_css(view);
+        let text_css = state_text_css(text);
+        let empty = view_css.is_empty() && border.is_none() && text_css.is_empty();
+        rule(out, &name, weight, pseudo, "", &view_css);
+        rule(
+            out,
+            &name,
+            weight,
+            pseudo,
+            " > .nl-border",
+            border.as_deref().unwrap_or(""),
+        );
+        rule(out, &name, weight, pseudo, " .nl-text span", &text_css);
+        rule(out, &name, weight, pseudo, " > .nl-field", &text_css);
+        out.item("st").num(id).str(interaction.name());
+        if empty {
+            out.raw("null");
+        } else {
+            out.str(&name);
+        }
+        out.end();
     }
 }
 
@@ -523,6 +571,48 @@ fn view_css(s: &ViewStyle) -> (String, Option<String>) {
         None
     };
     (css, border)
+}
+
+fn rule(out: &mut Out, name: &str, weight: u8, pseudo: &str, tail: &str, text: &str) {
+    out.item("rule")
+        .str(name)
+        .num(weight)
+        .str(pseudo)
+        .str(tail)
+        .str(text)
+        .end();
+}
+
+/// Text paint a state style set. Unset properties stay the view's.
+fn state_text_css(text: &TextStyle) -> String {
+    let mut css = String::new();
+    if let Some(color) = text.color {
+        let _ = write!(css, "color:{};", css_color(color));
+    }
+    if let Some(size) = text.font_size {
+        let _ = write!(css, "font-size:{}px;", size.0);
+    }
+    if let Some(weight) = text.font_weight {
+        let _ = write!(css, "font-weight:{weight};");
+    }
+    if let Some(italic) = text.italic {
+        css.push_str(if italic {
+            "font-style:italic;"
+        } else {
+            "font-style:normal;"
+        });
+    }
+    if let Some(height) = text.line_height {
+        let _ = write!(css, "line-height:{}px;", height.0);
+    } else if let Some(multiple) = text.line_height_multiple {
+        let _ = write!(css, "line-height:{multiple};");
+    }
+    if let Some(align) = text.text_align
+        && let Some(align) = align_css(align, false)
+    {
+        let _ = write!(css, "text-align:{align};");
+    }
+    css
 }
 
 fn border_style(style: BorderStyle) -> &'static str {

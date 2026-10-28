@@ -29,6 +29,7 @@ pub use color::{Hsla, Rgba};
 pub use core::{ApplyError, Core};
 pub use mount::{InputConfig, MountBatch, MountItem, ViewKind};
 pub use ops::{
-    Command, EventKind, IMAGE_SCALES, ImageScales, ImageSource, KeyboardType, Op, Prop, Tag,
+    Command, EventKind, IMAGE_SCALES, ImageScales, ImageSource, Interaction, KeyboardType, Op,
+    Prop, Tag,
 };
 pub use style::Color;
