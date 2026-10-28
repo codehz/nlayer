@@ -1,6 +1,6 @@
 [package]
 name = "nlayer-platform-ios"
-description = "UIKit host: mounts views, text, images and one-axis scroll views from the engine's batches."
+description = "UIKit host: mounts views, text, images, one-axis scroll views and single-line inputs from the engine's batches."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -57,6 +57,8 @@ objc2-ui-kit = { version = "0.3.2", default-features = false, features = [
   "UISceneSession",
   "UIScreen",
   "UIScrollView",
+  "UITextField",
+  "UIControl",
   "UIView",
   "UIViewController",
   "UIWindow",

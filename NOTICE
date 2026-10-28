@@ -110,9 +110,11 @@ Copied files:
   modules; nsh's canvas, list, gesture and animation facades are not copied.
 - `crates/nlayer-platform-ios` from `crates/nsh-platform-ios`
   (`app.rs`, `surface.rs`, `mount.rs`, `text.rs`, `text_view.rs`,
-  `decor.rs`, `image.rs`): one window, frames, fill, radius, opacity,
-  overflow, a static transform, solid and dashed borders, `onPress`,
-  `activeStyle` / `hoverStyle`, safe area, CoreText measurement, one-axis
-  scroll and PNG / JPEG / WebP from a bundled file or `http(s)`. Inputs,
-  refresh, zoom, paging, disk cache, SVG and GIF frames are not mounted.
-  The runner binary is `nlayer-ios-app`.
+  `decor.rs`, `image.rs`, `input.rs`): one window, frames, fill, radius,
+  opacity, overflow, a static transform, solid and dashed borders, `onPress`,
+  `activeStyle` / `hoverStyle` / `focusStyle`, safe area, CoreText
+  measurement, one-axis scroll, PNG / JPEG / WebP from a bundled file or
+  `http(s)`, and a single-line field (`value`, `onChange`, `placeholder`,
+  `disabled`, `secureTextEntry`, `keyboardType`). Refresh, zoom, paging,
+  disk cache, SVG, GIF frames, multiline input and composition events are
+  not mounted. The runner binary is `nlayer-ios-app`.

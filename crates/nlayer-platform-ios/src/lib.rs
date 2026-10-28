@@ -6,11 +6,13 @@
 //! the views draw.
 //!
 //! Extracted from `nsh-platform-ios` (`app.rs`, `surface.rs`, `mount.rs`,
-//! `text.rs`, `text_view.rs`, `decor.rs`, `image.rs`) and cut to views, text,
-//! images and one-axis scroll views: frames, fill, radius, opacity, overflow,
-//! a static transform, solid or dashed uniform borders, per-side solid
-//! borders, `onPress`, `activeStyle` / `hoverStyle`, safe area and PNG, JPEG
-//! or WebP from a bundled file or `http(s)`. Inputs, refresh, zoom, paging
+//! `text.rs`, `text_view.rs`, `decor.rs`, `image.rs`, `input.rs`) and cut to
+//! views, text, images, one-axis scroll views and single-line inputs: frames,
+//! fill, radius, opacity, overflow, a static transform, solid or dashed
+//! uniform borders, per-side solid borders, `onPress`, `activeStyle` /
+//! `hoverStyle` / `focusStyle`, safe area, PNG, JPEG or WebP from a bundled
+//! file or `http(s)`, and a field with `value`, `onChange`, `placeholder`,
+//! `disabled`, `secureTextEntry` and `keyboardType`. Refresh, zoom, paging
 //! and text selection are not mounted.
 
 #![cfg_attr(target_os = "ios", deny(unsafe_op_in_unsafe_fn))]
@@ -22,6 +24,7 @@ mod app;
 #[cfg(target_os = "ios")]
 mod host;
 mod image;
+mod input;
 #[cfg(target_os = "ios")]
 mod mount;
 #[cfg(target_os = "ios")]

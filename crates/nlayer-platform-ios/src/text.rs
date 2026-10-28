@@ -89,6 +89,14 @@ fn make_font(style: &ResolvedTextStyle) -> CFRetained<CTFont> {
     with_features(font, style.font_variant.0)
 }
 
+/// The same font [`make_font`] builds, as a `UIFont` a text field can hold.
+pub(crate) fn ui_font(style: &ResolvedTextStyle) -> Retained<UIFont> {
+    let font = make_font(style);
+    let ptr = CFRetained::into_raw(font).cast::<UIFont>();
+    // SAFETY: UIFont and CTFont are toll-free. The +1 reference moves over.
+    unsafe { Retained::from_raw(ptr.as_ptr()).expect("non-null font") }
+}
+
 fn with_features(font: CFRetained<CTFont>, variant: u8) -> CFRetained<CTFont> {
     if variant == 0 {
         return font;

@@ -1,9 +1,9 @@
 //! Applies one mount batch to UIKit views.
 //!
 //! Extracted from `nsh-platform-ios/src/mount.rs` (`set_frame`, the transform
-//! matrix, insert-below-sibling) and `decor.rs` (the clipping image layer and
-//! the picture layer inside it). Animation, gestures beyond press and hover,
-//! and inputs are not applied.
+//! matrix, insert-below-sibling), `decor.rs` (the clipping image layer) and
+//! `input.rs` (the single-line field). Animation and gestures beyond press
+//! and hover are not applied.
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -27,6 +27,7 @@ use objc2_ui_kit::{
     UIScrollView, UIScrollViewContentInsetAdjustmentBehavior, UIView,
 };
 
+use crate::input::Field;
 use crate::text_view::TextView;
 
 /// One native view and the paint the engine last set on it.
@@ -37,6 +38,8 @@ struct Slot {
     states: [Option<Paint>; 3],
     pressed: bool,
     hovered: bool,
+    /// This view, or a field inside it, has focus. `focusStyle` paints then.
+    focused: bool,
     press: Option<Retained<UILongPressGestureRecognizer>>,
     hover: Option<Retained<UIHoverGestureRecognizer>>,
     /// A dashed or dotted uniform border, above the children.
@@ -57,6 +60,7 @@ enum Native {
     Text(Retained<TextView>),
     Image(Retained<UIView>),
     Scroll(Retained<UIScrollView>),
+    Input(Retained<Field>),
 }
 
 impl Native {
@@ -65,6 +69,7 @@ impl Native {
             Native::View(view) | Native::Image(view) => view,
             Native::Text(view) => view,
             Native::Scroll(view) => view,
+            Native::Input(view) => view,
         }
     }
 }
@@ -90,6 +95,31 @@ define_class!(
         #[unsafe(method(hovered:))]
         fn hovered(&self, gesture: &UIHoverGestureRecognizer) {
             self.forward(gesture.view().as_deref(), gesture.state(), false);
+        }
+
+        #[unsafe(method(edited:))]
+        fn edited(&self, sender: &AnyObject) {
+            let Some(field) = sender.downcast_ref::<Field>() else {
+                return;
+            };
+            let id = field.tag() as u32;
+            let Some(crate::input::TextUpdate::Report(text)) = field.edited() else {
+                return;
+            };
+            let Some(mounter) = self.ivars().mounter.borrow().upgrade() else {
+                return;
+            };
+            mounter.borrow().report_input(id, text);
+        }
+
+        #[unsafe(method(editingBegan:))]
+        fn editing_began(&self, sender: &AnyObject) {
+            self.focus_edit(sender, true);
+        }
+
+        #[unsafe(method(editingEnded:))]
+        fn editing_ended(&self, sender: &AnyObject) {
+            self.focus_edit(sender, false);
         }
     }
 
@@ -121,6 +151,21 @@ impl Relay {
             mounter.borrow_mut().hovered(id, state);
         }
     }
+
+    fn focus_edit(&self, sender: &AnyObject, on: bool) {
+        let Some(view) = sender.downcast_ref::<UIView>() else {
+            return;
+        };
+        let id = view.tag() as u32;
+        let Some(mounter) = self.ivars().mounter.borrow().upgrade() else {
+            return;
+        };
+        if on {
+            mounter.borrow_mut().begin_focus(id);
+        } else {
+            mounter.borrow_mut().end_focus(id);
+        }
+    }
 }
 
 /// The views of one surface. Touched only on the main thread.
@@ -133,6 +178,8 @@ pub(crate) struct Mounter {
     insets: nlayer_core::geometry::Edges<Points>,
     /// Directory `asset:/` paths are read from (the directory of `app.js`).
     assets: PathBuf,
+    /// The field that is editing, if one is.
+    focused: Option<NodeId>,
 }
 
 impl Mounter {
@@ -154,6 +201,7 @@ impl Mounter {
             viewport: Size::default(),
             insets: nlayer_core::geometry::Edges::default(),
             assets,
+            focused: None,
         }));
         CURRENT.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&mounter)));
         relay.bind(Rc::downgrade(&mounter));
@@ -212,6 +260,9 @@ impl Mounter {
                 }
             }
             MountItem::Delete { id } => {
+                if self.focused == Some(id) {
+                    self.end_focus(id);
+                }
                 if let Some(slot) = self.take(id) {
                     slot.native.view().removeFromSuperview();
                 }
@@ -302,9 +353,22 @@ impl Mounter {
                 source,
                 resize_mode,
             } => self.set_image(id, source, resize_mode),
-            MountItem::Input { .. }
-            | MountItem::InputValue { .. }
-            | MountItem::InputContent { .. } => {}
+            MountItem::Input { id, config } => {
+                if let Some(Native::Input(field)) = self.native(id) {
+                    field.configure(&config);
+                }
+                self.repaint(id);
+            }
+            MountItem::InputValue { id, text, count } => {
+                if let Some(Native::Input(field)) = self.native(id) {
+                    field.set_value(&text, count);
+                }
+            }
+            MountItem::InputContent { id, content } => {
+                if let Some(Native::Input(field)) = self.native(id) {
+                    field.set_content(content);
+                }
+            }
         }
     }
 
@@ -325,9 +389,7 @@ impl Mounter {
                 let (view, picture) = image_layers(self.mtm);
                 (Native::Image(view), Some(picture))
             }
-            // Inputs are not mounted. Their frames are ignored; children
-            // are not parented under them.
-            ViewKind::Input => return,
+            ViewKind::Input => (Native::Input(Field::new(self.mtm, &self.relay)), None),
         };
         let view = native.view();
         view.setTag(id as isize);
@@ -373,6 +435,10 @@ impl Mounter {
                     )
                 };
                 gesture.setMinimumPressDuration(0.0);
+                // A press on a field must still start editing.
+                if matches!(slot.native, Native::Input(_)) {
+                    gesture.setCancelsTouchesInView(false);
+                }
                 view.addGestureRecognizer(&gesture);
                 slot.press = Some(gesture);
             }
@@ -458,6 +524,63 @@ impl Mounter {
         if let Some(Native::Text(text)) = self.native(id) {
             text.set_color(text_color);
         }
+        if let Some(Native::Input(field)) = self.native(id) {
+            field.set_override_color(text_color);
+        }
+    }
+
+    fn report_input(&self, id: NodeId, text: String) {
+        if let Some(control) = &self.control {
+            control.input_changed(id, text);
+        }
+    }
+
+    fn begin_focus(&mut self, id: NodeId) {
+        if self.focused == Some(id) {
+            return;
+        }
+        if let Some(old) = self.focused {
+            let ids = self.chain(old);
+            self.mark_focused(&ids, false);
+        }
+        let ids = self.chain(id);
+        self.mark_focused(&ids, true);
+        self.focused = Some(id);
+    }
+
+    fn end_focus(&mut self, id: NodeId) {
+        if self.focused != Some(id) {
+            return;
+        }
+        let ids = self.chain(id);
+        self.focused = None;
+        self.mark_focused(&ids, false);
+    }
+
+    fn chain(&self, id: NodeId) -> Vec<NodeId> {
+        let Some(view) = self.view(id).map(|view| view.retain()) else {
+            return vec![id];
+        };
+        let mut ids = Vec::new();
+        let mut current = Some(view);
+        while let Some(view) = current {
+            let tag = view.tag() as u32;
+            ids.push(tag);
+            if tag == ROOT_ID {
+                break;
+            }
+            current = view.superview();
+        }
+        ids
+    }
+
+    fn mark_focused(&mut self, ids: &[NodeId], on: bool) {
+        for &id in ids {
+            if let Some(slot) = self.slot_mut(id) {
+                slot.focused = on;
+            }
+            self.repaint(id);
+        }
     }
 
     fn native(&self, id: NodeId) -> Option<&Native> {
@@ -495,6 +618,7 @@ impl Slot {
             states: [None, None, None],
             pressed: false,
             hovered: false,
+            focused: false,
             press: None,
             hover: None,
             dash: None,
@@ -516,13 +640,7 @@ fn state_index(interaction: Interaction) -> usize {
 /// non-default fields over it. Active beats hover, which beats focus.
 fn painted(slot: &Slot) -> ViewStyle {
     let mut style = slot.style.clone();
-    let over = if slot.pressed {
-        slot.states[state_index(Interaction::Active)].as_ref()
-    } else if slot.hovered {
-        slot.states[state_index(Interaction::Hover)].as_ref()
-    } else {
-        slot.states[state_index(Interaction::Focus)].as_ref()
-    };
+    let over = winning(slot);
     let Some(over) = over else { return style };
     let over = &over.view;
     if !over.background_color.is_transparent() {
@@ -553,14 +671,19 @@ fn painted(slot: &Slot) -> ViewStyle {
 }
 
 fn text_override(slot: &Slot) -> Option<Color> {
-    let over = if slot.pressed {
+    winning(slot)?.text.color
+}
+
+fn winning(slot: &Slot) -> Option<&Paint> {
+    if slot.pressed {
         slot.states[state_index(Interaction::Active)].as_ref()
     } else if slot.hovered {
         slot.states[state_index(Interaction::Hover)].as_ref()
-    } else {
+    } else if slot.focused {
         slot.states[state_index(Interaction::Focus)].as_ref()
-    }?;
-    over.text.color
+    } else {
+        None
+    }
 }
 
 fn paint_view(view: &UIView, style: &ViewStyle, slot: &mut Slot) {
