@@ -110,8 +110,9 @@ export type LengthValue = number | `${number}%`;
 /** A length from a CSS environment variable, on padding and margin:
  * `env(safe-area-inset-top)` (`-right`, `-bottom`, `-left`), `env(keyboard-inset-height)`
  * (0 while the keyboard is hidden), with an optional fallback (`env(name, 8px)`),
- * or one of them plus a length (`calc(env(name) + 8px)`). */
-export type EnvValue = `env(${string})` | `calc(${string})`;
+ * one of them plus a length (`calc(env(name) + 8px)`), or the larger of two
+ * known variables (`max(env(a), env(b))`, also inside that calc). */
+export type EnvValue = `env(${string})` | `calc(${string})` | `max(${string})`;
 
 /** One static transform step. Angles are degrees (`"45deg"`, `"0.5rad"` or a number). */
 export type TransformStep =

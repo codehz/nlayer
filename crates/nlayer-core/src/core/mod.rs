@@ -2108,6 +2108,15 @@ fn env_value(safe: Edges<Points>, keyboard: Points, var: style::EnvVar) -> Point
     }
 }
 
+/// The points `term` is now.
+fn env_term(safe: Edges<Points>, keyboard: Points, term: style::EnvTerm) -> Points {
+    use style::EnvTerm;
+    match term {
+        EnvTerm::Var(var) => env_value(safe, keyboard, var),
+        EnvTerm::Max(a, b) => env_value(safe, keyboard, a).max(env_value(safe, keyboard, b)),
+    }
+}
+
 /// Adds point insets to padding and margin lengths. Percentages and `auto`
 /// margins cannot take an addition, as in nsh.
 fn add_insets(layout: &mut TaffyStyle, padding: Edges<Points>, margin: Edges<Points>) {
@@ -2296,19 +2305,16 @@ impl<M: TextEngine> Core<M> {
 
 impl<M: TextEngine> Core<M> {
     fn env_insets(&self, env: &EnvEdges) -> [Edges<Points>; 2] {
-        let edges = |vars: &[Option<style::EnvVar>; 4]| Edges {
-            top: vars[0].map_or(Points::ZERO, |var| {
-                env_value(self.safe_area, self.keyboard_inset, var)
-            }),
-            right: vars[1].map_or(Points::ZERO, |var| {
-                env_value(self.safe_area, self.keyboard_inset, var)
-            }),
-            bottom: vars[2].map_or(Points::ZERO, |var| {
-                env_value(self.safe_area, self.keyboard_inset, var)
-            }),
-            left: vars[3].map_or(Points::ZERO, |var| {
-                env_value(self.safe_area, self.keyboard_inset, var)
-            }),
+        let edge = |term: Option<style::EnvTerm>| {
+            term.map_or(Points::ZERO, |term| {
+                env_term(self.safe_area, self.keyboard_inset, term)
+            })
+        };
+        let edges = |terms: &[Option<style::EnvTerm>; 4]| Edges {
+            top: edge(terms[0]),
+            right: edge(terms[1]),
+            bottom: edge(terms[2]),
+            left: edge(terms[3]),
         };
         [edges(&env.padding), edges(&env.margin)]
     }
@@ -3883,6 +3889,71 @@ mod tests {
     }
 
     #[test]
+    fn max_env_uses_the_larger_inset() {
+        let mut c = core();
+        c.set_safe_area(Edges {
+            bottom: px(34.0),
+            ..Edges::default()
+        });
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::View,
+        })
+        .unwrap();
+        let mut padded = Style::default();
+        padded
+            .set(
+                "paddingBottom",
+                StyleValue::Str(
+                    "calc(max(env(safe-area-inset-bottom), env(keyboard-inset-height)) + 8px)",
+                ),
+            )
+            .unwrap();
+        apply_style(&mut c, 2, padded);
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::View,
+        })
+        .unwrap();
+        apply_style(&mut c, 3, sized(10.0, 10.0));
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        // Keyboard hidden: safe area 34 + 8, around a 10pt child.
+        assert_eq!(frame(&batch, 2).size.height, px(52.0));
+
+        c.set_keyboard_inset(px(300.0));
+        let batch = c.commit().unwrap();
+        assert_eq!(frame(&batch, 2).size.height, px(318.0));
+
+        c.set_safe_area(Edges {
+            bottom: px(400.0),
+            ..Edges::default()
+        });
+        let batch = c.commit().unwrap();
+        assert_eq!(frame(&batch, 2).size.height, px(418.0));
+
+        // A shorter keyboard does not shrink below the safe area.
+        c.set_safe_area(Edges {
+            bottom: px(34.0),
+            ..Edges::default()
+        });
+        c.set_keyboard_inset(px(10.0));
+        let batch = c.commit().unwrap();
+        assert_eq!(frame(&batch, 2).size.height, px(52.0));
+    }
+
+    #[test]
     fn scroll_padding_follows_the_safe_area() {
         let mut c = core();
         c.set_safe_area(Edges {
@@ -4199,7 +4270,10 @@ mod tests {
         let batch = c.commit().unwrap();
         assert!(batch.items.iter().any(|item| matches!(
             item,
-            MountItem::TestId { id: 2, test_id: None }
+            MountItem::TestId {
+                id: 2,
+                test_id: None
+            }
         )));
         assert!(
             batch

@@ -1125,6 +1125,16 @@ pub enum EnvVar {
     KeyboardInsetHeight,
 }
 
+/// One `env()` use on a padding or margin edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnvTerm {
+    /// A single variable.
+    Var(EnvVar),
+    /// `max(env(a), env(b))`: the larger of the two live insets. A length
+    /// stays outside, in `calc()`.
+    Max(EnvVar, EnvVar),
+}
+
 impl EnvVar {
     /// The variable named `name`, if NSH has it.
     pub(crate) fn parse(name: &str) -> Option<Self> {
@@ -1144,9 +1154,9 @@ impl EnvVar {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct EnvEdges {
     /// The padding's.
-    pub(crate) padding: [Option<EnvVar>; 4],
+    pub(crate) padding: [Option<EnvTerm>; 4],
     /// The margin's.
-    pub(crate) margin: [Option<EnvVar>; 4],
+    pub(crate) margin: [Option<EnvTerm>; 4],
 }
 
 impl EnvEdges {
@@ -1157,16 +1167,34 @@ impl EnvEdges {
 }
 
 /// A padding or margin value using `env()`: `env(name)`, `env(name,
-/// <length>)`, `calc(env(name) + <length>)` or `calc(<length> +
-/// env(name))`. `None` when `s` uses no `env()`; else the length part (in
-/// points) and the variable (none when an unknown name's fallback stands
-/// in for it), or an error for anything else.
-pub(crate) fn env_length(s: &str) -> Option<Result<(f32, Option<EnvVar>), StyleError>> {
+/// <length>)`, `calc(env(name) + <length>)`, `calc(<length> + env(name))`,
+/// `max(env(a), env(b))`, or that `max` plus a length inside `calc()`.
+/// `None` when `s` uses no `env()`; else the length part (in points) and
+/// the term (none when an unknown name's fallback stands in for a single
+/// `env()`), or an error for anything else. `max` takes two known names
+/// and no fallback.
+pub(crate) fn env_length(s: &str) -> Option<Result<(f32, Option<EnvTerm>), StyleError>> {
     if !s.contains("env(") {
         return None;
     }
-    // One term: `env(...)` or a length.
-    fn term(s: &str) -> Option<(f32, Option<EnvVar>)> {
+    /// `env(name)` with a known name and no fallback.
+    fn bare_env(s: &str) -> Option<EnvVar> {
+        let args = s.trim().strip_prefix("env(")?.strip_suffix(')')?;
+        if args.contains(',') {
+            return None;
+        }
+        EnvVar::parse(args.trim())
+    }
+    // One term: `env(...)`, `max(env(...), env(...))`, or a length.
+    fn term(s: &str) -> Option<(f32, Option<EnvTerm>)> {
+        let s = s.trim();
+        if let Some(args) = s.strip_prefix("max(").and_then(|r| r.strip_suffix(')')) {
+            let parts = css::split_top(args, ',');
+            let [a, b] = parts.as_slice() else {
+                return None;
+            };
+            return Some((0.0, Some(EnvTerm::Max(bare_env(a)?, bare_env(b)?))));
+        }
         let Some(args) = s.strip_prefix("env(").and_then(|r| r.strip_suffix(')')) else {
             return Some((css::length(s)?, None));
         };
@@ -1175,7 +1203,7 @@ pub(crate) fn env_length(s: &str) -> Option<Result<(f32, Option<EnvVar>), StyleE
             None => (args.trim(), None),
         };
         match EnvVar::parse(name) {
-            Some(var) => Some((0.0, Some(var))),
+            Some(var) => Some((0.0, Some(EnvTerm::Var(var)))),
             // CSS: an unknown variable is its fallback.
             None => Some((css::length(fallback?)?, None)),
         }
@@ -1238,7 +1266,7 @@ fn env_points(v: StyleValue<'_>) -> Points {
 }
 
 /// A padding edge: its length and its `env()` term.
-fn padding_edge(v: StyleValue<'_>) -> Result<(LengthPercentage, Option<EnvVar>), StyleError> {
+fn padding_edge(v: StyleValue<'_>) -> Result<(LengthPercentage, Option<EnvTerm>), StyleError> {
     if let StyleValue::Str(s) = v
         && let Some(env) = env_length(s)
     {
@@ -1253,7 +1281,7 @@ fn padding_edge(v: StyleValue<'_>) -> Result<(LengthPercentage, Option<EnvVar>),
 }
 
 /// A margin edge: its length and its `env()` term.
-fn margin_edge(v: StyleValue<'_>) -> Result<(LengthPercentageAuto, Option<EnvVar>), StyleError> {
+fn margin_edge(v: StyleValue<'_>) -> Result<(LengthPercentageAuto, Option<EnvTerm>), StyleError> {
     if let StyleValue::Str(s) = v
         && let Some(env) = env_length(s)
     {
@@ -1781,8 +1809,8 @@ pub enum PropertyValue {
     /// `strokeDasharray` (empty: `none`).
     Dashes(Option<Arc<[Points]>>),
     /// A margin or padding of a length (points) plus an environment
-    /// variable (`calc(env(safe-area-inset-top) + 8px)`).
-    EnvLength(Points, EnvVar),
+    /// term (`calc(env(safe-area-inset-top) + 8px)`, or `max` of two).
+    EnvLength(Points, EnvTerm),
     /// `textAlignVertical`: 0% the top, 50% the middle, 100% the bottom.
     AlignVertical(Option<Percentage>),
     /// `numberOfLines` (`Some(0)`: no clamp).
@@ -3988,23 +4016,24 @@ mod tests {
     #[test]
     fn env_on_padding_and_margin() {
         use EnvVar::*;
+        let var = |v| Some(EnvTerm::Var(v));
         let mut s = Style::default();
         let k = StyleValue::Str;
         s.set("paddingBottom", k("env(keyboard-inset-height)"))
             .unwrap();
         assert_eq!(
             s.pending.env.padding,
-            [None, None, Some(KeyboardInsetHeight), None]
+            [None, None, var(KeyboardInsetHeight), None]
         );
         assert_eq!(s.layout.padding.bottom, LengthPercentage::length(0.0));
         // `calc()` adds a length, on either side.
         s.set("paddingTop", k("calc(env(safe-area-inset-top) + 8px)"))
             .unwrap();
-        assert_eq!(s.pending.env.padding[0], Some(SafeAreaInsetTop));
+        assert_eq!(s.pending.env.padding[0], var(SafeAreaInsetTop));
         assert_eq!(s.layout.padding.top, LengthPercentage::length(8.0));
         s.set("marginLeft", k("calc(0.5rem + env(safe-area-inset-left))"))
             .unwrap();
-        assert_eq!(s.pending.env.margin[3], Some(SafeAreaInsetLeft));
+        assert_eq!(s.pending.env.margin[3], var(SafeAreaInsetLeft));
         assert_eq!(s.layout.margin.left, LengthPercentageAuto::length(8.0));
         // Margins may go below zero.
         s.set("marginBottom", k("calc(env(keyboard-inset-height) + -4px)"))
@@ -4013,10 +4042,10 @@ mod tests {
         // Shorthands set every edge they cover.
         s.set("paddingHorizontal", k("env(safe-area-inset-right)"))
             .unwrap();
-        assert_eq!(s.pending.env.padding[1], Some(SafeAreaInsetRight));
-        assert_eq!(s.pending.env.padding[3], Some(SafeAreaInsetRight));
+        assert_eq!(s.pending.env.padding[1], var(SafeAreaInsetRight));
+        assert_eq!(s.pending.env.padding[3], var(SafeAreaInsetRight));
         s.set("margin", k("env(safe-area-inset-top)")).unwrap();
-        assert_eq!(s.pending.env.margin, [Some(SafeAreaInsetTop); 4]);
+        assert_eq!(s.pending.env.margin, [var(SafeAreaInsetTop); 4]);
         // An unknown variable is its fallback.
         s.set("paddingRight", k("env(titlebar-area-x, 12px)"))
             .unwrap();
@@ -4025,8 +4054,50 @@ mod tests {
         // A known one ignores its fallback.
         s.set("paddingRight", k("env(safe-area-inset-right, 12px)"))
             .unwrap();
-        assert_eq!(s.pending.env.padding[1], Some(SafeAreaInsetRight));
+        assert_eq!(s.pending.env.padding[1], var(SafeAreaInsetRight));
         assert_eq!(s.layout.padding.right, LengthPercentage::length(0.0));
+        // The larger of two known variables. The length stays outside.
+        s.set(
+            "paddingBottom",
+            k("max(env(safe-area-inset-bottom), env(keyboard-inset-height))"),
+        )
+        .unwrap();
+        assert_eq!(
+            s.pending.env.padding[2],
+            Some(EnvTerm::Max(SafeAreaInsetBottom, KeyboardInsetHeight))
+        );
+        assert_eq!(s.layout.padding.bottom, LengthPercentage::length(0.0));
+        s.set(
+            "paddingBottom",
+            k("calc(max( env(keyboard-inset-height) , env(safe-area-inset-bottom) ) + 32px)"),
+        )
+        .unwrap();
+        assert_eq!(
+            s.pending.env.padding[2],
+            Some(EnvTerm::Max(KeyboardInsetHeight, SafeAreaInsetBottom))
+        );
+        assert_eq!(s.layout.padding.bottom, LengthPercentage::length(32.0));
+        s.set(
+            "marginBottom",
+            k("calc(8px + max(env(safe-area-inset-bottom), env(keyboard-inset-height)))"),
+        )
+        .unwrap();
+        assert_eq!(s.layout.margin.bottom, LengthPercentageAuto::length(8.0));
+        s.set(
+            "marginBottom",
+            k("calc(max(env(keyboard-inset-height), env(safe-area-inset-bottom)) + -4px)"),
+        )
+        .unwrap();
+        assert_eq!(s.layout.margin.bottom, LengthPercentageAuto::length(-4.0));
+        s.set(
+            "paddingLeft",
+            k("max(env(safe-area-inset-left), env(safe-area-inset-left))"),
+        )
+        .unwrap();
+        assert_eq!(
+            s.pending.env.padding[3],
+            Some(EnvTerm::Max(SafeAreaInsetLeft, SafeAreaInsetLeft))
+        );
         // A plain value or a reset drops the term.
         s.set("paddingTop", StyleValue::Number(4.0)).unwrap();
         s.set("paddingBottom", StyleValue::Null).unwrap();
@@ -4044,6 +4115,14 @@ mod tests {
             "calc(env(safe-area-inset-top) + 10%)",
             "calc(env(safe-area-inset-top) + 1px + 2px)",
             "max(env(safe-area-inset-top), 8px)",
+            "min(env(safe-area-inset-top), env(keyboard-inset-height))",
+            "max(env(safe-area-inset-top, 8px), env(keyboard-inset-height))",
+            "max(env(nope), env(keyboard-inset-height))",
+            "max(env(safe-area-inset-top), env(keyboard-inset-height), env(safe-area-inset-left))",
+            "max(calc(env(safe-area-inset-top) + 8px), env(keyboard-inset-height))",
+            "calc(max(env(safe-area-inset-top), env(keyboard-inset-height)))",
+            "calc(max(env(safe-area-inset-top), env(keyboard-inset-height)) + env(safe-area-inset-left))",
+            "calc(max(env(safe-area-inset-top), env(keyboard-inset-height))+8px)",
         ] {
             assert_eq!(
                 s.set("paddingTop", k(v)),
@@ -4051,14 +4130,29 @@ mod tests {
                 "{v}"
             );
         }
-        // Padding is never negative.
+        // Padding is never negative, including around a max.
         assert_eq!(
             s.set("paddingTop", k("calc(env(safe-area-inset-top) + -8px)")),
+            Err(StyleError::InvalidValue)
+        );
+        assert_eq!(
+            s.set(
+                "paddingTop",
+                k("calc(max(env(safe-area-inset-top), env(keyboard-inset-height)) + -8px)"),
+            ),
             Err(StyleError::InvalidValue)
         );
         // Only padding and margin's physical edges take `env()`.
         for key in ["paddingStart", "marginEnd", "top", "width", "gap"] {
             assert!(s.set(key, k("env(safe-area-inset-top)")).is_err(), "{key}");
+            assert!(
+                s.set(
+                    key,
+                    k("max(env(safe-area-inset-top), env(keyboard-inset-height))")
+                )
+                .is_err(),
+                "{key}"
+            );
         }
     }
 
