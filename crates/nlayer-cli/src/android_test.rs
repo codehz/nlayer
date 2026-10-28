@@ -2,8 +2,9 @@
 //!
 //! The test file still runs in QuickJS. `open` writes the app into the
 //! device's private files and listens on a socket. `adb reverse` lets the
-//! app connect. It answers one JSON line per step. Press, type and scroll
-//! go through the view system.
+//! app connect, including the loopback file server its `fetch` uses. It
+//! answers one JSON line per step. Press, type and scroll go through the
+//! view system.
 
 use std::{
     io::{BufRead, BufReader, Write},
@@ -85,6 +86,10 @@ impl AppHost for AndroidHost {
             pin.to_string().as_bytes(),
         )
         .map_err(|error| error.to_string())?;
+        let files = nlayer_testing::fixture_file_port(&app_dir);
+        let files_forwarded = format!("tcp:{files}");
+        android::adb(sdk, &serial, &["reverse", &files_forwarded, &files_forwarded])
+            .map_err(|error| error.to_string())?;
         let forwarded = format!("tcp:{port}");
         android::adb(sdk, &serial, &["reverse", &forwarded, &forwarded])
             .map_err(|error| error.to_string())?;
@@ -105,6 +110,7 @@ impl AppHost for AndroidHost {
             sdk_root: sdk.adb(),
             serial,
             port,
+            files,
             open: true,
         }))
     }
@@ -117,6 +123,7 @@ struct AndroidApp {
     sdk_root: std::path::PathBuf,
     serial: String,
     port: u16,
+    files: u16,
     open: bool,
 }
 
@@ -210,8 +217,12 @@ impl HostedApp for AndroidApp {
             .args(["-s", &self.serial, "shell", "am", "force-stop", PACKAGE])
             .status();
         let forwarded = format!("tcp:{}", self.port);
+        let files = format!("tcp:{}", self.files);
         let _ = std::process::Command::new(&self.sdk_root)
             .args(["-s", &self.serial, "reverse", "--remove", &forwarded])
+            .status();
+        let _ = std::process::Command::new(&self.sdk_root)
+            .args(["-s", &self.serial, "reverse", "--remove", &files])
             .status();
     }
 }

@@ -899,32 +899,46 @@ fn transform_name(kind: TransformKind) -> &'static str {
 
 /// Points the app's `fetch` at a loopback server of `root`, so a headless
 /// run can read the same files `nlayer run` serves next to the page.
+/// Android does not share that loopback: the caller forwards
+/// [`fixture_file_port`] with `adb reverse`.
 pub fn with_fixture_origin(code: &str, root: &Path) -> String {
     let origin = fixture_origin(root);
     format!("globalThis.__nlayerTestOrigin={origin:?};\n{code}")
 }
 
+/// The loopback port [`with_fixture_origin`] serves `root` on.
+pub fn fixture_file_port(root: &Path) -> u16 {
+    let _ = fixture_origin(root);
+    FIXTURE.port
+}
+
+struct Fixture {
+    port: u16,
+    root: Arc<Mutex<PathBuf>>,
+}
+
+static FIXTURE: LazyLock<Fixture> = LazyLock::new(|| {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("test file server");
+    let port = listener.local_addr().expect("test file server").port();
+    let root = Arc::new(Mutex::new(PathBuf::new()));
+    let files = Arc::clone(&root);
+    thread::Builder::new()
+        .name("nlayer-test-files".to_owned())
+        .spawn(move || {
+            for connection in listener.incoming() {
+                let Ok(socket) = connection else { continue };
+                let root = files.lock().expect("test files").clone();
+                let _ = serve_file(socket, &root);
+            }
+        })
+        .expect("test file server");
+    Fixture { port, root }
+});
+
 fn fixture_origin(root: &Path) -> String {
-    static FIXTURE: LazyLock<(u16, Arc<Mutex<PathBuf>>)> = LazyLock::new(|| {
-        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("test file server");
-        let port = listener.local_addr().expect("test file server").port();
-        let root = Arc::new(Mutex::new(PathBuf::new()));
-        let files = Arc::clone(&root);
-        thread::Builder::new()
-            .name("nlayer-test-files".to_owned())
-            .spawn(move || {
-                for connection in listener.incoming() {
-                    let Ok(socket) = connection else { continue };
-                    let root = files.lock().expect("test files").clone();
-                    let _ = serve_file(socket, &root);
-                }
-            })
-            .expect("test file server");
-        (port, root)
-    });
-    let (port, slot) = &*FIXTURE;
-    *slot.lock().expect("test files") = root.to_path_buf();
-    format!("http://127.0.0.1:{port}")
+    let fixture = &*FIXTURE;
+    *fixture.root.lock().expect("test files") = root.to_path_buf();
+    format!("http://127.0.0.1:{}", fixture.port)
 }
 
 fn serve_file(mut socket: TcpStream, root: &Path) -> std::io::Result<()> {
