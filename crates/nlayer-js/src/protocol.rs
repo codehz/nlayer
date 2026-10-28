@@ -1,6 +1,8 @@
 //! Decoding of JS prop values into the core's types: styles
 //! ([`decode_style`]) and the v1 host props ([`decode_prop`]).
 
+use std::sync::Arc;
+
 use nlayer_core::{
     ImageScales, ImageSource, Interaction, KeyboardType, NodeId, Op, Prop, Tag,
     geometry::{Points, Size},
@@ -76,6 +78,14 @@ pub(crate) fn decode_prop<'js>(
         let style = *style;
         let paint = paints(&style).then(|| Box::new((style.view, style.text)));
         return Ok(Some(state_style(id, name, paint)));
+    }
+    if name == "testID" {
+        let name = string(&value)?;
+        let test_id = (!name.is_empty()).then(|| Arc::<str>::from(name));
+        return Ok(Some(Op::SetProp {
+            id,
+            prop: Prop::TestId(test_id),
+        }));
     }
     let prop = match (tag, name) {
         (Some(Tag::Image), "src") => Prop::Source(image_source(value)?),

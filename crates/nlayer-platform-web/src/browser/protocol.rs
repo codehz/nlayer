@@ -51,6 +51,14 @@ pub(super) fn decode_prop(
         let paint = paints(&style).then(|| Box::new((style.view, style.text)));
         return Ok(Some(state_style(id, name, paint)));
     }
+    if name == "testID" {
+        let name = string(value);
+        let test_id = (!name.is_empty()).then(|| std::sync::Arc::<str>::from(name));
+        return Ok(Some(Op::SetProp {
+            id,
+            prop: Prop::TestId(test_id),
+        }));
+    }
     let prop = match (tag, name) {
         (Some(Tag::Image), "src") => Prop::Source(image_source(value)?),
         (Some(Tag::Scroll), "horizontal") => Prop::Horizontal(value.bool()),

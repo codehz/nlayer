@@ -265,6 +265,8 @@ export interface ViewProps {
   /** Painted while it has focus. The platform applies it; layout does not change. */
   focusStyle?: StyleProp<ViewStyle>;
   children?: Children;
+  /** A name tests use to find this view. The platform does not draw it. */
+  testID?: string;
   onPress?: () => void;
 }
 
@@ -277,6 +279,8 @@ export interface TextProps {
   /** Painted while it has focus. The platform applies it; layout does not change. */
   focusStyle?: StyleProp<TextStyle>;
   children?: Children;
+  /** A name tests use to find this span. The platform does not draw it. */
+  testID?: string;
   onPress?: () => void;
 }
 
@@ -290,6 +294,8 @@ export interface ImageProps {
   focusStyle?: StyleProp<ViewStyle>;
   /** A URL or a bundled image import. */
   src?: string | ImageAsset;
+  /** A name tests use to find this image. The platform does not draw it. */
+  testID?: string;
   onPress?: () => void;
 }
 
@@ -318,6 +324,8 @@ export interface InputProps {
   secureTextEntry?: boolean;
   keyboardType?: "text" | "email" | "number" | "phone";
   disabled?: boolean;
+  /** A name tests use to find this field. The platform does not draw it. */
+  testID?: string;
   onPress?: () => void;
 }
 
@@ -469,6 +477,7 @@ mod tests {
         assert!(ui.contains("activeStyle?:"));
         assert!(ui.contains("hoverStyle?:"));
         assert!(ui.contains("focusStyle?:"));
+        assert!(ui.contains("testID?:"));
         assert!(!ui.contains("disabledStyle"));
         assert!(!runtime.contains("resource"));
         assert!(text("styles.d.ts").contains("gridTemplateColumns?:"));

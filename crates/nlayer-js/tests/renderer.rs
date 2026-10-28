@@ -89,6 +89,60 @@ fn elements_styles_and_children_reach_the_core() {
     );
 }
 
+/// `testID` names a view in the mount batch and a nested span on its block.
+#[test]
+fn test_ids_name_a_view_and_a_nested_span() {
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r#"
+        import { mount } from "@nlayer/runtime";
+        import { element, prop, append, text } from "nlayer:rt";
+
+        function App() {
+            const view = element("view");
+            prop(view, "testID", "box");
+            prop(view, "style", { width: 80, height: 40 });
+            const block = element("text");
+            append(block, text("see "));
+            const span = element("text");
+            prop(span, "testID", "docs");
+            append(span, text("docs"));
+            append(block, span);
+            append(view, block);
+            return view;
+        }
+        mount(App);
+        "#,
+    )
+    .unwrap();
+    let mut core = core();
+    let batch = frame(&host, &mut core);
+    assert!(batch.items.iter().any(|item| matches!(
+        item,
+        MountItem::TestId { test_id, .. } if test_id.as_deref() == Some("box")
+    )));
+    let text = batch
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MountItem::Text { text, .. } => Some(text),
+            _ => None,
+        })
+        .expect("the block");
+    assert_eq!(text.text, "see docs");
+    assert_eq!(text.test_ids.len(), 1);
+    assert_eq!(text.test_ids[0].test_id.as_ref(), "docs");
+    assert_eq!(
+        batch
+            .items
+            .iter()
+            .filter(|item| matches!(item, MountItem::TestId { .. }))
+            .count(),
+        1,
+        "a span has no view of its own"
+    );
+}
+
 /// `onPress` is a listener on the node, and the handler is called with the
 /// event object.
 #[test]
