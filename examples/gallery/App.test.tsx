@@ -75,6 +75,29 @@ test("a press updates the label", () => {
   expect(app.texts()).toContain("Pressed");
 });
 
+test("pointer styles are paint and a press still lands", () => {
+  const app = open("./App.tsx", { width: 390, height: 844 });
+  const nodes = flat(app.tree(), []);
+  const fade = holder(nodes, "Fade");
+  const hover = holder(nodes, "Hover");
+  const focus = nodes.find((node) => node.kind === "input" && node.placeholder === "Focus");
+  expect(fade.frame.width).toBe(160);
+  expect(fade.frame.height).toBe(36);
+  expect(hover.frame.width).toBe(120);
+  expect(hover.frame.height).toBe(36);
+  expect(focus.frame.width).toBe(160);
+  expect(app.texts()).toContain("activeStyle={{ opacity: 0.4 }}");
+  expect(app.texts()).toContain("activeStyle={{ backgroundColor }}");
+  expect(app.texts()).toContain("hoverStyle={{ backgroundColor }}");
+  expect(app.texts()).toContain("focusStyle={{ backgroundColor }}");
+  reveal(app, (node) => node.children.some((child) => child.text === "Fade"));
+  app.press("Fade");
+  expect(app.texts()).toContain("Faded");
+  reveal(app, (node) => node.children.some((child) => child.text === "Light"));
+  app.press("Light");
+  expect(app.texts()).toContain("Lit");
+});
+
 test("a static transform is mounted", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
   const shifted = holder(flat(app.tree(), []), "Shifted");

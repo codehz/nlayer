@@ -119,6 +119,75 @@ function Layout() {
   );
 }
 
+function Pointer() {
+  const faded = signal(false);
+  const lit = signal(false);
+  const focused = signal("");
+  return (
+    <Section title="Pointer">
+      <View
+        onPress={() => faded.set(true)}
+        activeStyle={{ opacity: 0.4, width: 10 }}
+        style={{
+          width: 160,
+          height: 36,
+          justifyContent: "center",
+          backgroundColor: "#0f172a",
+          borderRadius: 8,
+          padding: 8,
+        }}
+      >
+        <Text style={{ color: "#ffffff" }}>{faded() ? "Faded" : "Fade"}</Text>
+      </View>
+      <Text style={{ fontSize: 12, color: "#64748b" }}>{"activeStyle={{ opacity: 0.4 }}"}</Text>
+      <View
+        onPress={() => lit.set(true)}
+        activeStyle={{ backgroundColor: "#bae6fd" }}
+        style={{
+          alignSelf: "flex-start",
+          backgroundColor: "#e2e8f0",
+          borderRadius: 8,
+          padding: 8,
+        }}
+      >
+        <Text>{lit() ? "Lit" : "Light"}</Text>
+      </View>
+      <Text style={{ fontSize: 12, color: "#64748b" }}>{"activeStyle={{ backgroundColor }}"}</Text>
+      <View
+        hoverStyle={{ backgroundColor: "#dbeafe", width: 10 }}
+        style={{
+          width: 120,
+          height: 36,
+          justifyContent: "center",
+          backgroundColor: "#f1f5f9",
+          borderRadius: 8,
+          padding: 8,
+        }}
+      >
+        <Text>Hover</Text>
+      </View>
+      <Text style={{ fontSize: 12, color: "#64748b" }}>{"hoverStyle={{ backgroundColor }}"}</Text>
+      <Input
+        value={focused()}
+        placeholder="Focus"
+        onChange={(value) => focused.set(value)}
+        focusStyle={{ backgroundColor: "#ecfeff", color: "#0f172a", width: 10 }}
+        style={{
+          width: 160,
+          fontSize: 16,
+          color: "#0f172a",
+          backgroundColor: "#ffffff",
+          borderWidth: 1,
+          borderColor: "#cbd5e1",
+          borderRadius: 8,
+          padding: 8,
+        }}
+      />
+      <Text style={{ fontSize: 12, color: "#64748b" }}>{"focusStyle={{ backgroundColor }}"}</Text>
+    </Section>
+  );
+}
+
 function Type() {
   return (
     <Section title="Text">
@@ -327,6 +396,7 @@ function App() {
           View, Text, Image, Scroll, and a single-line Input.
         </Text>
         <Layout />
+        <Pointer />
         <Type />
         <Pictures />
         <Scrollers />
