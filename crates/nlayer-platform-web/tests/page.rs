@@ -8,7 +8,10 @@ use std::{
     },
 };
 
-use nlayer_core::geometry::{Edges, Size, px};
+use nlayer_core::{
+    EventKind,
+    geometry::{Edges, Size, px},
+};
 use nlayer_platform_web::{Page, PageSession};
 
 struct Record {
@@ -115,6 +118,61 @@ mount(App);
     page.press(id);
     page.pump();
     assert_eq!(texts_of(&last_batch(&record)), ["count: 1"]);
+}
+
+#[test]
+fn a_scroll_end_updates_the_json_frame() {
+    let bundle = r#"
+import { mount, signal } from "@nlayer/runtime";
+import { element, prop, append, insert, text } from "nlayer:rt";
+
+const y = signal(0);
+function App() {
+    const view = element("scroll");
+    prop(view, "style", { width: 100, height: 40 });
+    prop(view, "onScrollEnd", (e) => y.set(e.offset.y));
+    const block = element("text");
+    append(block, text("y: "));
+    insert(block, () => String(y()));
+    append(view, block);
+    return view;
+}
+mount(App);
+"#;
+    let record = Arc::new(Record {
+        batches: Default::default(),
+        pumps: AtomicUsize::new(0),
+    });
+    let mut page = session(bundle, &record);
+    let first = last_batch(&record);
+    assert_eq!(texts_of(&first), ["y: 0"]);
+    let id = items(&first)
+        .iter()
+        .find_map(|item| {
+            (item[0] == "e"
+                && item[2]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|event| event == "onScrollEnd"))
+            .then(|| item[1].as_u64().unwrap() as u32)
+        })
+        .expect("a scroll end listener");
+    page.scroll(
+        id.into(),
+        EventKind::ScrollEnd,
+        0.0,
+        24.0,
+        100.0,
+        400.0,
+        100.0,
+        40.0,
+    );
+    page.pump();
+    assert_eq!(texts_of(&last_batch(&record)), ["y: 24"]);
+    page.scroll(id.into(), EventKind::Press, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0);
+    page.pump();
+    assert_eq!(texts_of(&last_batch(&record)), ["y: 24"]);
 }
 
 #[test]

@@ -88,9 +88,10 @@ class Element {
         event.stopped = true;
       },
       ...(extra ?? {}),
+      target: extra?.target ?? this,
     };
     for (const fn of this.listeners[type] ?? []) fn(event);
-    if (!event.stopped) this.parentNode?.dispatch(type, extra);
+    if (!event.stopped) this.parentNode?.dispatch(type, { ...extra, target: event.target });
   }
   setAttribute(name, value) {
     this.attributes[name] = value;
@@ -126,7 +127,7 @@ function page() {
   const host = { presses: [], changes: [], scrolls: [] };
   host.press = (id) => host.presses.push(id);
   host.change = (id, text) => host.changes.push([id, text]);
-  host.scroll = (id, x, y) => host.scrolls.push([id, x, y]);
+  host.scroll = (...args) => host.scrolls.push(args);
   const player = new Player(root, host, { assetBase: "assets/" });
   player.doc = doc;
   return { doc, root, host, player };
@@ -204,7 +205,9 @@ test("a batch becomes views, text, an image, a scroll and an input", () => {
   assert.equal(scroll._spacer.style.height, "400px");
   assert.equal(scroll.scrollTop, 12);
   scroll.dispatch("scroll");
-  assert.deepEqual(host.scrolls, [[5, 0, 12]]);
+  assert.deepEqual(host.scrolls, [
+    [5, "onScroll", 0, 12, undefined, undefined, undefined, undefined],
+  ]);
   player.apply([["cmd", 5, "scrollTo", 0, 30, false]]);
   assert.equal(scroll.scrollTop, 30);
   assert.ok(player.view(6).classList.contains("nl-ox"));
@@ -287,4 +290,155 @@ test("a click on a pressable span presses that span", () => {
   assert.deepEqual(host.presses, [9]);
   player.view(2).dispatch("click", { _utf16: 1 });
   assert.deepEqual(host.presses, [9]);
+});
+
+const SCROLL_EVENTS = [
+  "onScroll",
+  "onScrollEnd",
+  "onScrollDragStart",
+  "onScrollDragEnd",
+  "onMomentumStart",
+  "onMomentumEnd",
+];
+
+function scrollPage() {
+  const harness = page();
+  harness.player.apply([
+    ["c", 5, "scroll"],
+    ["i", 1, 5, null],
+    ["sc", 5, false],
+    ["e", 5, SCROLL_EVENTS],
+    ["f", 5, 0, 0, 80, 40],
+    ["scs", 5, 80, 400],
+  ]);
+  const el = harness.player.view(5);
+  el.clientWidth = 80;
+  el.clientHeight = 40;
+  el.scrollWidth = 80;
+  el.scrollHeight = 400;
+  return { ...harness, el };
+}
+
+function names(host) {
+  return host.scrolls.map((call) => call[1]);
+}
+
+test("a wheel scroll reports onScroll and ends at rest", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { host, el } = scrollPage();
+  el.scrollTop = 18;
+  el.dispatch("scroll");
+  el.dispatch("scrollend");
+  assert.deepEqual(names(host), ["onScroll", "onScrollEnd"]);
+  assert.deepEqual(host.scrolls[0], [5, "onScroll", 0, 18, 80, 400, 80, 40]);
+  assert.equal(host.scrolls[1][1], "onScrollEnd");
+  t.mock.timers.tick(200);
+  assert.deepEqual(names(host), ["onScroll", "onScrollEnd"]);
+});
+
+test("quiet scrolling ends once without scrollend", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { host, el } = scrollPage();
+  el.scrollTop = 9;
+  el.dispatch("scroll");
+  t.mock.timers.tick(200);
+  assert.deepEqual(names(host), ["onScroll", "onScrollEnd"]);
+  t.mock.timers.tick(200);
+  assert.deepEqual(names(host), ["onScroll", "onScrollEnd"]);
+});
+
+test("a touch drag flings, and a new drag catches the glide", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { host, player, el } = scrollPage();
+  let now = 1000;
+  player.now = () => now;
+  const touch = { pointerId: 1, pointerType: "touch", clientX: 4, clientY: 4 };
+  el.dispatch("pointerdown", touch);
+  el.dispatch("pointercancel", { ...touch, clientY: 30 });
+  el.scrollTop = 20;
+  el.dispatch("scroll");
+  el.dispatch("touchend");
+  now += 40;
+  el.scrollTop = 48;
+  el.dispatch("scroll");
+  assert.deepEqual(names(host), [
+    "onScrollDragStart",
+    "onScroll",
+    "onScrollDragEnd",
+    "onMomentumStart",
+    "onScroll",
+  ]);
+  el.dispatch("pointerdown", touch);
+  el.dispatch("scrollend");
+  el.dispatch("pointercancel", { ...touch, clientY: 20 });
+  assert.deepEqual(names(host).slice(5), ["onMomentumEnd", "onScrollDragStart"]);
+});
+
+test("a drag that does not glide ends without momentum", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { host, player, el } = scrollPage();
+  player.now = () => 0;
+  const touch = { pointerId: 1, pointerType: "touch", clientX: 1, clientY: 1 };
+  el.dispatch("pointerdown", touch);
+  el.dispatch("pointercancel", { ...touch, clientY: 20 });
+  el.dispatch("touchend");
+  t.mock.timers.tick(200);
+  assert.deepEqual(names(host), ["onScrollDragStart", "onScrollDragEnd", "onScrollEnd"]);
+});
+
+test("a vertical drag hits the vertical ancestor, and a mouse does not drag", () => {
+  const { host, player } = page();
+  player.apply([
+    ["c", 5, "scroll"],
+    ["i", 1, 5, null],
+    ["sc", 5, false],
+    ["e", 5, ["onScrollDragStart"]],
+    ["c", 6, "scroll"],
+    ["i", 5, 6, null],
+    ["sc", 6, true],
+    ["e", 6, ["onScrollDragStart"]],
+    ["c", 7, "view"],
+    ["i", 6, 7, null],
+  ]);
+  const inner = player.view(7);
+  const touch = { pointerId: 3, pointerType: "touch", clientX: 8, clientY: 8 };
+  inner.dispatch("pointerdown", touch);
+  inner.dispatch("pointercancel", { ...touch, clientY: 40 });
+  assert.deepEqual(host.scrolls, [
+    [5, "onScrollDragStart", 0, 0, undefined, undefined, undefined, undefined],
+  ]);
+  host.scrolls.length = 0;
+  inner.dispatch("pointerdown", { ...touch, pointerType: "mouse" });
+  inner.dispatch("pointercancel", { ...touch, pointerType: "mouse", clientY: 40 });
+  assert.deepEqual(host.scrolls, []);
+});
+
+test("onScroll is once per frame, and an instant command is not an end", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { doc, host, player, el } = scrollPage();
+  const frames = [];
+  doc.defaultView = {
+    requestAnimationFrame(fn) {
+      frames.push(fn);
+      return frames.length;
+    },
+  };
+  el.scrollTop = 4;
+  el.dispatch("scroll");
+  el.scrollTop = 11;
+  el.dispatch("scroll");
+  assert.deepEqual(host.scrolls, []);
+  frames[0]();
+  assert.deepEqual(host.scrolls, [[5, "onScroll", 0, 11, 80, 400, 80, 40]]);
+  host.scrolls.length = 0;
+  doc.defaultView = null;
+  player.apply([["sb", 5, 0, 3]]);
+  el.dispatch("scroll");
+  el.dispatch("scrollend");
+  assert.deepEqual(names(host), ["onScroll"]);
+  player.apply([["cmd", 5, "scrollTo", 0, 30, true]]);
+  el.scrollTop = 30;
+  el.dispatch("scroll");
+  el.dispatch("scrollend");
+  assert.deepEqual(names(host), ["onScroll", "onScroll", "onScrollEnd"]);
 });

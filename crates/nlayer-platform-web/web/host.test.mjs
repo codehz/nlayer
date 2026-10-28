@@ -26,8 +26,8 @@ function harness() {
     change(id, text) {
       sink.changes.push([id, text]);
     },
-    scroll(id, x, y) {
-      sink.scrolls.push([id, x, y]);
+    scroll(id, kind, x, y) {
+      sink.scrolls.push([id, kind, x, y]);
     },
   });
   player.doc = doc;
@@ -171,7 +171,7 @@ test("selectors name one view, and the steps use the page's events", () => {
 
   host.scroll("list", 30);
   assert.equal(player.view(6).scrollTop, 30);
-  assert.deepEqual(sink.scrolls, [[6, 0, 30]]);
+  assert.deepEqual(sink.scrolls, [[6, "onScroll", 0, 30]]);
   host.scroll("list", 1000);
   assert.equal(player.view(6).scrollTop, 100);
   assert.equal(host.tree().children.find((child) => child.testID === "list").offset.y, 100);

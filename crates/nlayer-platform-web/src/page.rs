@@ -100,11 +100,13 @@ impl PageSession {
         self.engine.control().input_changed(id, text);
     }
 
-    /// Scroll view `id` moved. The page already moved; this fires `onScroll`
-    /// with the content offset, content size and visible size, in points.
+    /// Scroll view `id` reported `kind`. The page already moved. The payload
+    /// is the content offset, content size and visible size, in points.
+    /// Kinds other than the six scroll events are ignored.
     pub fn scroll(
         &self,
         id: NodeId,
+        kind: EventKind,
         x: f32,
         y: f32,
         content_w: f32,
@@ -112,9 +114,20 @@ impl PageSession {
         width: f32,
         height: f32,
     ) {
+        if !matches!(
+            kind,
+            EventKind::Scroll
+                | EventKind::ScrollEnd
+                | EventKind::ScrollDragStart
+                | EventKind::ScrollDragEnd
+                | EventKind::MomentumStart
+                | EventKind::MomentumEnd
+        ) {
+            return;
+        }
         self.engine.control().dispatch_event(
             id,
-            EventKind::Scroll,
+            kind,
             EventPayload::Scroll {
                 x,
                 y,

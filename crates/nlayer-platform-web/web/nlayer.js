@@ -102,8 +102,10 @@ export function installBase(doc, css) {
 /**
  * One surface. `root` is the platform's root view (node 1). `host` hears
  * what the page must send back to the engine: `press(id)`,
- * `change(id, text)`, `scroll(id, x, y, contentWidth, contentHeight, width, height)`.
- * Lengths are CSS pixels. `assetBase` is prepended to an `asset:/` URI.
+ * `change(id, text)`, `scroll(id, name, x, y, contentWidth, contentHeight, width, height)`.
+ * `name` is the event (`onScroll`, `onScrollEnd`, `onScrollDragStart`,
+ * `onScrollDragEnd`, `onMomentumStart`, `onMomentumEnd`). Lengths are CSS
+ * pixels. `assetBase` is prepended to an `asset:/` URI.
  */
 export class Player {
   constructor(root, host = {}, options = {}) {
@@ -112,10 +114,23 @@ export class Player {
     this.assetBase = options.assetBase ?? "";
     this.doc = root.ownerDocument ?? globalThis.document;
     this.views = new Map();
+    this.pointers = new Map();
+    this.touchDrags = new Set();
+    this.holding = 0;
+    this.onTouchEnd = (event) => this.touchEnded(event);
     root._id = 1;
     root._kind = "view";
     root.classList.add("nl-v", "nl-root");
     this.views.set(1, root);
+    root.addEventListener("pointerdown", (event) => this.pointerDown(event), true);
+    root.addEventListener("pointercancel", (event) => this.pointerCancel(event), true);
+    root.addEventListener("touchend", this.onTouchEnd);
+    root.addEventListener("touchcancel", this.onTouchEnd);
+    const view = this.doc.defaultView;
+    if (view && view.addEventListener && view !== root) {
+      view.addEventListener("touchend", this.onTouchEnd);
+      view.addEventListener("touchcancel", this.onTouchEnd);
+    }
     if (options.baseCSS != null) installBase(this.doc, options.baseCSS);
   }
 
@@ -163,24 +178,7 @@ export class Player {
       el.append(img);
       el._img = img;
     }
-    if (kind === "scroll") {
-      el._spacer = this.doc.createElement("div");
-      el._spacer.className = "nl-spacer";
-      el.append(el._spacer);
-      el._horizontal = false;
-      el.addEventListener("scroll", () => {
-        if (!el._events.has("onScroll")) return;
-        this.host.scroll?.(
-          id,
-          el.scrollLeft,
-          el.scrollTop,
-          el.scrollWidth,
-          el.scrollHeight,
-          el.clientWidth,
-          el.clientHeight,
-        );
-      });
-    }
+    if (kind === "scroll") this.wireScroll(el);
     el.addEventListener("click", (event) => {
       const link = linkAt(el, event);
       if (link != null) {
@@ -317,6 +315,181 @@ export class Player {
     else img.src = src;
   }
 
+  /**
+   * Touch scrolling is the browser's (nsh's `touchScroll` / `scrolled` /
+   * `scrollEnded`, cut to no refresh, zoom, snap or custom bar). A
+   * `pointercancel` starts the drag, `touchend` ends it, a scroll within
+   * 150 ms is the glide, and `scrollend` or 200 ms of quiet ends it. A
+   * glide caught by a new drag ends with `onMomentumEnd` before
+   * `onScrollDragStart`, as UIKit does. Wheel, keys and the bar are not
+   * drags. An instant command is not an end. `onScroll` is at most once
+   * per frame. Web does not bounce, so the offset is not negative.
+   */
+  wireScroll(el) {
+    el._spacer = this.doc.createElement("div");
+    el._spacer.className = "nl-spacer";
+    el.append(el._spacer);
+    el._horizontal = false;
+    el.addEventListener("scroll", () => this.scrolled(el), { passive: true });
+    el.addEventListener("scrollend", () => this.scrollEnded(el));
+    // The user takes over an instant command (`noteInstant`).
+    const takeOver = () => {
+      el._swallowEnd = false;
+    };
+    for (const type of ["wheel", "pointerdown", "touchstart", "keydown"]) {
+      el.addEventListener(type, takeOver, { passive: true });
+    }
+  }
+
+  now() {
+    return globalThis.performance?.now?.() ?? Date.now();
+  }
+
+  /** Scroll views from `node` out to the root, innermost first. */
+  scrollChain(node) {
+    const chain = [];
+    for (let el = node; el; el = el.parentNode) {
+      if (el._kind === "scroll") chain.push(el);
+    }
+    return chain;
+  }
+
+  pointerDown(event) {
+    if (event.pointerType === "mouse" || event.button > 0) return;
+    const scrolls = this.scrollChain(event.target);
+    if (!scrolls.length) return;
+    this.holding++;
+    this.pointers.set(event.pointerId ?? 0, {
+      x: event.clientX || 0,
+      y: event.clientY || 0,
+      scrolls,
+    });
+  }
+
+  pointerCancel(event) {
+    if (event.pointerType === "mouse") return;
+    const id = event.pointerId ?? 0;
+    const tracked = this.pointers.get(id);
+    this.pointers.delete(id);
+    const scrolls = tracked?.scrolls ?? this.scrollChain(event.target);
+    if (!scrolls.length) return;
+    const dx = (event.clientX || 0) - (tracked?.x || 0);
+    const dy = (event.clientY || 0) - (tracked?.y || 0);
+    const horizontal = Math.abs(dx) > Math.abs(dy);
+    const el = scrolls.find((view) => !!view._horizontal === horizontal) ?? scrolls[0];
+    this.beginDrag(el);
+  }
+
+  beginDrag(el) {
+    if (!el || el._touchDrag) return;
+    el._touchDrag = true;
+    el._released = 0;
+    el._settled = false;
+    clearTimeout(el._restTimer);
+    el._restTimer = 0;
+    this.touchDrags.add(el);
+    if (el._momentum) {
+      el._momentum = false;
+      this.scrollEvent(el, "onMomentumEnd");
+    }
+    this.scrollEvent(el, "onScrollDragStart");
+  }
+
+  touchEnded(event) {
+    if (event.touches?.length) return;
+    if (!this.holding && !this.touchDrags.size) return;
+    this.holding = 0;
+    for (const el of this.touchDrags) this.endDrag(el);
+    this.touchDrags.clear();
+    this.pointers.clear();
+  }
+
+  endDrag(el) {
+    if (!el._touchDrag) return;
+    el._touchDrag = false;
+    el._released = this.now();
+    this.scrollEvent(el, "onScrollDragEnd");
+    this.armRest(el);
+  }
+
+  scrolled(el) {
+    el._settled = false;
+    // Still moving after the finger left: a glide.
+    if (el._released && !el._momentum && this.now() - el._released < 150) {
+      el._momentum = true;
+      el._released = 0;
+      this.scrollEvent(el, "onMomentumStart");
+    }
+    if (el._events.has("onScroll")) this.queueScroll(el);
+    if (!el._touchDrag && !this.holding && !el._swallowEnd) this.armRest(el);
+  }
+
+  /** The latest offset, once per frame when the page has a frame clock. */
+  queueScroll(el) {
+    if (el._scrollQueued) return;
+    el._scrollQueued = true;
+    const send = () => {
+      el._scrollQueued = false;
+      if (this.views.get(el._id) !== el) return;
+      this.scrollEvent(el, "onScroll");
+    };
+    const raf = this.doc.defaultView?.requestAnimationFrame ?? globalThis.requestAnimationFrame;
+    if (typeof raf === "function") raf(send);
+    else send();
+  }
+
+  armRest(el) {
+    clearTimeout(el._restTimer);
+    el._restTimer = setTimeout(() => {
+      el._restTimer = 0;
+      this.scrollEnded(el);
+    }, 200);
+  }
+
+  /** The browser's scrolling stopped, unless a finger still holds it. */
+  scrollEnded(el) {
+    clearTimeout(el._restTimer);
+    el._restTimer = 0;
+    if (el._touchDrag || this.holding) return;
+    // An instant command moved the view. Its `scrollend` is not the end.
+    if (el._swallowEnd) {
+      el._swallowEnd = false;
+      clearTimeout(el._instantTimer);
+      return;
+    }
+    if (el._settled) return;
+    el._settled = true;
+    el._released = 0;
+    if (el._momentum) {
+      el._momentum = false;
+      this.scrollEvent(el, "onMomentumEnd");
+    }
+    this.scrollEvent(el, "onScrollEnd");
+  }
+
+  scrollEvent(el, name) {
+    if (!el._events?.has(name)) return;
+    this.host.scroll?.(
+      el._id,
+      name,
+      el.scrollLeft,
+      el.scrollTop,
+      el.scrollWidth,
+      el.scrollHeight,
+      el.clientWidth,
+      el.clientHeight,
+    );
+  }
+
+  /** `op_sb` and an instant `scrollTo` move the view without ending a scroll. */
+  noteInstant(el) {
+    el._swallowEnd = true;
+    clearTimeout(el._instantTimer);
+    el._instantTimer = setTimeout(() => {
+      el._swallowEnd = false;
+    }, 200);
+  }
+
   op_sc([, id, horizontal]) {
     const el = this.view(id);
     if (!el) return;
@@ -334,6 +507,7 @@ export class Player {
   op_sb([, id, dx, dy]) {
     const el = this.view(id);
     if (!el) return;
+    this.noteInstant(el);
     el.scrollLeft += dx;
     el.scrollTop += dy;
   }
@@ -409,6 +583,7 @@ export class Player {
   op_cmd([, id, name, x, y, animated]) {
     const el = this.view(id);
     if (!el || name !== "scrollTo") return;
+    if (!animated) this.noteInstant(el);
     el.scrollTo?.({ left: x, top: y, behavior: animated ? "smooth" : "instant" });
     if (!el.scrollTo) {
       el.scrollLeft = x;

@@ -21,6 +21,16 @@ const decoder = new TextDecoder();
 /** Levels `nlayer_log` passes, matching the engine's `log` crate. */
 const LEVELS = ["error", "warn", "info", "debug", "debug"];
 
+/** `EventKind` discriminants. `onScroll` is 1. */
+const SCROLL_KIND = {
+  onScroll: 1,
+  onScrollEnd: 2,
+  onScrollDragStart: 3,
+  onScrollDragEnd: 4,
+  onMomentumStart: 5,
+  onMomentumEnd: 6,
+};
+
 let wasm = null;
 let player = null;
 let facade = null;
@@ -232,9 +242,11 @@ export async function startPage(root, options = {}) {
           }),
         );
       },
-      scroll(id, x, y, contentW, contentH, width, height) {
+      scroll(id, kind, x, y, contentW, contentH, width, height) {
+        const raw = SCROLL_KIND[kind];
+        if (raw == null) return;
         enter(() => {
-          wasm.nlayer_scroll(id, x, y, contentW, contentH, width, height);
+          wasm.nlayer_scroll(id, raw, x, y, contentW, contentH, width, height);
           return wasm.nlayer_pump();
         });
       },

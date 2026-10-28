@@ -91,7 +91,8 @@ Copied files:
   are not copied)
 - `crates/nlayer-platform-web/web/nlayer.js` and `web/base.css` from
   `crates/nsh-platform-web/web/nsh.js` (the DOM mounter, the same cut:
-  frames, classes, border overlay, scroll spacer, single-line field)
+  frames, classes, border overlay, scroll spacer, single-line field,
+  and the scroll events of a native scroll: touch drag, glide, `scrollend`)
 - `URL` / `URLSearchParams` behavior from `crates/nsh-js/src/web/url.rs`
   (bound on this host's classes; nsh's web class layer is not copied)
 - `crates/nlayer-js/src/random.rs` from `crates/nsh-js/src/standard/random.rs`

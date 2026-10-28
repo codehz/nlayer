@@ -10,7 +10,7 @@
 use std::cell::RefCell;
 
 use nlayer_core::{
-    NodeId,
+    EventKind, NodeId,
     geometry::{Edges, Size, px},
 };
 
@@ -184,11 +184,13 @@ pub unsafe extern "C" fn nlayer_input(id: u32, ptr: *const u8, len: usize) {
     });
 }
 
-/// Scroll view `id` moved (`onScroll`). Lengths are CSS pixels. Applied at
-/// the next [`nlayer_pump`].
+/// Scroll view `id` reported `kind` ([`EventKind`]: `onScroll` is 1,
+/// `onScrollEnd` 2, drag 3 and 4, momentum 5 and 6). Lengths are CSS
+/// pixels. Applied at the next [`nlayer_pump`].
 #[unsafe(no_mangle)]
 pub extern "C" fn nlayer_scroll(
     id: u32,
+    kind: u32,
     x: f32,
     y: f32,
     content_w: f32,
@@ -196,8 +198,20 @@ pub extern "C" fn nlayer_scroll(
     width: f32,
     height: f32,
 ) {
+    let Some(kind) = EventKind::from_raw(kind as u8) else {
+        return;
+    };
     with_session(|session| {
-        session.scroll(NodeId::from(id), x, y, content_w, content_h, width, height);
+        session.scroll(
+            NodeId::from(id),
+            kind,
+            x,
+            y,
+            content_w,
+            content_h,
+            width,
+            height,
+        );
         -1.0
     });
 }
