@@ -1,4 +1,4 @@
-# Non-Rust formatting. `scripts/fmt` is the command: this file, then Java.
+# bun fmt config. `scripts/fmt` runs `cargo fmt`, then this, then Java.
 # Markdown is excluded. bun fmt rewrites inline code (` >> ` becomes `>>`).
 
 [fmt]

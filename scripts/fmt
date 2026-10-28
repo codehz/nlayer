@@ -1,5 +1,6 @@
 #!/bin/sh
-# Format non-Rust sources.
+# Format sources.
+# Rust: `cargo fmt` (workspace).
 # JS, TS, TSX, CSS, HTML, JSON and TOML: `bun fmt` (`bunfig.toml`).
 # Java: google-java-format 1.28.0. Later jars call javac internals this JDK 17
 # does not have; 1.36+ is JDK 21. The Android sources are compiled as Java 8.
@@ -23,8 +24,17 @@ if ! command -v java >/dev/null 2>&1; then
   echo "scripts/fmt: java is required (JDK 17+)" >&2
   exit 1
 fi
+if ! command -v cargo >/dev/null 2>&1 || ! command -v rustfmt >/dev/null 2>&1; then
+  echo "scripts/fmt: rustfmt is required" >&2
+  exit 1
+fi
 
 status=0
+if [ "$check" -eq 1 ]; then
+  cargo fmt --check || status=1
+else
+  cargo fmt
+fi
 if [ "$check" -eq 1 ]; then
   bun fmt --check || status=1
 else
