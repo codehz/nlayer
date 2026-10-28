@@ -1,9 +1,11 @@
 //! `nlayer init` creates a TSX app. `nlayer build` writes its bundle, source
 //! map, imported images and TypeScript declarations. `nlayer test` runs its
 //! test files headless. `nlayer run --target web` serves the app to a browser
-//! and reloads it after a rebuild.
+//! and reloads it after a rebuild. `nlayer run --target ios` runs it in the
+//! simulator and restarts it after a rebuild, without reinstalling the host.
 
 mod init;
+mod ios;
 mod run;
 
 use std::{
@@ -12,6 +14,7 @@ use std::{
 };
 
 pub use init::{InitError, InitOptions, InitReport, init};
+pub use ios::{IosOptions, IosSession, run_ios};
 use nlayer_bundler::{BundleError, BundleOptions, bundle};
 pub use run::{BuildOutcome, DevServer, RunError, RunOptions, serve, web_module};
 

@@ -4,8 +4,8 @@ use std::{path::PathBuf, process::ExitCode, sync::Arc};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use nlayer_cli::{
-    BuildOptions, BuildOutcome, InitOptions, RunOptions, TestOptions, build, init, serve, test,
-    web_module,
+    BuildOptions, BuildOutcome, InitOptions, IosOptions, RunOptions, TestOptions, build, init,
+    run_ios, serve, test, web_module,
 };
 
 #[derive(Parser)]
@@ -44,8 +44,9 @@ enum Command {
         #[arg(default_value = ".")]
         dir: PathBuf,
     },
-    /// Serve the app in a browser. Rebuilds when TSX or assets change and reloads the page.
-    /// A failed rebuild is printed; the previous page keeps running.
+    /// Run the app. Web serves a browser. iOS installs a simulator host once,
+    /// then restarts it after a rebuild without reinstalling.
+    /// A failed rebuild is printed; the previous app keeps running.
     Run {
         /// The entry module, or the app's directory (default: the current one), whose `App.tsx` is the entry.
         #[arg(default_value = ".")]
@@ -53,13 +54,13 @@ enum Command {
         /// Which host runs the app.
         #[arg(long, value_enum, default_value = "web")]
         target: Target,
-        /// Port. `0` picks a free one.
+        /// Port. `0` picks a free one. Web only.
         #[arg(long, default_value_t = 8733)]
         port: u16,
         /// Minify the bundle.
         #[arg(long)]
         release: bool,
-        /// Do not open a browser.
+        /// Do not open a browser. Web only.
         #[arg(long)]
         no_open: bool,
     },
@@ -70,6 +71,8 @@ enum Command {
 enum Target {
     /// This machine's browser.
     Web,
+    /// The iOS simulator. A rebuild restarts the app and drops its state.
+    Ios,
 }
 
 fn main() -> ExitCode {
@@ -124,6 +127,17 @@ fn main() -> ExitCode {
             Target::Web => match run_web(entry, port, release, !no_open) {
                 Ok(server) => {
                     server.park();
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
+            },
+            Target::Ios => match run_ios(IosOptions { entry, release }) {
+                Ok(session) => {
+                    session.park();
+                    drop(session);
                     ExitCode::SUCCESS
                 }
                 Err(err) => {
@@ -212,6 +226,15 @@ mod tests {
                 ..
             }
         ));
-        assert!(Cli::try_parse_from(["nlayer", "run", "--target", "ios"]).is_err());
+        assert!(matches!(
+            Cli::try_parse_from(["nlayer", "run", "--target", "ios"])
+                .unwrap()
+                .command,
+            Command::Run {
+                target: Target::Ios,
+                ..
+            }
+        ));
+        assert!(Cli::try_parse_from(["nlayer", "run", "--target", "android"]).is_err());
     }
 }

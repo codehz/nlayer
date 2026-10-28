@@ -97,7 +97,7 @@ impl std::fmt::Display for RunError {
 impl std::error::Error for RunError {}
 
 impl RunError {
-    fn message(message: impl Into<String>) -> Self {
+    pub(crate) fn message(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
         }
@@ -326,7 +326,7 @@ fn wasm_artifacts(workspace: &Path) -> [PathBuf; 2] {
     ]
 }
 
-fn workspace_root() -> Option<PathBuf> {
+pub(crate) fn workspace_root() -> Option<PathBuf> {
     let mut starts = Vec::new();
     if let Ok(dir) = std::env::current_dir() {
         starts.push(dir);
@@ -366,7 +366,7 @@ fn newest_source(workspace: &Path) -> SystemTime {
     newest
 }
 
-fn consider(path: &Path, newest: &mut SystemTime) {
+pub(crate) fn consider(path: &Path, newest: &mut SystemTime) {
     if let Ok(modified) = fs::metadata(path).and_then(|meta| meta.modified())
         && modified > *newest
     {
@@ -374,7 +374,7 @@ fn consider(path: &Path, newest: &mut SystemTime) {
     }
 }
 
-fn consider_tree(dir: &Path, newest: &mut SystemTime) {
+pub(crate) fn consider_tree(dir: &Path, newest: &mut SystemTime) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
@@ -526,7 +526,7 @@ fn reserved(path: &str) -> bool {
         || path.starts_with("__nlayer/")
 }
 
-fn watch_paths(app_dir: &Path, bundled: Option<&Bundle>) -> Vec<PathBuf> {
+pub(crate) fn watch_paths(app_dir: &Path, bundled: Option<&Bundle>) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     collect_sources(app_dir, &mut paths);
     if let Some(bundled) = bundled {
@@ -566,7 +566,7 @@ fn is_watched(path: &Path) -> bool {
     )
 }
 
-fn stamp(paths: &[PathBuf]) -> u64 {
+pub(crate) fn stamp(paths: &[PathBuf]) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     for path in paths {
         path.hash(&mut hasher);

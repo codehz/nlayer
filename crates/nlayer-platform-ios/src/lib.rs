@@ -14,6 +14,8 @@
 
 #![cfg_attr(target_os = "ios", deny(unsafe_op_in_unsafe_fn))]
 
+use std::path::{Path, PathBuf};
+
 #[cfg(target_os = "ios")]
 mod app;
 #[cfg(target_os = "ios")]
@@ -24,6 +26,22 @@ mod mount;
 mod text;
 #[cfg(target_os = "ios")]
 mod text_view;
+
+/// Where the runner looks for `app.js`, in order.
+///
+/// `nlayer run` writes the first path (the simulator data container), so a
+/// rebuild can replace the bundle without reinstalling the app. A file next
+/// to the executable still runs when that path is absent.
+pub fn bundle_paths(home: Option<&Path>, exe_dir: Option<&Path>) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(home) = home {
+        paths.push(home.join("Documents/app.js"));
+    }
+    if let Some(dir) = exe_dir {
+        paths.push(dir.join("app.js"));
+    }
+    paths
+}
 
 /// Runs `bundle` (an ES module) until the process exits.
 ///
@@ -39,4 +57,22 @@ pub fn run_app(bundle: String) -> ! {
 pub fn run_app(_bundle: String) -> ! {
     eprintln!("nlayer-platform-ios runs on iOS");
     std::process::exit(1);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    #[test]
+    fn the_data_container_is_read_before_the_app_bundle() {
+        let paths = super::bundle_paths(Some(Path::new("/home")), Some(Path::new("/app")));
+        assert_eq!(
+            paths,
+            [
+                Path::new("/home/Documents/app.js").to_path_buf(),
+                Path::new("/app/app.js").to_path_buf()
+            ]
+        );
+        assert!(super::bundle_paths(None, None).is_empty());
+    }
 }

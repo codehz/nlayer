@@ -1206,8 +1206,11 @@ name = "nlayer-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "libc",
  "nlayer-bundler",
  "nlayer-testing",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

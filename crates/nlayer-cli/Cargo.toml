@@ -17,3 +17,6 @@ workspace = true
 nlayer-bundler.workspace = true
 nlayer-testing.workspace = true
 clap = { version = "4", features = ["derive"] }
+libc = "0.2"
+serde.workspace = true
+serde_json.workspace = true
