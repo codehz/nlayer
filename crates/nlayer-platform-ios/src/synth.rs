@@ -144,11 +144,8 @@ fn enqueue(hid: &Hid, event: Event, window: &UIWindow, mtm: MainThreadMarker) {
         (hid.digitizer_info)(event, context, 0, 0, std::ptr::null(), 0.0, 0.0);
         let app = objc2_ui_kit::UIApplication::sharedApplication(mtm);
         // Not `msg_send!`: the event is an IOKit object, and the selector is private.
-        let send: unsafe extern "C-unwind" fn(
-            &objc2_ui_kit::UIApplication,
-            Sel,
-            Event,
-        ) = std::mem::transmute(ffi::objc_msgSend as unsafe extern "C-unwind" fn());
+        let send: unsafe extern "C-unwind" fn(&objc2_ui_kit::UIApplication, Sel, Event) =
+            std::mem::transmute(ffi::objc_msgSend as unsafe extern "C-unwind" fn());
         send(&app, sel!(_enqueueHIDEvent:), event);
         (hid.release)(event.cast_const().cast());
     }
@@ -229,7 +226,8 @@ pub(crate) fn insert_text(window: &UIWindow, text: &str) {
     let s = objc2_foundation::NSString::from_str(text);
     // The software keyboard calls this on the focused field. Prefer it: the
     // keyboard singleton exists before it is attached, and its insert is a no-op then.
-    if let Some(responder) = unsafe { retain0((window as *const UIWindow).cast(), sel!(firstResponder)) }
+    if let Some(responder) =
+        unsafe { retain0((window as *const UIWindow).cast(), sel!(firstResponder)) }
     {
         // SAFETY: UIKeyInput's method, which a text field implements.
         unsafe { msg_void(&responder, sel!(insertText:), &s) };

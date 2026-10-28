@@ -115,9 +115,12 @@ Copied files:
   `activeStyle` / `hoverStyle` / `focusStyle`, safe area, CoreText
   measurement, one-axis scroll, PNG / JPEG / WebP from a bundled file or
   `http(s)`, and a single-line field (`value`, `onChange`, `placeholder`,
-  `disabled`, `secureTextEntry`, `keyboardType`). Refresh, zoom, paging,
-  disk cache, SVG, GIF frames, multiline input and composition events are
-  not mounted. `synth.rs` is the one-finger touch and the software keyboard
+  `disabled`, `secureTextEntry`, `keyboardType`). The software keyboard's
+  overlap (`crates/nlayer-platform-ios/src/keyboard.rs`, from
+  `surface.rs` `keyboard_changed`) is `env(keyboard-inset-height)`; the
+  animation and the mounter's scroll-into-view are not copied. Refresh, zoom,
+  paging, disk cache, SVG, GIF frames, multiline input and composition events
+  are not mounted. `synth.rs` is the one-finger touch and the software keyboard
   from `crates/nsh-platform-ios/src/synth.rs` (no drag path, no hardware
   modifiers, no screenshot). The runner binary is `nlayer-ios-app`.
 - `crates/nlayer-platform-android/src/encode.rs` from

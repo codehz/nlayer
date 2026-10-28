@@ -1,26 +1,37 @@
 //! One running surface: the engine thread and the main-thread mounter.
+//! The software keyboard's overlap is sent as `env(keyboard-inset-height)`.
+//! An explicit pin height replaces it; v1 does not animate with the keyboard.
 
+use crate::keyboard::overlap;
 use crate::mount::Mounter;
 use crate::text::CoreTextEngine;
+use block2::RcBlock;
 use dispatch2::DispatchQueue;
 use nlayer_core::geometry::{Points, Size};
 use nlayer_engine::{Engine, EngineConfig, EngineError, MountSink};
-use objc2::rc::Retained;
-use objc2::runtime::{NSObject, NSObjectProtocol};
+use objc2::rc::{Retained, Weak};
+use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send};
 use objc2_core_foundation::{CGFloat, CGPoint, CGRect, CGSize};
-use objc2_ui_kit::{UILabel, UIResponder, UIView, UIViewAutoresizing};
+use objc2_foundation::{NSNotification, NSNotificationCenter, NSOperationQueue, NSValue};
+use objc2_ui_kit::{
+    NSValueUIGeometryExtensions, UIKeyboardFrameEndUserInfoKey,
+    UIKeyboardWillChangeFrameNotification, UIKeyboardWillHideNotification, UILabel, UIResponder,
+    UIView, UIViewAutoresizing,
+};
 use std::cell::RefCell;
 use std::path::PathBuf;
+use std::ptr::NonNull;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 struct RootIvars {
     mounter: RefCell<std::rc::Weak<RefCell<Mounter>>>,
+    observers: RefCell<Vec<Retained<ProtocolObject<dyn NSObjectProtocol>>>>,
 }
 
 define_class!(
-    /// Fills the window and reports its size and safe area to the engine.
+    /// Fills the window and reports its size, safe area and keyboard overlap.
     #[unsafe(super(UIView, UIResponder, NSObject))]
     #[thread_kind = MainThreadOnly]
     #[ivars = RootIvars]
@@ -65,6 +76,7 @@ impl RootView {
     fn new(mtm: MainThreadMarker, frame: CGRect) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(RootIvars {
             mounter: RefCell::new(std::rc::Weak::new()),
+            observers: RefCell::new(Vec::new()),
         });
         // SAFETY: UIView's designated initializer.
         let this: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: frame] };
@@ -94,6 +106,76 @@ impl RootView {
         mounter
             .borrow_mut()
             .publish(bounds.size, self.safeAreaInsets());
+    }
+
+    /// Tracks the software keyboard. An explicit pin height skips this. The
+    /// end frame is applied at once.
+    fn observe_keyboard(&self) {
+        let center = NSNotificationCenter::defaultCenter();
+        let weak = Weak::new(self);
+        let block = RcBlock::new(move |note: NonNull<NSNotification>| {
+            let Some(view) = weak.load() else { return };
+            // SAFETY: a valid notification for the duration of the call.
+            view.keyboard_changed(unsafe { note.as_ref() });
+        });
+        // SAFETY: UIKit notification names; the block runs on the main queue.
+        let names = unsafe {
+            [
+                UIKeyboardWillChangeFrameNotification,
+                UIKeyboardWillHideNotification,
+            ]
+        };
+        let mut observers = self.ivars().observers.borrow_mut();
+        for name in names {
+            // SAFETY: the observer token is removed in [`Self::stop_observing`].
+            observers.push(unsafe {
+                center.addObserverForName_object_queue_usingBlock(
+                    Some(name),
+                    None,
+                    Some(&NSOperationQueue::mainQueue()),
+                    &block,
+                )
+            });
+        }
+    }
+
+    fn stop_observing(&self) {
+        let center = NSNotificationCenter::defaultCenter();
+        for observer in self.ivars().observers.borrow_mut().drain(..) {
+            // SAFETY: a token returned by this center.
+            unsafe { center.removeObserver(observer.as_ref()) };
+        }
+    }
+
+    fn keyboard_changed(&self, note: &NSNotification) {
+        let Some(info) = note.userInfo() else { return };
+        // SAFETY: UIKit documents this key as an NSValue of a CGRect in
+        // screen coordinates.
+        let frame = unsafe {
+            info.objectForKey(UIKeyboardFrameEndUserInfoKey)
+                .and_then(|value| value.downcast::<NSValue>().ok())
+                .map(|value| value.CGRectValue())
+        };
+        let hiding = note.name().isEqualToString(
+            // SAFETY: an immutable UIKit constant.
+            unsafe { UIKeyboardWillHideNotification },
+        );
+        let local = match (frame, self.window().and_then(|window| window.windowScene())) {
+            (Some(frame), Some(scene)) if !hiding => {
+                let space = scene.screen().coordinateSpace();
+                // SAFETY: `convertRect:fromCoordinateSpace:` of UICoordinateSpace.
+                let frame: CGRect =
+                    unsafe { msg_send![self, convertRect: frame, fromCoordinateSpace: &*space] };
+                Some((frame.origin.x, frame.origin.y, frame.size.width, frame.size.height))
+            }
+            _ => None,
+        };
+        let bounds = self.bounds().size;
+        let height = overlap(bounds.width, bounds.height, local, hiding);
+        let Some(mounter) = self.ivars().mounter.borrow().upgrade() else {
+            return;
+        };
+        mounter.borrow_mut().set_keyboard(height);
     }
 }
 
@@ -166,6 +248,12 @@ pub(crate) struct Session {
     _root: Retained<RootView>,
 }
 
+impl Drop for Session {
+    fn drop(&mut self) {
+        self._root.stop_observing();
+    }
+}
+
 /// Starts the engine on `bundle` inside `container` (the window's root view).
 /// `assets` is the directory bundled `asset:/` images are read from. A pin
 /// file there replaces the window size and safe area for `nlayer test`.
@@ -195,6 +283,9 @@ pub(crate) fn start(
         mounter.borrow_mut().set_pin(pin);
     }
     root.bind(Rc::downgrade(&mounter));
+    if pin.as_ref().is_none_or(|pin| pin.keyboard.is_none()) {
+        root.observe_keyboard();
+    }
     MOUNTER.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&mounter)));
     let queue = Arc::new(Queue(Mutex::new(Vec::new())));
     QUEUE.with(|slot| *slot.borrow_mut() = Some(Arc::clone(&queue)));
@@ -221,7 +312,7 @@ pub(crate) fn start(
                 bottom: Points(pin.safe_area.bottom),
                 left: Points(pin.safe_area.left),
             },
-            Points(pin.keyboard),
+            Points(pin.keyboard.unwrap_or(0.0)),
         );
     }
     let engine = Engine::start(config, CoreTextEngine::default, queue);

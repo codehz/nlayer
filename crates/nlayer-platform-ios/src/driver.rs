@@ -264,7 +264,10 @@ struct Point {
     y: f64,
 }
 
-fn point_of(mounter: &Mounter, press: Press) -> Result<(objc2::rc::Retained<UIWindow>, Point), String> {
+fn point_of(
+    mounter: &Mounter,
+    press: Press,
+) -> Result<(objc2::rc::Retained<UIWindow>, Point), String> {
     let window = window_of(mounter)?;
     let point = match press {
         Press::View(id) => {

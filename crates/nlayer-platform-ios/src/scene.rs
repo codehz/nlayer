@@ -331,7 +331,10 @@ impl Scene {
             return false;
         }
         let mut id = hit.view();
-        while let Some(parent) = self.nodes[id as usize].as_ref().and_then(|node| node.parent) {
+        while let Some(parent) = self.nodes[id as usize]
+            .as_ref()
+            .and_then(|node| node.parent)
+        {
             let Some(view) = self.nodes[parent as usize].as_ref() else {
                 break;
             };
@@ -342,7 +345,10 @@ impl Scene {
                     .unwrap_or((0.0, 0.0));
                 let local_x = x - origin.0;
                 let local_y = y - origin.1;
-                if local_x < 0.0 || local_y < 0.0 || local_x > view.frame.w || local_y > view.frame.h
+                if local_x < 0.0
+                    || local_y < 0.0
+                    || local_x > view.frame.w
+                    || local_y > view.frame.h
                 {
                     return false;
                 }
@@ -710,7 +716,6 @@ pub(crate) fn utf16_slice(text: &str, start: u32, end: u32) -> String {
     String::from_utf16_lossy(&units)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -753,7 +758,12 @@ mod tests {
         let scene = Scene::from_nodes(vec![root, named, labeled], 100.0, 100.0);
         assert!(matches!(scene.press("pad"), Ok(Press::View(2))));
         assert!(matches!(scene.press("text:pad"), Ok(Press::View(3))));
-        assert!(scene.press("missing").unwrap_err().contains("matches nothing"));
+        assert!(
+            scene
+                .press("missing")
+                .unwrap_err()
+                .contains("matches nothing")
+        );
     }
 
     #[test]
@@ -816,12 +826,7 @@ mod tests {
             100.0,
             100.0,
         );
-        assert!(
-            scene
-                .press("row")
-                .unwrap_err()
-                .contains("is not in view")
-        );
+        assert!(scene.press("row").unwrap_err().contains("is not in view"));
         assert_eq!(next_offset(0.0, 30.0, 200.0, 40.0), 30.0);
         assert_eq!(next_offset(150.0, 30.0, 200.0, 40.0), 160.0);
         assert_eq!(next_offset(0.0, -10.0, 200.0, 40.0), 0.0);
@@ -850,11 +855,7 @@ mod tests {
             disabled: true,
         });
         let scene = Scene::from_nodes(
-            vec![
-                view(1, None, rect(0.0, 0.0, 100.0, 100.0)),
-                field,
-                disabled,
-            ],
+            vec![view(1, None, rect(0.0, 0.0, 100.0, 100.0)), field, disabled],
             100.0,
             100.0,
         );

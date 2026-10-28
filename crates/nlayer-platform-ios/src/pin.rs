@@ -12,8 +12,10 @@ pub(crate) const FILE: &str = "nlayer-test.json";
 pub(crate) struct Pin {
     pub width: f32,
     pub height: f32,
+    /// `None` follows the software keyboard. A number pins
+    /// `env(keyboard-inset-height)` for this run.
     #[serde(default)]
-    pub keyboard: f32,
+    pub keyboard: Option<f32>,
     #[serde(default, rename = "safeArea")]
     pub safe_area: Area,
     #[serde(default)]

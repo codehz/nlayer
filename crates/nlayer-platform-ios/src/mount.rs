@@ -193,8 +193,11 @@ pub(crate) struct Mounter {
     assets: PathBuf,
     /// The field that is editing, if one is.
     focused: Option<NodeId>,
-    /// Set by `nlayer test`. Replaces the window's size and safe area.
+    /// Set by `nlayer test`. Replaces the window's size, safe area and
+    /// keyboard height. A pin with a keyboard height ignores the software keyboard.
     pin: Option<crate::pin::Pin>,
+    /// Software keyboard overlap, in points. An explicit pin height replaces it.
+    keyboard: Points,
 }
 
 impl Mounter {
@@ -218,6 +221,7 @@ impl Mounter {
             assets,
             focused: None,
             pin: None,
+            keyboard: Points::ZERO,
         }));
         CURRENT.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&mounter)));
         relay.bind(Rc::downgrade(&mounter));
@@ -225,7 +229,30 @@ impl Mounter {
     }
 
     pub(crate) fn set_control(&mut self, control: EngineControl) {
+        if self
+            .pin
+            .as_ref()
+            .is_none_or(|pin| pin.keyboard.is_none())
+            && self.keyboard != Points::ZERO
+        {
+            control.set_keyboard_inset(self.keyboard);
+        }
         self.control = Some(control);
+    }
+
+    /// The software keyboard's overlap changed. An explicit pin height wins.
+    pub(crate) fn set_keyboard(&mut self, height: f32) {
+        if self.pin.as_ref().is_some_and(|pin| pin.keyboard.is_some()) {
+            return;
+        }
+        let height = Points(height);
+        if self.keyboard == height {
+            return;
+        }
+        self.keyboard = height;
+        if let Some(control) = &self.control {
+            control.set_keyboard_inset(height);
+        }
     }
 
     pub(crate) fn set_pin(&mut self, pin: crate::pin::Pin) {
@@ -258,7 +285,7 @@ impl Mounter {
         } else {
             (size, insets)
         };
-        let keyboard = self.pin.as_ref().map(|pin| pin.keyboard);
+        let keyboard = self.pin.as_ref().and_then(|pin| pin.keyboard);
         let size = Size::new(Points(size.width as f32), Points(size.height as f32));
         let insets = nlayer_core::geometry::Edges {
             top: Points(insets.top as f32),
@@ -839,21 +866,36 @@ fn selector_spans(
     let mut spans = Vec::new();
     for id in &text.test_ids {
         let node = text.links.iter().find_map(|link| {
-            (link.start == id.start
-                && link.end == id.end
-                && link.events.contains(EventKind::Press))
-            .then_some(link.node)
+            (link.start == id.start && link.end == id.end && link.events.contains(EventKind::Press))
+                .then_some(link.node)
         });
-        spans.push(span_snap(view, text, id.start, id.end, Some(id.test_id.to_string()), node));
+        spans.push(span_snap(
+            view,
+            text,
+            id.start,
+            id.end,
+            Some(id.test_id.to_string()),
+            node,
+        ));
     }
     for link in &text.links {
         if !link.events.contains(EventKind::Press) {
             continue;
         }
-        if spans.iter().any(|span| span.start == link.start && span.end == link.end) {
+        if spans
+            .iter()
+            .any(|span| span.start == link.start && span.end == link.end)
+        {
             continue;
         }
-        spans.push(span_snap(view, text, link.start, link.end, None, Some(link.node)));
+        spans.push(span_snap(
+            view,
+            text,
+            link.start,
+            link.end,
+            None,
+            Some(link.node),
+        ));
     }
     spans
 }

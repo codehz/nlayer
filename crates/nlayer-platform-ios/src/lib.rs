@@ -10,10 +10,11 @@
 //! views, text, images, one-axis scroll views and single-line inputs: frames,
 //! fill, radius, opacity, overflow, a static transform, solid or dashed
 //! uniform borders, per-side solid borders, `onPress`, `activeStyle` /
-//! `hoverStyle` / `focusStyle`, safe area, PNG, JPEG or WebP from a bundled
-//! file or `http(s)`, and a field with `value`, `onChange`, `placeholder`,
-//! `disabled`, `secureTextEntry` and `keyboardType`. Refresh, zoom, paging
-//! and text selection are not mounted.
+//! `hoverStyle` / `focusStyle`, safe area, the software keyboard's height
+//! (`env(keyboard-inset-height)`, applied at once, not animated), PNG, JPEG
+//! or WebP from a bundled file or `http(s)`, and a field with `value`,
+//! `onChange`, `placeholder`, `disabled`, `secureTextEntry` and `keyboardType`.
+//! Refresh, zoom, paging and text selection are not mounted.
 
 #![cfg_attr(target_os = "ios", deny(unsafe_op_in_unsafe_fn))]
 
@@ -22,23 +23,24 @@ use std::path::{Path, PathBuf};
 #[cfg(target_os = "ios")]
 mod app;
 #[cfg(target_os = "ios")]
+mod driver;
+#[cfg(target_os = "ios")]
 mod host;
 mod image;
 mod input;
+mod keyboard;
+#[cfg(target_os = "ios")]
+mod mount;
+#[cfg(target_os = "ios")]
+mod pin;
 #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
 mod scene;
 #[cfg(target_os = "ios")]
-mod mount;
+mod synth;
 #[cfg(target_os = "ios")]
 mod text;
 #[cfg(target_os = "ios")]
 mod text_view;
-#[cfg(target_os = "ios")]
-mod driver;
-#[cfg(target_os = "ios")]
-mod pin;
-#[cfg(target_os = "ios")]
-mod synth;
 
 /// Where the runner looks for `app.js`, in order.
 ///
