@@ -567,7 +567,7 @@ impl Session {
         Ok(id.to_string())
     }
 
-    fn app_mut<'a>(&'a mut self, id: usize) -> Result<&'a mut dyn HostedApp, String> {
+    fn app_mut(&mut self, id: usize) -> Result<&mut dyn HostedApp, String> {
         match self.apps.get_mut(id) {
             Some(Some(app)) => Ok(app.as_mut()),
             _ => Err("the app is closed".to_owned()),

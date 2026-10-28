@@ -690,8 +690,10 @@ mod tests {
         assert_eq!((words.int(), words.int(), words.int()), (3, 1, 0));
         assert!(words.done());
 
-        let mut text = TextStyle::default();
-        text.color = Some(Color::rgba(255, 0, 0, 255));
+        let text = TextStyle {
+            color: Some(Color::rgba(255, 0, 0, 255)),
+            ..TextStyle::default()
+        };
         let set = super::encode(MountBatch {
             items: vec![MountItem::StateStyle {
                 id: 3,

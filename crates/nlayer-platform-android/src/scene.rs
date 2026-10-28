@@ -733,15 +733,6 @@ fn text_eq(text: Option<&str>, want: &str) -> bool {
     text.is_some_and(|text| text.trim() == want.trim())
 }
 
-pub(crate) fn utf16_slice(text: &str, start: u32, end: u32) -> String {
-    let units: Vec<u16> = text
-        .encode_utf16()
-        .skip(start as usize)
-        .take(end.saturating_sub(start) as usize)
-        .collect();
-    String::from_utf16_lossy(&units)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
