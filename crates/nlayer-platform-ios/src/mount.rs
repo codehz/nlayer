@@ -48,6 +48,8 @@ struct Slot {
     sides: [Option<Retained<CALayer>>; 4],
     /// The fitted bitmap, present only for an image view.
     picture: Option<Picture>,
+    /// `testID`. Not drawn, and not an accessibility id.
+    test_id: Option<Arc<str>>,
 }
 
 struct Paint {
@@ -369,6 +371,11 @@ impl Mounter {
                     field.set_content(content);
                 }
             }
+            MountItem::TestId { id, test_id } => {
+                if let Some(slot) = self.slot_mut(id) {
+                    slot.test_id = test_id.clone();
+                }
+            }
         }
     }
 
@@ -624,6 +631,7 @@ impl Slot {
             dash: None,
             sides: [None, None, None, None],
             picture: None,
+            test_id: None,
         }
     }
 }

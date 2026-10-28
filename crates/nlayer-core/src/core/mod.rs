@@ -4,8 +4,11 @@
 //! and single-line inputs, extracted from `nsh_core::core` and cut to those
 //! hosts. `env()` on padding and margin follows the surface safe area and
 //! the keyboard inset. `activeStyle`, `hoverStyle` and `focusStyle` are
-//! stored and sent to the platform; they do not change layout. Inline views
-//! inside text, text selection and links are not part of this slice.
+//! stored and sent to the platform; they do not change layout. `testID` is
+//! a name for tests: a view's is mounted, a nested span's is recorded on
+//! its block, and neither is drawn. A pressable nested span is a link in
+//! that block. Inline views inside text and text selection are not part of
+//! this slice.
 
 mod layout_tree;
 
@@ -21,10 +24,11 @@ use crate::{
     geometry::{Bounds, Edges, Percentage, Points, Size, rect},
     mount::{InputConfig, MountBatch, MountItem, ViewKind},
     ops::{
-        Command, EventMask, ImageSource, Interaction, NodeId, Op, Prop, ROOT_ID, ResizeMode, Tag,
+        Command, EventKind, EventMask, ImageSource, Interaction, NodeId, Op, Prop, ROOT_ID,
+        ResizeMode, Tag,
     },
     style::{self, EllipsizeMode, EnvEdges, Style, TextAlign, TextStyle, ViewStyle},
-    text::{AttributedText, MeasureCache, ResolvedTextStyle, TextEngine, TextLayout},
+    text::{AttributedText, MeasureCache, ResolvedTextStyle, SpanTestId, TextEngine, TextLayout},
 };
 
 /// Slab index of a node. Internal links use keys, never ids.
@@ -53,6 +57,8 @@ mod dirty {
     pub(super) const INPUT_VALUE: u32 = 1 << 7;
     /// Emit [`crate::MountItem::StateStyle`] for the slots in `state_dirty`.
     pub(super) const STATE: u32 = 1 << 8;
+    /// Emit [`crate::MountItem::TestId`].
+    pub(super) const TEST_ID: u32 = 1 << 9;
 }
 
 /// Host kind.
@@ -215,6 +221,8 @@ struct Node {
     state: [Option<StatePaint>; 3],
     /// Slots of [`Self::state`] to send on the next [`dirty::STATE`].
     state_dirty: u8,
+    /// `testID`. Absent until set. A span's is also copied into its block.
+    test_id: Option<Arc<str>>,
 }
 impl Node {
     fn new(id: NodeId, kind: Kind) -> Self {
@@ -248,6 +256,7 @@ impl Node {
             text_queued: false,
             state: [None, None, None],
             state_dirty: 0,
+            test_id: None,
         }
     }
 }
@@ -266,6 +275,9 @@ struct TextContext<P> {
     /// Last final layout sent to the platform and the content box it was
     /// made for (where in the view the text goes).
     laid_out: Option<LaidText>,
+    /// `testID`s changed and the glyphs did not: remount the text on the
+    /// layout already sent.
+    metadata_changed: bool,
 }
 
 /// The final text sent with its layout.
@@ -283,6 +295,7 @@ impl<P> TextContext<P> {
             min_content: None,
             cache: None,
             laid_out: None,
+            metadata_changed: false,
         }
     }
 }
@@ -451,7 +464,12 @@ impl<M: TextEngine> Core<M> {
                 let before = node.events;
                 node.events.set(event, enabled);
                 if node.events != before {
-                    self.mark(key, dirty::EVENTS);
+                    // A span's press is a link in its block, not a native view.
+                    if node.inline && node.kind == Kind::Text {
+                        self.mark_text_block(key);
+                    } else {
+                        self.mark(key, dirty::EVENTS);
+                    }
                 }
                 Ok(())
             }
@@ -744,6 +762,19 @@ impl<M: TextEngine> Core<M> {
                 };
                 input.config.disabled = disabled;
                 self.mark(key, dirty::INPUT);
+            }
+            Prop::TestId(value) => {
+                let node = &mut self.nodes[key as usize];
+                if node.test_id == value {
+                    return Ok(());
+                }
+                let inline = node.kind == Kind::Text && node.inline;
+                node.test_id = value;
+                if inline {
+                    self.mark_text_block(key);
+                } else {
+                    self.mark(key, dirty::TEST_ID);
+                }
             }
             Prop::StateStyle { interaction, paint } => {
                 let slot = interaction.index();
@@ -1047,6 +1078,9 @@ impl<M: TextEngine> Core<M> {
             node.state_dirty = slots;
             flags |= dirty::STATE;
         }
+        if node.test_id.is_some() {
+            flags |= dirty::TEST_ID;
+        }
         self.mount.push(MountItem::Create {
             id,
             kind: kind.view_kind(),
@@ -1149,6 +1183,10 @@ impl<M: TextEngine> Core<M> {
                         self.emit_state(key, id, slot);
                     }
                 }
+            }
+            if flags & dirty::TEST_ID != 0 {
+                let test_id = self.nodes[key as usize].test_id.clone();
+                self.mount.push(MountItem::TestId { id, test_id });
             }
         }
     }
@@ -1682,6 +1720,13 @@ impl<M: TextEngine> Core<M> {
             if *cx.text == text {
                 return false;
             }
+            // A test id is not a glyph: keep the layout and remount the text.
+            if cx.text.test_ids != text.test_ids && cx.text.rendering_eq(&text) {
+                cx.text = Arc::new(text);
+                cx.metadata_changed = true;
+                return true;
+            }
+            cx.metadata_changed = false;
             let same_layout = cx.text.layout_eq(&text);
             cx.text = Arc::new(text);
             cx.prepared = None;
@@ -1715,11 +1760,30 @@ impl<M: TextEngine> Core<M> {
             match child.kind {
                 Kind::RawText => out.push(&child.text, style),
                 Kind::Text => {
+                    let start = out.len_utf16();
                     let mut inner = style.inherit(&child.text_style);
                     if let Some(background) = span_background(&child.view_style, child.id) {
                         inner.background = Some(background);
                     }
+                    let events = child.events;
+                    let id = child.id;
+                    let test_id = child.test_id.clone();
                     self.collect_text(c, inner, out);
+                    if events.contains(EventKind::Press) {
+                        out.links.push(crate::text::TextLink {
+                            start,
+                            end: out.len_utf16(),
+                            node: id,
+                            events,
+                        });
+                    }
+                    if let Some(test_id) = test_id {
+                        out.test_ids.push(SpanTestId {
+                            start,
+                            end: out.len_utf16(),
+                            test_id,
+                        });
+                    }
                 }
                 // Inline views are not part of v1.
                 _ => {}
@@ -1800,6 +1864,25 @@ impl<M: TextEngine> Core<M> {
                     content.origin.y += align_vertical.of(content.size.height - height);
                     content.size.height = height;
                 }
+            }
+            if cx.metadata_changed {
+                let reuse = cx
+                    .laid_out
+                    .as_ref()
+                    .filter(|laid| laid.content == content)
+                    .map(|laid| laid.layout.clone());
+                if let Some(layout) = reuse {
+                    let text = cx.text.clone();
+                    cx.metadata_changed = false;
+                    self.mount.push(MountItem::Text {
+                        id,
+                        text,
+                        layout,
+                        content,
+                    });
+                    continue;
+                }
+                cx.metadata_changed = false;
             }
             let size = content.size;
             let text_layout = match &cx.laid_out {
@@ -4081,5 +4164,177 @@ mod tests {
                 .iter()
                 .all(|item| !matches!(item, MountItem::Frame { id: 2, .. }))
         );
+    }
+
+    #[test]
+    fn a_view_mounts_its_test_id_and_a_clear() {
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::View,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::TestId(Some("box".into())),
+        })
+        .unwrap();
+        apply_style(&mut c, 2, sized(10.0, 10.0));
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        assert!(batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::TestId { id: 2, test_id } if test_id.as_deref() == Some("box")
+        )));
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::TestId(None),
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        assert!(batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::TestId { id: 2, test_id: None }
+        )));
+        assert!(
+            batch
+                .items
+                .iter()
+                .all(|item| !matches!(item, MountItem::Frame { .. }))
+        );
+    }
+
+    /// 8pt per character, and counts typesetting so a test id can be shown
+    /// not to redo it.
+    struct Counted {
+        prepares: std::cell::Cell<u32>,
+        layouts: std::cell::Cell<u32>,
+        measures: std::cell::Cell<u32>,
+    }
+
+    impl TextEngine for Counted {
+        type Prepared = usize;
+
+        fn prepare(&self, text: &AttributedText) -> usize {
+            self.prepares.set(self.prepares.get() + 1);
+            text.text.chars().count()
+        }
+
+        fn measure(&self, chars: &usize, max_width: Option<Points>) -> Size<Points> {
+            self.measures.set(self.measures.get() + 1);
+            let w = *chars as f32 * 8.0;
+            match max_width.map(|m| m.0) {
+                Some(max) if w > max && max > 0.0 => size_pt(max, (w / max).ceil() * 16.0),
+                _ => size_pt(w, 16.0),
+            }
+        }
+
+        fn layout(&self, chars: &usize, _: Size<Points>) -> TextLayout {
+            self.layouts.set(self.layouts.get() + 1);
+            TextLayout(Arc::new(*chars))
+        }
+    }
+
+    #[test]
+    fn a_spans_test_id_is_metadata_on_its_block() {
+        let mut c = Core::new(
+            Counted {
+                prepares: std::cell::Cell::new(0),
+                layouts: std::cell::Cell::new(0),
+                measures: std::cell::Cell::new(0),
+            },
+            size(px(320.0), px(480.0)),
+        );
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Text,
+        })
+        .unwrap();
+        c.apply(Op::CreateText {
+            id: 3,
+            text: "see ".into(),
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 4,
+            tag: Tag::Text,
+        })
+        .unwrap();
+        c.apply(Op::CreateText {
+            id: 5,
+            text: "docs".into(),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 4,
+            child: 5,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        assert!(mounted_text(&batch, 2).test_ids.is_empty());
+        let (prepares, layouts, measures) = (
+            c.text_engine.prepares.get(),
+            c.text_engine.layouts.get(),
+            c.text_engine.measures.get(),
+        );
+        c.apply(Op::SetProp {
+            id: 4,
+            prop: Prop::TestId(Some("docs".into())),
+        })
+        .unwrap();
+        let text = mounted_text(&c.commit().unwrap(), 2);
+        assert_eq!(
+            text.test_ids,
+            [crate::text::SpanTestId {
+                start: 4,
+                end: 8,
+                test_id: "docs".into(),
+            }]
+        );
+        assert_eq!(c.text_engine.prepares.get(), prepares);
+        assert_eq!(c.text_engine.layouts.get(), layouts);
+        assert_eq!(c.text_engine.measures.get(), measures);
+        c.apply(Op::SetProp {
+            id: 4,
+            prop: Prop::TestId(None),
+        })
+        .unwrap();
+        assert!(mounted_text(&c.commit().unwrap(), 2).test_ids.is_empty());
+        assert_eq!(c.text_engine.layouts.get(), layouts);
+        c.apply(Op::Listen {
+            id: 4,
+            event: EventKind::Press,
+            enabled: true,
+        })
+        .unwrap();
+        let text = mounted_text(&c.commit().unwrap(), 2);
+        assert_eq!(text.links.len(), 1);
+        assert_eq!(text.links[0].node, 4);
+        assert_eq!(text.links[0].start, 4);
+        assert_eq!(text.links[0].end, 8);
     }
 }

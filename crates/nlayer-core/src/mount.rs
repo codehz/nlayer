@@ -166,6 +166,15 @@ pub enum MountItem {
         /// Content box relative to the view.
         content: Bounds<Points>,
     },
+    /// `testID`. The platform draws nothing from it. `None` clears it.
+    /// Nested `<Text>` spans do not get this item: their ids are
+    /// [`crate::text::AttributedText::test_ids`].
+    TestId {
+        /// View.
+        id: NodeId,
+        /// The name, or `None` when it was cleared.
+        test_id: Option<Arc<str>>,
+    },
     /// An imperative call (`scrollTo`).
     Command {
         /// View.

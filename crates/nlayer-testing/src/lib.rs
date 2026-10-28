@@ -24,7 +24,7 @@ use nlayer_core::{
     ViewKind,
     geometry::{Bounds, Points, Size},
     style::ViewStyle,
-    text::ApproxTextEngine,
+    text::{ApproxTextEngine, SpanTestId, TextLink},
 };
 use nlayer_engine::{Engine, EngineConfig, EngineError, EventPayload, MountSink};
 
@@ -57,6 +57,12 @@ pub struct View {
     pub scroll_horizontal: Option<bool>,
     /// Style runs of a text view, covering [`Self::text`].
     pub spans: Vec<TextRun>,
+    /// `testID`. The screen keeps it; nothing is drawn from it.
+    pub test_id: Option<Arc<str>>,
+    /// Nested spans named by `testID`, on the text view that draws them.
+    pub span_ids: Vec<SpanTestId>,
+    /// Nested spans that take presses, on the text view that draws them.
+    pub links: Vec<TextLink>,
 }
 
 /// A single-line input's configuration and text.
@@ -214,6 +220,9 @@ impl Screen {
                     scroll_content: None,
                     scroll_horizontal: None,
                     spans: Vec::new(),
+                    test_id: None,
+                    span_ids: Vec::new(),
+                    links: Vec::new(),
                 });
                 view.kind = *kind;
             }
@@ -252,6 +261,8 @@ impl Screen {
                 if let Some(view) = self.views.get_mut(id) {
                     view.spans = text_runs(text);
                     view.text = Some(text.text.clone());
+                    view.span_ids = text.test_ids.clone();
+                    view.links = text.links.clone();
                 }
             }
             MountItem::Events { id, events } => {
@@ -303,6 +314,11 @@ impl Screen {
             MountItem::InputContent { .. }
             | MountItem::Command { .. }
             | MountItem::StateStyle { .. } => {}
+            MountItem::TestId { id, test_id } => {
+                if let Some(view) = self.views.get_mut(id) {
+                    view.test_id = test_id.clone();
+                }
+            }
         }
     }
 
@@ -321,6 +337,9 @@ impl Screen {
             scroll_content: None,
             scroll_horizontal: None,
             spans: Vec::new(),
+            test_id: None,
+            span_ids: Vec::new(),
+            links: Vec::new(),
         });
     }
 

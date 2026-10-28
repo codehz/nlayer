@@ -142,6 +142,16 @@ impl Encoder {
                     out.s.push(']');
                 }
                 out.s.push(']');
+                out.s.push_str(",[");
+                for (i, span) in text.test_ids.iter().enumerate() {
+                    if i > 0 {
+                        out.s.push(',');
+                    }
+                    out.s.push('[');
+                    push_str(&mut out.s, &span.test_id);
+                    let _ = write!(out.s, ",{},{}]", span.start, span.end);
+                }
+                out.s.push(']');
                 out.end();
             }
             MountItem::Events { id, events } => {
@@ -216,6 +226,12 @@ impl Encoder {
                     .num(x.0)
                     .num(y.0)
                     .bool(*animated)
+                    .end();
+            }
+            MountItem::TestId { id, test_id } => {
+                out.item("tid")
+                    .num(*id)
+                    .opt_str(test_id.as_deref())
                     .end();
             }
             MountItem::StateStyle {

@@ -250,7 +250,7 @@ export class Player {
     if (el._border) el.append(el._border);
   }
 
-  op_t([, id, x, y, w, h, align, rtl, runs]) {
+  op_t([, id, x, y, w, h, align, rtl, runs, spanIds]) {
     const el = this.view(id);
     if (!el) return;
     let box = el._text;
@@ -275,12 +275,18 @@ export class Player {
       span.textContent = text;
       box.append(span);
     }
+    el._spanIds = spanIds || [];
   }
 
   op_e([, id, events]) {
     const el = this.view(id);
     if (!el) return;
     el._events = new Set(events);
+  }
+
+  op_tid([, id, name]) {
+    const el = this.view(id);
+    if (el) el._testId = name || "";
   }
 
   op_img([, id, uri, mode]) {

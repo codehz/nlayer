@@ -413,6 +413,9 @@ pub enum Prop {
     Keyboard(KeyboardType),
     /// `disabled`: the input ignores edits.
     Disabled(bool),
+    /// `testID`: a name tests use to find the view. The platform draws
+    /// nothing from it. `None` clears it.
+    TestId(Option<Arc<str>>),
     /// `activeStyle` / `hoverStyle` / `focusStyle`. `None` clears it.
     /// Paint only: the platform applies it, and layout does not change.
     StateStyle {
