@@ -161,6 +161,27 @@ declare class Response {
 }
 
 declare function fetch(input: string | Request, init?: RequestInit): Promise<Response>;
+
+// `If` and `Each` are renderer globals. No import, unless a binding of the name shadows them.
+
+/** `<If when else>`. A function child is called with an accessor of `when`. */
+declare function If<T>(props: {
+  when: T;
+  else?: unknown;
+  children: (value: () => T) => unknown;
+}): unknown;
+declare function If<T>(props: {
+  when: T;
+  else?: unknown;
+  children?: unknown;
+}): unknown;
+
+/** `<Each of key>`. The child is called with accessors of the item and its index. `key` is called with the item and index; `"index"` keys by position. */
+declare function Each<T>(props: {
+  of: readonly T[];
+  key?: ((item: T, index: number) => unknown) | "index";
+  children: (item: () => T, index: () => number) => unknown;
+}): unknown;
 "#;
 
 fn style_file() -> String {
@@ -526,5 +547,7 @@ mod tests {
             !globals.contains("export "),
             "globals are ambient, not a module"
         );
+        assert!(globals.contains("declare function If"));
+        assert!(globals.contains("declare function Each"));
     }
 }
