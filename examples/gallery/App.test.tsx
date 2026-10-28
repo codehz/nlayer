@@ -141,6 +141,28 @@ test("scroll views overflow on each axis", () => {
   expect(across.content.height).toBe(48);
 });
 
+test("scroll callbacks report the offset, content, and viewport", () => {
+  const app = open("./App.tsx", { width: 390, height: 844 });
+  for (const name of [
+    "onScroll",
+    "onScrollEnd",
+    "onScrollDragStart",
+    "onScrollDragEnd",
+    "onMomentumStart",
+    "onMomentumEnd",
+  ]) {
+    expect(app.texts()).toContain(`${name} none`);
+  }
+  reveal(app, (node) => node.testID === "events");
+  app.scroll("events", 40);
+  const events = flat(app.tree(), []).find((node) => node.testID === "events");
+  expect(events.offset).toEqual({ x: 0, y: 40 });
+  const n = (value) => String(Math.round(value));
+  app.waitFor(
+    `onScroll ${n(events.offset.x)},${n(events.offset.y)} ${n(events.content.width)}x${n(events.content.height)} ${n(events.frame.width)}x${n(events.frame.height)}`,
+  );
+});
+
 test("inputs take text, keyboards, a password, and a disabled value", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
   const nodes = flat(app.tree(), []);

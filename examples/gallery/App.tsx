@@ -164,6 +164,48 @@ function Scrollers() {
   );
 }
 
+function metric(event: {
+  offset: { x: number; y: number };
+  contentSize: { width: number; height: number };
+  size: { width: number; height: number };
+}): string {
+  const n = (value: number) => String(Math.round(value));
+  return `${n(event.offset.x)},${n(event.offset.y)} ${n(event.contentSize.width)}x${n(event.contentSize.height)} ${n(event.size.width)}x${n(event.size.height)}`;
+}
+
+function ScrollEvents() {
+  const scroll = signal("");
+  const scrollEnd = signal("");
+  const dragStart = signal("");
+  const dragEnd = signal("");
+  const momentumStart = signal("");
+  const momentumEnd = signal("");
+  return (
+    <Section title="Scroll events">
+      <Text>{`onScroll ${scroll() || "none"}`}</Text>
+      <Text>{`onScrollEnd ${scrollEnd() || "none"}`}</Text>
+      <Text>{`onScrollDragStart ${dragStart() || "none"}`}</Text>
+      <Text>{`onScrollDragEnd ${dragEnd() || "none"}`}</Text>
+      <Text>{`onMomentumStart ${momentumStart() || "none"}`}</Text>
+      <Text>{`onMomentumEnd ${momentumEnd() || "none"}`}</Text>
+      <Scroll
+        testID="events"
+        onScroll={(event) => scroll.set(metric(event))}
+        onScrollEnd={(event) => scrollEnd.set(metric(event))}
+        onScrollDragStart={(event) => dragStart.set(metric(event))}
+        onScrollDragEnd={(event) => dragEnd.set(metric(event))}
+        onMomentumStart={(event) => momentumStart.set(metric(event))}
+        onMomentumEnd={(event) => momentumEnd.set(metric(event))}
+        style={{ height: 80, width: 200, backgroundColor: "#f8fafc", borderRadius: 8 }}
+      >
+        <View style={{ height: 240, width: 200, padding: 8 }}>
+          <Text>Events</Text>
+        </View>
+      </Scroll>
+    </Section>
+  );
+}
+
 function Field(props: {
   label: string;
   value: string;
@@ -288,6 +330,7 @@ function App() {
         <Type />
         <Pictures />
         <Scrollers />
+        <ScrollEvents />
         <Fields />
         <Quote />
       </View>
