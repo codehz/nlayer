@@ -275,7 +275,7 @@ function App() {
         style={{
           paddingTop: "calc(env(safe-area-inset-top) + 16px)",
           paddingRight: "calc(env(safe-area-inset-right) + 16px)",
-          paddingBottom: "calc(env(safe-area-inset-bottom) + 32px)",
+          paddingBottom: "calc(env(keyboard-inset-height) + 32px)",
           paddingLeft: "calc(env(safe-area-inset-left) + 16px)",
         }}
       >
