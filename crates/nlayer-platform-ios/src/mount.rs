@@ -229,10 +229,7 @@ impl Mounter {
     }
 
     pub(crate) fn set_control(&mut self, control: EngineControl) {
-        if self
-            .pin
-            .as_ref()
-            .is_none_or(|pin| pin.keyboard.is_none())
+        if self.pin.as_ref().is_none_or(|pin| pin.keyboard.is_none())
             && self.keyboard != Points::ZERO
         {
             control.set_keyboard_inset(self.keyboard);

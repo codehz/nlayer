@@ -88,8 +88,12 @@ impl AppHost for AndroidHost {
         .map_err(|error| error.to_string())?;
         let files = nlayer_testing::fixture_file_port(&app_dir);
         let files_forwarded = format!("tcp:{files}");
-        android::adb(sdk, &serial, &["reverse", &files_forwarded, &files_forwarded])
-            .map_err(|error| error.to_string())?;
+        android::adb(
+            sdk,
+            &serial,
+            &["reverse", &files_forwarded, &files_forwarded],
+        )
+        .map_err(|error| error.to_string())?;
         let forwarded = format!("tcp:{port}");
         android::adb(sdk, &serial, &["reverse", &forwarded, &forwarded])
             .map_err(|error| error.to_string())?;

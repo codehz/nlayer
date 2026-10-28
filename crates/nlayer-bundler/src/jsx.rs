@@ -565,7 +565,9 @@ impl<'a> Compiler<'a, '_> {
             });
         match best {
             Some(name) => format!(": write <{name}>{}", self.import_hint(name)),
-            None => ": write the component's name (`<View>`, imported from \"@nlayer/ui\")".to_owned(),
+            None => {
+                ": write the component's name (`<View>`, imported from \"@nlayer/ui\")".to_owned()
+            }
         }
     }
 

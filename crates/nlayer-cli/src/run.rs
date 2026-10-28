@@ -383,7 +383,9 @@ pub(crate) fn consider_tree(dir: &Path, newest: &mut SystemTime) {
         if path.is_dir() {
             consider_tree(&path, newest);
         } else if name == "Cargo.toml"
-            || path.extension().is_some_and(|ext| ext == "rs" || ext == "java")
+            || path
+                .extension()
+                .is_some_and(|ext| ext == "rs" || ext == "java")
         {
             consider(&path, newest);
         }

@@ -166,7 +166,12 @@ impl RootView {
                 // SAFETY: `convertRect:fromCoordinateSpace:` of UICoordinateSpace.
                 let frame: CGRect =
                     unsafe { msg_send![self, convertRect: frame, fromCoordinateSpace: &*space] };
-                Some((frame.origin.x, frame.origin.y, frame.size.width, frame.size.height))
+                Some((
+                    frame.origin.x,
+                    frame.origin.y,
+                    frame.size.width,
+                    frame.size.height,
+                ))
             }
             _ => None,
         };
