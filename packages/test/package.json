@@ -1,0 +1,22 @@
+{
+  "name": "@nlayer/test",
+  "version": "0.1.0",
+  "description": "TypeScript types for nlayer's test runner (@nlayer/test). nlayer test provides the values. No JavaScript.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts"
+    }
+  },
+  "files": [
+    "index.d.ts",
+    "LICENSE",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

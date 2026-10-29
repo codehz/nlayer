@@ -649,4 +649,21 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn package_versions_match_the_cli() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages");
+        for dir in ["runtime", "ui", "jsx-runtime", "test", "globals"] {
+            let path = root.join(dir).join("package.json");
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+            let value: serde_json::Value = serde_json::from_str(&text)
+                .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()));
+            assert_eq!(
+                value["version"].as_str(),
+                Some(env!("CARGO_PKG_VERSION")),
+                "{dir} version must match the CLI"
+            );
+        }
+    }
 }

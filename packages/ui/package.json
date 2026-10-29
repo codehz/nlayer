@@ -1,0 +1,24 @@
+{
+  "name": "@nlayer/ui",
+  "version": "0.1.0",
+  "description": "TypeScript types for nlayer's View, Text, Image, Scroll, Input, platform and Keyboard. No JavaScript; the host provides the values.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts"
+    }
+  },
+  "files": [
+    "index.d.ts",
+    "styles.d.ts",
+    "assets.d.ts",
+    "LICENSE",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
