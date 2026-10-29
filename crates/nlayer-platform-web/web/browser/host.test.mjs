@@ -86,6 +86,38 @@ test("the page graph and a text mount do not need QuickJS", async () => {
   assert.match(frame, /"scaleX":1\.5/);
   assert.match(frame, /"scaleY":2/);
   assert.match(JSON.stringify(frames.at(-1)), /hello/);
+
+  // `resource` on the facade: the states, superseding and cancellation the
+  // QuickJS class has.
+  const source = facade.runtime.signal(undefined);
+  const aborts = [];
+  const loads = [];
+  const pending = [];
+  const user = facade.runtime.resource(source, (value, info) => {
+    loads.push(value);
+    info.signal.addEventListener("abort", () => aborts.push(value));
+    return new Promise((resolve) => pending.push(() => resolve(`user ${value}`)));
+  });
+  assert.equal(user.state(), "unresolved");
+  source.set(1);
+  assert.equal(user.state(), "pending");
+  source.set(2);
+  source.set(3);
+  assert.deepEqual(aborts, [1, 2], "a superseded load's signal aborts");
+  assert.deepEqual(loads, [1, 2, 3]);
+  // An earlier load that ends late changes nothing.
+  pending[0]();
+  pending[1]();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(user(), undefined);
+  pending[2]();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(user(), "user 3");
+  assert.equal(user.state(), "ready");
+  assert.equal(user.loading(), false);
+
   assert.equal(typeof global.gc, "function", "run node with --expose-gc");
   for (let i = 0; i < 5; i++) {
     global.gc();

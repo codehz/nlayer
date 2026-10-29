@@ -402,3 +402,60 @@ mount(App);
     );
     engine.stop();
 }
+
+/// A source change aborts the running load's `fetch`: the old request is
+/// stopped on the network and the new one's value is the one shown.
+#[test]
+fn a_superseded_resource_cancels_its_fetch() {
+    let closed = Arc::new(AtomicBool::new(false));
+    let server_closed = Arc::clone(&closed);
+    let base = serve(move |stream, line, _headers| {
+        if line.starts_with("GET /slow ") {
+            stream
+                .get_mut()
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\n")
+                .unwrap();
+            // The resource's source changes while this sleeps.
+            std::thread::sleep(Duration::from_millis(400));
+            let _ = stream.get_mut().write_all(b"late");
+            let mut buf = [0_u8; 256];
+            while let Ok(read) = stream.read(&mut buf) {
+                if read == 0 {
+                    break;
+                }
+            }
+            server_closed.store(true, Ordering::SeqCst);
+            return;
+        }
+        assert!(line.starts_with("GET /fast "), "{line}");
+        reply(stream, "200 OK", "text/plain", "fresh");
+    });
+    let bundle = format!(
+        r#"
+import {{ mount, resource, signal }} from "@nlayer/runtime";
+import {{ Text }} from "@nlayer/ui";
+
+function App() {{
+    const source = signal(1);
+    const user = resource(source, (value, info) =>
+        fetch(`{base}/${{value === 1 ? "slow" : "fast"}}`, {{ signal: info.signal }})
+            .then((response) => response.text()));
+    setTimeout(() => source.set(2), 100);
+    return <Text>{{`${{user.state()}} ${{user() ?? "-"}}`}}</Text>;
+}}
+mount(App);
+"#
+    );
+    let (engine, rx) = run(bundle);
+    rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(wait_for(&rx, "ready fresh"), "the new load's value shows");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while std::time::Instant::now() < deadline && !closed.load(Ordering::SeqCst) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        closed.load(Ordering::SeqCst),
+        "the superseded request stayed open"
+    );
+    engine.stop();
+}
