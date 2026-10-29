@@ -315,6 +315,51 @@ export function ErrorBoundary(props: {
   children?: unknown;
 }): unknown;
 
+/** Where a resource is. */
+export type ResourceState =
+  | "unresolved"
+  | "pending"
+  | "ready"
+  | "refreshing"
+  | "errored";
+
+/** What a fetcher gets besides the source. */
+export interface ResourceInfo {
+  /** Aborted when the load is superseded or its owner goes away. */
+  readonly signal: AbortSignal;
+  /** Whether this load is a `refetch()` or a source change with a value. */
+  readonly refetching: boolean;
+}
+
+/**
+ * A value loaded asynchronously. Reads are tracked, as a signal's: the
+ * returned function is the latest value (`undefined` before the first).
+ */
+export interface Resource<T> {
+  (): T | undefined;
+  state(): ResourceState;
+  /** The last load's error. The value is kept. */
+  error(): unknown;
+  loading(): boolean;
+  refetch(): void;
+  mutate(value: T | undefined): void;
+}
+
+/** A resource with no source: it loads once, and again on `refetch()`. */
+export function resource<T>(
+  fetcher: (info: ResourceInfo) => T | Promise<T>,
+): Resource<T>;
+
+/**
+ * A resource of `source`: it loads when the source is truthy, again when
+ * the source changes, and on `refetch()`. A falsy source loads nothing
+ * (state `unresolved`).
+ */
+export function resource<S, T>(
+  source: () => S,
+  fetcher: (source: S, info: ResourceInfo) => T | Promise<T>,
+): Resource<T>;
+
 /**
  * The app's key-value storage: strings by string key, kept on the device
  * across launches (up to 5 MiB of keys and values).
@@ -639,7 +684,7 @@ mod tests {
         assert!(ui.contains("testID?:"));
         assert!(!ui.contains("disabledStyle"));
         assert!(runtime.contains("export function signal"));
-        assert!(!runtime.contains("resource"));
+        assert!(runtime.contains("export function resource"));
         assert!(text("ui/styles.d.ts").contains("gridTemplateColumns?:"));
         assert!(text("ui/styles.d.ts").contains("boxShadow?:"));
         assert!(text("ui/styles.d.ts").contains("export interface ImageStyle"));

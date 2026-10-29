@@ -217,6 +217,7 @@ struct Classes {
     signal: qjs::JSClassID,
     setter: qjs::JSClassID,
     memo: qjs::JSClassID,
+    resource: qjs::JSClassID,
 }
 
 /// The graph of `cx`.
@@ -922,6 +923,7 @@ pub(crate) fn new_graph(raw: *mut JsContext) -> Graph {
                 true,
                 qjs::JS_DupValue(raw, function_proto),
             ),
+            resource: crate::resource::register(raw),
         };
         qjs::JS_FreeValue(raw, function_proto);
         Graph::new(JsData {
@@ -1200,6 +1202,17 @@ pub(crate) fn memo(cx: *mut JsContext, func: JsValue, equals_truthy: bool) -> Js
     let id = r::memo(Js(cx), func, UNDEFINED, equals, true);
     let class = unsafe { graph(cx) }.data.classes.memo;
     object(cx, class, id)
+}
+
+/// The class of the graph's resource objects.
+pub(crate) fn resource_class(cx: *mut JsContext) -> qjs::JSClassID {
+    // SAFETY: short borrow.
+    unsafe { graph(cx) }.data.classes.resource
+}
+
+/// Runs `f` in one batch: its writes reach the effects once it returns.
+pub(crate) fn batch_with<R>(cx: *mut JsContext, f: impl FnOnce() -> R) -> R {
+    r::batch(Js(cx), f)
 }
 
 /// Runs `f` with no listener (untracked).

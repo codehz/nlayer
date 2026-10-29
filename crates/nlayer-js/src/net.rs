@@ -43,11 +43,21 @@ pub struct NetworkRequest {
     pub request: HttpRequest,
 }
 
-/// The requests JS queued since the engine last took them.
+/// What the engine does with a request: start it, or stop one whose
+/// promise was rejected by its `AbortSignal`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NetworkOp {
+    /// Fetch this request.
+    Start(NetworkRequest),
+    /// The promise of request `id` was aborted: stop it on the network.
+    Cancel(u32),
+}
+
+/// The network work JS queued since the engine last took it.
 #[derive(Debug, Default)]
 pub(crate) struct Queue {
     next: u32,
-    pending: Vec<NetworkRequest>,
+    pending: Vec<NetworkOp>,
 }
 
 impl Queue {
@@ -55,12 +65,18 @@ impl Queue {
     pub(crate) fn push(&mut self, request: HttpRequest) -> u32 {
         let id = self.next;
         self.next += 1;
-        self.pending.push(NetworkRequest { id, request });
+        self.pending
+            .push(NetworkOp::Start(NetworkRequest { id, request }));
         id
     }
 
-    /// Moves the queued requests into `out`.
-    pub(crate) fn take(&mut self, out: &mut Vec<NetworkRequest>) {
+    /// Stops request `id` (an abort the promise already rejected with).
+    pub(crate) fn cancel(&mut self, id: u32) {
+        self.pending.push(NetworkOp::Cancel(id));
+    }
+
+    /// Moves the queued work into `out`.
+    pub(crate) fn take(&mut self, out: &mut Vec<NetworkOp>) {
         out.append(&mut self.pending);
     }
 }

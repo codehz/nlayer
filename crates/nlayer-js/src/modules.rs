@@ -106,6 +106,7 @@ const RUNTIME: &[Item] = &[
     ("context", Export::Function(dom::context, 1)),
     ("mount", Export::Function(dom::mount, 2)),
     ("ErrorBoundary", Export::Function(dom::error_boundary, 1)),
+    ("resource", Export::Function(crate::resource::resource, 2)),
     ("storage", Export::Value(storage)),
 ];
 

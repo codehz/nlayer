@@ -16,6 +16,7 @@ mod protocol;
 #[cfg(all(target_arch = "wasm32", getrandom_backend = "custom"))]
 mod random;
 mod reactive;
+mod resource;
 mod standard;
 mod state;
 mod storage;
@@ -30,7 +31,7 @@ use rquickjs::{CatchResultExt, Context, Module, Persistent, Promise, Runtime};
 pub use crate::bridge::TestBridge;
 pub use crate::error::JsError;
 pub use crate::modules::native_module_exports;
-pub use crate::net::{HttpRequest, HttpResponse, NetworkRequest};
+pub use crate::net::{HttpRequest, HttpResponse, NetworkOp, NetworkRequest};
 
 /// What a native view reports to JS with an event.
 #[derive(Debug, Clone, PartialEq)]
@@ -163,8 +164,8 @@ impl Host {
         self.run_jobs();
     }
 
-    /// Moves the requests `fetch` queued into `out`.
-    pub fn take_network(&self, out: &mut Vec<NetworkRequest>) {
+    /// Moves the network work `fetch` queued into `out`.
+    pub fn take_network(&self, out: &mut Vec<NetworkOp>) {
         self.cx.with(|cx| {
             // SAFETY: the live state.
             unsafe { (*state::state(cx.as_raw().as_ptr())).net.take(out) }

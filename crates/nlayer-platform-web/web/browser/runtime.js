@@ -254,6 +254,105 @@ export function createFacade(wasm, requestPump, options = {}) {
     storagePrefix(options.appId, globalThis.location?.href),
   );
 
+  // `resource(source, fetcher)` on the facade's signals and effects: the
+  // same states and cancellation as the QuickJS host's class.
+  function resource(source, fetcher) {
+    let readSource = null;
+    if (typeof fetcher === "function") {
+      readSource = source;
+    } else {
+      fetcher = source;
+    }
+    const value = signal(undefined);
+    const error = signal(undefined);
+    const state = signal("unresolved");
+    const trigger = signal(0);
+    let current = 0;
+    let running = false;
+    let hasValue = false;
+    let controller = null;
+    let refetching = false;
+
+    function stop() {
+      current++;
+      running = false;
+      if (controller) {
+        const aborted = controller;
+        controller = null;
+        aborted.abort();
+      }
+    }
+
+    function settle(run, ok, outcome) {
+      if (!running || run !== current) return;
+      running = false;
+      controller = null;
+      batch(() => {
+        if (ok) {
+          value.set(outcome);
+          error.set(undefined);
+          hasValue = true;
+          state.set("ready");
+        } else {
+          error.set(outcome);
+          state.set("errored");
+        }
+      });
+    }
+
+    function load() {
+      const tick = trigger();
+      void tick;
+      const src = readSource ? readSource() : undefined;
+      stop();
+      if (readSource && !src) {
+        state.set(hasValue ? "ready" : "unresolved");
+        return;
+      }
+      const run = current;
+      running = true;
+      state.set(hasValue ? "refreshing" : "pending");
+      const wasRefetching = refetching;
+      refetching = false;
+      controller = new AbortController();
+      const info = { signal: controller.signal, refetching: wasRefetching };
+      let result;
+      try {
+        result = untracked(() => (readSource ? fetcher(src, info) : fetcher(info)));
+      } catch (failure) {
+        settle(run, false, failure);
+        return;
+      }
+      Promise.resolve(result).then(
+        (next) => settle(run, true, next),
+        (failure) => settle(run, false, failure),
+      );
+    }
+
+    effect(() => {
+      load();
+      return stop;
+    });
+
+    const read = () => value();
+    read.state = () => state();
+    read.error = () => error();
+    read.loading = () => state() === "pending" || state() === "refreshing";
+    read.refetch = () => {
+      refetching = true;
+      trigger.set(trigger() + 1);
+    };
+    read.mutate = (next) => {
+      hasValue = true;
+      if (!running) state.set("ready");
+      batch(() => {
+        value.set(next);
+        error.set(undefined);
+      });
+    };
+    return read;
+  }
+
   const runtime = {
     signal,
     computed,
@@ -264,6 +363,7 @@ export function createFacade(wasm, requestPump, options = {}) {
     context,
     mount,
     ErrorBoundary,
+    resource,
     storage,
   };
   const ui = {

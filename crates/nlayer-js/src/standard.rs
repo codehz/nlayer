@@ -332,7 +332,11 @@ const PRELUDE: &str = r#"
             pendingFetch.set(id, { resolve: resolve, reject: reject, signal: signal });
             if (signal) {
                 var onAbort = function () {
-                    if (pendingFetch.delete(id)) reject(signal.reason || abortError());
+                    if (pendingFetch.delete(id)) {
+                        // Stop the request on the network too, not only its promise.
+                        globalThis.__nlayerHttpCancel(id);
+                        reject(signal.reason || abortError());
+                    }
                 };
                 signal.addEventListener("abort", onAbort);
             }
@@ -405,6 +409,18 @@ const PRELUDE: &str = r#"
         },
     };
     Object.defineProperty(globalThis, "__nlayerStorage", { value: storage, writable: false, configurable: false });
+
+    // --- abort signals the natives make (a resource's load) ---
+    Object.defineProperty(globalThis, "__nlayerAbortNew", {
+        value: function () { return new AbortController().signal; },
+        writable: false,
+        configurable: false,
+    });
+    Object.defineProperty(globalThis, "__nlayerAbortAbort", {
+        value: function (signal) { signal._abort(); },
+        writable: false,
+        configurable: false,
+    });
 })();
 "#;
 
@@ -421,6 +437,52 @@ pub(crate) fn new_function(cx: *mut JsContext, name: &CStr, f: Native, length: i
             qjs::JSCFunctionEnum_JS_CFUNC_generic,
             0,
         )
+    }
+}
+
+/// A new `AbortSignal` (the prelude's `AbortController`). `Err` leaves
+/// an exception pending.
+pub(crate) fn new_abort_signal(cx: *mut JsContext) -> Result<JsValue, ()> {
+    // SAFETY: the prelude's hidden global; the call's result is owned.
+    unsafe {
+        let value = call_hidden(cx, c"__nlayerAbortNew", &mut [])?;
+        Ok(value)
+    }
+}
+
+/// Aborts `signal` (borrowed) with an `AbortError`; nothing when it is
+/// already aborted.
+pub(crate) fn abort_signal(cx: *mut JsContext, signal: JsValue) -> Result<(), ()> {
+    // SAFETY: a borrowed argument; the call's result is freed.
+    unsafe {
+        let value = call_hidden(cx, c"__nlayerAbortAbort", &mut [signal])?;
+        qjs::JS_FreeValue(cx, value);
+        Ok(())
+    }
+}
+
+/// Calls the prelude's hidden global `name` with `args`; `Err` leaves the
+/// exception pending.
+unsafe fn call_hidden(
+    cx: *mut JsContext,
+    name: &CStr,
+    args: &mut [JsValue],
+) -> Result<JsValue, ()> {
+    // SAFETY: the global is a function the prelude made; `args` are live.
+    unsafe {
+        let global = qjs::JS_GetGlobalObject(cx);
+        let func = qjs::JS_GetPropertyStr(cx, global, name.as_ptr());
+        qjs::JS_FreeValue(cx, global);
+        if !qjs::JS_IsFunction(cx, func) {
+            qjs::JS_FreeValue(cx, func);
+            return Err(());
+        }
+        let result = qjs::JS_Call(cx, func, UNDEFINED, args.len() as i32, args.as_mut_ptr());
+        qjs::JS_FreeValue(cx, func);
+        if qjs::JS_IsException(result) {
+            return Err(());
+        }
+        Ok(result)
     }
 }
 
@@ -617,6 +679,29 @@ fn network(cx: *mut JsContext) {
         c"__nlayerHttpStart",
         new_function(cx, c"__nlayerHttpStart", http_start, 5),
     );
+    set_global(
+        cx,
+        c"__nlayerHttpCancel",
+        new_function(cx, c"__nlayerHttpCancel", http_cancel, 1),
+    );
+}
+
+/// `__nlayerHttpCancel(id)`: the request's promise was aborted; the engine
+/// stops it on the network.
+unsafe extern "C" fn http_cancel(
+    cx: *mut JsContext,
+    _this: JsValue,
+    argc: i32,
+    argv: *mut JsValue,
+) -> JsValue {
+    let mut id = 0f64;
+    // SAFETY: the live state; a borrowed argument.
+    unsafe {
+        if argc > 0 && qjs::JS_ToFloat64(cx, &mut id, *argv) == 0 {
+            (*crate::state::state(cx)).net.cancel(id as u32);
+        }
+    }
+    UNDEFINED
 }
 
 unsafe extern "C" fn http_start(

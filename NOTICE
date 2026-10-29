@@ -68,6 +68,9 @@ Copied files:
 - `crates/nlayer-js/src/dom.rs` from `crates/nsh-js/src/dom.rs` (the v1
   renderer: host elements, text, style and prop decoding, children and
   keyed rows, components, context, error boundaries, mount)
+- `crates/nlayer-js/src/resource.rs` from `crates/nsh-js/src/resource.rs`
+  (the callable class, its signals, the load effect and promise following;
+  `initialValue`, entity and Rust-face options are not copied)
 - `crates/nlayer-js/src/protocol.rs` from `crates/nsh-js/src/protocol.rs`
   (styles with a static transform list, the v1 host props; animation,
   shadows, filters and native components are not copied)
@@ -99,8 +102,9 @@ Copied files:
 - `crates/nlayer-js/src/net.rs` from `crates/nsh-core/src/platform.rs`
   (`HttpRequest` / `HttpHead`, cut to whole bodies and no streams)
 - `crates/nlayer-engine/src/net.rs` from `crates/nsh-engine/src/net.rs`
-  (ureq with rustls, whole bodies; streaming, pause and cancellation are
-  not copied)
+  (ureq with rustls, whole bodies; a cancelled request stops between body
+  chunks and its connection closes, as nsh's `FetchOp::Cancel` does;
+  streaming, pause and uploads are not copied)
 - `crates/nlayer-platform-web/src/encode.rs` from
   `crates/nsh-platform-web/src/encode.rs` and `src/text/css.rs` (the mount
   JSON and its CSS classes, cut to the v1 views and the whitelist: fill,

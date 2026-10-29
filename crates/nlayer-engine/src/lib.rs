@@ -60,7 +60,7 @@ use nlayer_core::{
 #[cfg(feature = "js")]
 use nlayer_js::Host as Vm;
 #[cfg(feature = "js")]
-pub use nlayer_js::{EventPayload, HttpRequest, HttpResponse, NetworkRequest, Os};
+pub use nlayer_js::{EventPayload, HttpRequest, HttpResponse, NetworkOp, NetworkRequest, Os};
 
 /// A platform that applies mount batches.
 pub trait MountSink: Send + Sync + 'static {
@@ -471,6 +471,10 @@ struct Session<M: TextEngine> {
     sink: Arc<dyn MountSink>,
     #[cfg(all(not(target_arch = "wasm32"), feature = "js"))]
     results: ResultSlot,
+    /// The requests running on the network, to cancel one whose promise
+    /// was aborted.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "js"))]
+    fetches: HashMap<u32, net::Fetch>,
     edits: HashMap<NodeId, u32>,
     /// Wakes the engine's HTTP stack. The browser host has none.
     #[cfg(not(target_arch = "wasm32"))]
@@ -507,6 +511,8 @@ impl<M: TextEngine> Session<M> {
             sink,
             #[cfg(all(not(target_arch = "wasm32"), feature = "js"))]
             results: Arc::default(),
+            #[cfg(all(not(target_arch = "wasm32"), feature = "js"))]
+            fetches: HashMap::new(),
             edits: HashMap::new(),
             #[cfg(not(target_arch = "wasm32"))]
             notify,
@@ -522,7 +528,7 @@ impl<M: TextEngine> Session<M> {
     #[cfg(not(target_arch = "wasm32"))]
     fn on_message(&mut self, message: Message) -> bool {
         #[cfg(feature = "js")]
-        complete_network(&self.host, &self.results);
+        complete_network(&self.host, &self.results, &mut self.fetches);
         if !self.apply(message) {
             return false;
         }
@@ -540,7 +546,7 @@ impl<M: TextEngine> Session<M> {
     /// One burst of input, then one frame. `false`: the engine was stopped.
     fn on_burst(&mut self, messages: Vec<Message>) -> bool {
         #[cfg(all(not(target_arch = "wasm32"), feature = "js"))]
-        complete_network(&self.host, &self.results);
+        complete_network(&self.host, &self.results, &mut self.fetches);
         for message in messages {
             if !self.apply(message) {
                 return false;
@@ -591,11 +597,23 @@ impl<M: TextEngine> Session<M> {
         }
         #[cfg(all(not(target_arch = "wasm32"), feature = "js"))]
         {
-            let mut requests = Vec::new();
-            self.host.take_network(&mut requests);
-            for request in requests {
-                let notify = Arc::clone(&self.notify);
-                net::start(request, Arc::clone(&self.results), move || notify());
+            let mut work = Vec::new();
+            self.host.take_network(&mut work);
+            for op in work {
+                match op {
+                    NetworkOp::Start(request) => {
+                        let id = request.id;
+                        let notify = Arc::clone(&self.notify);
+                        let fetch =
+                            net::start(request, Arc::clone(&self.results), move || notify());
+                        self.fetches.insert(id, fetch);
+                    }
+                    NetworkOp::Cancel(id) => {
+                        if let Some(fetch) = self.fetches.remove(&id) {
+                            fetch.cancel();
+                        }
+                    }
+                }
             }
         }
     }
@@ -603,9 +621,10 @@ impl<M: TextEngine> Session<M> {
 
 /// Hands JS the responses that arrived.
 #[cfg(all(not(target_arch = "wasm32"), feature = "js"))]
-fn complete_network(host: &Vm, results: &ResultSlot) {
+fn complete_network(host: &Vm, results: &ResultSlot, fetches: &mut HashMap<u32, net::Fetch>) {
     let done = std::mem::take(&mut *results.lock().expect("network results"));
     for (id, result) in done {
+        fetches.remove(&id);
         host.complete_network(id, result);
     }
 }

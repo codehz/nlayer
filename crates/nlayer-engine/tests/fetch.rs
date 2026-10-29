@@ -3,7 +3,10 @@
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -339,6 +342,63 @@ mount(App);
     assert!(
         wait_for(&rx, "15 15 application/octet-stream %PDF-1.4\u{0}binary"),
         "the bytes and the blob"
+    );
+    engine.stop();
+}
+
+/// An abort rejects the promise and stops the request on the network: the
+/// connection closes instead of reading the body to its end.
+#[test]
+fn aborting_stops_the_request_on_the_network() {
+    let closed = Arc::new(AtomicBool::new(false));
+    let server_closed = Arc::clone(&closed);
+    let base = serve(move |stream, line, _headers| {
+        assert!(line.starts_with("GET /slow "), "{line}");
+        stream
+            .get_mut()
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 200000\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        // The client aborts while this sleeps, waiting for the body.
+        std::thread::sleep(Duration::from_millis(400));
+        let body = vec![b'x'; 100_000];
+        let _ = stream.get_mut().write_all(&body);
+        // A closed client reads as the end.
+        let mut buf = [0_u8; 1024];
+        while let Ok(read) = stream.read(&mut buf) {
+            if read == 0 {
+                break;
+            }
+        }
+        server_closed.store(true, Ordering::SeqCst);
+    });
+    let bundle = format!(
+        r#"
+import {{ mount, signal }} from "@nlayer/runtime";
+import {{ Text }} from "@nlayer/ui";
+
+function App() {{
+    const shown = signal("loading");
+    const controller = new AbortController();
+    fetch("{base}/slow", {{ signal: controller.signal }})
+        .then((response) => response.text())
+        .then((text) => shown.set(`${{text.length}}`))
+        .catch((error) => shown.set(error.name));
+    setTimeout(() => controller.abort(), 100);
+    return <Text>{{shown()}}</Text>;
+}}
+mount(App);
+"#
+    );
+    let (engine, rx) = run(bundle);
+    rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(wait_for(&rx, "AbortError"), "the promise rejects");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while std::time::Instant::now() < deadline && !closed.load(Ordering::SeqCst) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        closed.load(Ordering::SeqCst),
+        "the server's connection stayed open: the request was not cancelled"
     );
     engine.stop();
 }
