@@ -103,29 +103,9 @@ export function createFacade(wasm, requestPump) {
     return read;
   }
 
-  function ErrorBoundary(props) {
-    const failed = signal(undefined);
-    return computed(() => {
-      const state = failed();
-      if (Array.isArray(state)) {
-        const fallback = props?.fallback;
-        if (typeof fallback === "function" && fallback.length > 0) {
-          return untracked(() => fallback(state[0], () => failed.set(undefined)));
-        }
-        return fallback;
-      }
-      call(113, boundaryKey, failed);
-      const children = props?.children;
-      return typeof children === "function" ? children() : children;
-    });
-  }
-
   // Rust's catch looks up this object. The facade's key is the one the
   // graph was given at startup, swapped in once the bridge can be called.
   function installBoundary() {
-    const key = call(116);
-    // The graph compares by identity. Replace the placeholder's identity
-    // by providing through the real key from here on.
     boundaryProvide = call(116);
     call(400, event);
   }
@@ -302,9 +282,8 @@ export function createFacade(wasm, requestPump) {
     });
   }
 
-  // ErrorBoundary provides the graph's key, not the placeholder.
-  const realBoundary = ErrorBoundary;
-  function boundary(props) {
+  // The graph's boundary key, not the facade's placeholder.
+  function ErrorBoundary(props) {
     const failed = signal(undefined);
     return computed(() => {
       const state = failed();
@@ -320,9 +299,6 @@ export function createFacade(wasm, requestPump) {
       return typeof children === "function" ? children() : children;
     });
   }
-  runtime.ErrorBoundary = boundary;
-  void realBoundary;
-  void installBoundary;
 
   return {
     values,
