@@ -3,18 +3,18 @@
 本文不是产品范围。范围仍以 `docs/v1.md` 和 `AGENTS.md` 为准；本文只记录当前实现与 v1 契约之间的差距、验证证据和验收方式。
 
 - 审计基线：`main`，`25152b4`，2026-10-29
+- 复核基线：`main`，`108d93f`，2026-10-29
 - 审计范围：`crates/*`、`packages/*`、`examples/gallery`、`scripts/*`
 - 验证环境：macOS 27.0.0 arm64；Xcode iOS 27.1 模拟器（iPhone Duo）；Android emulator-5554；web target 使用本机 Brave（Chromium）
 - 维护约定：每修掉一项，删除对应条目或在“状态”里标成已关闭；不要让本文变成第二份产品范围
 
 ## 结论
 
-v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bundle、五个宿主组件、三端平台 API、CLI 和类型包都有真实代码，没有 `todo!()` / 空实现。本文的条目都已关闭：
+v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bundle、五个宿主组件、三端平台 API、CLI 和类型包都有真实代码，没有 `todo!()` / 空实现。P0–P3 的条目都已关闭，但复核仍留下两项 API 面缺口和两处设备验收盲区：
 
-1. 明确的契约缺口（绘制）：P0-4 已关闭。
-2. 宿主语义偏差：本切片的 focusStyle、onScroll、transformOrigin 已关闭。
-3. 验收与回归覆盖：P2-1 到 P2-7 已关闭。
-4. 清理项：P3-1 到 P3-7 已关闭。
+1. `URLSearchParams` 运行时缺 `entries` / `keys` / `values` / `[Symbol.iterator]`，`@nlayer/globals` 也未声明；`Headers` 运行时只有 `entries`，类型未声明 `entries` / `keys` / `values` / `[Symbol.iterator]`。
+2. Android API 28–29 的键盘 inset：`HostActivity.keyboardOverlap` 有代码路径，但没有 API 28/29 的设备回归；现有 emulator-5554 是 API 36。
+3. Android `focusStyle` 祖先链：`Mounter.chainFocused` / `focusChanged` 有实现，iOS 宿主测试覆盖；Android Java instrumentation 没有 focus 用例。
 
 P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS 宿主。
 
@@ -22,15 +22,17 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 
 | 检查 | 结果 |
 |---|---|
-| `cargo test --workspace` | 全绿；286 个 `#[test]` 函数 |
+| `cargo test --workspace` | 全绿；322 个测试（`cargo test --workspace -- --list`） |
 | `nlayer test examples/gallery/App.test.tsx` | 12/12 |
 | `nlayer test examples/gallery/App.test.tsx --target web` | 12/12 |
 | `nlayer test examples/gallery/App.test.tsx --target ios` | 12/12 |
 | `nlayer test examples/gallery/App.test.tsx --target android` | 12/12 |
+| `scripts/test-targets` | 6/6；`gallery_runs_on_each_target`、三端 press/type/scroll、Android Java instrumentation、iOS 宿主测试 |
 | `nlayer-platform-ios` host tests in the simulator | 13/13；`cargo test -p nlayer-cli --test targets the_ios_host_tests_pass_in_the_simulator` |
-| `nlayer build examples/gallery --out /tmp/nlayer-build-check` | 写出 `bundle.js`、`bundle.js.map`、`mark.png` |
-| `nlayer init /tmp/nlayer-init-check` | 写出 `App.tsx`、`App.test.tsx`、`tsconfig.json`、`package.json`、`.gitignore` |
+| `nlayer build examples/gallery --out /tmp/nlayer-build-check` | 写出 `bundle.js`、`bundle.js.map`、`mark.png`（沿用审计基线，本次未复跑） |
+| `nlayer init /tmp/nlayer-init-check` | 写出 `App.tsx`、`App.test.tsx`、`tsconfig.json`、`package.json`、`.gitignore`（沿用审计基线，本次未复跑） |
 | `scripts/test-types` | 五个类型包打包并在临时工程中 `tsc` 通过 |
+| API 探针（`/tmp/nlayer-gap-probe`） | 6/7；`URLSearchParams.entries` 失败，见附件 |
 
 `scripts/test-targets`（`cargo test -p nlayer-cli --test targets`）跑 gallery 四端、三端 press/type/scroll/safe-area，以及 Android Java 层在 emulator 上的 instrumentation。CI 是 `.github/workflows/targets.yml`。
 
@@ -38,14 +40,14 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 
 | ID | 缺口 | 证据 | 影响 |
 |---|---|---|---|
-| P0-4 | 已关闭。web 图片 `border-radius: inherit` 加 `overflow: clip`；Android `ImageBox` 按 `Decor` 圆角路径裁剪。树上报 `radius`（point，四角）。web target 断言 16px 圆角图片的计算半径 | 同上 | 三端圆角图片裁到半径 |
+| P0-4 | 已关闭。web 图片 `border-radius: inherit` 加 `overflow: clip`；Android `ImageBox` 按 `Decor` 圆角路径裁剪。树上报 `radius`（point，四角）。web target 断言 16px 圆角图片的计算半径 | `crates/nlayer-platform-web/web/base.css`；`crates/nlayer-platform-android/java/dev/nlayer/android/ImageBox.java`；`crates/nlayer-cli/tests/fixtures/App.test.tsx` | 三端圆角图片裁到半径 |
 | P0-10 | 已关闭。焦点变化沿父链重绘；`focusStyle` 在自身或子孙 field 聚焦时生效。touch mode 下普通 Box 只 `setFocusable`，点击不会聚焦它（与 `HostView` 一致）；键盘或方向键可以。祖先样式不依赖那条路径 | `Mounter.focusChanged` / `chainFocused` | 聚焦输入时祖先 `focusStyle` 亮；树上报 `focused` |
 
 ### P0 验收方式
 
 
 - P0-4：已关闭。`nlayer test --target web` 断言 `radius` 为 `[16, 16, 16, 16]`。Android 树的 `radius` 来自 `onDraw` 使用的 fitted 半径。
-- P0-10：已关闭。touch mode 下普通 Box 的 `focusStyle` 不能靠点击点亮，靠内部 field 或非触摸焦点。
+- P0-10：已关闭（实现）。touch mode 下普通 Box 的 `focusStyle` 不能靠点击点亮，靠内部 field 或非触摸焦点。iOS 宿主测试覆盖 focus 祖先链；Android Java instrumentation 还没有该用例，见“剩余工作”。
 
 ## P1：宿主语义与契约定稿
 
@@ -79,7 +81,7 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 | P2-4 | 已关闭。`nlayer test --filter` 只跑名字匹配的用例，无匹配也算成功；应用入口的真实 stdin 步骤驱动界面，失败步骤退出 1；类型版本不一致只警告、退出 0。iOS/Android 共用 `Watch`：源改动重建一次，坏源码保留上一个 app 并在修好后重试，发布失败在下一次改动重试 | `crates/nlayer-cli/tests/cli.rs`；`run.rs` 的 `Watch` 测试 | watch/rebuild/失败回退不再只有手工验证 |
 | P2-5 | 已关闭。web 的 press/type/scroll 走 CDP `Input.dispatchMouseEvent` / `Input.dispatchKeyEvent`，键盘 Return、拖拽、momentum 在真实浏览器里有 E2E | `web_test.rs`；`web/host.js` 只答坐标与滚动终点 | 测试输入和用户输入走同一条页面路径 |
 | P2-6 | 已关闭。`java-test/` 是独立测试 APK 上的 instrumentation：`Mounter` 的 mount batch、frame、样式、状态样式和删除，`ScrollBox` 的轴、内容尺寸和偏移，`InputBox` 的配置、受控值与输入计数，`ImageBox` 的 cover/contain/none、object position、圆角裁剪和 asset 解码都在 emulator / 设备上跑。`crates/nlayer-cli/src/android.rs` 的 `android_java_tests` 构建、安装并运行它，`cargo test -p nlayer-cli --test targets` 断言报告全过 | `crates/nlayer-platform-android/java-test/`；`crates/nlayer-cli/tests/targets.rs` | `Mounter`、`ScrollBox`、`InputBox`、`ImageBox` 的设备行为进 `cargo test` |
-| P2-7 | 已关闭。`nlayer-platform-ios` 的 `host` 测试目标是 `harness = false` 的主线程二进制：`host`、`driver`、`mount`、`text` 的 13 个测试在模拟器里跑，覆盖错误浮层与根视图、测试协议 step、帧/样式/状态样式/删除、focus 祖先链、scroll 收窄与恢复、input 配置和 image、CoreText 换行和截断。`crates/nlayer-cli` 的 `ios_host_tests` 用 `aarch64-apple-ios-sim` 构建并由 `simctl spawn` 执行；`cargo test -p nlayer-cli --test targets` 断言报告全过 | `crates/nlayer-platform-ios/tests/host.rs`；`src/lib.rs` `run_host_tests`；`ios.rs` `host_test_binary` | 设备层不再只有纯逻辑测试；`cargo test` 跑不动 UIKit 的部分由模拟器补上 |
+| P2-7 | 已关闭。`nlayer-platform-ios` 的 `host` 测试目标是 `harness = false` 的主线程二进制：`host`、`driver`、`mount`、`text` 的 13 个测试在模拟器里跑，覆盖错误浮层与根视图、测试协议 step、帧/样式/状态样式/删除、focus 祖先链、scroll 收窄与恢复、input 配置和 image、CoreText 换行和截断。`crates/nlayer-cli` 的 `ios_host_tests` 用 `aarch64-apple-ios-sim` 构建并由 `simctl spawn` 执行；`cargo test -p nlayer-cli --test targets` 断言报告全过 | `crates/nlayer-platform-ios/src/{host,driver,mount,text}.rs`；`tests/host.rs`；`src/lib.rs` `run_host_tests`；`ios.rs` `host_test_binary` | 设备层不再只有纯逻辑测试；`cargo test` 跑不动 UIKit 的部分由模拟器补上 |
 
 ### P2 建议的最小验收集
 
@@ -98,6 +100,7 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 | P3-1 | 已关闭。`pointerEvents` 不在 v1 样式面；样式 IR、类型和 class 侧信道已删除该入口 | `crates/nlayer-core/src/style.rs`；`packages/ui/styles.d.ts` |
 | P3-2 | 已关闭。未接线的通用 reactive API（`owned_signal`、`set_equals`、`remove_cleanup`、`collecting_effects`、`with_root_under`）已删除 | `crates/nlayer-core/src/reactive.rs` |
 | P3-3 | 已关闭。web 只留一份 `ErrorBoundary`，直接用图提供的 boundary key | `crates/nlayer-platform-web/web/browser/runtime.js` |
+| P3-4 | 已关闭。`@nlayer/test` 的 `Node` 声明了 `focused` | `packages/test/index.d.ts` |
 | P3-5 | 已关闭。`@nlayer/test` 类型声明了 test bundle 导出的 `finish`；生成入口用它跑已注册的用例 | `crates/nlayer-bundler/src/types.rs`；`packages/test/index.d.ts` |
 | P3-6 | 已关闭。web 的视图样式写出 `visibility: hidden`，与 iOS / Android 的隐藏视图一致 | `crates/nlayer-platform-web/src/encode.rs` |
 | P3-7 | 已关闭。v1 不点名 skew；`transform` 不再解析 `skew()` / `skewX()` / `skewY()`，类型和步骤名同步删除，Android 不再静默丢弃 | `crates/nlayer-core/src/transform.rs`；`packages/ui/styles.d.ts` |
@@ -110,34 +113,35 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 |---|---|---|---|
 | 纵向布局 | `App.tsx:40-63` | 相等 x、递增 y；row 相等 y | 未断言 `flexShrink: 0` / 无 `min-width: auto` |
 | grid | `App.tsx:64-84` | 2×2 单元 x/y | 未覆盖 line names、auto flow |
-| 嵌套 Text span | `App.tsx:194-199` | 一段文本、字重/斜体/字号/颜色 | gallery 未覆盖 span `testID` / span `onPress` |
-| 打包图片 | `App.tsx:3,207` | `asset:/mark.png`、cover、32×32 | 只读挂载元数据，未断言解码/绘制 |
+| 嵌套 Text span | `App.tsx:194-199` | 一段文本、字重/斜体/字号/颜色 | gallery 未覆盖 span `testID` / span `onPress`；四端 targets fixture 用 `id:docs` 覆盖 |
+| 打包图片 | `App.tsx:3,207` | `asset:/mark.png`、cover、32×32 | gallery 只读挂载元数据；Android 设备测试断言解码和圆角裁剪，web target 断言 radius |
 | 双轴 Scroll | `App.tsx:219-232` | 垂直溢出 + 水平滚到 x=40 | 未断言绘制 |
 | 滚动回调 | `App.tsx:247-275` | 六个回调都等到同一 metric | 无 |
-| active/hover/focus | `App.tsx:129-178` | 基础宽高 + 文案 | 未断言实际绘制；无 hover 步骤 |
-| 受控 Input | `App.tsx:290-354` | 输入、`Name: ada`、disabled | 未覆盖 Return、`Keyboard.dismiss`、placeholder 选择器 |
-| onPress | `App.tsx:85-96,129,144` | 文案变化 | 未覆盖嵌套 span press |
+| active/hover/focus | `App.tsx:129-178` | 基础宽高 + 文案 | web 单测断言 active/hover 规则应用；未断言实际像素；无 hover 输入步骤 |
+| 受控 Input | `App.tsx:290-354` | 输入、`Name: ada`、disabled | Return 只在 web E2E 断言；`Keyboard.dismiss` 和 placeholder 选择器由无窗口 suite 覆盖；iOS/Android 的 Return 未断言 |
+| onPress | `App.tsx:85-96,129,144` | 文案变化 | gallery 未覆盖嵌套 span press；四端 targets fixture 用 `id:docs` 覆盖 |
 | 静态 transform | `App.tsx:97-107` | transform 步骤列表 | 未断言绘制或 origin 几何 |
-| fetch JSON | `App.tsx:359-375` | 等到 `Gallery: 5` | 只有成功路径；未覆盖 abort/重定向/错误 |
+| fetch JSON | `App.tsx:359-375` | 等到 `Gallery: 5` | gallery 只有成功路径；引擎 `fetch.rs` 覆盖 abort，未覆盖重定向 |
 | safe-area `env()` | `App.tsx:108-116,397-405` | top/left、right/bottom、`max(safe, keyboard)` | 无 |
 | `platform.os` | `App.tsx:382-388` | 等于当前 target 的 `__nlayerOs` | 无 |
 
 ## 附件：已复现的 API 缺口
 
-临时应用 `/tmp/nlayer-probe`，用 `nlayer test` 无窗口运行。结果 `3 passed, 4 failed`。`TextDecoder` 的两项和 `Blob` 构造器已关闭。
+临时应用 `/tmp/nlayer-gap-probe`，用 `nlayer test` 无窗口运行。结果 `6 passed, 1 failed`。`TextDecoder` 的两项和 `Blob` 构造器已关闭。
 
 | 测试 | 结果 | 说明 |
-|---|---|---|---|
+|---|---|---|
+| `TextDecoder decode with no argument` | ok | 无参返回空串 |
+| `TextDecoder decode a DataView` | ok | DataView 按 Encoding 标准解码 |
 | `crypto.subtle is absent` | ok | QuickJS 宿主符合 v1 |
-| `URLSearchParams exposes entries` | fail | 运行时没有 `entries`；类型也未声明，属标准完整性而非类型漂移 |
-| `Headers exposes entries` | ok | 运行时存在，类型未声明 |
+| `URLSearchParams exposes entries` | fail | 运行时没有 `entries` / `keys` / `values` / `[Symbol.iterator]`；类型也未声明，属标准完整性而非类型漂移 |
+| `Headers exposes entries` | ok | 运行时只有 `entries`；`keys` / `values` / `[Symbol.iterator]` 缺失，类型未声明这些方法 |
+| `Blob is not a constructor in v1` | ok | 只作为 `Response.blob()` 的结果 |
 | `Response has no clone` | ok | 与 v1 最小面一致 |
 
+类型侧用 `tsc` 复核：`headers.entries()` 和 `params.entries()` 都报 `TS2339`。
 
-## 建议切片顺序
+## 剩余工作
 
-1. **CLI/API 契约**：P0-1、P0-5、P0-8、P0-9 已关闭。
-2. **键盘/选择器**：P0-2、P0-3、P0-6、P0-7 已关闭。
-3. **绘制与宿主语义**：P0-4、P0-10、P1-2、P1-3、P1-4 已关闭。
-4. **Scroll 定稿**：P1-1 已关闭。
-5. **验收自动化**：P2-1 到 P2-4 已关闭。
+1. **API 面**：给 `URLSearchParams` 补 `entries` / `keys` / `values` / `[Symbol.iterator]` 和对应类型；给 `Headers` 补类型声明，并按同一标准补齐 `keys` / `values` / `[Symbol.iterator]`。
+2. **设备回归**：在 API 28/29 emulator 上断言 `env(keyboard-inset-height) > 0` 和 tap/drag 收键盘；在 Android Java instrumentation 补 `focusStyle` 祖先链用例。
