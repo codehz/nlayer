@@ -315,7 +315,11 @@ final class Tree {
 
   static void scrollTo(HostView host, int id, float x, float y) {
     View v = host.mounter.views.get(id);
-    if (v instanceof ScrollBox) ((ScrollBox) v).scrollToPoints(x, y, host.density);
+    if (v instanceof ScrollBox) {
+      ScrollBox box = (ScrollBox) v;
+      box.scrollToPoints(x, y, host.density);
+      box.noteTestGesture();
+    }
   }
 
   static String opName(int kind) {

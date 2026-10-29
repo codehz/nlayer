@@ -4,6 +4,7 @@ import mark from "./mark.png";
 
 declare global {
   var __nlayerTestOrigin: string | undefined;
+  var __nlayerOs: string | undefined;
 }
 
 /** Headless tests serve the app directory here. The browser fetches the same file from the page. */
@@ -222,6 +223,7 @@ function Scrollers() {
         </View>
       </Scroll>
       <Scroll
+        testID="across"
         horizontal
         style={{ height: 48, width: 160, backgroundColor: "#f8fafc", borderRadius: 8 }}
       >
@@ -394,6 +396,7 @@ function App() {
   return (
     <Scroll testID="page" style={{ flex: 1, backgroundColor: "#f8fafc" }}>
       <View
+        testID="safe"
         style={{
           paddingTop: "calc(env(safe-area-inset-top) + 16px)",
           paddingRight: "calc(env(safe-area-inset-right) + 16px)",

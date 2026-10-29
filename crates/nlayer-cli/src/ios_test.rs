@@ -50,6 +50,10 @@ impl IosHost {
 }
 
 impl AppHost for IosHost {
+    fn os(&self) -> &'static str {
+        "ios"
+    }
+
     fn open(&mut self, request: HostOpen) -> Result<Box<dyn HostedApp>, String> {
         let entry = crate::resolve_entry(&request.entry).map_err(|error| error.to_string())?;
         let app_dir = entry

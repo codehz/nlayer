@@ -222,39 +222,53 @@ fn type_text(selector: String, text: String) -> Result<Value, String> {
 
 fn scroll(selector: String, distance: f32) -> Result<Value, String> {
     on_ui(move || -> Result<Value, String> {
-        let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
-        let mounter = mounter.borrow();
-        let scene = mounter.scene();
-        let id = scene.scroll_target(&selector)?;
-        let scroll = mounter
-            .scroll(id)
-            .ok_or_else(|| format!("`{selector}` is not in a scroll view"))?;
-        let offset = scroll.contentOffset();
-        let content = scroll.contentSize();
-        let bounds = scroll.bounds().size;
-        let horizontal = scroll.alwaysBounceHorizontal();
-        let (x, y) = if horizontal {
-            (
-                scene::next_offset(
-                    offset.x as f32,
-                    distance,
-                    content.width as f32,
-                    bounds.width as f32,
-                ),
-                offset.y as f32,
-            )
-        } else {
-            (
-                offset.x as f32,
-                scene::next_offset(
+        let (scroll, x, y) = {
+            let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
+            let mounter = mounter.borrow();
+            let scene = mounter.scene();
+            let id = scene.scroll_target(&selector)?;
+            let scroll = mounter
+                .scroll(id)
+                .ok_or_else(|| format!("`{selector}` is not in a scroll view"))?;
+            let offset = scroll.contentOffset();
+            let content = scroll.contentSize();
+            let bounds = scroll.bounds().size;
+            let horizontal = scroll.alwaysBounceHorizontal();
+            let (x, y) = if horizontal {
+                (
+                    scene::next_offset(
+                        offset.x as f32,
+                        distance,
+                        content.width as f32,
+                        bounds.width as f32,
+                    ),
                     offset.y as f32,
-                    distance,
-                    content.height as f32,
-                    bounds.height as f32,
-                ),
-            )
+                )
+            } else {
+                (
+                    offset.x as f32,
+                    scene::next_offset(
+                        offset.y as f32,
+                        distance,
+                        content.height as f32,
+                        bounds.height as f32,
+                    ),
+                )
+            };
+            (scroll, x, y)
         };
         scroll.setContentOffset(CGPoint::new(x as CGFloat, y as CGFloat));
+        // The offset is the end of a drag that glides. The delegate reports
+        // the same callbacks a finger would. The mounter borrow is gone, so
+        // the delegate's `try_borrow` succeeds.
+        if let Some(delegate) = scroll.delegate() {
+            let scroll = &*scroll;
+            let _: () = unsafe { msg_send![&*delegate, scrollViewWillBeginDragging: scroll] };
+            let _: () = unsafe {
+                msg_send![&*delegate, scrollViewDidEndDragging: scroll, willDecelerate: true]
+            };
+            let _: () = unsafe { msg_send![&*delegate, scrollViewDidEndDecelerating: scroll] };
+        }
         Ok(json!(null))
     })?
 }

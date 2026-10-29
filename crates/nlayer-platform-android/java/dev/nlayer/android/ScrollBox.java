@@ -418,6 +418,30 @@ final class ScrollBox extends FrameLayout {
     applying = false;
   }
 
+  /** A test scroll landed at the current offset: the six callbacks, in order. */
+  void noteTestGesture() {
+    dropScrollFrame();
+    emitTest(DRAG_START);
+    emitTest(SCROLL);
+    emitTest(DRAG_END);
+    emitTest(MOMENTUM_START);
+    emitTest(MOMENTUM_END);
+    emitTest(SCROLL_END);
+  }
+
+  /** The offset the tree reports, not the pixel scroll rounded back to points. */
+  private void emitTest(int kind) {
+    if ((pressMask & (1 << kind)) == 0) return;
+    float w = getWidth() / density;
+    float h = getHeight() / density;
+    if (getTag() instanceof float[]) {
+      float[] points = (float[]) getTag();
+      w = points[2];
+      h = points[3];
+    }
+    Native.sendScroll(this, id, kind, offsetX, offsetY, contentPointsW, contentPointsH, w, h);
+  }
+
   /**
    * ScrollView measures the scroll axis as UNSPECIFIED but packs the viewport size in the spec.
    * {@link Box#onMeasure} uses that size, so a later layout pass clamps the content to the viewport

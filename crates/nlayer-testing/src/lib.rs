@@ -647,9 +647,21 @@ impl Headless {
             width: view.frame.size.width.0,
             height: view.frame.size.height.0,
         };
-        self.engine
-            .control()
-            .dispatch_event(id, EventKind::Scroll, payload);
+        // A test scroll is a finished drag that glides to this offset, so
+        // the six callbacks run with the offset the tree reports. The
+        // engine applies one event per frame; `waitFor` pumps them.
+        for event in [
+            EventKind::ScrollDragStart,
+            EventKind::Scroll,
+            EventKind::ScrollDragEnd,
+            EventKind::MomentumStart,
+            EventKind::MomentumEnd,
+            EventKind::ScrollEnd,
+        ] {
+            self.engine
+                .control()
+                .dispatch_event(id, event, payload.clone());
+        }
         Ok(())
     }
 

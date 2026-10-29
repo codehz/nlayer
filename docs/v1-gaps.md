@@ -13,7 +13,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 
 1. 明确的契约缺口（绘制）：P0-4 已关闭。
 2. 宿主语义偏差：本切片的 focusStyle、onScroll、transformOrigin 已关闭。
-3. 验收与回归覆盖（三端 target 测试、gallery 断言；If/Each/ErrorBoundary 已关闭）
+3. 验收与回归覆盖（三端 target 测试；gallery 断言与 If/Each/ErrorBoundary 已关闭）
 4. 需要定稿的文档歧义（web 上的浏览器全局）
 
 ## 验证基线
@@ -29,7 +29,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 | `nlayer init /tmp/nlayer-init-check` | 写出 `App.tsx`、`App.test.tsx`、`tsconfig.json`、`package.json`、`.gitignore` |
 | `scripts/test-types` | 五个类型包打包并在临时工程中 `tsc` 通过 |
 
-三端 12/12 是手工运行结果；仓库里没有对应的自动化 target 测试（见 P2-1）。
+gallery 12/12 的水平滚动、六个滚动回调、四边 safe area 和 `platform.os` 已有断言。三端 target 仍是手工结果（见 P2-1）。
 
 ## P0：明确的契约缺口
 
@@ -71,7 +71,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 | ID | 缺口 | 证据 | 影响 |
 |---|---|---|---|
 | P2-1 | 没有自动化 iOS/Android target 测试 | `crates/nlayer-cli/src/ios_test.rs`、`android_test.rs` 无集成测试；`crates/nlayer-cli/tests/` 只有 `web_target.rs` | 三端 12/12 只是手工结果，回归无保护 |
-| P2-2 | gallery 断言偏弱 | `examples/gallery/App.test.tsx` | 水平 Scroll 从未实际滚动；六个滚动回调只触发 `onScroll`；active/hover/focus 只断言基础布局；safe area 只断言 top/left；`platform.os` 接受任意值 |
+| P2-2 | 已关闭。水平 Scroll 滚到 `{x:40}`；六个滚动回调都等到同一 metric；safe area 断言 top/right/bottom/left 和 `max(env, keyboard)`；`platform.os` 等于当前 target | `examples/gallery/App.test.tsx` | 回归有测试。active/hover/focus 绘制仍见验收矩阵 |
 | P2-3 | 已关闭。`<If>` 覆盖 when/else、函数 child 和分支切换；`<Each>` 覆盖 `key={fn}`、`key="index"` 和乱序重排；`ErrorBoundary` 覆盖 effect、listener、`reset` 和 fallback 再抛 | `crates/nlayer-js/tests/renderer.rs` | lowering 或运行时回归有测试 |
 | P2-4 | CLI 路径未测 | `crates/nlayer-cli/tests/` | `--filter`、真实 stdin 步骤、`run --target ios|android` 的 watch/rebuild/失败回退、类型版本警告退出码都未覆盖 |
 | P2-5 | Web target 输入保真度不足 | `web/host.js:381-439` | press/type/scroll 是合成 DOM 事件，不是 CDP Input；键盘 Return、拖拽、momentum 未被真实浏览器 E2E 覆盖 |
@@ -81,7 +81,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 ### P2 建议的最小验收集
 
 1. 增加 `ios_target.rs`、`android_target.rs`，用与 `web_target.rs` 相同的最小应用覆盖 press/type/scroll/tree/safe-area。
-2. gallery 增加：水平 Scroll 实际滚动、其余五个滚动回调触发、`max(env(a),env(b))`、bottom/right safe area、target 对应的 `platform.os`。
+2. 已关闭。gallery 覆盖水平 Scroll 实际滚动、六个滚动回调、`max(env(a),env(b))`、四边 safe area、target 对应的 `platform.os`。
 3. 已关闭。`<If>` when/else/函数 child/分支切换；`<Each key={fn}>`、`key="index"`、乱序重排。
 4. 已关闭。`ErrorBoundary` 覆盖 effect/listener 抛错、`reset`、fallback 再抛。
 5. CLI 覆盖 `--version`、`--filter`、stdin 步骤、类型版本警告退出码 0。
@@ -107,15 +107,15 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 | grid | `App.tsx:64-84` | 2×2 单元 x/y | 未覆盖 line names、auto flow |
 | 嵌套 Text span | `App.tsx:194-199` | 一段文本、字重/斜体/字号/颜色 | gallery 未覆盖 span `testID` / span `onPress` |
 | 打包图片 | `App.tsx:3,207` | `asset:/mark.png`、cover、32×32 | 只读挂载元数据，未断言解码/绘制 |
-| 双轴 Scroll | `App.tsx:219-232` | 垂直溢出 + 水平内容宽度 | 水平 Scroll 从未实际滚动 |
-| 滚动回调 | `App.tsx:245-271` | 六个初始 `"none"`；只触发 `onScroll` | 其余五个回调未触发 |
+| 双轴 Scroll | `App.tsx:219-232` | 垂直溢出 + 水平滚到 x=40 | 未断言绘制 |
+| 滚动回调 | `App.tsx:247-275` | 六个回调都等到同一 metric | 无 |
 | active/hover/focus | `App.tsx:129-178` | 基础宽高 + 文案 | 未断言实际绘制；无 hover 步骤 |
 | 受控 Input | `App.tsx:290-354` | 输入、`Name: ada`、disabled | 未覆盖 Return、`Keyboard.dismiss`、placeholder 选择器 |
 | onPress | `App.tsx:85-96,129,144` | 文案变化 | 未覆盖嵌套 span press |
 | 静态 transform | `App.tsx:97-107` | transform 步骤列表 | 未断言绘制或 origin 几何 |
 | fetch JSON | `App.tsx:359-375` | 等到 `Gallery: 5` | 只有成功路径；未覆盖 abort/重定向/错误 |
-| safe-area `env()` | `App.tsx:108-116,398-402` | top=22、left=10 | bottom/right、keyboard inset、`max(env(a),env(b))` 未断言 |
-| `platform.os` | `App.tsx:382-388` | 值属于三端之一 | 未断言当前 target 对应值 |
+| safe-area `env()` | `App.tsx:108-116,397-405` | top/left、right/bottom、`max(safe, keyboard)` | 无 |
+| `platform.os` | `App.tsx:382-388` | 等于当前 target 的 `__nlayerOs` | 无 |
 
 ## 附件：已复现的 API 缺口
 
@@ -135,4 +135,4 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 2. **键盘/选择器**：P0-2、P0-3、P0-6、P0-7 已关闭。
 3. **绘制与宿主语义**：P0-4、P0-10、P1-2、P1-3 已关闭。
 4. **Scroll 定稿**：P1-1 已关闭。
-5. **验收自动化**：P2-1 到 P2-3；把 gallery 和三端 target 测试接入 `cargo test` / CI。
+5. **验收自动化**：P2-2、P2-3 已关闭。P2-1：把三端 target 测试接入 `cargo test` / CI。

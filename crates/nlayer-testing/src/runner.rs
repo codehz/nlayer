@@ -216,6 +216,11 @@ pub trait HostedApp {
 pub trait AppHost {
     /// Starts `request` and returns the app the later steps drive.
     fn open(&mut self, request: HostOpen) -> Result<Box<dyn HostedApp>, String>;
+
+    /// What the opened app's `platform.os` is. Headless and web are `web`.
+    fn os(&self) -> &'static str {
+        "web"
+    }
 }
 
 /// Runs the test file `path`, or every test file under the directory
@@ -475,6 +480,9 @@ fn execute_in(dir: &Path, name: &str, code: &str, filter: Option<&str>) -> FileR
         host.set_test_bridge(Box::new(dispatch));
         if let Some(filter) = filter {
             host.set_global_string("__nlayerFilter", filter);
+        }
+        if let Ok(os) = with_host(|app_host| app_host.os()) {
+            host.set_global_string("__nlayerOs", os);
         }
         host.eval_source(code).map_err(|e| e.to_string())?;
         let raw = host

@@ -44,7 +44,7 @@ export function installHost(player, root) {
       visible(root, target, selector);
       const el = scrollOf(target);
       if (!el) throw new Error(`\`${selector}\` is not in a scroll view`);
-      moveScroll(el, distance);
+      moveScroll(player, el, distance);
       return null;
     },
     query(selector) {
@@ -424,7 +424,7 @@ function scrollOf(target) {
   return null;
 }
 
-function moveScroll(el, distance) {
+function moveScroll(player, el, distance) {
   const horizontal = !!el._horizontal;
   const content = spacerSize(el);
   const span = Math.max(
@@ -433,10 +433,22 @@ function moveScroll(el, distance) {
   );
   const current = horizontal ? el.scrollLeft || 0 : el.scrollTop || 0;
   const next = Math.min(span, Math.max(0, current + distance));
-  const native = typeof el.dispatchEvent === "function";
   if (horizontal) el.scrollLeft = next;
   else el.scrollTop = next;
+  // The offset is already the end. A drag that glides there fires the six
+  // callbacks with that offset. One `scroll` dispatch is `onScroll`; the
+  // rest go through the page's drag and rest path.
+  player.beginDrag?.(el);
+  const native = typeof el.dispatchEvent === "function";
   if (!native && typeof el.dispatch === "function") el.dispatch("scroll");
+  else player.scrolled?.(el);
+  player.endDrag?.(el);
+  if (player.scrollEvent && !el._momentum) {
+    el._momentum = true;
+    el._released = 0;
+    player.scrollEvent(el, "onMomentumStart");
+  }
+  player.scrollEnded?.(el);
 }
 
 function boxSize(el) {

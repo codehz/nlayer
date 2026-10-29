@@ -121,11 +121,22 @@ test("safe-area env insets pad the view", () => {
   const app = open("./App.tsx", {
     width: 390,
     height: 844,
-    safeArea: { top: 22, right: 0, bottom: 0, left: 10 },
+    safeArea: { top: 22, right: 8, bottom: 14, left: 10 },
+    keyboard: 40,
   });
-  const inset = holder(flat(app.tree(), []), "Inset").children[0];
+  const nodes = flat(app.tree(), []);
+  const inset = holder(nodes, "Inset").children[0];
   expect(inset.frame.x).toBe(10);
   expect(inset.frame.y).toBe(22);
+  const safe = must(nodes.find((node) => node.testID === "safe"));
+  const title = must(safe.children[0]);
+  expect(title.frame.x).toBe(26);
+  expect(title.frame.y).toBe(38);
+  const section = must(safe.children.find((node) => node.kind === "view"));
+  expect(section.frame.x).toBe(26);
+  expect(section.frame.x + section.frame.width).toBe(safe.frame.width - 24);
+  const last = must(safe.children[safe.children.length - 1]);
+  expect(safe.frame.height - (last.frame.y + last.frame.height)).toBe(72);
 });
 
 test("nested text is one block with distinct spans", () => {
@@ -181,6 +192,10 @@ test("scroll views overflow on each axis", () => {
   expect(across.frame.width).toBe(160);
   expect(must(across.content).width > across.frame.width).toBe(true);
   expect(must(across.content).height).toBe(48);
+  reveal(app, (node) => node.testID === "across");
+  app.scroll("across", 40);
+  const moved = must(flat(app.tree(), []).find((node) => node.testID === "across"));
+  expect(moved.offset).toEqual({ x: 40, y: 0 });
 });
 
 test("scroll callbacks report the offset, content, and viewport", () => {
@@ -201,10 +216,17 @@ test("scroll callbacks report the offset, content, and viewport", () => {
   const offset = must(events.offset);
   const content = must(events.content);
   expect(offset).toEqual({ x: 0, y: 40 });
-  const n = (value: number) => String(Math.round(value));
-  app.waitFor(
-    `onScroll ${n(offset.x)},${n(offset.y)} ${n(content.width)}x${n(content.height)} ${n(events.frame.width)}x${n(events.frame.height)}`,
-  );
+  const metric = `${String(Math.round(offset.x))},${String(Math.round(offset.y))} ${String(Math.round(content.width))}x${String(Math.round(content.height))} ${String(Math.round(events.frame.width))}x${String(Math.round(events.frame.height))}`;
+  for (const name of [
+    "onScroll",
+    "onScrollEnd",
+    "onScrollDragStart",
+    "onScrollDragEnd",
+    "onMomentumStart",
+    "onMomentumEnd",
+  ]) {
+    app.waitFor(`${name} ${metric}`);
+  }
 });
 
 test("inputs take text, keyboards, a password, and a disabled value", () => {
@@ -237,7 +259,10 @@ test("fetch renders the JSON", () => {
 
 test("platform.os is the surface", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
-  expect(app.texts()).toContain("platform.os");
-  const os = app.texts().find((text) => text === "web" || text === "ios" || text === "android");
+  const os = globalThis.__nlayerOs ?? "web";
   expect(["web", "ios", "android"]).toContain(os);
+  const shown = app
+    .texts()
+    .filter((text) => text === "web" || text === "ios" || text === "android");
+  expect(shown).toEqual([os]);
 });
