@@ -58,6 +58,19 @@ fn reply(stream: &mut BufReader<TcpStream>, status: &str, content_type: &str, bo
         .expect("write");
 }
 
+/// A bare response, for the ones whose headers matter (`Location`).
+fn reply_with(stream: &mut BufReader<TcpStream>, status: &str, headers: &[(&str, &str)]) {
+    let mut response = format!("HTTP/1.1 {status}\r\n");
+    for (name, value) in headers {
+        response.push_str(&format!("{name}: {value}\r\n"));
+    }
+    response.push_str("Content-Length: 0\r\nConnection: close\r\n\r\n");
+    stream
+        .get_mut()
+        .write_all(response.as_bytes())
+        .expect("write");
+}
+
 struct Sink {
     tx: crossbeam_channel::Sender<MountBatch>,
 }
@@ -247,6 +260,44 @@ mount(App);
     assert!(
         texts.iter().any(|t| t.starts_with("error TypeError ")),
         "{texts:?}"
+    );
+    engine.stop();
+}
+
+#[test]
+fn fetch_follows_a_redirect() {
+    let base = serve(|stream, line, _headers| {
+        if line.starts_with("GET /start ") {
+            reply_with(stream, "302 Found", &[("Location", "/final")]);
+        } else if line.starts_with("GET /final ") {
+            reply(stream, "200 OK", "application/json", r#"{"n":5}"#);
+        } else {
+            panic!("unexpected request: {line}");
+        }
+    });
+    let bundle = format!(
+        r#"
+import {{ mount, signal }} from "@nlayer/runtime";
+import {{ Text }} from "@nlayer/ui";
+
+function App() {{
+    const shown = signal("loading");
+    fetch("{base}/start")
+        .then((response) =>
+            response.json().then((body) =>
+                `${{response.status}} ${{response.redirected}} ${{response.url.endsWith("/final")}} ${{body.n}}`))
+        .then((text) => shown.set(text))
+        .catch((error) => shown.set(`error ${{error.message}}`));
+    return <Text>{{shown()}}</Text>;
+}}
+mount(App);
+"#
+    );
+    let (engine, rx) = run(bundle);
+    rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(
+        wait_for(&rx, "200 true true 5"),
+        "the redirect is followed and the final URL reported"
     );
     engine.stop();
 }

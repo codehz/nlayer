@@ -16,10 +16,9 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 
 1. iOS / Android 宿主没有断言 `text` / `email` 输入的 Return 收键盘（web E2E 已覆盖）。
 2. 静态 transform 只断言步骤列表，未断言 `transformOrigin` 的几何或百分比在 resize 后的结果。
-3. `fetch` 只有成功路径和 abort，未覆盖重定向。
-4. `hoverStyle` 没有真实的 hover 输入步骤，只有 web 规则单测。
-5. grid 的 line names / auto flow 只覆盖解析，未覆盖布局落位。
-6. iOS 图片只有 source / fit 断言，没有解码和圆角裁剪的设备断言。
+3. `hoverStyle` 没有真实的 hover 输入步骤，只有 web 规则单测。
+4. grid 的 line names / auto flow 只覆盖解析，未覆盖布局落位。
+5. iOS 图片只有 source / fit 断言，没有解码和圆角裁剪的设备断言。
 
 P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS 宿主。
 
@@ -130,7 +129,7 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 | 受控 Input | `App.tsx:290-354` | 输入、`Name: ada`、disabled | Return 只在 web E2E 断言；`Keyboard.dismiss` 和 placeholder 选择器由无窗口 suite 覆盖；iOS/Android 的 Return 未断言 | 未关闭 |
 | onPress | `App.tsx:85-96,129,144` | 文案变化 | gallery 未覆盖嵌套 span press；四端 targets fixture 用 `id:docs` 覆盖 | 已关闭 |
 | 静态 transform | `App.tsx:97-107` | transform 步骤列表 | 未断言绘制或 origin 几何；Android 只断言默认 pivot 跟随尺寸 | 未关闭 |
-| fetch JSON | `App.tsx:359-375` | 等到 `Gallery: 5` | gallery 只有成功路径；引擎 `fetch.rs` 覆盖 abort，未覆盖重定向 | 未关闭 |
+| fetch JSON | `App.tsx:359-375` | 等到 `Gallery: 5`；引擎 `fetch.rs` 用本地 302 断言跟随重定向、最终 URL、`redirected` 和 JSON body | 无 | 已关闭 |
 | safe-area `env()` | `App.tsx:108-116,397-405` | top/left、right/bottom、`max(safe, keyboard)` | 无 | 已关闭 |
 | `platform.os` | `App.tsx:382-388` | 等于当前 target 的 `__nlayerOs` | 无 | 已关闭 |
 
