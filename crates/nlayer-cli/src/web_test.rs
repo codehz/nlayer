@@ -855,6 +855,7 @@ mount(App);
                 height: 844.0,
                 safe_area: None,
                 keyboard: None,
+                data_dir: None,
             })
             .expect("the browser opens the app");
         (app, dir)
