@@ -32,6 +32,10 @@ const SCROLL_DEADLINE: Duration = Duration::from_secs(5);
 pub(crate) struct WebHost {
     wasm: Vec<u8>,
     browser: Option<Arc<Mutex<Browser>>>,
+    /// The port the first app was served on, reused while it is free: an
+    /// app opened again reads the same `localStorage` entries, as one
+    /// served at a fixed address does.
+    port: Option<u16>,
 }
 
 impl WebHost {
@@ -39,6 +43,7 @@ impl WebHost {
         Self {
             wasm,
             browser: None,
+            port: None,
         }
     }
 
@@ -60,14 +65,25 @@ impl WebHost {
     /// Opens the app of `request` in a page of this run's browser.
     fn start(&mut self, request: HostOpen) -> Result<WebApp, String> {
         let browser = self.browser()?;
-        let server = serve(RunOptions {
-            entry: request.entry.clone(),
-            port: 0,
-            release: false,
-            wasm: self.wasm.clone(),
-            on_build: None,
-        })
-        .map_err(|error| error.to_string())?;
+        let serve_at = |port| {
+            serve(RunOptions {
+                entry: request.entry.clone(),
+                port,
+                release: false,
+                wasm: self.wasm.clone(),
+                on_build: None,
+            })
+        };
+        let server = match self.port {
+            Some(port) => match serve_at(port) {
+                Ok(server) => server,
+                // Another app is open on it: keep its origin, and use a
+                // fresh one for this app.
+                Err(_) => serve_at(0).map_err(|error| error.to_string())?,
+            },
+            None => serve_at(0).map_err(|error| error.to_string())?,
+        };
+        self.port = Some(server.port());
         if server.generation() == 0 {
             return Err(server
                 .last_error()
