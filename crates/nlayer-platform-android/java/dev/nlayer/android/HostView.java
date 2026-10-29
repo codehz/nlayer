@@ -2,6 +2,7 @@ package dev.nlayer.android;
 
 import android.content.Context;
 import android.graphics.Color;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.AttributeSet;
@@ -31,6 +32,12 @@ public final class HostView extends FrameLayout {
     super(c, a);
     density = getResources().getDisplayMetrics().density;
     setFocusable(true);
+    // Holds focus when no input does. In touch mode a view that is only
+    // focusable refuses requestFocus, and the search then lands on the first
+    // field. clearFocus() does the same.
+    setFocusableInTouchMode(true);
+    if (Build.VERSION.SDK_INT >= 26) setDefaultFocusHighlightEnabled(false);
+    setDescendantFocusability(FOCUS_BEFORE_DESCENDANTS);
     mounter = new Mounter(this);
   }
 
@@ -41,10 +48,12 @@ public final class HostView extends FrameLayout {
   }
 
   void dismissKeyboard() {
+    android.view.View focused = findFocus();
+    android.view.View token = focused != null && focused != this ? focused : this;
     android.view.inputmethod.InputMethodManager imm =
         (android.view.inputmethod.InputMethodManager)
             getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
-    if (imm != null) imm.hideSoftInputFromWindow(getWindowToken(), 0);
+    if (imm != null) imm.hideSoftInputFromWindow(token.getWindowToken(), 0);
     requestFocus();
   }
 
