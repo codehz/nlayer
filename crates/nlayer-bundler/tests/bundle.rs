@@ -279,3 +279,91 @@ fn a_test_bundle_inlines_the_test_module() {
     assert!(out.code.contains("__nlayerTest"), "{}", out.code);
     assert!(!out.code.contains("from \"@nlayer/test\""), "{}", out.code);
 }
+
+#[test]
+fn installed_type_packages_are_not_bundled() {
+    let dir = app(
+        "installed-types",
+        &[(
+            "App.tsx",
+            "import { signal } from \"@nlayer/runtime\";\nimport { View } from \"@nlayer/ui\";\nexport const n = signal;\n",
+        )],
+    );
+    let runtime = dir.join("node_modules/@nlayer/runtime");
+    std::fs::create_dir_all(&runtime).unwrap();
+    std::fs::write(
+        runtime.join("package.json"),
+        "{\"name\":\"@nlayer/runtime\",\"version\":\"0.1.0\"}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        runtime.join("index.js"),
+        "export const signal = \"SENTINEL_RUNTIME\";\n",
+    )
+    .unwrap();
+    let test_pkg = dir.join("node_modules/@nlayer/test");
+    std::fs::create_dir_all(&test_pkg).unwrap();
+    std::fs::write(
+        test_pkg.join("index.js"),
+        "export const test = \"SENTINEL_TEST\";\n",
+    )
+    .unwrap();
+
+    let out = bundle(&BundleOptions {
+        entry: dir.join("App.tsx"),
+        minify: false,
+        test: false,
+    })
+    .expect("native modules stay external");
+    assert!(
+        out.code.contains("from \"@nlayer/runtime\""),
+        "{}",
+        out.code
+    );
+    assert!(!out.code.contains("SENTINEL_RUNTIME"), "{}", out.code);
+
+    std::fs::write(
+        dir.join("TestImport.tsx"),
+        "import { test } from \"@nlayer/test\";\nexport const t = test;\n",
+    )
+    .unwrap();
+    let error = bundle(&BundleOptions {
+        entry: dir.join("TestImport.tsx"),
+        minify: false,
+        test: false,
+    })
+    .expect_err("app cannot import the test module");
+    assert!(
+        error
+            .plain
+            .contains("`@nlayer/test` is the test runner's module"),
+        "{}",
+        error.plain
+    );
+
+    std::fs::write(
+        dir.join("Globals.tsx"),
+        "import { x } from \"@nlayer/globals\";\nexport const y = x;\n",
+    )
+    .unwrap();
+    let error = bundle(&BundleOptions {
+        entry: dir.join("Globals.tsx"),
+        minify: false,
+        test: false,
+    })
+    .expect_err("globals are ambient");
+    assert!(error.plain.contains("ambient types"), "{}", error.plain);
+
+    std::fs::write(
+        dir.join("Nope.tsx"),
+        "import { x } from \"@nlayer/nope\";\n",
+    )
+    .unwrap();
+    let error = bundle(&BundleOptions {
+        entry: dir.join("Nope.tsx"),
+        minify: false,
+        test: false,
+    })
+    .expect_err("unknown @nlayer module");
+    assert!(error.plain.contains("is not a module"), "{}", error.plain);
+}

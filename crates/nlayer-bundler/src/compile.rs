@@ -100,7 +100,7 @@ pub(crate) fn compile_native(
     }
     // Plain JS keeps imports that may be present for their side effects.
     if source_type.is_typescript() || source_type.is_jsx() {
-        elide_unused_imports(&mut program, &scoping);
+        elide_unused_imports(&mut program, &scoping, modules);
     }
     let out = Codegen::new()
         .with_options(CodegenOptions {
@@ -203,10 +203,12 @@ fn edit_distance(a: &str, b: &str) -> usize {
 /// tag made in place no longer references its import): import specifiers
 /// nothing references go (an import of types only, without `type`, or of a
 /// primitive only its tags use), and declarations left without any.
-/// `scoping` is the program's.
+/// `scoping` is the program's. An unknown `@nlayer` import stays, so the
+/// bundler resolves it and refuses it instead of dropping it first.
 fn elide_unused_imports(
     program: &mut oxc::ast::ast::Program<'_>,
     scoping: &oxc::semantic::Scoping,
+    modules: &NativeModules,
 ) {
     use oxc::ast::ast::{ImportDeclarationSpecifier as S, Statement};
     let used = |local: &oxc::ast::ast::BindingIdentifier<'_>| {
@@ -219,6 +221,10 @@ fn elide_unused_imports(
         let Statement::ImportDeclaration(import) = statement else {
             return true;
         };
+        let source = import.source.value.as_str();
+        if !modules.contains(source) && (source == "@nlayer" || source.starts_with("@nlayer/")) {
+            return true;
+        }
         let Some(specifiers) = &mut import.specifiers else {
             // `import "x"`: for its effects.
             return true;

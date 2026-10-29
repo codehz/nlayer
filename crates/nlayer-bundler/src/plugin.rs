@@ -178,6 +178,16 @@ impl Plugin for NlayerPlugin {
                 "{from}`@nlayer/jsx-runtime` is types only (`jsxImportSource` is \"@nlayer\"); compiled JSX imports \"nlayer:rt\", which apps do not write"
             )));
         }
+        if spec == "@nlayer/globals" {
+            return Err(self.refuse(format!(
+                "{from}`@nlayer/globals` is ambient types (`compilerOptions.types` includes \"globals\"); apps do not import it"
+            )));
+        }
+        if spec.starts_with("@nlayer/") {
+            return Err(self.refuse(format!(
+                "{from}`{spec}` is not a module: the native modules are \"@nlayer/runtime\" and \"@nlayer/ui\""
+            )));
+        }
         if spec == "solid-js" || spec.starts_with("solid-js/") {
             return Err(self.refuse(format!(
                 "{from}`{spec}` is not part of nlayer apps: import signal, computed, effect, batch, untracked, cleanup, context, mount and ErrorBoundary from \"@nlayer/runtime\""
