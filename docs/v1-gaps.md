@@ -99,7 +99,7 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 | P3-2 | 已关闭。未接线的通用 reactive API（`owned_signal`、`set_equals`、`remove_cleanup`、`collecting_effects`、`with_root_under`）已删除 | `crates/nlayer-core/src/reactive.rs` |
 | P3-3 | 已关闭。web 只留一份 `ErrorBoundary`，直接用图提供的 boundary key | `crates/nlayer-platform-web/web/browser/runtime.js` |
 | P3-5 | 已关闭。`@nlayer/test` 类型声明了 test bundle 导出的 `finish`；生成入口用它跑已注册的用例 | `crates/nlayer-bundler/src/types.rs`；`packages/test/index.d.ts` |
-| P3-6 | web 不绘制 `visibility: hidden` | `crates/nlayer-core/src/style.rs:3618`；web `encode.rs:562-614` |
+| P3-6 | 已关闭。web 的视图样式写出 `visibility: hidden`，与 iOS / Android 的隐藏视图一致 | `crates/nlayer-platform-web/src/encode.rs` |
 | P3-7 | Android 丢弃 `skewX` / `skewY` | `crates/nlayer-platform-android/src/encode.rs:323-326`；v1 未点名 skew，属残留 |
 
 ## 验收矩阵

@@ -74,6 +74,28 @@ fn a_style_is_one_class_and_its_border_is_separate() {
 }
 
 #[test]
+fn a_hidden_view_is_laid_out_but_not_drawn() {
+    let style = ViewStyle {
+        hidden: true,
+        ..ViewStyle::default()
+    };
+    let json = Encoder::new().encode(&MountBatch {
+        items: vec![MountItem::ViewStyle {
+            id: 2,
+            style: Box::new(style),
+        }],
+    });
+    let css = items(&json)
+        .into_iter()
+        .find(|item| item[0] == "css")
+        .expect("a style class");
+    assert!(
+        css[2].as_str().unwrap().contains("visibility:hidden;"),
+        "{json}"
+    );
+}
+
+#[test]
 fn a_view_style_carries_transform_steps() {
     let mut style = ViewStyle::default();
     let mut transform = Transform::default();

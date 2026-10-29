@@ -585,6 +585,10 @@ fn view_css(s: &ViewStyle) -> (String, Option<String>) {
     if s.overflow_hidden {
         css.push_str("overflow:clip;");
     }
+    // Laid out, not drawn, and out of the page's hit testing.
+    if s.hidden {
+        css.push_str("visibility:hidden;");
+    }
     if !s.transform.is_identity() {
         let transform = css_transform(&s.transform);
         let _ = write!(css, "transform:{transform};");
