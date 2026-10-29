@@ -23,7 +23,7 @@ fn the_browser_presses_types_and_scrolls() {
 
 const APP: &str = r#"
 import { mount, signal } from "@nlayer/runtime";
-import { Input, Scroll, Text, View } from "@nlayer/ui";
+import { Image, Input, Scroll, Text, View } from "@nlayer/ui";
 
 function App() {
     const count = signal(0);
@@ -51,6 +51,7 @@ function App() {
             <View testID="pad" style={{ paddingTop: "env(safe-area-inset-top)", width: 80, height: 40 }}>
                 <Text>pad</Text>
             </View>
+            <Image testID="mark" src="https://example.invalid/a.png" style={{ width: 32, height: 32, borderRadius: 16 }} />
         </View>
     );
 }
@@ -87,6 +88,8 @@ test("the page takes a press, keys, a scroll, and the pinned inset", () => {
     app.press("id:docs");
     expect(app.texts()).toContain("opened");
     const pad = byId(app.tree(), "pad");
+    const mark = byId(app.tree(), "mark");
+    expect(mark.radius).toEqual([16, 16, 16, 16]);
     expect(pad.children[0].frame.y).toBe(12);
 });
 "#;

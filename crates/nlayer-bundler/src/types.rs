@@ -495,6 +495,8 @@ export interface Node {
   src?: string;
   /** An image's `objectFit`. */
   fit?: "fill" | "contain" | "cover" | "none" | "scale-down";
+  /** Painted corner radii in points, when the host clips the picture. */
+  radius?: [number, number, number, number];
   /** A scroll view scrolls along x. */
   horizontal?: boolean;
   /** A scroll view's content offset, toward the end of the content. */

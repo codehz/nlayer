@@ -105,6 +105,8 @@ struct WireScroll {
 struct WireImage {
     src: String,
     fit: String,
+    #[serde(default)]
+    radius: Option<[f32; 4]>,
 }
 
 #[derive(Deserialize)]
@@ -205,6 +207,7 @@ pub(crate) fn scene_of(text: &str) -> Result<Scene, String> {
                 image: wire.image.map(|image| ImageSnap {
                     src: image.src,
                     fit: image.fit,
+                    radius: image.radius,
                 }),
                 transform,
             }
@@ -252,6 +255,26 @@ mod tests {
             scene.point(crate::scene::Press::View(2)).unwrap(),
             (30.0, 28.0)
         );
+    }
+
+    #[test]
+    fn an_image_snapshot_keeps_the_painted_corner_radii() {
+        let scene = scene_of(
+            r#"{
+                "width": 32,
+                "height": 32,
+                "nodes": [{
+                    "id": 2,
+                    "kind": "image",
+                    "frame": {"x": 0, "y": 0, "w": 32, "h": 32},
+                    "image": {"src": "asset:/mark.png", "fit": "cover", "radius": [16, 8, 4, 2]}
+                }]
+            }"#,
+        )
+        .expect("snapshot");
+        let tree = scene.tree();
+        assert_eq!(tree["src"], "asset:/mark.png");
+        assert_eq!(tree["radius"], serde_json::json!([16.0, 8.0, 4.0, 2.0]));
     }
 
     #[test]

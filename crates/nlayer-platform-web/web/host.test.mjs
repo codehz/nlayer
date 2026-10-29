@@ -261,9 +261,16 @@ test("an image src is the engine URI, not the page URL", () => {
     ["img", 3, "https://example.com/photo.jpg", "contain"],
   ]);
   assert.equal(player.view(2)._img.src, "./mark.png");
+  assert.equal(player.view(2)._img.style.borderRadius, "inherit");
+  player.view(2)._img.ownerDocument.defaultView = {
+    getComputedStyle() {
+      return { borderRadius: "16px" };
+    },
+  };
   const nodes = host.tree().children;
   assert.equal(nodes[0].src, "asset:/mark.png");
   assert.equal(nodes[0].fit, "cover");
+  assert.deepEqual(nodes[0].radius, [16, 16, 16, 16]);
   assert.equal(nodes[1].src, "https://example.com/photo.jpg");
   assert.equal(nodes[1].fit, "contain");
 });

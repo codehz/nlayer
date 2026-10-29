@@ -49,6 +49,17 @@ final class Decor extends Drawable {
     return out;
   }
 
+  /** The view's painted shape. Image drawing clips to this, fitted to `b`. */
+  Path clip(Rect b, Path out) {
+    return shape(b, 0, out);
+  }
+
+  /** Fitted corner radii, in the same order as `radii` (px). */
+  float[] fitted(Rect b) {
+    float[] src = fit(b);
+    return new float[] {src[0], src[1], src[2], src[3]};
+  }
+
   private static final double SMOOTHING = .6;
 
   static void roundedRect(Path out, RectF r, float[] c, boolean continuous) {

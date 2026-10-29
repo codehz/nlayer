@@ -486,6 +486,8 @@ function nodeJson(el, parent, root) {
     node.src =
       el._img._uri != null ? el._img._uri : (el._img.getAttribute?.("src") ?? el._img.src ?? "");
     node.fit = fitOf(el._img);
+    const radius = imageRadius(el._img);
+    if (radius) node.radius = radius;
   }
   if (el._kind === "scroll") {
     node.horizontal = !!el._horizontal;
@@ -542,6 +544,32 @@ function hexColor(value) {
   return a >= 255 ? `#${rgb}` : `#${rgb}${channel(a)}`;
 }
 
+/**
+ * Painted corner radii in points, or null when the picture is not rounded.
+ * Computed style resolves `border-radius: inherit`; a stand-in without one
+ * leaves this empty.
+ */
+function imageRadius(img) {
+  const style = img.ownerDocument?.defaultView?.getComputedStyle?.(img);
+  const raw = style?.borderRadius || "";
+  const parts = String(raw)
+    .trim()
+    .split(/\s+/)
+    .map((part) => parseFloat(part))
+    .filter((n) => !Number.isNaN(n));
+  const radii =
+    parts.length === 1
+      ? [parts[0], parts[0], parts[0], parts[0]]
+      : parts.length === 2
+        ? [parts[0], parts[1], parts[0], parts[1]]
+        : parts.length === 3
+          ? [parts[0], parts[1], parts[2], parts[1]]
+          : parts.length >= 4
+            ? parts.slice(0, 4)
+            : null;
+  if (!radii || radii.every((n) => n === 0)) return null;
+  return radii;
+}
 function fitOf(img) {
   const name = img.className || "";
   if (name.includes("nl-fit-contain")) return "contain";

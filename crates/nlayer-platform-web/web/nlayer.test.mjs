@@ -199,6 +199,8 @@ test("a batch becomes views, text, an image, a scroll and an input", () => {
   const img = player.view(4)._img;
   assert.equal(img.src, "assets/a.png");
   assert.ok(img.className.includes("nl-fit-contain"));
+  assert.equal(img.style.borderRadius, "inherit");
+  assert.equal(img.style.overflow, "clip");
 
   const scroll = player.view(5);
   assert.ok(scroll.classList.contains("nl-oy"));

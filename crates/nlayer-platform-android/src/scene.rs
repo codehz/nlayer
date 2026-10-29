@@ -110,11 +110,12 @@ pub(crate) struct ScrollSnap {
     pub content_h: f32,
 }
 
-/// An image's source and fit.
+/// An image's source, fit, and painted corner radii (points, when rounded).
 #[derive(Debug, Clone)]
 pub(crate) struct ImageSnap {
     pub src: String,
     pub fit: String,
+    pub radius: Option<[f32; 4]>,
 }
 
 #[derive(Clone, Copy)]
@@ -495,6 +496,9 @@ impl Scene {
         if let Some(image) = &node.image {
             map.insert("src".into(), image.src.clone().into());
             map.insert("fit".into(), image.fit.clone().into());
+            if let Some(radius) = image.radius {
+                map.insert("radius".into(), json!(radius));
+            }
         }
         if node.kind == Kind::Scroll
             && let Some(scroll) = node.scroll

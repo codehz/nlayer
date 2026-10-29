@@ -181,6 +181,9 @@ export class Player {
       const img = this.doc.createElement("img");
       img.draggable = false;
       img.className = "nl-fill nl-fit-cover";
+      // Inherit, not a copied length: a state rule can change the view's radius.
+      img.style.borderRadius = "inherit";
+      img.style.overflow = "clip";
       el.append(img);
       el._img = img;
     }

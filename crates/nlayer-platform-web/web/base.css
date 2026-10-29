@@ -54,6 +54,9 @@
 }
 img.nl-fill {
   pointer-events: none;
+  /* The view's radius clips the picture even when overflow is visible. */
+  border-radius: inherit;
+  overflow: clip;
 }
 .nl-fit-cover {
   object-fit: cover;

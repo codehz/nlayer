@@ -64,7 +64,7 @@ final class Tree {
     if (v instanceof TextBox) text((TextBox) v, o, density);
     if (v instanceof InputBox) input((InputBox) v, o);
     if (v instanceof ScrollBox) scroll((ScrollBox) v, o, density);
-    if (v instanceof ImageBox) image((ImageBox) v, o);
+    if (v instanceof ImageBox) image((ImageBox) v, o, density);
     return o;
   }
 
@@ -197,10 +197,20 @@ final class Tree {
     o.put("frame", frame(box, density, false).json());
   }
 
-  private static void image(ImageBox box, JSONObject o) throws Exception {
+  private static void image(ImageBox box, JSONObject o, float density) throws Exception {
     JSONObject image = new JSONObject();
     image.put("src", box.uri == null ? "" : box.uri);
     image.put("fit", fit(box.mode));
+    float[] fitted =
+        box.decor.fitted(new android.graphics.Rect(0, 0, box.getWidth(), box.getHeight()));
+    boolean rounded = false;
+    for (float r : fitted) if (r > 0) rounded = true;
+    if (rounded) {
+      JSONArray radius = new JSONArray();
+      float d = density == 0 ? 1 : density;
+      for (float r : fitted) radius.put(r / d);
+      image.put("radius", radius);
+    }
     o.put("image", image);
   }
 

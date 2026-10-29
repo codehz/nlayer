@@ -5,6 +5,8 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.Rect;
 import android.graphics.RectF;
 import android.view.View;
 import java.io.File;
@@ -21,6 +23,7 @@ final class ImageBox extends View {
   int xKind = 1, yKind = 1;
   boolean xEnd, yEnd;
   String uri;
+  private final Path clip = new Path();
 
   ImageBox(Context c, int id) {
     super(c);
@@ -132,7 +135,7 @@ final class ImageBox extends View {
     dst.right = dst.left + w;
     dst.bottom = dst.top + h;
     c.save();
-    c.clipRect(0, 0, vw, vh);
+    c.clipPath(decor.clip(new Rect(0, 0, Math.round(vw), Math.round(vh)), clip));
     c.drawBitmap(bitmap, null, dst, new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG));
     c.restore();
     decor.setBounds(0, 0, getWidth(), getHeight());
