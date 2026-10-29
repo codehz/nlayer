@@ -158,7 +158,8 @@ impl Plugin for NlayerPlugin {
             }));
         }
         if self.modules.contains(spec) {
-            // Imports of the native modules stay.
+            // Native modules stay external. Handwritten `nlayer:rt` is refused
+            // in compile, before the compiler inserts this import.
             return Ok(Some(HookResolveIdOutput {
                 external: Some(true.into()),
                 ..HookResolveIdOutput::from_id(spec)

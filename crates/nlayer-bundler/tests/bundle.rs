@@ -174,6 +174,47 @@ fn a_bare_scope_and_the_jsx_types_module_are_refused() {
 }
 
 #[test]
+fn a_handwritten_renderer_import_is_refused() {
+    for (name, source) in [
+        (
+            "import",
+            "import { element } from \"nlayer:rt\";\nexport const a = element;\n",
+        ),
+        (
+            "side-effect",
+            "import \"nlayer:rt\";\nexport const a = 1;\n",
+        ),
+        ("export", "export { element } from \"nlayer:rt\";\n"),
+        (
+            "dynamic",
+            "export const load = () => import(\"nlayer:rt\");\n",
+        ),
+        ("require", "export const rt = require(\"nlayer:rt\");\n"),
+        (
+            "url",
+            "export const url = new URL(\"nlayer:rt\", import.meta.url);\n",
+        ),
+        (
+            "type",
+            "import type { element } from \"nlayer:rt\";\nexport const a = 1;\n",
+        ),
+    ] {
+        let dir = app(&format!("rt-{name}"), &[("App.tsx", source)]);
+        let error = bundle(&BundleOptions {
+            entry: dir.join("App.tsx"),
+            minify: false,
+            test: false,
+        })
+        .expect_err("apps do not write nlayer:rt");
+        assert!(
+            error.plain.contains("renderer's module"),
+            "{name}: {}",
+            error.plain
+        );
+    }
+}
+
+#[test]
 fn an_imported_image_is_an_asset_descriptor() {
     let dir = app(
         "image",

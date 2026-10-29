@@ -6,18 +6,25 @@ use std::path::Path;
 
 use oxc::{
     allocator::Allocator,
+    ast::ast::{
+        Argument, CallExpression, ExportAllDeclaration, ExportFromDeclaration, Expression,
+        ImportDeclaration, ImportExpression, NewExpression, Program,
+    },
+    ast_visit::{Visit, walk},
     codegen::{Codegen, CodegenOptions},
+    diagnostics::OxcDiagnostic,
     parser::Parser,
     semantic::SemanticBuilder,
-    span::SourceType,
+    span::{SourceType, Span},
     transformer::{JsxOptions, TransformOptions, Transformer},
 };
 use oxc_sourcemap::SourceMap;
 
 /// What the compiler knows of the modules it checks named imports against:
-/// `@nlayer/runtime`, `@nlayer/ui` and the renderer's `nlayer:rt`. With
-/// `test`, `@nlayer/test` too (the bundler inlines that module; the app host
-/// does not serve it).
+/// `@nlayer/runtime`, `@nlayer/ui` and the renderer's [`RT`]. With `test`,
+/// `@nlayer/test` too (the bundler inlines that module; the app host does
+/// not serve it). Handwritten [`RT`] is refused before the compiler inserts
+/// its own import.
 #[derive(Debug, Default)]
 pub(crate) struct NativeModules {
     specifiers: std::collections::BTreeSet<String>,
@@ -28,7 +35,7 @@ pub(crate) struct NativeModules {
 impl NativeModules {
     pub(crate) fn new(test: bool) -> Self {
         let mut out = Self::default();
-        for spec in ["@nlayer/runtime", "@nlayer/ui", "nlayer:rt"] {
+        for spec in ["@nlayer/runtime", "@nlayer/ui", RT] {
             out.specifiers.insert(spec.to_owned());
             if let Some(names) = nlayer_js::native_module_exports(spec) {
                 out.exports.insert(spec.to_owned(), names);
@@ -70,6 +77,11 @@ pub(crate) fn compile_native(
         return Err(err.render_with_source_code(source.to_owned()));
     }
     let mut program = parsed.program;
+    // Before the compiler inserts its own `nlayer:rt` import. After that,
+    // rolldown cannot tell a handwritten specifier from the generated one.
+    if let Some(err) = handwritten_rt(&program) {
+        return Err(err.render_with_source_code(source.to_owned()));
+    }
     let scoping = SemanticBuilder::new()
         .build(&program)
         .semantic
@@ -112,6 +124,119 @@ pub(crate) fn compile_native(
         code: out.code,
         map: out.map.expect("source map requested").into_owned(),
     })
+}
+
+/// The renderer's module. Compiled JSX imports it; app source does not write it.
+pub(crate) const RT: &str = "nlayer:rt";
+
+/// The first handwritten [`RT`] specifier: a static import or re-export,
+/// `import()`, `require()`, or `new URL()`.
+fn handwritten_rt(program: &Program<'_>) -> Option<OxcDiagnostic> {
+    let mut finder = HandwrittenRt { hit: None };
+    finder.visit_program(program);
+    finder.hit
+}
+
+struct HandwrittenRt {
+    hit: Option<OxcDiagnostic>,
+}
+
+impl HandwrittenRt {
+    fn note(&mut self, source: &str, span: Span) {
+        if self.hit.is_some() || source != RT {
+            return;
+        }
+        self.hit = Some(
+            OxcDiagnostic::error(
+                "`nlayer:rt` is the renderer's module; compiled JSX imports it, apps do not write it",
+            )
+            .with_label(span),
+        );
+    }
+
+    fn note_expr(&mut self, expr: &Expression<'_>) {
+        if let Some((source, span)) = static_specifier(expr) {
+            self.note(source, span);
+        }
+    }
+
+    fn note_arg(&mut self, arg: &Argument<'_>) {
+        let Some((source, span)) = static_argument(arg) else {
+            return;
+        };
+        self.note(source, span);
+    }
+}
+
+impl<'a> Visit<'a> for HandwrittenRt {
+    fn visit_import_declaration(&mut self, it: &ImportDeclaration<'a>) {
+        self.note(it.source.value.as_str(), it.source.span);
+    }
+
+    fn visit_export_all_declaration(&mut self, it: &ExportAllDeclaration<'a>) {
+        self.note(it.source.value.as_str(), it.source.span);
+    }
+
+    fn visit_export_from_declaration(&mut self, it: &ExportFromDeclaration<'a>) {
+        self.note(it.source.value.as_str(), it.source.span);
+    }
+
+    fn visit_import_expression(&mut self, it: &ImportExpression<'a>) {
+        self.note_expr(&it.source);
+        walk::walk_import_expression(self, it);
+    }
+
+    fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
+        if ident_name(&it.callee) == Some("require")
+            && let Some(arg) = it.arguments.first()
+        {
+            self.note_arg(arg);
+        }
+        walk::walk_call_expression(self, it);
+    }
+
+    fn visit_new_expression(&mut self, it: &NewExpression<'a>) {
+        if ident_name(&it.callee) == Some("URL")
+            && let Some(arg) = it.arguments.first()
+        {
+            self.note_arg(arg);
+        }
+        walk::walk_new_expression(self, it);
+    }
+}
+
+/// A specifier rolldown can resolve: a string, a static template, or either
+/// wrapped in parentheses.
+fn static_specifier<'a>(expr: &'a Expression<'a>) -> Option<(&'a str, Span)> {
+    match expr {
+        Expression::StringLiteral(lit) => Some((lit.value.as_str(), lit.span)),
+        Expression::TemplateLiteral(lit) if lit.expressions.is_empty() => {
+            let cooked = lit.quasis.first()?.value.cooked.as_ref()?;
+            Some((cooked.as_str(), lit.span))
+        }
+        Expression::ParenthesizedExpression(lit) => static_specifier(&lit.expression),
+        _ => None,
+    }
+}
+
+fn static_argument<'a>(arg: &'a Argument<'a>) -> Option<(&'a str, Span)> {
+    match arg {
+        Argument::StringLiteral(lit) => Some((lit.value.as_str(), lit.span)),
+        Argument::TemplateLiteral(lit) if lit.expressions.is_empty() => {
+            let cooked = lit.quasis.first()?.value.cooked.as_ref()?;
+            Some((cooked.as_str(), lit.span))
+        }
+        Argument::ParenthesizedExpression(lit) => static_specifier(&lit.expression),
+        _ => None,
+    }
+}
+
+fn ident_name<'a>(expr: &'a Expression<'a>) -> Option<&'a str> {
+    match expr {
+        Expression::Identifier(id) => Some(id.name.as_str()),
+        Expression::ParenthesizedExpression(e) => ident_name(&e.expression),
+        _ => None,
+    }
 }
 
 /// The first named import of a native module that it does not export:

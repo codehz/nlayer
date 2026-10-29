@@ -151,7 +151,12 @@ pub(crate) fn transform<'a>(
     if imports.is_empty() {
         return Ok(());
     }
-    let text = format!("import {{ {} }} from \"nlayer:rt\";\n", imports.join(", "));
+    // App source that already named this specifier was refused in compile.
+    let text = format!(
+        "import {{ {} }} from \"{}\";\n",
+        imports.join(", "),
+        crate::compile::RT
+    );
     let text = allocator.alloc_str(&text);
     let parsed = Parser::new(allocator, text, SourceType::mjs()).parse();
     if let Some(err) = parsed.diagnostics.into_iter().next() {
