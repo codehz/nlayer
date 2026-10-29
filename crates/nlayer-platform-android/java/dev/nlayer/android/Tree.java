@@ -50,6 +50,7 @@ final class Tree {
     o.put("opacity", style == null ? 1 : style.opacity);
     Integer mask = m.events.get(id);
     o.put("pressable", mask != null && (mask & 1) != 0);
+    if (m.chainFocused(v)) o.put("focused", true);
     o.put("children", children(m, v));
     if (style != null && style.opKind.length > 0) {
       JSONArray ops = new JSONArray();

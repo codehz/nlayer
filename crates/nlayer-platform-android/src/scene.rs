@@ -21,6 +21,8 @@ pub(crate) struct Node {
     pub hidden: bool,
     pub opacity: f32,
     pub pressable: bool,
+    /// This view, or a field inside it, has focus.
+    pub focused: bool,
     pub input: Option<InputSnap>,
     pub runs: Vec<Run>,
     pub spans: Vec<Span>,
@@ -493,6 +495,9 @@ impl Scene {
             map.insert("disabled".into(), input.disabled.into());
             map.insert("focused".into(), input.focused.into());
         }
+        if node.focused {
+            map.insert("focused".into(), true.into());
+        }
         if let Some(image) = &node.image {
             map.insert("src".into(), image.src.clone().into());
             map.insert("fit".into(), image.fit.clone().into());
@@ -766,6 +771,7 @@ mod tests {
             hidden: false,
             opacity: 1.0,
             pressable: false,
+            focused: false,
             input: None,
             runs: Vec::new(),
             spans: Vec::new(),

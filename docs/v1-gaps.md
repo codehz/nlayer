@@ -12,7 +12,7 @@
 v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bundle、五个宿主组件、三端平台 API、CLI 和类型包都有真实代码，没有 `todo!()` / 空实现。当前剩余工作集中在四类：
 
 1. 明确的契约缺口（绘制）：P0-4 已关闭。
-2. 宿主语义偏差（focusStyle、onScroll 节流）
+2. 宿主语义偏差（focusStyle 祖先已关闭，onScroll 节流仍开）
 3. 验收与回归覆盖（三端 target 测试、gallery 断言、If/Each/ErrorBoundary）
 4. 需要定稿的文档歧义（单实例双轴 Scroll、web 上的浏览器全局）
 
@@ -36,13 +36,13 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 | ID | 缺口 | 证据 | 影响 |
 |---|---|---|---|
 | P0-4 | 已关闭。web 图片 `border-radius: inherit` 加 `overflow: clip`；Android `ImageBox` 按 `Decor` 圆角路径裁剪。树上报 `radius`（point，四角）。web target 断言 16px 圆角图片的计算半径 | 同上 | 三端圆角图片裁到半径 |
-| P0-10 | Android `focusStyle` 不绘制聚焦输入的祖先 | `crates/nlayer-platform-android/java/dev/nlayer/android/Mounter.java:474`；语义定义 `crates/nlayer-core/src/ops.rs:459`；iOS 会标记焦点链 `crates/nlayer-platform-ios/src/mount.rs:975-1019` | “view 或其中的 field 有焦点”只在 iOS 成立；Android 上祖先 focusStyle 永远不亮 |
+| P0-10 | 已关闭。焦点变化沿父链重绘；`focusStyle` 在自身或子孙 field 聚焦时生效。touch mode 下普通 Box 只 `setFocusable`，点击不会聚焦它（与 `HostView` 一致）；键盘或方向键可以。祖先样式不依赖那条路径 | `Mounter.focusChanged` / `chainFocused` | 聚焦输入时祖先 `focusStyle` 亮；树上报 `focused` |
 
 ### P0 验收方式
 
 
 - P0-4：已关闭。`nlayer test --target web` 断言 `radius` 为 `[16, 16, 16, 16]`。Android 树的 `radius` 来自 `onDraw` 使用的 fitted 半径。
-- P0-10：Android 上给包含 Input 的 View 加 `focusStyle`，聚焦后断言祖先样式生效；同时确认 touch mode 下普通 Box 的 focusStyle 是否可达。
+- P0-10：已关闭。touch mode 下普通 Box 的 `focusStyle` 不能靠点击点亮，靠内部 field 或非触摸焦点。
 
 ## P1：宿主语义与契约定稿
 
@@ -133,6 +133,6 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 
 1. **CLI/API 契约**：P0-1、P0-5、P0-8、P0-9 已关闭。
 2. **键盘/选择器**：P0-2、P0-3、P0-6、P0-7 已关闭。
-3. **绘制与宿主语义**：P0-4 已关闭。剩余 P0-10、P1-2、P1-3。
+3. **绘制与宿主语义**：P0-4、P0-10 已关闭。剩余 P1-2、P1-3。
 4. **Scroll 定稿**：P1-1；先改文档或改实现，不要两份契约并存。
 5. **验收自动化**：P2-1 到 P2-3；把 gallery 和三端 target 测试接入 `cargo test` / CI。

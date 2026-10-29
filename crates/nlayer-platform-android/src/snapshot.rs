@@ -34,6 +34,8 @@ struct Wire {
     #[serde(default)]
     pressable: bool,
     #[serde(default)]
+    focused: bool,
+    #[serde(default)]
     children: Vec<u32>,
     #[serde(default)]
     runs: Vec<WireRun>,
@@ -166,6 +168,7 @@ pub(crate) fn scene_of(text: &str) -> Result<Scene, String> {
                 hidden: wire.hidden,
                 opacity: wire.opacity,
                 pressable: wire.pressable,
+                focused: wire.focused,
                 input: wire.input.map(|input| InputSnap {
                     value: input.value,
                     placeholder: input.placeholder,

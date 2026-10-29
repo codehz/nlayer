@@ -160,7 +160,7 @@ final class Mounter {
           .edit.setOnFocusChangeListener(
               new View.OnFocusChangeListener() {
                 public void onFocusChange(View view, boolean has) {
-                  paint(vid);
+                  focusChanged(view);
                 }
               });
     v.setOnHoverListener(
@@ -174,7 +174,7 @@ final class Mounter {
     v.setOnFocusChangeListener(
         new View.OnFocusChangeListener() {
           public void onFocusChange(View view, boolean has) {
-            paint(vid);
+            focusChanged(view);
           }
         });
     views.put(id, v);
@@ -471,7 +471,7 @@ final class Mounter {
     if (v == null || base == null) return;
     Style over = null;
     Integer color = null;
-    boolean focused = v.isFocused() || (v instanceof InputBox && ((InputBox) v).edit.isFocused());
+    boolean focused = focus.get(id) != null && chainFocused(v);
     if (v.isPressed()) {
       over = active.get(id);
       color = activeColor.get(id);
@@ -489,6 +489,38 @@ final class Mounter {
       InputBox in = (InputBox) v;
       in.applyTextColor(color != null ? color : in.textColor);
     }
+  }
+
+  /** The view, or a field inside it, has focus. `focusStyle` uses this. */
+  boolean chainFocused(View v) {
+    if (v.isFocused()) return true;
+    if (v instanceof InputBox && ((InputBox) v).edit.isFocused()) return true;
+    if (!(v instanceof ViewGroup)) return false;
+    ViewGroup group = (ViewGroup) v;
+    for (int i = 0; i < group.getChildCount(); i++) {
+      if (chainFocused(group.getChildAt(i))) return true;
+    }
+    return false;
+  }
+
+  /** Repaint this view and the ancestors whose `focusStyle` tracks the field. */
+  private void focusChanged(View origin) {
+    for (View v = origin; v != null; ) {
+      int id = idOf(v);
+      if (id >= 0) paint(id);
+      android.view.ViewParent parent = v.getParent();
+      v = parent instanceof View ? (View) parent : null;
+    }
+  }
+
+  private int idOf(View v) {
+    if (v == host) return 1;
+    if (v instanceof Box) return ((Box) v).id;
+    if (v instanceof TextBox) return ((TextBox) v).id;
+    if (v instanceof ImageBox) return ((ImageBox) v).id;
+    if (v instanceof ScrollBox) return ((ScrollBox) v).id;
+    if (v instanceof InputBox) return ((InputBox) v).id;
+    return -1;
   }
 
   private Style merge(Style base, Style over) {
