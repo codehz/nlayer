@@ -115,22 +115,29 @@ fn an_unknown_import_is_an_error_of_the_module() {
 }
 
 #[test]
-fn a_node_builtin_is_refused_by_name() {
-    let dir = app(
-        "builtin",
-        &[("App.tsx", "import fs from \"fs\";\nexport const a = fs;\n")],
-    );
-    let error = bundle(&BundleOptions {
-        entry: dir.join("App.tsx"),
-        minify: false,
-        test: false,
-    })
-    .expect_err("fs is not there");
-    assert!(
-        error.plain.contains("has no module `fs`"),
-        "{}",
-        error.plain
-    );
+fn a_node_builtin_stays_an_external_import() {
+    for spec in ["fs", "node:fs", "path", "buffer"] {
+        let dir = app(
+            &format!("builtin-{spec}"),
+            &[(
+                "App.tsx",
+                &format!("import m from \"{spec}\";\nexport const a = m;\n"),
+            )],
+        );
+        let bundled = bundle(&BundleOptions {
+            entry: dir.join("App.tsx"),
+            minify: false,
+            test: false,
+        })
+        .unwrap_or_else(|error| {
+            panic!("{spec} must stay external, not be refused: {}", error.plain)
+        });
+        assert!(
+            bundled.code.contains(&format!("from \"{spec}\"")),
+            "{spec} was inlined or rewritten: {}",
+            bundled.code
+        );
+    }
 }
 
 #[test]

@@ -193,21 +193,6 @@ impl Plugin for NlayerPlugin {
                 "{from}`{spec}` is not part of nlayer apps: import signal, computed, effect, batch, untracked, cleanup, context, mount and ErrorBoundary from \"@nlayer/runtime\""
             )));
         }
-        // Node's modules are not there: the runtime has the web APIs only.
-        if spec.starts_with("node:")
-            || [
-                "events",
-                "assert",
-                "util",
-                "string_decoder",
-                "fs",
-                "path",
-                "os",
-            ]
-            .contains(&spec)
-        {
-            return Err(self.refuse(format!("{from}nlayer has no module `{spec}`")));
-        }
         Ok(None)
     }
 

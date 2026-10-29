@@ -52,7 +52,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 | P1-2 | 已关闭。web 用 `requestAnimationFrame`；iOS / Android 把同一帧的偏移合成一次，结束、拖动和惯性先发出等待中的 `onScroll` | `scroll_frame.rs`；`ScrollBox.queueScroll`；web `queueScroll` | `onScroll` 至多每帧一次 |
 | P1-3 | 已关闭。`frame` 布局后按当前宽高重算 pivot；百分比跟尺寸走，绝对长度不重算 | `Mounter.frame`；`Decor.applyPivot` | resize 后 `transformOrigin` 百分比不再陈旧 |
 | P1-4 | 已关闭。stamp 新鲜时仍用 `pm path` 确认包在，并用 `run-as` 确认数据目录可进。卸载或数据目录不可进时重装 | `install_if_needed`；`host_present` | `run-as` push 前包和数据目录都在 |
-| P1-5 | Node 内置模块拒绝不完整 | 只拒绝 `node:*` 和 `events/assert/util/string_decoder/fs/path/os`；`buffer`、`process`、`streams`、`net`、`zlib` 等会落到 rolldown 通用解析错误 | `crates/nlayer-bundler/src/plugin.rs:196-210` |
+| P1-5 | 已关闭。不移植 Node 兼容。打包器不写 Node 拒绝。rolldown 1.2.13 不打 shim，内建留成外部 import；QuickJS 加载时抛 `could not load module` | `plugin.rs` resolve_id | 不补拒绝名单，也不留 shim 闸 |
 | P1-6 | 应用源码可写 `nlayer:rt` | 只拒绝 `@nlayer/jsx-runtime`；手写 `nlayer:rt` 会被保留为外部模块 | `crates/nlayer-bundler/src/plugin.rs:160-179`；文档约定见 `AGENTS.md` |
 | P1-7 | Web 上 `crypto.subtle` 存在 | QuickJS 宿主中缺失；web target 在浏览器页面执行应用，浏览器全局仍在 | 契约 `docs/v1.md:17`；web 运行模型 `docs/v1.md:19` |
 
@@ -62,7 +62,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 - P1-2：已关闭。同一帧多次偏移只收到最后一次 `onScroll`。
 - P1-3：已关闭。尺寸变化后宿主重算 pivot，不依赖引擎重发样式。
 - P1-4：已关闭。包不在或 `run-as` 进不了数据目录时 `adb install -r`。
-- P1-5：补全拒绝名单，或至少覆盖 AGENTS 明确列出的 `buffer` / `process` / `path` / `net` / `os` / `zlib` / streams。
+- P1-5：已关闭。不补拒绝名单，打包器不拒绝 Node 内建。
 - P1-6：区分编译器生成的 `nlayer:rt` 和应用源码手写的 `nlayer:rt`，后者报错。
 - P1-7：先定稿 web 是否受 v1 “crypto.subtle 缺失”约束。若受约束，需要在页面启动时遮蔽；若不受，改文档说明该条只适用于 QuickJS 宿主。
 

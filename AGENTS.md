@@ -25,7 +25,7 @@ v1 不做。做到那一层再搬，不留钩子。
 
 - Rust 写 app，以及 `#[component]`。应用只写 TSX。它不是应用模板，也不是写原生组件的宏
 - Shader
-- 不提供 Node 内建，也不提供 CJS / `require` 兼容层：`buffer` / `fs` / `process` / `path` / `net` / `os` / `zlib`、streams。不为了跑 npm 包加 shim
+- 不提供 Node 内建，也不提供 CJS / `require` 兼容层：`buffer` / `fs` / `process` / `path` / `net` / `os` / `zlib`、streams。不为了跑 npm 包加 shim。打包器不维护 Node 拒绝目录，也不为 Node 内建写拒绝代码。缺的导入留成外部 import，加载时由运行时拒绝
 - 内置 tsc。构建不需要 Node
 - capability grant。`fetch` 任意 URL，不经 grant。nsh 的 web `fetch` 经 wasm 交回页面再发，是为了这条 grant；这里没有 grant，不要把那条桥搬回来
 
