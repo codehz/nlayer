@@ -484,6 +484,124 @@ fn select<'a>(list: &'a DeviceList, wanted: Option<&str>) -> Result<&'a Device, 
     Ok(device)
 }
 
+/// The iOS device layer's unit tests, run in the simulator.
+///
+/// The modules under `cfg(target_os = "ios")` (the mounter, host, driver
+/// and CoreText) cannot link on the Mac, and `cargo test` runs test bodies
+/// on worker threads. The package's `host` test target is a `harness =
+/// false` main, so `cargo test` builds it for `aarch64-apple-ios-sim` and
+/// `simctl spawn` runs it on the simulator's main thread. `cargo test -p
+/// nlayer-cli --test targets` calls this.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IosHostTests {
+    /// Tests that passed.
+    pub passed: usize,
+    /// Tests run.
+    pub total: usize,
+    /// One line per test that failed.
+    pub failures: Vec<String>,
+}
+
+/// Builds the simulator test binary and runs it. Needs Xcode and a booted
+/// simulator, as `nlayer test --target ios` does.
+pub fn ios_host_tests() -> Result<IosHostTests, RunError> {
+    let workspace =
+        workspace_root().ok_or_else(|| RunError::message("not inside the nlayer workspace"))?;
+    let binary = host_test_binary(&workspace)?;
+    let (udid, _name) = simulator()?;
+    let output = Command::new("xcrun")
+        .args(["simctl", "spawn", &udid])
+        .arg(&binary)
+        .output()
+        .map_err(|error| RunError::message(format!("xcrun simctl spawn: {error}")))?;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    parse_host_tests(&text)
+}
+
+fn host_test_binary(workspace: &Path) -> Result<PathBuf, RunError> {
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let output = Command::new(cargo)
+        .current_dir(workspace)
+        .args([
+            "test",
+            "-p",
+            "nlayer-platform-ios",
+            "--target",
+            "aarch64-apple-ios-sim",
+            "--features",
+            "host-tests",
+            "--test",
+            "host",
+            "--no-run",
+            "--message-format=json-render-diagnostics",
+        ])
+        .output()
+        .map_err(|error| {
+            RunError::message(format!("cargo test -p nlayer-platform-ios: {error}"))
+        })?;
+    if !output.status.success() {
+        return Err(RunError::message(format!(
+            "the iOS host tests failed to build (aarch64-apple-ios-sim; `rustup target add aarch64-apple-ios-sim`):\n{}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|value| {
+            value["reason"] == "compiler-artifact"
+                && value["target"]["name"] == "host"
+                && value["target"]["kind"]
+                    .as_array()
+                    .is_some_and(|kinds| kinds.iter().any(|kind| kind == "test"))
+                && value["executable"].is_string()
+        })
+        .and_then(|value| value["executable"].as_str().map(PathBuf::from))
+        .ok_or_else(|| RunError::message("no iOS host test binary was built"))
+}
+
+fn parse_host_tests(output: &str) -> Result<IosHostTests, RunError> {
+    let mut passed = None;
+    let mut failed = None;
+    let mut failures = Vec::new();
+    for line in output.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("test result:") {
+            let words: Vec<&str> = rest.split_whitespace().collect();
+            for pair in words.windows(2) {
+                let Ok(count) = pair[0].parse::<usize>() else {
+                    continue;
+                };
+                if pair[1].starts_with("passed") {
+                    passed = Some(count);
+                } else if pair[1].starts_with("failed") {
+                    failed = Some(count);
+                }
+            }
+        }
+        if let Some(name) = line
+            .strip_prefix("test ")
+            .and_then(|rest| rest.strip_suffix(" ... FAILED"))
+        {
+            failures.push(name.to_owned());
+        }
+    }
+    let (Some(passed), Some(failed)) = (passed, failed) else {
+        return Err(RunError::message(format!(
+            "the iOS host tests did not report a result:\n{output}"
+        )));
+    };
+    Ok(IosHostTests {
+        passed,
+        total: passed + failed,
+        failures,
+    })
+}
+
 pub(crate) fn data_container(udid: &str) -> Result<PathBuf, RunError> {
     let out = simctl(&["get_app_container", udid, BUNDLE_ID, "data"])?;
     let path = PathBuf::from(out.trim());

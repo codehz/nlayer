@@ -72,6 +72,43 @@ pub fn run_app(bundle: String, assets: PathBuf) -> ! {
     app::run_app(bundle, assets)
 }
 
+/// Runs the device-layer tests that need UIKit and the main thread.
+///
+/// `cargo test` runs each test on a worker thread, and UIKit cannot be
+/// linked off iOS. The `host` test binary is a `harness = false` executable;
+/// this runs there, on the process's main thread. `crates/nlayer-cli`'s
+/// `ios_host_tests` builds it for the simulator and spawns it.
+#[cfg(all(target_os = "ios", feature = "host-tests"))]
+pub fn run_host_tests() -> std::process::ExitCode {
+    let mut tests = Vec::new();
+    tests.extend(host::tests::tests());
+    tests.extend(driver::tests::tests());
+    tests.extend(mount::tests::tests());
+    tests.extend(text::tests::tests());
+    println!("running {} tests", tests.len());
+    let mut passed = 0;
+    let mut failures = Vec::new();
+    for (name, test) in tests {
+        if std::panic::catch_unwind(test).is_ok() {
+            println!("test {name} ... ok");
+            passed += 1;
+        } else {
+            println!("test {name} ... FAILED");
+            failures.push(name);
+        }
+    }
+    println!(
+        "\ntest result: {}. {passed} passed; {} failed; 0 ignored",
+        if failures.is_empty() { "ok" } else { "FAILED" },
+        failures.len()
+    );
+    if failures.is_empty() {
+        std::process::ExitCode::SUCCESS
+    } else {
+        std::process::ExitCode::FAILURE
+    }
+}
+
 /// UIKit is not on this target.
 #[cfg(not(target_os = "ios"))]
 pub fn run_app(_bundle: String, _assets: PathBuf) -> ! {

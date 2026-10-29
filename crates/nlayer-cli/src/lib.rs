@@ -27,7 +27,7 @@ pub use android::{
     AndroidJavaTests, AndroidOptions, AndroidSession, android_java_tests, run_android,
 };
 pub use init::{InitError, InitOptions, InitReport, init};
-pub use ios::{IosOptions, IosSession, run_ios};
+pub use ios::{IosHostTests, IosOptions, IosSession, ios_host_tests, run_ios};
 use nlayer_bundler::{BundleError, BundleOptions, bundle};
 pub use run::{BuildOutcome, DevServer, RunError, RunOptions, serve, web_module};
 pub use types_version::type_package_warning;

@@ -2167,3 +2167,437 @@ fn screen_scale(mtm: MainThreadMarker) -> f32 {
         1.0
     }
 }
+
+#[cfg(feature = "host-tests")]
+pub(crate) mod tests {
+    use super::*;
+    use nlayer_core::geometry::{Bounds, point, px, size};
+    use nlayer_core::text::{AttributedText, ResolvedTextStyle, TextEngine, TextSpan};
+
+    /// The tests own the main thread (the runner is a `harness = false`
+    /// binary): UIKit views, CoreText and the run loop's queue are
+    /// main-thread only.
+    fn mounter() -> Rc<RefCell<Mounter>> {
+        let mtm =
+            MainThreadMarker::new().expect("the iOS host test runner runs on the main thread");
+        let root = UIView::new(mtm);
+        root.setFrame(CGRect::new(CGPoint::ZERO, CGSize::new(320.0, 640.0)));
+        Mounter::new(mtm, root, PathBuf::new())
+    }
+
+    fn frame(x: f32, y: f32, width: f32, height: f32) -> Bounds<Points> {
+        Bounds::new(point(px(x), px(y)), size(px(width), px(height)))
+    }
+
+    fn child(id: NodeId, kind: ViewKind, at: Bounds<Points>) -> Vec<MountItem> {
+        vec![
+            MountItem::Create { id, kind },
+            MountItem::Insert {
+                parent: ROOT_ID,
+                child: id,
+                before: None,
+            },
+            MountItem::Frame { id, frame: at },
+        ]
+    }
+
+    fn apply(mounter: &Rc<RefCell<Mounter>>, items: Vec<MountItem>) {
+        mounter.borrow_mut().apply(MountBatch { items });
+    }
+
+    pub(crate) fn tests() -> Vec<(&'static str, fn())> {
+        vec![
+            (
+                "mount::a_batch_frames_paints_and_names_a_view",
+                a_batch_frames_paints_and_names_a_view as fn(),
+            ),
+            (
+                "mount::active_beats_hover_and_both_beat_the_base_paint",
+                active_beats_hover_and_both_beat_the_base_paint as fn(),
+            ),
+            (
+                "mount::a_focused_field_lights_the_focus_style_on_its_ancestors",
+                a_focused_field_lights_the_focus_style_on_its_ancestors as fn(),
+            ),
+            (
+                "mount::a_vertical_scroll_narrows_its_native_width_until_a_row_grows",
+                a_vertical_scroll_narrows_its_native_width_until_a_row_grows as fn(),
+            ),
+            (
+                "mount::scroll_by_and_scroll_to_move_a_horizontal_scroll",
+                scroll_by_and_scroll_to_move_a_horizontal_scroll as fn(),
+            ),
+            (
+                "mount::an_input_takes_its_configuration_and_value",
+                an_input_takes_its_configuration_and_value as fn(),
+            ),
+            (
+                "mount::an_image_records_its_source_and_fit",
+                an_image_records_its_source_and_fit as fn(),
+            ),
+            (
+                "mount::a_text_block_carries_its_layout_and_runs",
+                a_text_block_carries_its_layout_and_runs as fn(),
+            ),
+        ]
+    }
+
+    fn a_batch_frames_paints_and_names_a_view() {
+        let mounter = mounter();
+        let mut style = ViewStyle::default();
+        style.opacity = 0.5;
+        style.hidden = true;
+        style.border_radius = px(8.0);
+        style.overflow_hidden = true;
+        style.background_color = Color::rgba(1, 2, 3, 255);
+        apply(
+            &mounter,
+            [
+                child(2, ViewKind::View, frame(10.0, 20.0, 100.0, 50.0)),
+                vec![
+                    MountItem::ViewStyle {
+                        id: 2,
+                        style: Box::new(style),
+                    },
+                    MountItem::TestId {
+                        id: 2,
+                        test_id: Some("card".into()),
+                    },
+                ],
+            ]
+            .concat(),
+        );
+
+        let view = mounter.borrow().view_of(2).expect("view");
+        assert_eq!(view.frame().origin.x, 10.0);
+        assert_eq!(view.frame().origin.y, 20.0);
+        assert_eq!(view.frame().size.width, 100.0);
+        assert_eq!(view.frame().size.height, 50.0);
+        assert!((view.alpha() - 0.5).abs() < 1e-6);
+        assert!(view.isHidden());
+        assert!(view.layer().masksToBounds());
+        assert_eq!(view.layer().cornerRadius(), 8.0);
+
+        let tree = mounter.borrow().scene().tree();
+        let node = &tree["children"][0];
+        assert_eq!(node["kind"], "view");
+        assert_eq!(node["testID"], "card");
+        assert_eq!(node["frame"]["x"], 10.0);
+        assert_eq!(node["frame"]["height"], 50.0);
+
+        // A delete drops the slot and the native view.
+        apply(&mounter, vec![MountItem::Delete { id: 2 }]);
+        assert!(mounter.borrow().view_of(2).is_none());
+        assert_eq!(
+            mounter.borrow().scene().tree()["children"]
+                .as_array()
+                .map(Vec::len),
+            Some(0)
+        );
+    }
+
+    fn active_beats_hover_and_both_beat_the_base_paint() {
+        let mounter = mounter();
+        let mut hover = ViewStyle::default();
+        hover.opacity = 0.4;
+        let mut active = ViewStyle::default();
+        active.opacity = 0.2;
+        apply(
+            &mounter,
+            [
+                child(2, ViewKind::View, frame(0.0, 0.0, 100.0, 50.0)),
+                vec![
+                    MountItem::StateStyle {
+                        id: 2,
+                        interaction: Interaction::Hover,
+                        view: Box::new(hover),
+                        text: TextStyle::default(),
+                    },
+                    MountItem::StateStyle {
+                        id: 2,
+                        interaction: Interaction::Active,
+                        view: Box::new(active),
+                        text: TextStyle::default(),
+                    },
+                ],
+            ]
+            .concat(),
+        );
+        let view = mounter.borrow().view_of(2).expect("view");
+        assert!((view.alpha() - 1.0).abs() < 1e-6);
+
+        mounter
+            .borrow_mut()
+            .hovered(2, UIGestureRecognizerState::Began);
+        assert!((view.alpha() - 0.4).abs() < 1e-6);
+
+        mounter
+            .borrow_mut()
+            .pressed(2, UIGestureRecognizerState::Began, CGPoint::ZERO);
+        assert!((view.alpha() - 0.2).abs() < 1e-6);
+
+        mounter
+            .borrow_mut()
+            .pressed(2, UIGestureRecognizerState::Ended, CGPoint::ZERO);
+        assert!((view.alpha() - 0.4).abs() < 1e-6);
+
+        mounter
+            .borrow_mut()
+            .hovered(2, UIGestureRecognizerState::Ended);
+        assert!((view.alpha() - 1.0).abs() < 1e-6);
+    }
+
+    fn a_focused_field_lights_the_focus_style_on_its_ancestors() {
+        let mounter = mounter();
+        let mut focus = ViewStyle::default();
+        focus.opacity = 0.25;
+        apply(
+            &mounter,
+            [
+                child(2, ViewKind::View, frame(0.0, 0.0, 200.0, 100.0)),
+                vec![
+                    MountItem::Create {
+                        id: 3,
+                        kind: ViewKind::Input,
+                    },
+                    MountItem::Insert {
+                        parent: 2,
+                        child: 3,
+                        before: None,
+                    },
+                    MountItem::Frame {
+                        id: 3,
+                        frame: frame(0.0, 0.0, 200.0, 40.0),
+                    },
+                    MountItem::StateStyle {
+                        id: 2,
+                        interaction: Interaction::Focus,
+                        view: Box::new(focus),
+                        text: TextStyle::default(),
+                    },
+                ],
+            ]
+            .concat(),
+        );
+        let parent = mounter.borrow().view_of(2).expect("parent");
+        assert!((parent.alpha() - 1.0).abs() < 1e-6);
+
+        mounter.borrow_mut().begin_focus(3);
+        assert!((parent.alpha() - 0.25).abs() < 1e-6);
+
+        mounter.borrow_mut().end_focus(3);
+        assert!((parent.alpha() - 1.0).abs() < 1e-6);
+    }
+
+    fn a_vertical_scroll_narrows_its_native_width_until_a_row_grows() {
+        let mounter = mounter();
+        apply(
+            &mounter,
+            [
+                child(2, ViewKind::Scroll, frame(0.0, 0.0, 320.0, 200.0)),
+                vec![
+                    MountItem::ScrollConfig {
+                        id: 2,
+                        horizontal: false,
+                        taps: KeyboardTaps::Never,
+                        dismiss: KeyboardDismiss::None,
+                    },
+                    MountItem::Create {
+                        id: 3,
+                        kind: ViewKind::View,
+                    },
+                    MountItem::Insert {
+                        parent: 2,
+                        child: 3,
+                        before: None,
+                    },
+                    MountItem::Frame {
+                        id: 3,
+                        frame: frame(0.0, 0.0, 300.0, 50.0),
+                    },
+                    MountItem::ScrollContent {
+                        id: 2,
+                        size: size(px(500.0), px(1000.0)),
+                    },
+                ],
+            ]
+            .concat(),
+        );
+        let scene = mounter.borrow().scene();
+        let tree = scene.tree();
+        assert_eq!(tree["children"][0]["content"]["width"], 500.0);
+
+        let scroll = mounter.borrow().scroll(2).expect("scroll view");
+        // Nothing inside passes the viewport's right edge, so the page
+        // would pan over nothing: the native width narrows to the viewport.
+        assert_eq!(scroll.contentSize().width, 320.0);
+        // The event and the tree still report the engine's size.
+        drop(scene);
+
+        apply(
+            &mounter,
+            vec![MountItem::Frame {
+                id: 3,
+                frame: frame(0.0, 0.0, 400.0, 50.0),
+            }],
+        );
+        // The row grew past the viewport. The engine sends no new content
+        // size for that batch, so the narrowed width is given back here.
+        assert_eq!(scroll.contentSize().width, 500.0);
+    }
+
+    fn scroll_by_and_scroll_to_move_a_horizontal_scroll() {
+        let mounter = mounter();
+        apply(
+            &mounter,
+            [
+                child(2, ViewKind::Scroll, frame(0.0, 0.0, 300.0, 100.0)),
+                vec![
+                    MountItem::ScrollConfig {
+                        id: 2,
+                        horizontal: true,
+                        taps: KeyboardTaps::Never,
+                        dismiss: KeyboardDismiss::None,
+                    },
+                    MountItem::ScrollContent {
+                        id: 2,
+                        size: size(px(600.0), px(100.0)),
+                    },
+                    MountItem::ScrollBy {
+                        id: 2,
+                        dx: px(40.0),
+                        dy: px(0.0),
+                    },
+                ],
+            ]
+            .concat(),
+        );
+        let scroll = mounter.borrow().scroll(2).expect("scroll view");
+        assert_eq!(scroll.contentOffset().x, 40.0);
+        assert!(scroll.alwaysBounceHorizontal());
+
+        apply(
+            &mounter,
+            vec![MountItem::Command {
+                id: 2,
+                command: nlayer_core::Command::ScrollTo {
+                    x: px(10.0),
+                    y: px(0.0),
+                    animated: false,
+                },
+            }],
+        );
+        assert_eq!(scroll.contentOffset().x, 10.0);
+    }
+
+    fn an_input_takes_its_configuration_and_value() {
+        let mounter = mounter();
+        let config = nlayer_core::InputConfig {
+            placeholder: "Name".into(),
+            secure: true,
+            keyboard: nlayer_core::KeyboardType::Email,
+            disabled: true,
+            ..nlayer_core::InputConfig::default()
+        };
+        apply(
+            &mounter,
+            [
+                child(2, ViewKind::Input, frame(0.0, 0.0, 200.0, 40.0)),
+                vec![
+                    MountItem::Input {
+                        id: 2,
+                        config: Box::new(config),
+                    },
+                    MountItem::InputValue {
+                        id: 2,
+                        text: "ada".into(),
+                        count: 0,
+                    },
+                    MountItem::TestId {
+                        id: 2,
+                        test_id: Some("name".into()),
+                    },
+                ],
+            ]
+            .concat(),
+        );
+
+        let field = mounter.borrow().field(2).expect("field");
+        assert_eq!(field.shown(), "ada");
+        assert_eq!(field.placeholder_text(), "Name");
+        assert!(field.secure());
+        assert_eq!(field.keyboard_name(), "email");
+        assert!(field.disabled());
+
+        let tree = mounter.borrow().scene().tree();
+        let node = &tree["children"][0];
+        assert_eq!(node["kind"], "input");
+        assert_eq!(node["value"], "ada");
+        assert_eq!(node["placeholder"], "Name");
+        assert_eq!(node["secure"], true);
+        assert_eq!(node["keyboard"], "email");
+        assert_eq!(node["disabled"], true);
+    }
+
+    fn an_image_records_its_source_and_fit() {
+        let mounter = mounter();
+        apply(
+            &mounter,
+            [
+                child(2, ViewKind::Image, frame(0.0, 0.0, 32.0, 32.0)),
+                vec![MountItem::Image {
+                    id: 2,
+                    source: Some(ImageSource {
+                        uri: "asset:/missing.png".into(),
+                        size: None,
+                        scales: nlayer_core::ImageScales::NONE,
+                    }),
+                    resize_mode: ResizeMode::Contain,
+                }],
+            ]
+            .concat(),
+        );
+        let tree = mounter.borrow().scene().tree();
+        assert_eq!(tree["children"][0]["kind"], "image");
+        assert_eq!(tree["children"][0]["src"], "asset:/missing.png");
+        assert_eq!(tree["children"][0]["fit"], "contain");
+    }
+
+    fn a_text_block_carries_its_layout_and_runs() {
+        let mounter = mounter();
+        let value = "Hello";
+        let attributed = Arc::new(AttributedText {
+            text: value.into(),
+            spans: vec![TextSpan {
+                start: 0,
+                end: value.encode_utf16().count() as u32,
+                style: ResolvedTextStyle::default(),
+            }],
+            ..AttributedText::default()
+        });
+        let engine = crate::text::CoreTextEngine::default();
+        let prepared = engine.prepare(&attributed);
+        let layout = engine.layout(&prepared, size(px(200.0), px(40.0)));
+        apply(
+            &mounter,
+            [
+                child(2, ViewKind::Text, frame(0.0, 0.0, 200.0, 20.0)),
+                vec![MountItem::Text {
+                    id: 2,
+                    text: Arc::clone(&attributed),
+                    layout,
+                    content: frame(0.0, 0.0, 200.0, 20.0),
+                }],
+            ]
+            .concat(),
+        );
+
+        let scene = mounter.borrow().scene();
+        assert_eq!(scene.texts(), ["Hello"]);
+        let tree = scene.tree();
+        assert_eq!(tree["children"][0]["text"], "Hello");
+        assert_eq!(tree["children"][0]["spans"][0]["text"], "Hello");
+        assert_eq!(tree["children"][0]["spans"][0]["fontSize"], 14.0);
+        assert_eq!(tree["children"][0]["spans"][0]["fontWeight"], 400);
+    }
+}

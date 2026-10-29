@@ -358,3 +358,55 @@ pub(crate) fn start(
         _root: root,
     }
 }
+
+#[cfg(feature = "host-tests")]
+pub(crate) mod tests {
+    use super::*;
+    use objc2::MainThreadMarker;
+    use objc2_core_foundation::{CGRect, CGSize};
+
+    fn assets() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "nlayer-host-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|time| time.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).expect("temporary assets");
+        dir
+    }
+
+    pub(crate) fn tests() -> Vec<(&'static str, fn())> {
+        vec![(
+            "host::an_empty_bundle_reports_the_missing_entry_and_keeps_a_root",
+            an_empty_bundle_reports_the_missing_entry_and_keeps_a_root as fn(),
+        )]
+    }
+
+    fn an_empty_bundle_reports_the_missing_entry_and_keeps_a_root() {
+        let mtm =
+            MainThreadMarker::new().expect("the iOS host test runner runs on the main thread");
+        let container = UIView::new(mtm);
+        container.setFrame(CGRect::new(CGPoint::ZERO, CGSize::new(320.0, 640.0)));
+        let session = start(mtm, &container, "", assets());
+
+        assert_eq!(
+            boot_error().as_deref(),
+            Some("no app.js next to the runner")
+        );
+        let mounter = mounter().expect("mounter");
+        let root = mounter
+            .borrow()
+            .view_of(nlayer_core::ROOT_ID)
+            .expect("root view");
+        assert!(root.isDescendantOfView(&container));
+        assert_eq!(root.bounds().size.width, 320.0);
+        assert_eq!(root.bounds().size.height, 640.0);
+        // The error label is on the root the app would have drawn into.
+        assert!(matches!(root.subviews().count(), 1..));
+        assert_eq!(mounter.borrow().scene().tree()["frame"]["width"], 320.0);
+        drop(session);
+    }
+}

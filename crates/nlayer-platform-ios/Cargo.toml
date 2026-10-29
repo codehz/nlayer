@@ -13,6 +13,18 @@ workspace = true
 name = "nlayer-ios-app"
 path = "src/bin/app.rs"
 
+[[test]]
+# A plain `main`, so UIKit sees the process's real main thread.
+name = "host"
+path = "tests/host.rs"
+harness = false
+required-features = ["host-tests"]
+
+[features]
+# The UIKit device-layer tests. They cannot link on the Mac, so they are
+# built for the simulator and run by `cargo test -p nlayer-cli --test targets`.
+host-tests = []
+
 [dependencies]
 nlayer-core.workspace = true
 nlayer-engine.workspace = true

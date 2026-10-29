@@ -13,7 +13,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 
 1. 明确的契约缺口（绘制）：P0-4 已关闭。
 2. 宿主语义偏差：本切片的 focusStyle、onScroll、transformOrigin 已关闭。
-3. 验收与回归覆盖：P2-1 到 P2-6 已关闭。其余见 P2-7。
+3. 验收与回归覆盖：P2-1 到 P2-7 已关闭。
 4. 清理项：P3。
 
 P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS 宿主。
@@ -27,6 +27,7 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 | `nlayer test examples/gallery/App.test.tsx --target web` | 12/12 |
 | `nlayer test examples/gallery/App.test.tsx --target ios` | 12/12 |
 | `nlayer test examples/gallery/App.test.tsx --target android` | 12/12 |
+| `nlayer-platform-ios` host tests in the simulator | 13/13；`cargo test -p nlayer-cli --test targets the_ios_host_tests_pass_in_the_simulator` |
 | `nlayer build examples/gallery --out /tmp/nlayer-build-check` | 写出 `bundle.js`、`bundle.js.map`、`mark.png` |
 | `nlayer init /tmp/nlayer-init-check` | 写出 `App.tsx`、`App.test.tsx`、`tsconfig.json`、`package.json`、`.gitignore` |
 | `scripts/test-types` | 五个类型包打包并在临时工程中 `tsc` 通过 |
@@ -78,7 +79,7 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 | P2-4 | 已关闭。`nlayer test --filter` 只跑名字匹配的用例，无匹配也算成功；应用入口的真实 stdin 步骤驱动界面，失败步骤退出 1；类型版本不一致只警告、退出 0。iOS/Android 共用 `Watch`：源改动重建一次，坏源码保留上一个 app 并在修好后重试，发布失败在下一次改动重试 | `crates/nlayer-cli/tests/cli.rs`；`run.rs` 的 `Watch` 测试 | watch/rebuild/失败回退不再只有手工验证 |
 | P2-5 | 已关闭。web 的 press/type/scroll 走 CDP `Input.dispatchMouseEvent` / `Input.dispatchKeyEvent`，键盘 Return、拖拽、momentum 在真实浏览器里有 E2E | `web_test.rs`；`web/host.js` 只答坐标与滚动终点 | 测试输入和用户输入走同一条页面路径 |
 | P2-6 | 已关闭。`java-test/` 是独立测试 APK 上的 instrumentation：`Mounter` 的 mount batch、frame、样式、状态样式和删除，`ScrollBox` 的轴、内容尺寸和偏移，`InputBox` 的配置、受控值与输入计数，`ImageBox` 的 cover/contain/none、object position、圆角裁剪和 asset 解码都在 emulator / 设备上跑。`crates/nlayer-cli/src/android.rs` 的 `android_java_tests` 构建、安装并运行它，`cargo test -p nlayer-cli --test targets` 断言报告全过 | `crates/nlayer-platform-android/java-test/`；`crates/nlayer-cli/tests/targets.rs` | `Mounter`、`ScrollBox`、`InputBox`、`ImageBox` 的设备行为进 `cargo test` |
-| P2-7 | iOS 宿主模块被 `cfg(target_os = "ios")` 排除出 `cargo test` | `crates/nlayer-platform-ios/src/lib.rs:24-45` | 设备层只有 15 个纯逻辑测试；mount/host/driver/text 不跑 |
+| P2-7 | 已关闭。`nlayer-platform-ios` 的 `host` 测试目标是 `harness = false` 的主线程二进制：`host`、`driver`、`mount`、`text` 的 13 个测试在模拟器里跑，覆盖错误浮层与根视图、测试协议 step、帧/样式/状态样式/删除、focus 祖先链、scroll 收窄与恢复、input 配置和 image、CoreText 换行和截断。`crates/nlayer-cli` 的 `ios_host_tests` 用 `aarch64-apple-ios-sim` 构建并由 `simctl spawn` 执行；`cargo test -p nlayer-cli --test targets` 断言报告全过 | `crates/nlayer-platform-ios/tests/host.rs`；`src/lib.rs` `run_host_tests`；`ios.rs` `host_test_binary` | 设备层不再只有纯逻辑测试；`cargo test` 跑不动 UIKit 的部分由模拟器补上 |
 
 ### P2 建议的最小验收集
 
@@ -88,6 +89,7 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 4. 已关闭。`ErrorBoundary` 覆盖 effect/listener 抛错、`reset`、fallback 再抛。
 5. 已关闭。CLI 覆盖 `--version`、`--filter`、stdin 步骤、类型版本警告退出码 0。
 6. 已关闭。Android Java 层测试在 emulator 上用独立 test APK 跑 `Mounter`、`ScrollBox`、`InputBox`、`ImageBox`，由 `cargo test -p nlayer-cli --test targets` 驱动。
+7. 已关闭。iOS 设备层的 `host` 测试二进制在同一 `targets` 测试里构建、在模拟器主线程上跑 13 个用例；报告 `passed == total && total > 0`。
 
 ## P3：清理项
 

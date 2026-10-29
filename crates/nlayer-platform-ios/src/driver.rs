@@ -11,7 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use dispatch2::DispatchQueue;
-use objc2::msg_send;
+use objc2::{MainThreadMarker, msg_send};
 use objc2_core_foundation::{CGFloat, CGPoint};
 use objc2_ui_kit::{UIView, UIWindow};
 use serde::Deserialize;
@@ -328,6 +328,12 @@ fn window_of(mounter: &Mounter) -> Result<objc2::rc::Retained<UIWindow>, String>
 }
 
 fn on_ui<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Result<T, String> {
+    // The socket thread hops to the main queue. A caller already on the main
+    // thread (the host's unit tests) runs the step here; waiting on the main
+    // queue from it would deadlock.
+    if MainThreadMarker::new().is_some() {
+        return Ok(work());
+    }
     let (tx, rx) = std::sync::mpsc::channel();
     DispatchQueue::main().exec_async(move || {
         let _ = tx.send(work());
@@ -342,4 +348,130 @@ fn ok(value: Value) -> String {
 
 fn fail(error: &str) -> String {
     json!({"ok": false, "error": error}).to_string()
+}
+
+#[cfg(feature = "host-tests")]
+pub(crate) mod tests {
+    use super::*;
+    use nlayer_core::geometry::{Bounds, point, px, size};
+    use nlayer_core::{MountBatch, MountItem, ViewKind};
+    use objc2::MainThreadMarker;
+    use objc2_core_foundation::{CGRect, CGSize};
+
+    /// The host's globals are per-process; each test starts its own surface.
+    fn surface(mtm: MainThreadMarker) -> crate::host::Session {
+        let container = UIView::new(mtm);
+        container.setFrame(CGRect::new(CGPoint::ZERO, CGSize::new(320.0, 640.0)));
+        let assets = std::env::temp_dir().join(format!(
+            "nlayer-driver-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|time| time.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::create_dir_all(&assets);
+        crate::host::start(mtm, &container, "", assets)
+    }
+
+    fn scroll_batch() -> MountBatch {
+        MountBatch {
+            items: vec![
+                MountItem::Create {
+                    id: 2,
+                    kind: ViewKind::Scroll,
+                },
+                MountItem::Insert {
+                    parent: nlayer_core::ROOT_ID,
+                    child: 2,
+                    before: None,
+                },
+                MountItem::Frame {
+                    id: 2,
+                    frame: Bounds::new(point(px(0.0), px(0.0)), size(px(300.0), px(200.0))),
+                },
+                MountItem::ScrollConfig {
+                    id: 2,
+                    horizontal: true,
+                    taps: nlayer_core::KeyboardTaps::Never,
+                    dismiss: nlayer_core::KeyboardDismiss::None,
+                },
+                MountItem::ScrollContent {
+                    id: 2,
+                    size: size(px(600.0), px(200.0)),
+                },
+                MountItem::TestId {
+                    id: 2,
+                    test_id: Some("list".into()),
+                },
+            ],
+        }
+    }
+
+    fn value(line: &str) -> Value {
+        let response: Value = serde_json::from_str(line).expect("a JSON response");
+        assert_eq!(response["ok"], true, "{line}");
+        response["value"].clone()
+    }
+
+    pub(crate) fn tests() -> Vec<(&'static str, fn())> {
+        vec![
+            (
+                "driver::a_scroll_step_moves_the_scroll_views_offset",
+                a_scroll_step_moves_the_scroll_views_offset as fn(),
+            ),
+            (
+                "driver::a_step_that_cannot_run_reports_why",
+                a_step_that_cannot_run_reports_why as fn(),
+            ),
+        ]
+    }
+
+    fn a_scroll_step_moves_the_scroll_views_offset() {
+        let mtm =
+            MainThreadMarker::new().expect("the iOS host test runner runs on the main thread");
+        let session = surface(mtm);
+        let mounter = crate::host::mounter().expect("mounter");
+        mounter.borrow_mut().apply(scroll_batch());
+
+        let tree = value(&step(r#"{"op":"tree"}"#));
+        assert_eq!(tree["children"][0]["kind"], "scroll");
+        assert_eq!(tree["children"][0]["horizontal"], true);
+
+        value(&step(
+            r#"{"op":"scroll","selector":"id:list","distance":40}"#,
+        ));
+        let scroll = mounter.borrow().scroll(2).expect("scroll view");
+        assert_eq!(scroll.contentOffset().x, 40.0);
+        assert_eq!(scroll.contentOffset().y, 0.0);
+        assert_eq!(
+            value(&step(r#"{"op":"query","selector":"id:list"}"#))["state"],
+            "ready"
+        );
+        assert_eq!(
+            value(&step(
+                r#"{"op":"scroll","selector":"id:list","distance":-20}"#
+            ))
+            .as_null(),
+            Some(())
+        );
+        assert_eq!(scroll.contentOffset().x, 20.0);
+        drop(session);
+    }
+
+    fn a_step_that_cannot_run_reports_why() {
+        let mtm =
+            MainThreadMarker::new().expect("the iOS host test runner runs on the main thread");
+        let session = surface(mtm);
+        let unknown: Value =
+            serde_json::from_str(&step(r#"{"op":"frobnicate"}"#)).expect("a JSON response");
+        assert_eq!(unknown["ok"], false);
+        assert_eq!(unknown["error"], "unknown test op `frobnicate`");
+        let bad: Value = serde_json::from_str(&step("not json")).expect("a JSON response");
+        assert_eq!(bad["ok"], false);
+        // The empty bundle's boot error is what the runner would receive
+        // instead of a ready app.
+        assert_eq!(mounted().unwrap_err(), "no app.js next to the runner");
+        drop(session);
+    }
 }

@@ -84,6 +84,20 @@ fn the_java_host_tests_pass_on_the_emulator() {
 }
 
 #[test]
+fn the_ios_host_tests_pass_in_the_simulator() {
+    let _guard = lock();
+    let report =
+        nlayer_cli::ios_host_tests().unwrap_or_else(|error| panic!("iOS host tests: {error}"));
+    assert!(
+        report.failures.is_empty(),
+        "iOS host tests:\n{}",
+        report.failures.join("\n")
+    );
+    assert_eq!(report.passed, report.total, "iOS host tests");
+    assert!(report.total > 0, "iOS host tests: no tests ran");
+}
+
+#[test]
 fn gallery_runs_on_each_target() {
     let _guard = lock();
     let path = gallery();

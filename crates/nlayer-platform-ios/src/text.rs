@@ -637,3 +637,70 @@ impl TextEngine for CoreTextEngine {
             .collect()
     }
 }
+
+#[cfg(feature = "host-tests")]
+pub(crate) mod tests {
+    use super::*;
+    use nlayer_core::text::{AttributedText, TextSpan};
+
+    fn content(value: &str, max_lines: u32, ellipsize: EllipsizeMode) -> AttributedText {
+        AttributedText {
+            text: value.into(),
+            spans: vec![TextSpan {
+                start: 0,
+                end: value.encode_utf16().count() as u32,
+                style: ResolvedTextStyle::default(),
+            }],
+            max_lines,
+            ellipsize,
+            ..AttributedText::default()
+        }
+    }
+
+    pub(crate) fn tests() -> Vec<(&'static str, fn())> {
+        vec![
+            (
+                "text::a_long_line_wraps_at_the_width_and_stacks_lines",
+                a_long_line_wraps_at_the_width_and_stacks_lines as fn(),
+            ),
+            (
+                "text::max_lines_cuts_the_rest_to_one_line",
+                max_lines_cuts_the_rest_to_one_line as fn(),
+            ),
+        ]
+    }
+
+    fn a_long_line_wraps_at_the_width_and_stacks_lines() {
+        let engine = CoreTextEngine::default();
+        let text = content("one two three four five six seven", 0, EllipsizeMode::Tail);
+        let prepared = engine.prepare(&text);
+        let measured = engine.measure(&prepared, Some(Points(80.0)));
+        assert!(
+            measured.width.0 > 0.0 && measured.width.0 <= 80.5,
+            "{measured:?}"
+        );
+        assert!(measured.height.0 > 0.0);
+
+        let layout = engine.layout(&prepared, Size::new(Points(80.0), measured.height));
+        let lines = engine.lines(&layout);
+        assert!(lines.len() > 1, "wrapped into {} lines", lines.len());
+        assert_eq!(lines[0].start, 0);
+        for pair in lines.windows(2) {
+            assert!(pair[1].y.0 > pair[0].y.0, "{pair:?}");
+            assert!(pair[1].start >= pair[0].end, "{pair:?}");
+        }
+        assert!(lines.iter().all(|line| line.width.0 <= 80.5));
+        assert_eq!(lines.last().map(|line| line.end), Some(text.len_utf16()));
+    }
+
+    fn max_lines_cuts_the_rest_to_one_line() {
+        let engine = CoreTextEngine::default();
+        let text = content("one two three four five", 1, EllipsizeMode::Tail);
+        let prepared = engine.prepare(&text);
+        let layout = engine.layout(&prepared, Size::new(Points(40.0), Points(20.0)));
+        let lines = engine.lines(&layout);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].end < text.len_utf16(), "{lines:?}");
+        assert!(lines[0].width.0 > 0.0);
+    }
+}
