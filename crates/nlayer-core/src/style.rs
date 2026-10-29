@@ -1613,7 +1613,7 @@ style_keys! {
     Translate = "translate": View "string | number | AnimatedNode | [x: number | string | AnimatedNode, y?: number | string | AnimatedNode]" "CSS's `translate`: x, then y (`\"10px 20px\"`; percentages of the view's size, `\"-50% 0\"`); a number is points. An animated value moves it natively, along x (along both, each its own, in the `[x, y]` form).",
     Rotate = "rotate": View "string | number | AnimatedNode" "CSS's `rotate`: `\"45deg\"`, or about an axis, `\"x 90deg\"`; a number, and an animated value, is degrees about z.",
     Scale = "scale": View "string | number | AnimatedNode | [x: number | AnimatedNode, y: number | AnimatedNode]" "CSS's `scale`: `1.5`, `\"150%\"`, x and y (`\"1 2\"`, `[x, y]`).",
-    Transform = "transform": View "string | TransformStep[]" "CSS's `transform`: `\"translateX(10px) rotate(45deg) scale(1.5)\"` (`translate()`, `scale()`, `rotate()` on any axis, `skew()` and `perspective()` functions), or `\"none\"`; or a list of steps whose amounts may be animated values (`[{ perspective: 800 }, { rotateY: angle }]`, a motion's `transform`). Applies after `translate`, `rotate` and `scale`, as in CSS.",
+    Transform = "transform": View "string | TransformStep[]" "CSS's `transform`: `\"translateX(10px) rotate(45deg) scale(1.5)\"` (`translate()`, `scale()`, `rotate()` on any axis and `perspective()` functions), or `\"none\"`; or a list of steps whose amounts may be animated values (`[{ perspective: 800 }, { rotateY: angle }]`, a motion's `transform`). Applies after `translate`, `rotate` and `scale`, as in CSS.",
     TransformOrigin = "transformOrigin": View "string | (number | string)[]" "The point `transform` acts around: keywords, percentages and lengths (\"top left\", \"50% 0\", `[10, 20]`). Default the center.",
     Opacity = "opacity": View "number | AnimatedNode",
     Overflow = "overflow": View "\"visible\" | \"hidden\"",
@@ -3871,10 +3871,15 @@ mod tests {
         assert_eq!(kinds(&s), [TranslateX, TranslateY, Rotate, RotateY, Rotate]);
         assert_eq!(s.animated, vec![(Step(3), 9), (Step(4), 11)]);
         // CSS's string replaces the list, its binding with it.
-        s.set_key(StyleKey::Transform, StyleValue::Str("skewX(5deg)"))
+        s.set_key(StyleKey::Transform, StyleValue::Str("rotateX(5deg)"))
             .unwrap();
-        assert_eq!(kinds(&s), [TranslateX, TranslateY, Rotate, SkewX, Rotate]);
+        assert_eq!(kinds(&s), [TranslateX, TranslateY, Rotate, RotateX, Rotate]);
         assert_eq!(s.animated, vec![(Step(4), 11)]);
+        // Skew is not a v1 transform: a view on Android cannot paint it.
+        assert_eq!(
+            s.set_key(StyleKey::Transform, StyleValue::Str("skewX(5deg)")),
+            Err(StyleError::InvalidValue)
+        );
         assert_eq!(
             s.set_key(StyleKey::Transform, StyleValue::Str("rotate(45)")),
             Err(StyleError::InvalidValue)

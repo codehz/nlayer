@@ -34,8 +34,6 @@ export type TransformStep =
   | { rotateZ: number | string }
   | { rotateX: number | string }
   | { rotateY: number | string }
-  | { skewX: number | string }
-  | { skewY: number | string }
   | { perspective: number };
 
 /** `start` / `end` follow the writing direction; `flex-start` / `flex-end` follow the flex direction. */

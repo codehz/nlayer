@@ -342,10 +342,6 @@ final class Tree {
         return "rotateX";
       case 7:
         return "rotateY";
-      case 8:
-        return "skewX";
-      case 9:
-        return "skewY";
       case 10:
         return "perspective";
       default:

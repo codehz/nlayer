@@ -322,9 +322,8 @@ fn view_style(e: &mut Encoded, style: &ViewStyle) {
 
 /// A transform list as Android view properties: translation x / y (dp),
 /// scale x / y, rotation, rotation x / y (degrees) and the perspective
-/// term (`-1 / distance`, 0 for none). Skew has no view property and is
-/// dropped. Degrees are rounded to 1e-4 so a whole degree survives the
-/// radians round trip.
+/// term (`-1 / distance`, 0 for none). Degrees are rounded to 1e-4 so a
+/// whole degree survives the radians round trip.
 fn view_transform(transform: &nlayer_core::transform::Transform) -> [f32; 8] {
     match transform.matrix(|_| None).decompose() {
         Some(decomposed) => [
@@ -354,8 +353,6 @@ fn transform_kind(kind: nlayer_core::transform::TransformKind) -> i32 {
         TransformKind::Rotate => 5,
         TransformKind::RotateX => 6,
         TransformKind::RotateY => 7,
-        TransformKind::SkewX => 8,
-        TransformKind::SkewY => 9,
         TransformKind::Perspective => 10,
         TransformKind::TranslateXFraction => 11,
         TransformKind::TranslateYFraction => 12,

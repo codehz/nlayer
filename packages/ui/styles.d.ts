@@ -28,8 +28,6 @@ export type TransformStep =
   | { rotateZ: number | string }
   | { rotateX: number | string }
   | { rotateY: number | string }
-  | { skewX: number | string }
-  | { skewY: number | string }
   | { perspective: number };
 
 /** `start` / `end` follow the writing direction; `flex-start` / `flex-end` follow the flex direction. */
@@ -212,7 +210,7 @@ export interface ViewStyle extends LayoutStyle {
   rotate?: string | number;
   /** CSS's `scale`: `1.5`, `"150%"`, x and y (`"1 2"`, `[x, y]`). */
   scale?: string | number | [x: number, y: number];
-  /** CSS's `transform`: `"translateX(10px) rotate(45deg) scale(1.5)"` (`translate()`, `scale()`, `rotate()` on any axis, `skew()` and `perspective()` functions), or `"none"`; or a list of steps whose amounts may be animated values (`[{ perspective: 800 }, { rotateY: angle }]`, a motion's `transform`). Applies after `translate`, `rotate` and `scale`, as in CSS. */
+  /** CSS's `transform`: `"translateX(10px) rotate(45deg) scale(1.5)"` (`translate()`, `scale()`, `rotate()` on any axis and `perspective()` functions), or `"none"`; or a list of steps whose amounts may be animated values (`[{ perspective: 800 }, { rotateY: angle }]`, a motion's `transform`). Applies after `translate`, `rotate` and `scale`, as in CSS. */
   transform?: string | TransformStep[];
   /** The point `transform` acts around: keywords, percentages and lengths ("top left", "50% 0", `[10, 20]`). Default the center. */
   transformOrigin?: string | (number | string)[];

@@ -8,10 +8,9 @@
 
 use crate::geometry::{Points, Radians, Size};
 
-/// Most entries a `transform` list can have: room for every step
-/// Tailwind's utilities compose (`translate`, `rotate`, `scale`, then
-/// `rotateX() rotateY() rotateZ() skewX() skewY()`) and the perspective of
-/// `perspective-*`.
+/// Most entries a `transform` list can have: room for every step the
+/// Tailwind utilities compose (`translate`, `rotate`, `scale`, then
+/// `rotateX() rotateY() rotateZ()`) and the perspective of `perspective-*`.
 pub const MAX_TRANSFORMS: usize = 16;
 
 /// One kind of transform entry.
@@ -33,10 +32,6 @@ pub enum TransformKind {
     RotateX,
     /// `rotateY`, degrees.
     RotateY,
-    /// `skewX`, degrees.
-    SkewX,
-    /// `skewY`, degrees.
-    SkewY,
     /// `perspective`, the distance of the viewer in points.
     Perspective,
     /// A translation by a fraction of the view's width (`translate-x-1/2`);
@@ -60,8 +55,6 @@ impl TransformKind {
             "rotate" | "rotateZ" => Rotate,
             "rotateX" => RotateX,
             "rotateY" => RotateY,
-            "skewX" => SkewX,
-            "skewY" => SkewY,
             "perspective" => Perspective,
             _ => return None,
         })
@@ -70,7 +63,7 @@ impl TransformKind {
     /// True for kinds whose value is an angle (`"45deg"` strings).
     pub fn is_angle(self) -> bool {
         use TransformKind::*;
-        matches!(self, Rotate | RotateX | RotateY | SkewX | SkewY)
+        matches!(self, Rotate | RotateX | RotateY)
     }
 
     /// The value that changes nothing.
@@ -223,8 +216,6 @@ impl Matrix {
             TransformKind::RotateY => {
                 (a[0], a[2], a[8], a[10]) = (cos, -sin, sin, cos);
             }
-            TransformKind::SkewX => a[4] = v.to_radians().tan(),
-            TransformKind::SkewY => a[1] = v.to_radians().tan(),
             TransformKind::Perspective => {
                 if v != 0.0 {
                     a[11] = -1.0 / v;
@@ -266,8 +257,7 @@ impl Matrix {
     }
 
     /// Splits the matrix into the separate properties of an Android view.
-    /// Skew has no view property and is dropped. `None` for degenerate
-    /// matrices (a zero scale).
+    /// `None` for degenerate matrices (a zero scale).
     pub fn decompose(&self) -> Option<Decomposed> {
         if self.is_2d() {
             return Some(self.decompose_2d());
@@ -444,8 +434,8 @@ pub struct Decomposed {
 /// `"none"`) as entries, in order: `translate()` / `translateX()` /
 /// `translateY()` (lengths, or percentages of the view's size), `scale()`
 /// / `scaleX()` / `scaleY()`, `rotate()` / `rotateZ()` / `rotateX()` /
-/// `rotateY()`, `skew()` / `skewX()` / `skewY()` (angles) and
-/// `perspective()`. `None` for anything else.
+/// `rotateY()` and `perspective()`. `None` for anything else, including
+/// `skew()`: v1 does not name it and Android views cannot paint it.
 pub(crate) fn parse_css(s: &str) -> Option<Vec<TransformOp>> {
     let mut out = Vec::new();
     let mut rest = s.trim();
@@ -481,8 +471,7 @@ fn function(name: &str, args: &[&str], out: &mut Vec<TransformOp>) -> Option<()>
             out.push(op(ScaleX, crate::css::amount(args[0])?));
             out.push(op(ScaleY, crate::css::amount(args[1])?));
         }
-        "scaleX" | "scaleY" | "rotate" | "rotateZ" | "rotateX" | "rotateY" | "skewX" | "skewY"
-        | "perspective"
+        "scaleX" | "scaleY" | "rotate" | "rotateZ" | "rotateX" | "rotateY" | "perspective"
             if args.len() == 1 =>
         {
             let kind = match name {
@@ -495,12 +484,6 @@ fn function(name: &str, args: &[&str], out: &mut Vec<TransformOp>) -> Option<()>
                 _ => crate::css::amount(args[0])?,
             };
             out.push(op(kind, value));
-        }
-        "skew" if matches!(args.len(), 1 | 2) => {
-            out.push(op(SkewX, crate::css::angle(args[0])?));
-            if let Some(y) = args.get(1) {
-                out.push(op(SkewY, crate::css::angle(y)?));
-            }
         }
         _ => return None,
     }
@@ -612,11 +595,10 @@ mod tests {
             Some(vec![(TranslateX, 10.0), (Rotate, 45.0), (Scale, 1.5)])
         );
         assert_eq!(
-            ops("translate(50%, 2rem) skew(10deg) perspective(800px) rotateY(0.25turn)"),
+            ops("translate(50%, 2rem) perspective(800px) rotateY(0.25turn)"),
             Some(vec![
                 (TranslateXFraction, 0.5),
                 (TranslateY, 32.0),
-                (SkewX, 10.0),
                 (Perspective, 800.0),
                 (RotateY, 90.0)
             ])
@@ -625,6 +607,8 @@ mod tests {
         assert_eq!(ops("none"), Some(vec![]));
         // What NSH does not do is rejected, never read another way.
         assert_eq!(ops("matrix(1, 0, 0, 1, 0, 0)"), None);
+        assert_eq!(ops("skew(10deg)"), None);
+        assert_eq!(ops("skewX(10deg)"), None);
         assert_eq!(ops("rotate(45)"), None);
         assert_eq!(ops("translateX(10px"), None);
         let one = |r: Option<Vec<TransformOp>>| {
@@ -725,6 +709,6 @@ mod tests {
     fn identity_detection() {
         assert!(Transform::IDENTITY.is_identity());
         assert!(list(&[(TransformKind::Scale, 1.0)]).is_identity());
-        assert!(!list(&[(TransformKind::SkewX, 10.0)]).is_identity());
+        assert!(!list(&[(TransformKind::RotateX, 10.0)]).is_identity());
     }
 }

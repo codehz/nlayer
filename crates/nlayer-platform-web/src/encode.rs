@@ -684,8 +684,6 @@ fn css_transform(t: &Transform) -> String {
             TransformKind::Rotate => write!(out, "rotate({v}deg) "),
             TransformKind::RotateX => write!(out, "rotateX({v}deg) "),
             TransformKind::RotateY => write!(out, "rotateY({v}deg) "),
-            TransformKind::SkewX => write!(out, "skewX({v}deg) "),
-            TransformKind::SkewY => write!(out, "skewY({v}deg) "),
             TransformKind::Perspective => write!(out, "perspective({v}px) "),
         };
     }
@@ -718,8 +716,6 @@ fn transform_name(kind: TransformKind) -> &'static str {
         TransformKind::Rotate => "rotate",
         TransformKind::RotateX => "rotateX",
         TransformKind::RotateY => "rotateY",
-        TransformKind::SkewX => "skewX",
-        TransformKind::SkewY => "skewY",
         TransformKind::Perspective => "perspective",
     }
 }

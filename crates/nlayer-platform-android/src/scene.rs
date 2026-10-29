@@ -575,8 +575,6 @@ fn transform_name(kind: nlayer_core::transform::TransformKind) -> &'static str {
         TransformKind::Rotate => "rotate",
         TransformKind::RotateX => "rotateX",
         TransformKind::RotateY => "rotateY",
-        TransformKind::SkewX => "skewX",
-        TransformKind::SkewY => "skewY",
         TransformKind::Perspective => "perspective",
     }
 }
