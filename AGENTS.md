@@ -16,7 +16,7 @@ v1 不做。做到那一层再搬，不留钩子。
 - 深色模式、无障碍 API、SVG、GIF、多行输入、文本选择、链接、行内视图、IME 事件回 JS。`testID` 不是无障碍 API
 - 阴影、渐变的绘制。`AnimationProp` 跟动画图走，v1 不暴露
 - Tailwind utility 表。`class` / `classList` 仍并进同一套样式 IR；v1 解析器为空，未知 `class` 警告且不生效
-- `crypto.subtle`、WebSocket、storage。v1 里 `crypto.subtle` 是缺的，不是空桩
+- `crypto.subtle`、WebSocket、storage。v1 里 `crypto.subtle` 在 QuickJS 宿主是缺的，不是空桩。Web 页面里浏览器自带的全局不遮蔽，也不属于 v1 API
 - `resource`。滚动的刷新、缩放、分页。`fetch` 的 cookie
 - 嵌入 ABI、`nlayer package`、HMR、`nsh-dev` 协议
 - 设备像素对齐的 headless 断言

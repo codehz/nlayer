@@ -14,7 +14,9 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 1. 明确的契约缺口（绘制）：P0-4 已关闭。
 2. 宿主语义偏差：本切片的 focusStyle、onScroll、transformOrigin 已关闭。
 3. 验收与回归覆盖：P2-1 到 P2-3 已关闭。其余见 P2-4 起
-4. 需要定稿的文档歧义（web 上的浏览器全局）
+4. 清理项：P3。
+
+P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS 宿主。
 
 ## 验证基线
 
@@ -54,7 +56,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 | P1-4 | 已关闭。stamp 新鲜时仍用 `pm path` 确认包在，并用 `run-as` 确认数据目录可进。卸载或数据目录不可进时重装 | `install_if_needed`；`host_present` | `run-as` push 前包和数据目录都在 |
 | P1-5 | 已关闭。不移植 Node 兼容。打包器不写 Node 拒绝。rolldown 1.2.13 不打 shim，内建留成外部 import；QuickJS 加载时抛 `could not load module` | `plugin.rs` resolve_id | 不补拒绝名单，也不留 shim 闸 |
 | P1-6 | 已关闭。编译器插入 `nlayer:rt` 之前，源码里的 import、re-export、`import()`、`require` 和 `new URL` 报错。编译器生成的导入仍是外部模块 | `compile.rs` `handwritten_rt` | 应用源码不能写 `nlayer:rt` |
-| P1-7 | Web 上 `crypto.subtle` 存在 | QuickJS 宿主中缺失；web target 在浏览器页面执行应用，浏览器全局仍在 | 契约 `docs/v1.md:17`；web 运行模型 `docs/v1.md:19` |
+| P1-7 | 已关闭。Web 不受「`crypto.subtle` 缺失」约束：应用在页面里跑，浏览器全局原样保留，v1 不遮蔽。该条只约束 QuickJS 宿主（iOS、Android、无窗口 `nlayer test`） | `docs/v1.md:17` | web 上浏览器自带的 `crypto.subtle` 可用；不属于 v1 API，也不进类型 |
 
 ### P1 处理建议
 
@@ -64,7 +66,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 - P1-4：已关闭。包不在或 `run-as` 进不了数据目录时 `adb install -r`。
 - P1-5：已关闭。不补拒绝名单，打包器不拒绝 Node 内建。
 - P1-6：已关闭。手写 `nlayer:rt` 报错；编译器生成的导入留下。
-- P1-7：先定稿 web 是否受 v1 “crypto.subtle 缺失”约束。若受约束，需要在页面启动时遮蔽；若不受，改文档说明该条只适用于 QuickJS 宿主。
+- P1-7：已关闭。契约按宿主分档，web 不遮蔽浏览器全局；仅改文档，无运行时代码改动。
 
 ## P2：测试与验收覆盖
 
