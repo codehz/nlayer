@@ -2212,6 +2212,10 @@ pub(crate) mod tests {
                 a_batch_frames_paints_and_names_a_view as fn(),
             ),
             (
+                "mount::a_transform_origin_follows_the_bounds",
+                a_transform_origin_follows_the_bounds as fn(),
+            ),
+            (
                 "mount::active_beats_hover_and_both_beat_the_base_paint",
                 active_beats_hover_and_both_beat_the_base_paint as fn(),
             ),
@@ -2294,6 +2298,51 @@ pub(crate) mod tests {
                 .map(Vec::len),
             Some(0)
         );
+    }
+
+    fn a_transform_origin_follows_the_bounds() {
+        let mounter = mounter();
+        let mut parsed = nlayer_core::style::Style::default();
+        parsed
+            .set(
+                "transform",
+                nlayer_core::style::StyleValue::Str("rotate(90deg)"),
+            )
+            .unwrap();
+        parsed
+            .set(
+                "transformOrigin",
+                nlayer_core::style::StyleValue::Str("25% 75%"),
+            )
+            .unwrap();
+        apply(
+            &mounter,
+            [
+                child(2, ViewKind::View, frame(0.0, 0.0, 20.0, 10.0)),
+                vec![MountItem::ViewStyle {
+                    id: 2,
+                    style: Box::new(parsed.view),
+                }],
+            ]
+            .concat(),
+        );
+        let view = mounter.borrow().view_of(2).expect("view");
+        let turned = view.layer().transform();
+        // The origin is (5, 7.5), 5 left of and 2.5 below the center.
+        assert!((turned.m41 + 2.5).abs() < 1e-6, "{}", turned.m41);
+        assert!((turned.m42 - 7.5).abs() < 1e-6, "{}", turned.m42);
+
+        // A percentage origin is of the new size, not the first one.
+        apply(
+            &mounter,
+            vec![MountItem::Frame {
+                id: 2,
+                frame: frame(0.0, 0.0, 40.0, 20.0),
+            }],
+        );
+        let turned = view.layer().transform();
+        assert!((turned.m41 + 5.0).abs() < 1e-6, "{}", turned.m41);
+        assert!((turned.m42 - 15.0).abs() < 1e-6, "{}", turned.m42);
     }
 
     fn active_beats_hover_and_both_beat_the_base_paint() {

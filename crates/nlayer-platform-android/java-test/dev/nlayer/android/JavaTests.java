@@ -36,6 +36,7 @@ public final class JavaTests extends Instrumentation {
   private static final String[] TESTS = {
     "testMountBatchBuildsTree",
     "testMountBatchFramesAndStyles",
+    "testTransformOriginFollowsResize",
     "testMountBatchStateStyle",
     "testMountBatchFocusAncestors",
     "testMountBatchDelete",
@@ -198,6 +199,35 @@ public final class JavaTests extends Instrumentation {
     equal(0xff112233, box.decor.fill, "fill");
     equal(8 * d, box.decor.radii[0], "radius in pixels");
     equal(box.getWidth() / 2f, box.getPivotX(), "default pivot follows the size");
+  }
+
+  void testTransformOriginFollowsResize() {
+    HostView host = host();
+    Batch b = batch();
+    b.word(0).word(2).word(0);
+    b.word(1).word(1).word(2).word(-1);
+    b.word(4).word(2).real(0).real(0).real(20).real(10);
+    b.word(5).word(2);
+    styleOrigin(b, 0xff112233, 0, 1, false, 0.25f, 0.75f);
+    main(
+        () -> {
+          host.mounter.apply(b.bytes(), b.objects());
+          return null;
+        });
+
+    Box box = (Box) host.mounter.views.get(2);
+    equal(box.getWidth() * 0.25f, box.getPivotX(), "percentage origin x");
+    equal(box.getHeight() * 0.75f, box.getPivotY(), "percentage origin y");
+
+    Batch resize = batch();
+    resize.word(4).word(2).real(0).real(0).real(40).real(20);
+    main(
+        () -> {
+          host.mounter.apply(resize.bytes(), resize.objects());
+          return null;
+        });
+    equal(box.getWidth() * 0.25f, box.getPivotX(), "origin x follows a resize");
+    equal(box.getHeight() * 0.75f, box.getPivotY(), "origin y follows a resize");
   }
 
   void testMountBatchStateStyle() {
@@ -693,6 +723,11 @@ public final class JavaTests extends Instrumentation {
    * transform-origin lengths and both object positions, and no transform ops.
    */
   private static void style(Batch b, int fill, float radius, float opacity, boolean hidden) {
+    styleOrigin(b, fill, radius, opacity, hidden, 0.5f, 0.5f);
+  }
+
+  private static void styleOrigin(
+      Batch b, int fill, float radius, float opacity, boolean hidden, float ox, float oy) {
     b.word(fill);
     for (int i = 0; i < 4; i++) b.real(radius);
     b.bool(false);
@@ -703,8 +738,8 @@ public final class JavaTests extends Instrumentation {
     b.bool(false);
     b.real(0).real(0).real(1).real(1).real(0).real(0).real(0).real(0);
     b.bool(hidden);
-    length(b, 0.5f);
-    length(b, 0.5f);
+    length(b, ox);
+    length(b, oy);
     position(b, false, 0.5f);
     position(b, false, 0.5f);
     b.word(0);
