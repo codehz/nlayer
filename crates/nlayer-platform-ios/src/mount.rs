@@ -2244,6 +2244,10 @@ pub(crate) mod tests {
                 an_image_records_its_source_and_fit as fn(),
             ),
             (
+                "mount::an_image_decodes_and_clips_to_its_radius",
+                an_image_decodes_and_clips_to_its_radius as fn(),
+            ),
+            (
                 "mount::a_text_block_carries_its_layout_and_runs",
                 a_text_block_carries_its_layout_and_runs as fn(),
             ),
@@ -2665,6 +2669,98 @@ pub(crate) mod tests {
         assert_eq!(tree["children"][0]["kind"], "image");
         assert_eq!(tree["children"][0]["src"], "asset:/missing.png");
         assert_eq!(tree["children"][0]["fit"], "contain");
+    }
+
+    fn an_image_decodes_and_clips_to_its_radius() {
+        // A 4×2 red PNG: the smallest file ImageIO still decodes.
+        const PNG: &[u8] = &[
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 4, 0, 0, 0, 2,
+            8, 6, 0, 0, 0, 127, 168, 125, 99, 0, 0, 0, 18, 73, 68, 65, 84, 120, 218, 99, 248, 207,
+            192, 240, 31, 25, 51, 160, 11, 0, 0, 15, 33, 15, 241, 254, 69, 20, 99, 0, 0, 0, 0, 73,
+            69, 78, 68, 174, 66, 96, 130,
+        ];
+        let mtm =
+            MainThreadMarker::new().expect("the iOS host test runner runs on the main thread");
+        let root = UIView::new(mtm);
+        root.setFrame(CGRect::new(CGPoint::ZERO, CGSize::new(320.0, 640.0)));
+        let assets = std::env::temp_dir().join(format!(
+            "nlayer-image-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|time| time.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&assets).expect("temporary assets");
+        std::fs::write(assets.join("pic.png"), PNG).expect("a PNG on disk");
+        let mounter = Mounter::new(mtm, root, assets.clone());
+
+        let mut parsed = nlayer_core::style::Style::default();
+        parsed
+            .set("borderRadius", nlayer_core::style::StyleValue::Number(8.0))
+            .unwrap();
+        apply(
+            &mounter,
+            [
+                child(2, ViewKind::Image, frame(0.0, 0.0, 32.0, 32.0)),
+                vec![
+                    MountItem::Image {
+                        id: 2,
+                        source: Some(ImageSource {
+                            uri: "asset:/pic.png".into(),
+                            size: None,
+                            scales: nlayer_core::ImageScales::NONE,
+                        }),
+                        resize_mode: ResizeMode::Contain,
+                    },
+                    MountItem::ViewStyle {
+                        id: 2,
+                        style: Box::new(parsed.view),
+                    },
+                ],
+            ]
+            .concat(),
+        );
+
+        let decoded =
+            crate::image::load(&assets, "asset:/pic.png").expect("ImageIO decodes the PNG");
+        assert_eq!((decoded.width, decoded.height), (4, 2), "the PNG's pixels");
+        let generation = mounter
+            .borrow()
+            .slot(2)
+            .and_then(|slot| slot.picture.as_ref())
+            .expect("picture")
+            .generation;
+        mounter
+            .borrow_mut()
+            .finish_image(2, generation, 2.0, Ok(decoded));
+
+        let mounter = mounter.borrow();
+        let picture = mounter
+            .slot(2)
+            .and_then(|slot| slot.picture.as_ref())
+            .expect("picture");
+        assert_eq!(
+            picture.natural,
+            Some(Size::new(Points(2.0), Points(1.0))),
+            "4×2 pixels at scale 2 are 2×1 points"
+        );
+        assert_eq!(picture.layer.contentsScale(), 2.0);
+        assert!(picture.clip.masksToBounds(), "the picture is clipped");
+        assert_eq!(picture.clip.cornerRadius(), 8.0, "the radius clips it");
+        let fitted = picture.layer.frame();
+        assert_eq!(
+            (
+                fitted.origin.x,
+                fitted.origin.y,
+                fitted.size.width,
+                fitted.size.height
+            ),
+            (0.0, 8.0, 32.0, 16.0),
+            "contain fits 2×1 into 32×32"
+        );
+        drop(mounter);
+        let _ = std::fs::remove_dir_all(&assets);
     }
 
     fn a_text_block_carries_its_layout_and_runs() {
