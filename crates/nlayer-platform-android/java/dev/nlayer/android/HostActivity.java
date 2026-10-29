@@ -28,6 +28,12 @@ public class HostActivity extends Activity {
       w.setStatusBarColor(android.graphics.Color.TRANSPARENT);
       w.setNavigationBarColor(android.graphics.Color.TRANSPARENT);
     }
+    // API 28–29 have no WindowInsets.Type.ime(). adjustResize is the only
+    // window mode whose content insets include the keyboard there; the
+    // layout flags above keep the surface at the full window, so the app
+    // still lays out under the keyboard and only the inset changes.
+    if (Build.VERSION.SDK_INT < 30)
+      w.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     host = new HostView(this);
     setContentView(host);
     host.setOnApplyWindowInsetsListener(
@@ -38,8 +44,8 @@ public class HostActivity extends Activity {
             return insets;
           }
         });
-    // API 28–29 have no WindowInsets.Type.ime(), and adjustNothing does not
-    // redispatch insets when the keyboard opens. The visible frame does move.
+    // API 28–29 do not redispatch insets when the keyboard opens under
+    // adjustNothing. adjustResize moves the visible frame.
     if (Build.VERSION.SDK_INT < 30) {
       host.getViewTreeObserver()
           .addOnGlobalLayoutListener(
@@ -82,10 +88,13 @@ public class HostActivity extends Activity {
       // on iOS. Subtracting systemBars leaves that strip under the keys.
       kb = Math.max(0, ime.bottom);
     } else if (insets != null) {
-      top = insets.getSystemWindowInsetTop();
-      right = insets.getSystemWindowInsetRight();
-      bottom = insets.getSystemWindowInsetBottom();
-      left = insets.getSystemWindowInsetLeft();
+      // Stable insets are the system bars: with adjustResize the system
+      // window inset at the bottom also carries the keyboard, which is
+      // `env(keyboard-inset-height)`, not the safe area.
+      top = insets.getStableInsetTop();
+      right = insets.getStableInsetRight();
+      bottom = insets.getStableInsetBottom();
+      left = insets.getStableInsetLeft();
       kb = keyboardOverlap(v, insets);
     } else if (Build.VERSION.SDK_INT < 30) {
       // No navigation-bar size yet: a closed keyboard can look like one.

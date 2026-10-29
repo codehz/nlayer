@@ -5,15 +5,14 @@
 - 审计基线：`main`，`25152b4`，2026-10-29
 - 复核基线：`main`，`108d93f`，2026-10-29
 - 审计范围：`crates/*`、`packages/*`、`examples/gallery`、`scripts/*`
-- 验证环境：macOS 27.0.0 arm64；Xcode iOS 27.1 模拟器（iPhone Duo）；Android emulator-5554；web target 使用本机 Brave（Chromium）
+- 验证环境：macOS 27.0.0 arm64；Xcode iOS 27.1 模拟器（iPhone Duo）；Android emulator-5554（API 36）；API 28/29 用 `system-images;android-28;default;arm64-v8a` / `system-images;android-29;default;arm64-v8a` 的 emulator 验过键盘 inset；web target 使用本机 Brave（Chromium）
 - 维护约定：每修掉一项，删除对应条目或在“状态”里标成已关闭；不要让本文变成第二份产品范围
 
 ## 结论
 
-v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bundle、五个宿主组件、三端平台 API、CLI 和类型包都有真实代码，没有 `todo!()` / 空实现。P0–P3 的条目都已关闭，复核留下的 API 面缺口已补齐，仍有两处设备验收盲区：
+v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bundle、五个宿主组件、三端平台 API、CLI 和类型包都有真实代码，没有 `todo!()` / 空实现。P0–P3 的条目都已关闭，复核留下的 API 面缺口已补齐。API 28/29 的键盘 inset 在设备上验过并修掉了一个真实缺口（P0-11）。仍有一处设备验收盲区：
 
-1. Android API 28–29 的键盘 inset：`HostActivity.keyboardOverlap` 有代码路径，但没有 API 28/29 的设备回归；现有 emulator-5554 是 API 36。
-2. Android `focusStyle` 祖先链：`Mounter.chainFocused` / `focusChanged` 有实现，iOS 宿主测试覆盖；Android Java instrumentation 没有 focus 用例。
+1. Android `focusStyle` 祖先链：`Mounter.chainFocused` / `focusChanged` 有实现，iOS 宿主测试覆盖；Android Java instrumentation 没有 focus 用例。
 
 P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS 宿主。
 
@@ -32,6 +31,8 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 | `nlayer init /tmp/nlayer-init-check` | 写出 `App.tsx`、`App.test.tsx`、`tsconfig.json`、`package.json`、`.gitignore`（沿用审计基线，本次未复跑） |
 | `scripts/test-types` | 五个类型包打包并在临时工程中 `tsc` 通过 |
 | API 探针（`/tmp/nlayer-gap-probe`） | 6/6；`URLSearchParams` / `Headers` 的 `entries` / `keys` / `values` / 迭代全过 |
+| API 28 emulator（`system-images;android-28;default;arm64-v8a`） | `cargo test -p nlayer-cli --test targets emulator` 2/2；gallery `--target android` 12/12；键盘 inset 探针：关闭 0、弹出 900px、tap/drag 归 0，`HostView` 保持 1920px |
+| API 29 emulator（`system-images;android-29;default;arm64-v8a`） | 同上：2/2、12/12；关闭 0、弹出 900px、tap/drag 归 0，safe area 底边保持 126px |
 
 `scripts/test-targets`（`cargo test -p nlayer-cli --test targets`）跑 gallery 四端、三端 press/type/scroll/safe-area，以及 Android Java 层在 emulator 上的 instrumentation。CI 是 `.github/workflows/targets.yml`。
 
@@ -41,12 +42,14 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 |---|---|---|---|
 | P0-4 | 已关闭。web 图片 `border-radius: inherit` 加 `overflow: clip`；Android `ImageBox` 按 `Decor` 圆角路径裁剪。树上报 `radius`（point，四角）。web target 断言 16px 圆角图片的计算半径 | `crates/nlayer-platform-web/web/base.css`；`crates/nlayer-platform-android/java/dev/nlayer/android/ImageBox.java`；`crates/nlayer-cli/tests/fixtures/App.test.tsx` | 三端圆角图片裁到半径 |
 | P0-10 | 已关闭。焦点变化沿父链重绘；`focusStyle` 在自身或子孙 field 聚焦时生效。touch mode 下普通 Box 只 `setFocusable`，点击不会聚焦它（与 `HostView` 一致）；键盘或方向键可以。祖先样式不依赖那条路径 | `Mounter.focusChanged` / `chainFocused` | 聚焦输入时祖先 `focusStyle` 亮；树上报 `focused` |
+| P0-11 | 已关闭。API 28–29 没有 `WindowInsets.Type.ime()`，`adjustNothing` 下 `getWindowVisibleDisplayFrame` 不随键盘移动，`env(keyboard-inset-height)` 恒为 0。改为 API < 30 在 `onCreate` 设 `SOFT_INPUT_ADJUST_RESIZE`（布局 flags 保持全屏，surface 尺寸不变），安全区四边改用 stable insets，底边不再把键盘算进 safe area | `crates/nlayer-platform-android/java/dev/nlayer/android/HostActivity.java` | 键盘弹起时 `env(keyboard-inset-height)` 为键盘高度，safe area 仍为系统栏 |
 
 ### P0 验收方式
 
 
 - P0-4：已关闭。`nlayer test --target web` 断言 `radius` 为 `[16, 16, 16, 16]`。Android 树的 `radius` 来自 `onDraw` 使用的 fitted 半径。
 - P0-10：已关闭（实现）。touch mode 下普通 Box 的 `focusStyle` 不能靠点击点亮，靠内部 field 或非触摸焦点。iOS 宿主测试覆盖 focus 祖先链；Android Java instrumentation 还没有该用例，见“剩余工作”。
+- P0-11：已关闭。API 28/29 emulator 上实机确认：点输入框弹出 IME 后 `env(keyboard-inset-height)` = 900px（343pt），`env(safe-area-inset-bottom)` 仍是 126px；tap 空白 Scroll 和 `keyboardDismissMode="on-drag"` 拖拽都把 inset 收回 0。AVD 是 `-ports 5554,5555`、`-wipe-data` 的 arm64 image，measure 用 `dumpsys activity top` 读 padding Box 的高度。
 
 ## P1：宿主语义与契约定稿
 
@@ -142,4 +145,4 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 
 ## 剩余工作
 
-1. **设备回归**：在 API 28/29 emulator 上断言 `env(keyboard-inset-height) > 0` 和 tap/drag 收键盘；在 Android Java instrumentation 补 `focusStyle` 祖先链用例。
+1. **设备回归**：在 Android Java instrumentation 补 `focusStyle` 祖先链用例。键盘 inset 已在 API 28/29 emulator 上验过（P0-11），不在剩余项里。
