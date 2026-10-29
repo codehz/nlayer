@@ -13,7 +13,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 
 1. 明确的契约缺口（绘制）：P0-4 已关闭。
 2. 宿主语义偏差：本切片的 focusStyle、onScroll、transformOrigin 已关闭。
-3. 验收与回归覆盖（三端 target 测试、gallery 断言、If/Each/ErrorBoundary）
+3. 验收与回归覆盖（三端 target 测试、gallery 断言；If/Each/ErrorBoundary 已关闭）
 4. 需要定稿的文档歧义（web 上的浏览器全局）
 
 ## 验证基线
@@ -72,7 +72,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 |---|---|---|---|
 | P2-1 | 没有自动化 iOS/Android target 测试 | `crates/nlayer-cli/src/ios_test.rs`、`android_test.rs` 无集成测试；`crates/nlayer-cli/tests/` 只有 `web_target.rs` | 三端 12/12 只是手工结果，回归无保护 |
 | P2-2 | gallery 断言偏弱 | `examples/gallery/App.test.tsx` | 水平 Scroll 从未实际滚动；六个滚动回调只触发 `onScroll`；active/hover/focus 只断言基础布局；safe area 只断言 top/left；`platform.os` 接受任意值 |
-| P2-3 | `If` 无测试；`Each` 只测默认 key；`ErrorBoundary` 只测组件体抛错 | `crates/nlayer-js/tests/renderer.rs` | lowering 或运行时回归不会被发现 |
+| P2-3 | 已关闭。`<If>` 覆盖 when/else、函数 child 和分支切换；`<Each>` 覆盖 `key={fn}`、`key="index"` 和乱序重排；`ErrorBoundary` 覆盖 effect、listener、`reset` 和 fallback 再抛 | `crates/nlayer-js/tests/renderer.rs` | lowering 或运行时回归有测试 |
 | P2-4 | CLI 路径未测 | `crates/nlayer-cli/tests/` | `--filter`、真实 stdin 步骤、`run --target ios|android` 的 watch/rebuild/失败回退、类型版本警告退出码都未覆盖 |
 | P2-5 | Web target 输入保真度不足 | `web/host.js:381-439` | press/type/scroll 是合成 DOM 事件，不是 CDP Input；键盘 Return、拖拽、momentum 未被真实浏览器 E2E 覆盖 |
 | P2-6 | Android Java 层无测试 | `crates/nlayer-platform-android/java/` | `Mounter`、`ScrollBox`、`InputBox`、`ImageBox` 的设备行为只靠手工验证 |
@@ -82,8 +82,8 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 
 1. 增加 `ios_target.rs`、`android_target.rs`，用与 `web_target.rs` 相同的最小应用覆盖 press/type/scroll/tree/safe-area。
 2. gallery 增加：水平 Scroll 实际滚动、其余五个滚动回调触发、`max(env(a),env(b))`、bottom/right safe area、target 对应的 `platform.os`。
-3. 增加 `<If>` 的 when/else/函数 child/分支切换；`<Each key={fn}>`、`key="index"`、乱序重排。
-4. `ErrorBoundary` 覆盖 effect/listener 抛错、`reset`、fallback 再抛。
+3. 已关闭。`<If>` when/else/函数 child/分支切换；`<Each key={fn}>`、`key="index"`、乱序重排。
+4. 已关闭。`ErrorBoundary` 覆盖 effect/listener 抛错、`reset`、fallback 再抛。
 5. CLI 覆盖 `--version`、`--filter`、stdin 步骤、类型版本警告退出码 0。
 
 ## P3：清理项

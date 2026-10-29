@@ -599,3 +599,304 @@ fn translate_and_scale_arrays_reach_the_host() {
         "an invalid array does not apply"
     );
 }
+
+fn press_id(batch: &MountBatch) -> u32 {
+    batch
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MountItem::Events { id, events } if events.contains(EventKind::Press) => Some(*id),
+            _ => None,
+        })
+        .expect("a pressable view")
+}
+
+fn press(host: &Host, core: &mut Core<ApproxTextEngine>, id: u32) -> MountBatch {
+    host.dispatch_event(id, EventKind::Press, &EventPayload::None);
+    frame(host, core)
+}
+
+fn creates(batch: &MountBatch) -> usize {
+    batch
+        .items
+        .iter()
+        .filter(|item| matches!(item, MountItem::Create { .. }))
+        .count()
+}
+
+/// `<If when else>` shows one branch, including a function child that reads
+/// `when`, and the other branch when `when` flips.
+#[test]
+fn if_switches_when_else_and_a_function_child() {
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r#"
+        import { mount, signal } from "@nlayer/runtime";
+        import { element, prop, append, insert, text, cond, component } from "nlayer:rt";
+
+        const on = signal(true);
+        const who = signal("ada");
+        const label = (value) => {
+            const block = element("text");
+            append(block, text(value));
+            return block;
+        };
+        function App() {
+            const view = element("view");
+            prop(view, "onPress", () => {
+                if (on()) who.set("bea");
+                on.set(!on());
+            });
+            // Compiled `<If when={on() ? who() : null} else="off">{(value) => value()}</If>`.
+            insert(view, ((w) => cond(w, () => ((value) => label(value()))(w), () => label("off")))(
+                () => (on() ? who() : null),
+            ));
+            insert(view, component(globalThis.If, {
+                get when() { return on(); },
+                get else() { return label("else"); },
+                get children() { return label("when"); },
+            }));
+            return view;
+        }
+        mount(App);
+        "#,
+    )
+    .unwrap();
+    let mut core = core();
+    let first = frame(&host, &mut core);
+    assert_eq!(text_of(&first), ["ada", "when"]);
+    let id = press_id(&first);
+    let second = press(&host, &mut core, id);
+    assert!(
+        text_of(&second).contains(&"off".to_owned())
+            && text_of(&second).contains(&"else".to_owned()),
+        "{:?}",
+        text_of(&second)
+    );
+    let third = press(&host, &mut core, id);
+    assert!(
+        text_of(&third).contains(&"bea".to_owned()) && text_of(&third).contains(&"when".to_owned()),
+        "{:?}",
+        text_of(&third)
+    );
+}
+
+/// `<Each key={fn}>` keeps rows across a reorder. `key="index"` updates the
+/// row in place, and a key function is also given the index.
+#[test]
+fn each_keeps_a_key_function_and_an_index() {
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r#"
+        import { mount, signal } from "@nlayer/runtime";
+        import { element, prop, append, insert, text, each } from "nlayer:rt";
+
+        const rows = signal([{ id: "a" }, { id: "b" }, { id: "c" }]);
+        const lines = signal(["a"]);
+        const seen = [];
+        globalThis.seen = seen;
+        const label = (value) => {
+            const block = element("text");
+            append(block, text(value));
+            return block;
+        };
+        function App() {
+            const view = element("view");
+            prop(view, "onPress", () => {
+                rows.set([{ id: "c" }, { id: "a" }, { id: "d" }]);
+                lines.set(["ab"]);
+            });
+            const row = (value) => {
+                const block = element("text");
+                insert(block, () => value());
+                return block;
+            };
+            insert(view, each(() => rows(), (item, index) => row(() => `${item().id}${index()}`), (item) => item.id));
+            insert(view, each(() => lines(), (item) => row(item), "index"));
+            insert(view, each(() => lines(), (item, index) => row(() => `${item()}:${index()}`), (item, index) => {
+                globalThis.__keyIndex = String(index);
+                return index;
+            }));
+            return view;
+        }
+        mount(App);
+        "#,
+    )
+    .unwrap();
+    let mut core = core();
+    let first = frame(&host, &mut core);
+    assert_eq!(text_of(&first), ["a0", "b1", "c2", "a", "a:0"]);
+    let id = press_id(&first);
+    let second = press(&host, &mut core, id);
+    assert!(
+        text_of(&second).contains(&"d2".to_owned()),
+        "the new key is rendered: {:?}",
+        text_of(&second)
+    );
+    assert!(
+        text_of(&second).contains(&"c0".to_owned()) && text_of(&second).contains(&"a1".to_owned()),
+        "kept keys take their new index: {:?}",
+        text_of(&second)
+    );
+    assert_eq!(
+        creates(&second),
+        1,
+        "only the new key makes a row: {second:?}"
+    );
+    assert!(
+        second
+            .items
+            .iter()
+            .any(|item| matches!(item, MountItem::Insert { .. })),
+        "kept rows are reordered"
+    );
+    assert!(
+        text_of(&second).contains(&"ab".to_owned()),
+        "key=index updates the row in place: {:?}",
+        text_of(&second)
+    );
+    assert!(
+        !text_of(&second).contains(&"a".to_owned()),
+        "the index row is not made again: {:?}",
+        text_of(&second)
+    );
+    assert_eq!(host.global_string("__keyIndex").as_deref(), Some("0"));
+}
+
+/// A failure under an `ErrorBoundary` (a binding, an effect, a listener, the
+/// component body) shows the fallback. `reset` renders the children again.
+/// A fallback that throws goes to the boundary above.
+#[test]
+fn error_boundary_catches_effects_listeners_and_a_rethrown_fallback() {
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r#"
+        import { mount, signal, effect, ErrorBoundary } from "@nlayer/runtime";
+        import { element, prop, append, insert, text, component } from "nlayer:rt";
+
+        const mode = signal("ok");
+        const label = (value) => {
+            const block = element("text");
+            append(block, text(value));
+            return block;
+        };
+        const button = (name, run) => {
+            const view = element("view");
+            prop(view, "testID", name);
+            prop(view, "onPress", run);
+            append(view, text(name));
+            return view;
+        };
+        function Risky() {
+            effect(() => {
+                if (mode() === "effect") throw new Error("effect");
+            });
+
+            const block = element("text");
+            prop(block, "onPress", () => { throw new Error("press"); });
+            insert(block, () => {
+                if (mode() === "binding") throw new Error("binding");
+                return "ok";
+            });
+            return block;
+        }
+        function App() {
+            const view = element("view");
+            append(view, button("binding", () => mode.set("binding")));
+            append(view, button("effect", () => mode.set("effect")));
+
+            append(view, component(ErrorBoundary, {
+                fallback: (error, reset) => {
+                    const row = element("view");
+                    append(row, label(`caught ${error.message}`));
+                    append(row, button("reset", () => { mode.set("ok"); reset(); }));
+                    return row;
+                },
+                get children() { return component(Risky, {}); },
+            }));
+            append(view, component(ErrorBoundary, {
+                fallback: (error) => label(`outer ${error.message}`),
+                get children() {
+                    return component(ErrorBoundary, {
+                        fallback: (error) => { throw new Error(`fallback of ${error.message}`); },
+                        get children() { return component(Risky, {}); },
+                    });
+                },
+            }));
+            return view;
+        }
+        mount(App);
+        "#,
+    )
+    .unwrap();
+    let mut core = core();
+    let first = frame(&host, &mut core);
+    assert!(
+        text_of(&first).contains(&"ok".to_owned()),
+        "{:?}",
+        text_of(&first)
+    );
+    let binding = press_named(&first, "binding");
+    let effect = press_named(&first, "effect");
+    let pressed = press(&host, &mut core, text_id(&first, "ok"));
+    assert!(
+        text_of(&pressed).contains(&"caught press".to_owned()),
+        "{:?}",
+        text_of(&pressed)
+    );
+    let restored = press(&host, &mut core, press_named(&pressed, "reset"));
+    assert!(
+        text_of(&restored).contains(&"ok".to_owned()),
+        "{:?}",
+        text_of(&restored)
+    );
+
+    let bound = press(&host, &mut core, binding);
+    assert!(
+        text_of(&bound).contains(&"caught binding".to_owned())
+            && text_of(&bound).contains(&"outer fallback of binding".to_owned()),
+        "{:?}",
+        text_of(&bound)
+    );
+    let restored = press(&host, &mut core, press_named(&bound, "reset"));
+    assert!(
+        text_of(&restored).contains(&"ok".to_owned()),
+        "{:?}",
+        text_of(&restored)
+    );
+
+    let effected = press(&host, &mut core, effect);
+    assert!(
+        text_of(&effected).contains(&"caught effect".to_owned()),
+        "{:?}",
+        text_of(&effected)
+    );
+    let restored = press(&host, &mut core, press_named(&effected, "reset"));
+    assert!(
+        text_of(&restored).contains(&"ok".to_owned()),
+        "{:?}",
+        text_of(&restored)
+    );
+}
+
+fn press_named(batch: &MountBatch, name: &str) -> u32 {
+    batch
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MountItem::TestId { id, test_id } if test_id.as_deref() == Some(name) => Some(*id),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no {name} in {batch:?}"))
+}
+
+fn text_id(batch: &MountBatch, text: &str) -> u32 {
+    batch
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MountItem::Text { id, text: body, .. } if body.text == text => Some(*id),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no text {text} in {batch:?}"))
+}
