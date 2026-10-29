@@ -86,3 +86,7 @@ export interface App {
 
 /** Starts `entry` (relative to the test file) and waits for its first frame. */
 export function open(entry: string, options?: OpenOptions): App;
+
+/** Runs the cases `test` registered. The entry `nlayer test` generates calls
+ * this; a test file does not. */
+export function finish(suite: unknown): void;
