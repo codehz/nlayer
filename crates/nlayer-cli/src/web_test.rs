@@ -769,6 +769,13 @@ impl Socket {
 mod tests {
     use super::*;
 
+    /// One browser at a time: two launches on the same machine starve each
+    /// other and the DevTools socket.
+    fn exclusive() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     const APP: &str = r#"
 import { mount, signal } from "@nlayer/runtime";
 import { Input, Scroll, Text, View } from "@nlayer/ui";
@@ -894,6 +901,7 @@ mount(App);
 
     #[test]
     fn the_browser_hovers_a_view() {
+        let _guard = exclusive();
         let (mut app, dir) = open_app();
         assert_eq!(app.computed("hover", "opacity").unwrap(), "1");
         let (x, y) = app.point("point", "hover").expect("the hover view");
@@ -918,6 +926,7 @@ mount(App);
 
     #[test]
     fn the_browser_takes_a_return_and_a_glide() {
+        let _guard = exclusive();
         let (mut app, dir) = open_app();
         app.type_text("name", "ada").expect("the field takes keys");
         let tree = app.tree().unwrap();
