@@ -602,7 +602,7 @@ mod tests {
     };
 
     use super::LayoutTree;
-    use crate::style::{self, Style as NStyle};
+    use crate::style::{self, Style as NStyle, StyleValue};
 
     fn definite(width: f32, height: f32) -> Size<AvailableSpace> {
         Size {
@@ -638,6 +638,38 @@ mod tests {
                 height: Dimension::length(height),
             };
         })
+    }
+
+    /// A grid container from the declarations an app writes.
+    fn grid(columns: &str, rows: &str, flow: Option<&str>) -> Style {
+        let mut style = NStyle::default();
+        style
+            .set("display", StyleValue::Str("grid"))
+            .expect("display");
+        style
+            .set("gridTemplateColumns", StyleValue::Str(columns))
+            .expect("columns");
+        style
+            .set("gridTemplateRows", StyleValue::Str(rows))
+            .expect("rows");
+        if let Some(flow) = flow {
+            style
+                .set("gridAutoFlow", StyleValue::Str(flow))
+                .expect("auto flow");
+        }
+        style::resolve_normal_alignment(&mut style.layout);
+        style.layout
+    }
+
+    /// A cell placed by the declarations an app writes.
+    fn cell(column: &str, row: &str) -> Style {
+        let mut style = NStyle::default();
+        style
+            .set("gridColumn", StyleValue::Str(column))
+            .expect("column");
+        style.set("gridRow", StyleValue::Str(row)).expect("row");
+        style::resolve_normal_alignment(&mut style.layout);
+        style.layout
     }
 
     fn measure_from_context(
@@ -696,6 +728,61 @@ mod tests {
         assert_eq!((first.location.x, first.location.y), (0.0, 0.0));
         assert_eq!((second.location.x, second.location.y), (40.0, 0.0));
         assert_eq!((first.size.width, first.size.height), (10.0, 10.0));
+    }
+
+    #[test]
+    fn named_grid_lines_place_cells() {
+        let mut tree = LayoutTree::<()>::with_capacity(4);
+        let first = tree.new_leaf(cell("mid / full-end", "top / bottom"));
+        let second = tree.new_leaf(cell("full-start / mid", "top / bottom"));
+        let root = tree.new_with_children(
+            grid(
+                "[full-start] 40px [mid] 60px [full-end]",
+                "[top] 30px [bottom]",
+                None,
+            ),
+            &[first, second],
+        );
+        tree.compute_layout_with_measure(root, definite(100.0, 30.0), measure_leaf);
+
+        let first = tree.unrounded_layout(first);
+        let second = tree.unrounded_layout(second);
+        assert_eq!((first.location.x, first.location.y), (40.0, 0.0));
+        assert_eq!((first.size.width, first.size.height), (60.0, 30.0));
+        assert_eq!((second.location.x, second.location.y), (0.0, 0.0));
+        assert_eq!((second.size.width, second.size.height), (40.0, 30.0));
+    }
+
+    fn auto_cells(flow: Option<&str>) -> Vec<(f32, f32)> {
+        let mut tree = LayoutTree::<()>::with_capacity(3);
+        let children = [
+            tree.new_leaf(fixed(10.0, 10.0)),
+            tree.new_leaf(fixed(10.0, 10.0)),
+            tree.new_leaf(fixed(10.0, 10.0)),
+        ];
+        let root = tree.new_with_children(grid("40px 60px", "30px 20px", flow), &children);
+        tree.compute_layout_with_measure(root, definite(100.0, 50.0), measure_leaf);
+        children
+            .iter()
+            .map(|&child| {
+                let layout = tree.unrounded_layout(child);
+                (layout.location.x, layout.location.y)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn grid_auto_flow_orders_cells() {
+        assert_eq!(
+            auto_cells(None),
+            [(0.0, 0.0), (40.0, 0.0), (0.0, 30.0)],
+            "row flow fills each row before the next"
+        );
+        assert_eq!(
+            auto_cells(Some("column")),
+            [(0.0, 0.0), (0.0, 30.0), (40.0, 0.0)],
+            "column flow fills each column before the next"
+        );
     }
 
     #[test]

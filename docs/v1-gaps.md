@@ -17,8 +17,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 1. iOS / Android 宿主没有断言 `text` / `email` 输入的 Return 收键盘（web E2E 已覆盖）。
 2. 静态 transform 只断言步骤列表，未断言 `transformOrigin` 的几何或百分比在 resize 后的结果。
 3. `hoverStyle` 没有真实的 hover 输入步骤，只有 web 规则单测。
-4. grid 的 line names / auto flow 只覆盖解析，未覆盖布局落位。
-5. iOS 图片只有 source / fit 断言，没有解码和圆角裁剪的设备断言。
+4. iOS 图片只有 source / fit 断言，没有解码和圆角裁剪的设备断言。
 
 P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS 宿主。
 
@@ -120,7 +119,7 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 | 验收项 | 应用位置 | 现有断言 | 剩余风险 | 状态 |
 |---|---|---|---|---|
 | 纵向布局 | `App.tsx:40-63` | 相等 x、递增 y；row 相等 y | gallery 未断言；引擎 `style.rs` 的 `react_native_defaults` 断言 `flexShrink: 0` 和 `minWidth: auto` 的默认值 0 | 已关闭 |
-| grid | `App.tsx:64-84` | 2×2 单元 x/y | gallery 未覆盖；`grid.rs` 覆盖 line names / auto flow 解析，未覆盖布局落位 | 未关闭 |
+| grid | `App.tsx:64-84` | 2×2 单元 x/y；`layout_tree.rs` 用解析后的声明断言 line names 落位和 row/column auto flow 顺序 | 无 | 已关闭 |
 | 嵌套 Text span | `App.tsx:194-199` | 一段文本、字重/斜体/字号/颜色 | gallery 未覆盖 span `testID` / span `onPress`；四端 targets fixture 用 `id:docs` 覆盖 | 已关闭 |
 | 打包图片 | `App.tsx:3,207` | `asset:/mark.png`、cover、32×32 | gallery 只读挂载元数据；Android 设备测试断言解码和圆角裁剪，web target 断言 radius；iOS 只有 source / fit 断言 | 未关闭 |
 | 双轴 Scroll | `App.tsx:219-232` | 垂直溢出 + 水平滚到 x=40；每实例一轴 | 未断言绘制；offset / content / size 已断言，像素对齐不在 v1 | 已关闭 |
