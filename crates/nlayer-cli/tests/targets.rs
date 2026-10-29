@@ -62,7 +62,10 @@ fn app_fixture(name: &str) -> PathBuf {
         .join("tests/fixtures")
         .join(name);
     for file in ["App.tsx", "App.test.tsx", "quote.json"] {
-        fs::copy(from.join(file), dir.join(file)).unwrap();
+        let source = from.join(file);
+        if source.exists() {
+            fs::copy(source, dir.join(file)).unwrap();
+        }
     }
     dir
 }
@@ -129,7 +132,7 @@ fn gallery_runs_on_each_target() {
 #[test]
 fn the_data_channel_runs_on_each_target() {
     let _guard = lock();
-    for name in ["data", "resource"] {
+    for name in ["data", "resource", "adapt"] {
         let dir = app_fixture(name);
         for target in [
             Some(TestTarget::Web),

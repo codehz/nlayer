@@ -71,3 +71,23 @@ fn resource_loads_reloads_and_reports_failures() {
     assert!(report.ok(), "{report}");
     let _ = fs::remove_dir_all(&dir);
 }
+
+const ADAPT_APP: &str = include_str!("fixtures/adapt/App.tsx");
+
+const ADAPT_TESTS: &str = include_str!("fixtures/adapt/App.test.tsx");
+
+#[test]
+fn the_scheme_and_accessibility_run_on_the_headless_engine() {
+    let _fixture = FIXTURE.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = scratch("adapt");
+    fs::write(dir.join("App.tsx"), ADAPT_APP).unwrap();
+    fs::write(dir.join("App.test.tsx"), ADAPT_TESTS).unwrap();
+    let report = test(&TestOptions {
+        path: dir.clone(),
+        filter: None,
+        target: None,
+    })
+    .expect("the test runs");
+    assert!(report.ok(), "{report}");
+    let _ = fs::remove_dir_all(&dir);
+}
