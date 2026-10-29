@@ -6,7 +6,7 @@
 //! and hover are not applied. A scroll view's delegate reports the scroll
 //! events with the content offset, the content size and the view's size.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -321,8 +321,8 @@ impl Relay {
     }
 
     /// A scroll callback. Setting `contentOffset` while a batch is applied
-    /// re-enters this; that report waits until the apply returns. UIKit
-    /// calls `scrollViewDidScroll:` at most once per frame while tracking.
+    /// re-enters this; that report waits until the apply returns. `onScroll`
+    /// is coalesced to the latest offset, once per main-queue turn.
     fn scroll_event(&self, scroll: &UIScrollView, event: EventKind) {
         let id = scroll.tag() as NodeId;
         let payload = scroll_metrics(scroll);
@@ -368,6 +368,8 @@ pub(crate) struct Mounter {
     assets: PathBuf,
     /// The field that is editing, if one is.
     focused: Option<NodeId>,
+    /// Latest `onScroll` per view, flushed once on the next main-queue turn.
+    scrolls: RefCell<crate::scroll_frame::ScrollFrames<EventPayload>>,
     /// Set by `nlayer test`. Replaces the window's size, safe area and
     /// keyboard height. A pin with a keyboard height ignores the software keyboard.
     pin: Option<crate::pin::Pin>,
@@ -395,6 +397,7 @@ impl Mounter {
             insets: nlayer_core::geometry::Edges::default(),
             assets,
             focused: None,
+            scrolls: RefCell::default(),
             pin: None,
             keyboard: Points::ZERO,
         }));
@@ -830,6 +833,32 @@ impl Mounter {
     }
 
     fn dispatch_scroll(&self, id: NodeId, event: EventKind, payload: EventPayload) {
+        if event == EventKind::Scroll {
+            let arm = self.scrolls.borrow_mut().note(id, payload);
+            if arm {
+                DispatchQueue::main().exec_async(move || {
+                    let Some(mounter) = current() else {
+                        return;
+                    };
+                    mounter.borrow().flush_scrolls();
+                });
+            }
+            return;
+        }
+        if let Some(pending) = self.scrolls.borrow_mut().take_id(id) {
+            self.send_scroll(id, EventKind::Scroll, pending);
+        }
+        self.send_scroll(id, event, payload);
+    }
+
+    fn flush_scrolls(&self) {
+        let pending = self.scrolls.borrow_mut().take();
+        for (id, payload) in pending {
+            self.send_scroll(id, EventKind::Scroll, payload);
+        }
+    }
+
+    fn send_scroll(&self, id: NodeId, event: EventKind, payload: EventPayload) {
         let listens = self
             .slot(id)
             .is_some_and(|slot| slot.events.contains(event));

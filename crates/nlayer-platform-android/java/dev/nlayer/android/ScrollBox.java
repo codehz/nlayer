@@ -1,6 +1,7 @@
 package dev.nlayer.android;
 
 import android.content.Context;
+import android.view.Choreographer;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -12,8 +13,8 @@ import android.widget.ScrollView;
  * One-axis scroll view. Drag and fling callbacks match UIKit's scroll delegate, cut to no refresh,
  * zoom or paging. Event kinds are {@code EventKind} discriminants. Each callback carries the
  * content offset, the content size and this view's visible size, in points. {@code onScroll} is at
- * most once per frame while tracking. There is no decelerating callback: rest is no movement for a
- * moment after the finger lifts. An iOS bounce can report a negative offset; this view does not.
+ * most once per frame. There is no decelerating callback: rest is no movement for a moment after
+ * the finger lifts. An iOS bounce can report a negative offset; this view does not.
  */
 final class ScrollBox extends FrameLayout {
   private static final int SCROLL = 1;
@@ -51,6 +52,16 @@ final class ScrollBox extends FrameLayout {
   private boolean tapDismiss;
 
   private final Runnable rest = this::cameToRest;
+  private boolean scrollQueued;
+
+  private final Choreographer.FrameCallback scrollFrame =
+      new Choreographer.FrameCallback() {
+        @Override
+        public void doFrame(long nanos) {
+          scrollQueued = false;
+          emit(SCROLL);
+        }
+      };
 
   ScrollBox(Context c, Mounter m, int id) {
     super(c);
@@ -70,6 +81,7 @@ final class ScrollBox extends FrameLayout {
     flung = false;
     momentum = false;
     touching = false;
+    dropScrollFrame();
     removeCallbacks(rest);
     scroller = horizontal ? new HScroll(c) : new VScroll(c);
     scroller.setClipToPadding(false);
@@ -135,6 +147,7 @@ final class ScrollBox extends FrameLayout {
   private void released() {
     touching = false;
     removeCallbacks(rest);
+    flushScroll();
     if (!dragging) return;
     dragging = false;
     emit(DRAG_END);
@@ -160,7 +173,7 @@ final class ScrollBox extends FrameLayout {
       }
       emit(DRAG_START);
     }
-    emit(SCROLL);
+    queueScroll();
     if (dragging || momentum) armRest();
   }
 
@@ -169,11 +182,39 @@ final class ScrollBox extends FrameLayout {
     postDelayed(rest, REST_MS);
   }
 
+  /** The latest offset, once on the next frame. */
+  private void queueScroll() {
+    if ((pressMask & (1 << SCROLL)) == 0 || scrollQueued) return;
+    scrollQueued = true;
+    Choreographer.getInstance().postFrameCallback(scrollFrame);
+  }
+
+  /** Deliver a waiting offset before an end, a drag, or momentum. */
+  private void flushScroll() {
+    if (!scrollQueued) return;
+    Choreographer.getInstance().removeFrameCallback(scrollFrame);
+    scrollQueued = false;
+    emit(SCROLL);
+  }
+
+  private void dropScrollFrame() {
+    if (!scrollQueued) return;
+    Choreographer.getInstance().removeFrameCallback(scrollFrame);
+    scrollQueued = false;
+  }
+
+  @Override
+  protected void onDetachedFromWindow() {
+    dropScrollFrame();
+    super.onDetachedFromWindow();
+  }
+
   private void cameToRest() {
     if (touching) {
       postDelayed(rest, REST_MS);
       return;
     }
+    flushScroll();
     if (momentum) {
       momentum = false;
       emit(MOMENTUM_END);

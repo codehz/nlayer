@@ -12,7 +12,7 @@
 v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bundle、五个宿主组件、三端平台 API、CLI 和类型包都有真实代码，没有 `todo!()` / 空实现。当前剩余工作集中在四类：
 
 1. 明确的契约缺口（绘制）：P0-4 已关闭。
-2. 宿主语义偏差（focusStyle 祖先已关闭，onScroll 节流仍开）
+2. 宿主语义偏差（onScroll 节流已关闭；Android transformOrigin 百分比仍开）
 3. 验收与回归覆盖（三端 target 测试、gallery 断言、If/Each/ErrorBoundary）
 4. 需要定稿的文档歧义（单实例双轴 Scroll、web 上的浏览器全局）
 
@@ -49,7 +49,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 | ID | 项 | 现状 | 证据 |
 |---|---|---|---|
 | P1-1 | Scroll 是否单实例双轴 | 文档写“两轴”，实现是 `horizontal: bool` 单轴；gallery 用两个 Scroll 分别覆盖两轴并通过 | `crates/nlayer-core/src/mount.rs:27`、`ops.rs:452`；web `base.css:25-32`；Android `ScrollBox.java:15-17,206-217` |
-| P1-2 | `onScroll` 每帧至多一次 | iOS 逐次转发 delegate，Android 依赖 `onScrollChange` 节奏；没有显式节流 | iOS `crates/nlayer-platform-ios/src/mount.rs:322-355`；Android `ScrollBox.java:148-169`；契约 `docs/v1.md:15` |
+| P1-2 | 已关闭。web 用 `requestAnimationFrame`；iOS / Android 把同一帧的偏移合成一次，结束、拖动和惯性先发出等待中的 `onScroll` | `scroll_frame.rs`；`ScrollBox.queueScroll`；web `queueScroll` | `onScroll` 至多每帧一次 |
 | P1-3 | Android `transformOrigin` 百分比在 resize 后陈旧 | pivot 在样式应用时缓存，尺寸变化不重算；只有 Text/分数 transform 会重新发样式 | `crates/nlayer-core/src/core/mod.rs:1486-1494` |
 | P1-4 | Android 安装判定只看 APK mtime | 应用被卸载或清数据后不会重装，后续 `run-as` push 失败；iOS 有容器探测 | `crates/nlayer-cli/src/android.rs:658-669`；iOS `ios.rs:281-291` |
 | P1-5 | Node 内置模块拒绝不完整 | 只拒绝 `node:*` 和 `events/assert/util/string_decoder/fs/path/os`；`buffer`、`process`、`streams`、`net`、`zlib` 等会落到 rolldown 通用解析错误 | `crates/nlayer-bundler/src/plugin.rs:196-210` |
@@ -59,7 +59,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 ### P1 处理建议
 
 - P1-1：先定稿。若保留单实例单轴，把 `docs/v1.md` 的“两轴”改成“每实例一轴，横竖各一个 Scroll”；若要单实例双轴，需要改 `ScrollConfig`、三个宿主编码器、`scroll()` 测试步骤。
-- P1-2：在宿主层加一帧一次的合并；测试用同一帧内多次 `scrollTo` 断言只收到一次 `onScroll`。
+- P1-2：已关闭。同一帧多次偏移只收到最后一次 `onScroll`。
 - P1-3：尺寸变化后重发 transform 样式，或在宿主 apply frame 时重算 pivot。
 - P1-4：安装前用 `pm path` 或等价探测确认包存在，再决定是否安装。
 - P1-5：补全拒绝名单，或至少覆盖 AGENTS 明确列出的 `buffer` / `process` / `path` / `net` / `os` / `zlib` / streams。
@@ -133,6 +133,6 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 
 1. **CLI/API 契约**：P0-1、P0-5、P0-8、P0-9 已关闭。
 2. **键盘/选择器**：P0-2、P0-3、P0-6、P0-7 已关闭。
-3. **绘制与宿主语义**：P0-4、P0-10 已关闭。剩余 P1-2、P1-3。
+3. **绘制与宿主语义**：P0-4、P0-10、P1-2 已关闭。剩余 P1-3。
 4. **Scroll 定稿**：P1-1；先改文档或改实现，不要两份契约并存。
 5. **验收自动化**：P2-1 到 P2-3；把 gallery 和三端 target 测试接入 `cargo test` / CI。
