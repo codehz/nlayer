@@ -1,0 +1,25 @@
+#!/bin/sh
+# Publish the five type packages. Does not bump versions.
+# Requires a logged-in npm account for a real publish. `--dry-run` does not upload.
+set -eu
+cd "$(dirname "$0")/.."
+
+dry=0
+if [ "$#" -eq 0 ]; then
+  :
+elif [ "$#" -eq 1 ] && [ "$1" = "--dry-run" ]; then
+  dry=1
+else
+  echo "usage: scripts/publish-types [--dry-run]" >&2
+  exit 2
+fi
+
+cargo test -p nlayer-bundler --lib -- package_files_match_the_tree package_versions_match_the_cli
+
+for dir in globals jsx-runtime runtime ui test; do
+  if [ "$dry" -eq 1 ]; then
+    (cd "packages/$dir" && bun publish --access public --dry-run)
+  else
+    (cd "packages/$dir" && bun publish --access public)
+  fi
+done

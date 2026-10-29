@@ -1,0 +1,80 @@
+#!/bin/sh
+# Prove the type packages typecheck without publishing them.
+set -eu
+cd "$(dirname "$0")/.."
+
+bun install
+bunx tsc --noEmit -p examples/gallery
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+pack=$tmp/pack
+app=$tmp/app
+mkdir -p "$pack" "$app"
+
+# The filename is whatever `bun pm pack` prints. Do not invent it.
+pack_one() {
+  dir=$1
+  name=$(cd "packages/$dir" && bun pm pack --quiet --destination "$pack")
+  case "$name" in
+    /*) printf '%s\n' "$name" ;;
+    *) printf '%s\n' "$pack/$name" ;;
+  esac
+}
+
+globals=$(pack_one globals)
+jsx=$(pack_one jsx-runtime)
+runtime=$(pack_one runtime)
+ui=$(pack_one ui)
+test=$(pack_one test)
+
+cat >"$app/package.json" <<EOF
+{
+  "name": "nlayer-types-fixture",
+  "private": true,
+  "dependencies": {
+    "@nlayer/globals": "file:$globals",
+    "@nlayer/jsx-runtime": "file:$jsx",
+    "@nlayer/runtime": "file:$runtime",
+    "@nlayer/ui": "file:$ui"
+  },
+  "devDependencies": {
+    "@nlayer/test": "file:$test"
+  }
+}
+EOF
+
+cat >"$app/tsconfig.json" <<'EOF'
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "jsxImportSource": "@nlayer",
+    "strict": true,
+    "noEmit": true,
+    "lib": ["ES2022"],
+    "typeRoots": ["./node_modules/@nlayer", "./node_modules/@types"],
+    "types": ["globals"]
+  },
+  "include": ["**/*.ts", "**/*.tsx"]
+}
+EOF
+
+cp examples/gallery/mark.png "$app/mark.png"
+cat >"$app/App.tsx" <<'EOF'
+import { signal } from "@nlayer/runtime";
+import { View } from "@nlayer/ui";
+import icon from "./mark.png";
+
+const pending = fetch("/quote.json");
+void pending;
+
+export function App() {
+  const n = signal(icon.url);
+  return <View>{n()}</View>;
+}
+EOF
+
+(cd "$app" && bun install && bunx tsc --noEmit)

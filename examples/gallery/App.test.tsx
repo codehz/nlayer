@@ -1,21 +1,28 @@
-import { expect, open, test } from "@nlayer/test";
+import { type App, type Node, expect, open, test } from "@nlayer/test";
 
-function flat(node, out) {
+function flat(node: Node, out: Node[]): Node[] {
   out.push(node);
   for (const child of node.children) flat(child, out);
   return out;
 }
 
-function containsText(node, text) {
+function containsText(node: Node, text: string): boolean {
   if (typeof node.text === "string" && node.text.includes(text)) return true;
   return node.children.some((child) => containsText(child, text));
 }
 
-function holder(nodes, text) {
-  return nodes.find((node) => node.children.some((child) => child.text === text));
+function holder(nodes: Node[], text: string): Node {
+  const found = nodes.find((node) => node.children.some((child) => child.text === text));
+  if (!found) throw new Error(text);
+  return found;
 }
 
-function locate(node, pred, top, scrollY) {
+function locate(
+  node: Node,
+  pred: (node: Node) => boolean,
+  top: number,
+  scrollY: number,
+): { node: Node; y: number } | null {
   const y = top + node.frame.y - scrollY;
   if (pred(node)) return { node, y };
   const childScroll = node.kind === "scroll" && node.offset ? node.offset.y : 0;
@@ -26,14 +33,20 @@ function locate(node, pred, top, scrollY) {
   return null;
 }
 
-function reveal(app, pred) {
+function reveal(app: App, pred: (node: Node) => boolean): void {
   const root = app.tree();
   const hit = locate(root, pred, 0, 0);
   const page = locate(root, (node) => node.testID === "page", 0, 0);
+  if (!hit || !page) throw new Error("not on the page");
   const center = hit.y + hit.node.frame.height / 2;
   const mid = page.y + page.node.frame.height / 2;
   const distance = center - mid;
   if (distance > 1 || distance < -1) app.scroll("page", distance);
+}
+
+function must<T>(value: T | null | undefined): T {
+  if (value == null) throw new Error("missing");
+  return value;
 }
 
 test("column, row, and grid place their children", () => {
@@ -80,7 +93,7 @@ test("pointer styles are paint and a press still lands", () => {
   const nodes = flat(app.tree(), []);
   const fade = holder(nodes, "Fade");
   const hover = holder(nodes, "Hover");
-  const focus = nodes.find((node) => node.kind === "input" && node.placeholder === "Focus");
+  const focus = must(nodes.find((node) => node.kind === "input" && node.placeholder === "Focus"));
   expect(fade.frame.width).toBe(160);
   expect(fade.frame.height).toBe(36);
   expect(hover.frame.width).toBe(120);
@@ -117,12 +130,12 @@ test("safe-area env insets pad the view", () => {
 
 test("nested text is one block with distinct spans", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
-  const block = flat(app.tree(), []).find((node) => node.text === "Plain bold italic color");
+  const block = must(flat(app.tree(), []).find((node) => node.text === "Plain bold italic color"));
   expect(block.kind).toBe("text");
-  const spans = block.spans;
-  expect(spans.find((span) => span.text === " bold").fontWeight).toBe(700);
-  expect(spans.find((span) => span.text === " italic").italic).toBe(true);
-  const color = spans.find((span) => span.text === " color");
+  const spans = must(block.spans);
+  expect(must(spans.find((span) => span.text === " bold")).fontWeight).toBe(700);
+  expect(must(spans.find((span) => span.text === " italic")).italic).toBe(true);
+  const color = must(spans.find((span) => span.text === " color"));
   expect(color.fontSize).toBe(22);
   expect(color.color).toBe("#c2410c");
 });
@@ -130,13 +143,15 @@ test("nested text is one block with distinct spans", () => {
 test("images mount a bundled asset and a remote URL", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
   const nodes = flat(app.tree(), []);
-  const bundled = nodes.find(
-    (node) => node.kind === "image" && String(node.src).indexOf("asset:/mark.png") === 0,
+  const bundled = must(
+    nodes.find(
+      (node) => node.kind === "image" && String(node.src).indexOf("asset:/mark.png") === 0,
+    ),
   );
   expect(bundled.fit).toBe("cover");
   expect(bundled.frame.width).toBe(32);
   expect(bundled.frame.height).toBe(32);
-  const remote = nodes.find((node) => node.src === "https://example.com/photo.jpg");
+  const remote = must(nodes.find((node) => node.src === "https://example.com/photo.jpg"));
   expect(remote.kind).toBe("image");
   expect(remote.fit).toBe("contain");
   expect(remote.frame.width).toBe(48);
@@ -146,22 +161,26 @@ test("images mount a bundled asset and a remote URL", () => {
 test("scroll views overflow on each axis", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
   const nodes = flat(app.tree(), []);
-  const down = nodes.find(
-    (node) =>
-      node.kind === "scroll" &&
-      node.horizontal === false &&
-      node.content &&
-      node.content.height === 200,
+  const down = must(
+    nodes.find(
+      (node) =>
+        node.kind === "scroll" &&
+        node.horizontal === false &&
+        node.content &&
+        node.content.height === 200,
+    ),
   );
-  const across = nodes.find(
-    (node) => node.kind === "scroll" && node.horizontal === true && containsText(node, "Across"),
+  const across = must(
+    nodes.find(
+      (node) => node.kind === "scroll" && node.horizontal === true && containsText(node, "Across"),
+    ),
   );
   expect(down.frame.height).toBe(80);
   expect(down.content).toEqual({ width: 200, height: 200 });
   expect(across.frame.height).toBe(48);
   expect(across.frame.width).toBe(160);
-  expect(across.content.width > across.frame.width).toBe(true);
-  expect(across.content.height).toBe(48);
+  expect(must(across.content).width > across.frame.width).toBe(true);
+  expect(must(across.content).height).toBe(48);
 });
 
 test("scroll callbacks report the offset, content, and viewport", () => {
@@ -178,19 +197,21 @@ test("scroll callbacks report the offset, content, and viewport", () => {
   }
   reveal(app, (node) => node.testID === "events");
   app.scroll("events", 40);
-  const events = flat(app.tree(), []).find((node) => node.testID === "events");
-  expect(events.offset).toEqual({ x: 0, y: 40 });
-  const n = (value) => String(Math.round(value));
+  const events = must(flat(app.tree(), []).find((node) => node.testID === "events"));
+  const offset = must(events.offset);
+  const content = must(events.content);
+  expect(offset).toEqual({ x: 0, y: 40 });
+  const n = (value: number) => String(Math.round(value));
   app.waitFor(
-    `onScroll ${n(events.offset.x)},${n(events.offset.y)} ${n(events.content.width)}x${n(events.content.height)} ${n(events.frame.width)}x${n(events.frame.height)}`,
+    `onScroll ${n(offset.x)},${n(offset.y)} ${n(content.width)}x${n(content.height)} ${n(events.frame.width)}x${n(events.frame.height)}`,
   );
 });
 
 test("inputs take text, keyboards, a password, and a disabled value", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
   const nodes = flat(app.tree(), []);
-  const input = (placeholder) =>
-    nodes.find((node) => node.kind === "input" && node.placeholder === placeholder);
+  const input = (placeholder: string) =>
+    nodes.find((node) => node.kind === "input" && node.placeholder === placeholder)!;
   expect(input("Email").keyboard).toBe("email");
   expect(input("Amount").keyboard).toBe("number");
   expect(input("Phone").keyboard).toBe("phone");
