@@ -214,9 +214,20 @@ final class Decor extends Drawable {
   }
 
   void applyPivot(android.view.View v) {
-    if (originXFraction && originYFraction && originX == .5f && originY == .5f) return;
-    v.setPivotX(originXFraction ? originX * v.getWidth() : originX);
-    v.setPivotY(originYFraction ? originY * v.getHeight() : originY);
+    // A fraction is of the current size. The default center stays unset so
+    // Android keeps tracking it, unless a previous origin left a pixel pivot.
+    if (originXFraction && originYFraction && originX == .5f && originY == .5f) {
+      float cx = v.getWidth() / 2f, cy = v.getHeight() / 2f;
+      if (v.getPivotX() != cx || v.getPivotY() != cy) {
+        v.setPivotX(cx);
+        v.setPivotY(cy);
+      }
+      return;
+    }
+    float x = originXFraction ? originX * v.getWidth() : originX;
+    float y = originYFraction ? originY * v.getHeight() : originY;
+    if (v.getPivotX() != x) v.setPivotX(x);
+    if (v.getPivotY() != y) v.setPivotY(y);
   }
 
   @Override

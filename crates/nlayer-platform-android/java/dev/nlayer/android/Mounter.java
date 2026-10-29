@@ -235,6 +235,8 @@ final class Mounter {
     ((ViewGroup.MarginLayoutParams) lp).topMargin = py;
     v.setLayoutParams(lp);
     v.layout(px, py, px + pw, py + ph);
+    Decor d = decor(v);
+    if (d != null) d.applyPivot(v);
   }
 
   static final class Style {
