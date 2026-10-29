@@ -2,7 +2,8 @@
 //!
 //! The test file still runs in QuickJS. `open` serves the app and loads it
 //! in a headless browser: the page executes the bundle, and press, type, and
-//! scroll go through that document. Assertions read the mounted DOM.
+//! scroll are the browser's own input (`Input.dispatch*`), which pages
+//! cannot tell from a user's. Assertions read the mounted DOM.
 
 use std::{
     fs,
@@ -19,6 +20,13 @@ use nlayer_testing::{AppHost, HostOpen, HostedApp};
 use serde_json::{Value, json};
 
 use crate::{RunOptions, serve};
+
+/// A press's hold, as a quick click's.
+const CLICK: Duration = Duration::from_millis(32);
+/// The gap between a key's press and the next, as a typist's.
+const KEY: Duration = Duration::from_millis(4);
+/// How long a wheel may take to move a scroll view.
+const SCROLL_DEADLINE: Duration = Duration::from_secs(5);
 
 /// A Chromium browser the web target keeps for one `nlayer test` run.
 pub(crate) struct WebHost {
@@ -44,6 +52,13 @@ impl WebHost {
 
 impl AppHost for WebHost {
     fn open(&mut self, request: HostOpen) -> Result<Box<dyn HostedApp>, String> {
+        Ok(Box::new(self.start(request)?))
+    }
+}
+
+impl WebHost {
+    /// Opens the app of `request` in a page of this run's browser.
+    fn start(&mut self, request: HostOpen) -> Result<WebApp, String> {
         let browser = self.browser()?;
         let server = serve(RunOptions {
             entry: request.entry.clone(),
@@ -68,11 +83,11 @@ impl AppHost for WebHost {
             }
             return Err(error);
         }
-        Ok(Box::new(WebApp {
+        Ok(WebApp {
             browser,
             page: Some(page),
             server: Some(server),
-        }))
+        })
     }
 }
 
@@ -105,6 +120,98 @@ impl WebApp {
         expression.push(')');
         self.eval(&expression)
     }
+
+    /// The page's point for `method(selector)`, in CSS pixels.
+    fn point(&mut self, method: &str, selector: &str) -> Result<(f64, f64), String> {
+        let value = self.call(method, &[json!(selector)])?;
+        Ok((number(&value, "x")?, number(&value, "y")?))
+    }
+
+    /// A DevTools protocol call in this page.
+    fn dispatch(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        let session = self
+            .page
+            .as_ref()
+            .ok_or_else(|| "the app is closed".to_owned())?
+            .session_id
+            .clone();
+        let mut browser = self.browser.lock().map_err(|error| error.to_string())?;
+        browser.call(Some(&session), method, params)
+    }
+
+    fn mouse(&mut self, kind: &str, x: f64, y: f64, buttons: u32) -> Result<(), String> {
+        self.dispatch(
+            "Input.dispatchMouseEvent",
+            json!({
+                "type": kind,
+                "x": x,
+                "y": y,
+                "button": if kind == "mouseMoved" && buttons == 0 { "none" } else { "left" },
+                "buttons": buttons,
+                "clickCount": 1,
+            }),
+        )?;
+        Ok(())
+    }
+
+    fn click(&mut self, x: f64, y: f64) -> Result<(), String> {
+        self.mouse("mouseMoved", x, y, 0)?;
+        self.mouse("mousePressed", x, y, 1)?;
+        thread::sleep(CLICK);
+        self.mouse("mouseReleased", x, y, 0)
+    }
+
+    /// One key, as the browser's own input. `\n` is Return.
+    fn key(&mut self, ch: char) -> Result<(), String> {
+        let (key, code, vk, text) = match ch {
+            '\n' => ("Enter".to_owned(), "Enter".to_owned(), 13, "\r".to_owned()),
+            '\t' => ("Tab".to_owned(), "Tab".to_owned(), 9, "\t".to_owned()),
+            ' ' => (" ".to_owned(), "Space".to_owned(), 32, " ".to_owned()),
+            c if c.is_ascii_alphabetic() => (
+                c.to_string(),
+                format!("Key{}", c.to_ascii_uppercase()),
+                c.to_ascii_uppercase() as u32,
+                c.to_string(),
+            ),
+            c if c.is_ascii_digit() => {
+                (c.to_string(), format!("Digit{c}"), c as u32, c.to_string())
+            }
+            c => (c.to_string(), String::new(), 0, c.to_string()),
+        };
+        let mut down = json!({
+            "type": "keyDown",
+            "key": key,
+            "text": text,
+            "unmodifiedText": text,
+            "windowsVirtualKeyCode": vk,
+        });
+        let mut up = json!({
+            "type": "keyUp",
+            "key": key,
+            "windowsVirtualKeyCode": vk,
+        });
+        if !code.is_empty() {
+            down["code"] = json!(code);
+            up["code"] = json!(code);
+        }
+        self.dispatch("Input.dispatchKeyEvent", down)?;
+        self.dispatch("Input.dispatchKeyEvent", up)?;
+        thread::sleep(KEY);
+        Ok(())
+    }
+
+    fn scroll_offset(&mut self, selector: &str) -> Result<(f64, f64), String> {
+        let value = self.call("offset", &[json!(selector)])?;
+        Ok((number(&value, "x")?, number(&value, "y")?))
+    }
+}
+
+/// A field of the JSON an `__nlayerHost` call answered.
+fn number(value: &Value, key: &str) -> Result<f64, String> {
+    value
+        .get(key)
+        .and_then(Value::as_f64)
+        .ok_or_else(|| format!("the page returned no `{key}`"))
 }
 
 impl HostedApp for WebApp {
@@ -117,18 +224,80 @@ impl HostedApp for WebApp {
     }
 
     fn press(&mut self, selector: &str) -> Result<(), String> {
-        self.call("press", &[json!(selector)])?;
-        Ok(())
+        let (x, y) = self.point("press", selector)?;
+        self.click(x, y)
     }
 
     fn type_text(&mut self, selector: &str, text: &str) -> Result<(), String> {
-        self.call("type", &[json!(selector), json!(text)])?;
+        let (x, y) = self.point("field", selector)?;
+        self.click(x, y)?;
+        for ch in text.chars() {
+            self.key(ch)?;
+        }
         Ok(())
     }
 
     fn scroll(&mut self, selector: &str, distance: f32) -> Result<(), String> {
-        self.call("scroll", &[json!(selector), json!(distance)])?;
-        Ok(())
+        let plan = self.call("scroll", &[json!(selector), json!(distance)])?;
+        let points = plan
+            .get("points")
+            .and_then(Value::as_array)
+            .filter(|points| !points.is_empty())
+            .ok_or("the page returned no place to scroll")?;
+        let horizontal = plan
+            .get("horizontal")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let to = plan
+            .get("to")
+            .ok_or_else(|| "the page returned no scroll end".to_owned())?;
+        let (end_x, end_y) = (number(to, "x")?, number(to, "y")?);
+        let deadline = Instant::now() + SCROLL_DEADLINE;
+        // A wheel over a point that a nested scroll view takes first leaves
+        // this one where it was; try the next point. The browser applies a
+        // wheel when it pleases, so each turn reads the offset again.
+        let mut tries = 0;
+        loop {
+            let now = self.scroll_offset(selector)?;
+            let remaining = if horizontal {
+                end_x - now.0
+            } else {
+                end_y - now.1
+            };
+            // Browsers round the offset they keep.
+            if remaining.abs() < 1.0 {
+                return Ok(());
+            }
+            if Instant::now() >= deadline || tries >= points.len() * 3 {
+                return Err(format!("`{selector}` did not scroll"));
+            }
+            let at = &points[tries % points.len()];
+            tries += 1;
+            let mut wheel = json!({
+                "type": "mouseWheel",
+                "x": number(at, "x")?,
+                "y": number(at, "y")?,
+                "deltaX": 0.0,
+                "deltaY": 0.0,
+            });
+            if horizontal {
+                wheel["deltaX"] = json!(remaining);
+            } else {
+                wheel["deltaY"] = json!(remaining);
+            }
+            self.dispatch("Input.dispatchMouseEvent", wheel)?;
+            let scout = Instant::now() + Duration::from_millis(400);
+            loop {
+                thread::sleep(Duration::from_millis(8));
+                let after = self.scroll_offset(selector)?;
+                if (after.0 - now.0).abs() > 0.01 || (after.1 - now.1).abs() > 0.01 {
+                    break;
+                }
+                if Instant::now() >= scout {
+                    break;
+                }
+            }
+        }
     }
 
     fn wait_for(&mut self, selector: &str) -> Result<(), String> {
@@ -300,6 +469,12 @@ impl Browser {
             target_id,
             session_id,
         };
+        // The window in front: a click focuses a field, and `:focus` paints.
+        self.call(
+            Some(&page.session_id),
+            "Emulation.setFocusEmulationEnabled",
+            json!({ "enabled": true }),
+        )?;
         self.call(
             Some(&page.session_id),
             "Emulation.setDeviceMetricsOverride",
@@ -578,5 +753,192 @@ impl Socket {
             self.buf.extend_from_slice(&tmp[..read]);
         }
         Ok(self.buf.drain(..n).collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const APP: &str = r#"
+import { mount, signal } from "@nlayer/runtime";
+import { Input, Scroll, Text, View } from "@nlayer/ui";
+
+function Events() {
+  const scroll = signal("none");
+  const scrollEnd = signal("none");
+  const dragStart = signal("none");
+  const dragEnd = signal("none");
+  const momentumStart = signal("none");
+  const momentumEnd = signal("none");
+  const at = (event: { offset: { y: number } }) => String(Math.round(event.offset.y));
+  return (
+    <View>
+      <Text>{`onScroll ${scroll()}`}</Text>
+      <Text>{`onScrollEnd ${scrollEnd()}`}</Text>
+      <Text>{`onScrollDragStart ${dragStart()}`}</Text>
+      <Text>{`onScrollDragEnd ${dragEnd()}`}</Text>
+      <Text>{`onMomentumStart ${momentumStart()}`}</Text>
+      <Text>{`onMomentumEnd ${momentumEnd()}`}</Text>
+      <Scroll
+        testID="events"
+        onScroll={(event) => scroll.set(at(event))}
+        onScrollEnd={(event) => scrollEnd.set(at(event))}
+        onScrollDragStart={(event) => dragStart.set(at(event))}
+        onScrollDragEnd={(event) => dragEnd.set(at(event))}
+        onMomentumStart={(event) => momentumStart.set(at(event))}
+        onMomentumEnd={(event) => momentumEnd.set(at(event))}
+        style={{ width: 200, height: 80 }}
+      >
+        <View style={{ width: 200, height: 400 }} />
+      </Scroll>
+    </View>
+  );
+}
+
+function App() {
+  const name = signal("");
+  return (
+    <View style={{ width: 390, height: 844 }}>
+      <Input
+        testID="name"
+        value={name()}
+        placeholder="Name"
+        onChange={(value) => name.set(value)}
+        style={{ width: 200, height: 32 }}
+      />
+      <Text>{`input ${name()}`}</Text>
+      <Events />
+    </View>
+  );
+}
+
+mount(App);
+"#;
+
+    fn open_app() -> (WebApp, PathBuf) {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let dir =
+            std::env::temp_dir().join(format!("nlayer-web-input-{}-{stamp}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("App.tsx"), APP).unwrap();
+        let wasm = crate::web_module().expect("the web runtime");
+        let mut host = WebHost::new(wasm);
+        let app = host
+            .start(HostOpen {
+                entry: dir.join("App.tsx"),
+                width: 390.0,
+                height: 844.0,
+                safe_area: None,
+                keyboard: None,
+            })
+            .expect("the browser opens the app");
+        (app, dir)
+    }
+
+    fn node<'a>(tree: &'a Value, test_id: &str) -> Option<&'a Value> {
+        if tree.get("testID").and_then(Value::as_str) == Some(test_id) {
+            return Some(tree);
+        }
+        tree.get("children")?
+            .as_array()?
+            .iter()
+            .find_map(|child| node(child, test_id))
+    }
+
+    fn touch(app: &mut WebApp, kind: &str, at: Option<(f64, f64)>) -> Result<(), String> {
+        let points = match at {
+            Some((x, y)) => {
+                json!([{ "x": x, "y": y, "id": 1, "radiusX": 1, "radiusY": 1, "force": 1 }])
+            }
+            None => json!([]),
+        };
+        app.dispatch(
+            "Input.dispatchTouchEvent",
+            json!({ "type": kind, "touchPoints": points }),
+        )?;
+        Ok(())
+    }
+
+    fn drag(app: &mut WebApp, (x, y): (f64, f64)) -> Result<(), String> {
+        touch(app, "touchStart", Some((x, y)))?;
+        for step in 1..=6 {
+            thread::sleep(Duration::from_millis(8));
+            touch(app, "touchMove", Some((x, y - 8.0 * step as f64)))?;
+        }
+        touch(app, "touchEnd", None)
+    }
+
+    fn callback(texts: &[String], name: &str) -> Option<String> {
+        texts
+            .iter()
+            .find_map(|text| text.strip_prefix(name)?.trim().to_owned().into())
+    }
+
+    #[test]
+    fn the_browser_takes_a_return_and_a_glide() {
+        let (mut app, dir) = open_app();
+        app.type_text("name", "ada").expect("the field takes keys");
+        let tree = app.tree().unwrap();
+        let field = node(&tree, "name").expect("the input");
+        assert_eq!(field.get("value").and_then(Value::as_str), Some("ada"));
+        assert_eq!(field.get("focused").and_then(Value::as_bool), Some(true));
+        app.key('\n').expect("the field takes Return");
+        let tree = app.tree().unwrap();
+        let field = node(&tree, "name").expect("the input");
+        assert_eq!(field.get("focused").and_then(Value::as_bool), Some(false));
+        assert!(app.texts().unwrap().iter().any(|text| text == "input ada"));
+
+        app.dispatch(
+            "Emulation.setTouchEmulationEnabled",
+            json!({ "enabled": true, "maxTouchPoints": 1 }),
+        )
+        .unwrap();
+        let (x, y) = app.point("point", "events").expect("the scroll view");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let names = [
+            "onScroll",
+            "onScrollEnd",
+            "onScrollDragStart",
+            "onScrollDragEnd",
+            "onMomentumStart",
+            "onMomentumEnd",
+        ];
+        loop {
+            drag(&mut app, (x, y)).expect("the browser takes a drag");
+            // A glide ends 200 ms after the last scroll: let it.
+            let quiet = Instant::now() + Duration::from_millis(800);
+            let mut texts;
+            loop {
+                texts = app.texts().unwrap();
+                let seen = names
+                    .iter()
+                    .all(|name| callback(&texts, name).is_some_and(|value| value != "none"));
+                if seen {
+                    break;
+                }
+                if Instant::now() >= quiet || Instant::now() >= deadline {
+                    assert!(
+                        Instant::now() < deadline,
+                        "a drag reports {names:?}: {texts:?}"
+                    );
+                    break;
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+            if names
+                .iter()
+                .all(|name| callback(&texts, name).is_some_and(|value| value != "none"))
+            {
+                break;
+            }
+        }
+        let offset = app.scroll_offset("events").unwrap();
+        assert!(offset.1 > 0.0, "the drag scrolled: {offset:?}");
+        app.close();
+        let _ = fs::remove_dir_all(dir);
     }
 }

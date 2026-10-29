@@ -3,8 +3,10 @@
 // Licensed under the Apache License, Version 2.0.
 //
 // The page side of `nlayer test --target web`. Steps name a view with the
-// same selector as the headless runner. A press, a key, and a scroll go
-// through this document; nothing here calls the engine.
+// same selector as the headless runner. The browser itself takes the
+// input: these calls answer where a press lands, where a field is, and how
+// far a scroll view moves; `nlayer test` sends that through the DevTools
+// protocol's `Input.dispatch*`, which pages cannot tell from a user's.
 
 /**
  * Installs `globalThis.__nlayerHost` for the page `player` mounted in `root`.
@@ -22,30 +24,37 @@ export function installHost(player, root) {
     tree() {
       return nodeJson(root, null, root);
     },
+    point(selector) {
+      const target = one(player, root, selector);
+      visible(root, target, selector);
+      return pointOf(target);
+    },
     press(selector) {
       const target = one(player, root, selector);
       visible(root, target, selector);
       if (!canPress(target)) throw new Error(`\`${selector}\` does not take a press`);
-      click(target);
-      return null;
+      return pointOf(target);
     },
-    type(selector, text) {
+    field(selector) {
       const target = one(player, root, selector);
       visible(root, target, selector);
       const field = inputField(target);
       if (!field) throw new Error(`\`${selector}\` is not an input`);
       if (field.disabled) throw new Error(`\`${selector}\` is disabled`);
-      field.focus?.();
-      for (const ch of String(text)) insertChar(field, ch);
-      return null;
+      return pointOf(target);
     },
     scroll(selector, distance) {
       const target = one(player, root, selector);
       visible(root, target, selector);
       const el = scrollOf(target);
       if (!el) throw new Error(`\`${selector}\` is not in a scroll view`);
-      moveScroll(player, el, distance);
-      return null;
+      return scrollPlan(el, distance);
+    },
+    offset(selector) {
+      const target = one(player, root, selector);
+      const el = scrollOf(target);
+      if (!el) throw new Error(`\`${selector}\` is not in a scroll view`);
+      return { x: el.scrollLeft || 0, y: el.scrollTop || 0 };
     },
     query(selector) {
       try {
@@ -378,43 +387,15 @@ function canPress(target) {
   return false;
 }
 
-function click(target) {
-  const el = target.el;
+/** The middle of `target`, in client coordinates. */
+function pointOf(target) {
   const box = clientBox(target);
-  const clientX = box.x + box.width / 2;
-  const clientY = box.y + box.height / 2;
-  if (typeof el.dispatch === "function" && typeof el.dispatchEvent !== "function") {
-    const extra = target.span?.node != null ? { _utf16: target.span.start } : { clientX, clientY };
-    el.dispatch("click", extra);
-    return;
-  }
-  const doc = el.ownerDocument;
-  const hit = doc.elementFromPoint?.(clientX, clientY) ?? el;
-  hit.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, clientX, clientY }));
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }
 
 function inputField(target) {
   if (target.span || target.el._kind !== "input") return null;
   return target.el._field ?? null;
-}
-
-function insertChar(field, ch) {
-  const doc = field.ownerDocument;
-  field.focus?.();
-  const before = field.value ?? "";
-  let inserted = false;
-  try {
-    inserted = doc?.execCommand?.("insertText", false, ch) === true && field.value !== before;
-  } catch {
-    inserted = false;
-  }
-  if (inserted) return;
-  field.value = before + ch;
-  if (typeof field.dispatch === "function" && typeof field.dispatchEvent !== "function") {
-    field.dispatch("input");
-    return;
-  }
-  field.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 function scrollOf(target) {
@@ -424,31 +405,66 @@ function scrollOf(target) {
   return null;
 }
 
-function moveScroll(player, el, distance) {
+/**
+ * Where a wheel goes for `el` to move by `distance` toward the end of its
+ * content: the points inside it that a nested scroll view on the same axis
+ * does not take first, the offset it starts from, and the offset it stops
+ * at (the browser clamps it).
+ */
+function scrollPlan(el, distance) {
   const horizontal = !!el._horizontal;
   const content = spacerSize(el);
-  const span = Math.max(
-    0,
-    horizontal ? content.width - boxSize(el).width : content.height - boxSize(el).height,
-  );
-  const current = horizontal ? el.scrollLeft || 0 : el.scrollTop || 0;
-  const next = Math.min(span, Math.max(0, current + distance));
-  if (horizontal) el.scrollLeft = next;
-  else el.scrollTop = next;
-  // The offset is already the end. A drag that glides there fires the six
-  // callbacks with that offset. One `scroll` dispatch is `onScroll`; the
-  // rest go through the page's drag and rest path.
-  player.beginDrag?.(el);
-  const native = typeof el.dispatchEvent === "function";
-  if (!native && typeof el.dispatch === "function") el.dispatch("scroll");
-  else player.scrolled?.(el);
-  player.endDrag?.(el);
-  if (player.scrollEvent && !el._momentum) {
-    el._momentum = true;
-    el._released = 0;
-    player.scrollEvent(el, "onMomentumStart");
+  const view = boxSize(el);
+  const span = Math.max(0, horizontal ? content.width - view.width : content.height - view.height);
+  const fromX = el.scrollLeft || 0;
+  const fromY = el.scrollTop || 0;
+  const from = horizontal ? fromX : fromY;
+  const to = Math.min(span, Math.max(0, from + Number(distance)));
+  return {
+    points: scrollPoints(el, horizontal, to - from),
+    horizontal,
+    from: { x: fromX, y: fromY },
+    to: { x: horizontal ? to : fromX, y: horizontal ? fromY : to },
+    delta: to - from,
+  };
+}
+
+function scrollPoints(el, horizontal, delta) {
+  const box = elementBox(el);
+  const spots = [
+    [0.5, 0.5],
+    [0.5, 0.1],
+    [0.1, 0.5],
+    [0.9, 0.5],
+    [0.5, 0.9],
+    [0.1, 0.1],
+    [0.9, 0.1],
+    [0.1, 0.9],
+    [0.9, 0.9],
+  ].map(([fx, fy]) => ({ x: box.x + box.width * fx, y: box.y + box.height * fy }));
+  const doc = el.ownerDocument;
+  if (typeof doc?.elementFromPoint !== "function") return spots.slice(0, 1);
+  const free = spots.filter((at) => {
+    const hit = doc.elementFromPoint(at.x, at.y);
+    return !hit || !takenAbove(hit, el, horizontal, delta);
+  });
+  return free.length ? free : spots.slice(0, 1);
+}
+
+/** Whether a scroll view under the pointer, inside `scroller`, moves first. */
+function takenAbove(node, scroller, horizontal, delta) {
+  for (let cur = node; cur && cur !== scroller; cur = cur.parentNode) {
+    if (cur._kind !== "scroll" || !!cur._horizontal !== horizontal) continue;
+    const content = spacerSize(cur);
+    const view = boxSize(cur);
+    const span = Math.max(
+      0,
+      horizontal ? content.width - view.width : content.height - view.height,
+    );
+    const at = horizontal ? cur.scrollLeft || 0 : cur.scrollTop || 0;
+    if (delta > 0 ? at < span - 0.5 : delta < 0 && at > 0.5) return true;
   }
-  player.scrollEnded?.(el);
+  return false;
 }
 
 function boxSize(el) {

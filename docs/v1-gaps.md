@@ -13,7 +13,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 
 1. 明确的契约缺口（绘制）：P0-4 已关闭。
 2. 宿主语义偏差：本切片的 focusStyle、onScroll、transformOrigin 已关闭。
-3. 验收与回归覆盖：P2-1 到 P2-4 已关闭。其余见 P2-5 起
+3. 验收与回归覆盖：P2-1 到 P2-5 已关闭。其余见 P2-6 起。
 4. 清理项：P3。
 
 P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS 宿主。
@@ -73,17 +73,17 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 | ID | 缺口 | 证据 | 影响 |
 |---|---|---|---|
 | P2-1 | 已关闭。`tests/targets.rs` 覆盖 web/iOS/Android 的 press、type、scroll、树和 safe area，并跑 gallery 四端。`scripts/test-targets` 与 `.github/workflows/targets.yml` 是入口 | `crates/nlayer-cli/tests/targets.rs` | 回归进 `cargo test` |
-| P2-2 | 已关闭。水平 Scroll 滚到 `{x:40}`；六个滚动回调都等到同一 metric；safe area 断言 top/right/bottom/left 和 `max(env, keyboard)`；`platform.os` 等于当前 target | `examples/gallery/App.test.tsx` | 回归有测试。active/hover/focus 绘制仍见验收矩阵 |
+| P2-2 | 已关闭。水平 Scroll 滚到 `{x:40}`。iOS/Android 的拖拽滚法把六个回调都等到同一 metric；web 的滚轮只报 `onScroll` 和 `onScrollEnd`。safe area 断言 top/right/bottom/left 和 `max(env, keyboard)`；`platform.os` 等于当前 target | `examples/gallery/App.test.tsx`；`web_test.rs` | 回归有测试。active/hover/focus 绘制仍见验收矩阵 |
 | P2-3 | 已关闭。`<If>` 覆盖 when/else、函数 child 和分支切换；`<Each>` 覆盖 `key={fn}`、`key="index"` 和乱序重排；`ErrorBoundary` 覆盖 effect、listener、`reset` 和 fallback 再抛 | `crates/nlayer-js/tests/renderer.rs` | lowering 或运行时回归有测试 |
 | P2-4 | 已关闭。`nlayer test --filter` 只跑名字匹配的用例，无匹配也算成功；应用入口的真实 stdin 步骤驱动界面，失败步骤退出 1；类型版本不一致只警告、退出 0。iOS/Android 共用 `Watch`：源改动重建一次，坏源码保留上一个 app 并在修好后重试，发布失败在下一次改动重试 | `crates/nlayer-cli/tests/cli.rs`；`run.rs` 的 `Watch` 测试 | watch/rebuild/失败回退不再只有手工验证 |
-| P2-5 | Web target 输入保真度不足 | `web/host.js:381-439` | press/type/scroll 是合成 DOM 事件，不是 CDP Input；键盘 Return、拖拽、momentum 未被真实浏览器 E2E 覆盖 |
+| P2-5 | 已关闭。web 的 press/type/scroll 走 CDP `Input.dispatchMouseEvent` / `Input.dispatchKeyEvent`，键盘 Return、拖拽、momentum 在真实浏览器里有 E2E | `web_test.rs`；`web/host.js` 只答坐标与滚动终点 | 测试输入和用户输入走同一条页面路径 |
 | P2-6 | Android Java 层无测试 | `crates/nlayer-platform-android/java/` | `Mounter`、`ScrollBox`、`InputBox`、`ImageBox` 的设备行为只靠手工验证 |
 | P2-7 | iOS 宿主模块被 `cfg(target_os = "ios")` 排除出 `cargo test` | `crates/nlayer-platform-ios/src/lib.rs:24-45` | 设备层只有 15 个纯逻辑测试；mount/host/driver/text 不跑 |
 
 ### P2 建议的最小验收集
 
 1. 已关闭。`ios`/`android`/`web` target 测试与 gallery 四端在 `cargo test -p nlayer-cli --test targets`。
-2. 已关闭。gallery 覆盖水平 Scroll 实际滚动、六个滚动回调、`max(env(a),env(b))`、四边 safe area、target 对应的 `platform.os`。
+2. 已关闭。gallery 覆盖水平 Scroll 实际滚动、滚动回调、`max(env(a),env(b))`、四边 safe area、target 对应的 `platform.os`；web 的 Return、拖拽和 momentum 在 `web_test::tests` 的真实浏览器里跑。
 3. 已关闭。`<If>` when/else/函数 child/分支切换；`<Each key={fn}>`、`key="index"`、乱序重排。
 4. 已关闭。`ErrorBoundary` 覆盖 effect/listener 抛错、`reset`、fallback 再抛。
 5. 已关闭。CLI 覆盖 `--version`、`--filter`、stdin 步骤、类型版本警告退出码 0。

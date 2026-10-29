@@ -1,6 +1,6 @@
-// Selectors, the mounted tree, and press / type / scroll against the
-// document stand-in. A browser is not involved: the stand-in dispatches
-// the same click, input, and scroll the page listens to.
+// Selectors, the mounted tree, and the points and offsets input goes to.
+// A browser is not involved: these are the answers `nlayer test` sends the
+// DevTools protocol's input to.
 
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -108,7 +108,7 @@ class El {
   }
 }
 
-test("selectors name one view, and the steps use the page's events", () => {
+test("selectors name one view, and input goes to its point", () => {
   const { player, host, sink } = harness();
   player.apply([
     ["c", 2, "view"],
@@ -154,27 +154,28 @@ test("selectors name one view, and the steps use the page's events", () => {
   assert.equal(tree.children.find((child) => child.testID === "Save").kind, "view");
   assert.equal(tree.children.find((child) => child.testID === "list").offset.y, 0);
 
-  host.press("Save");
-  assert.deepEqual(sink.presses, [2]);
+  assert.deepEqual(host.press("Save"), { x: 40, y: 15 });
+  assert.deepEqual(host.point("Save"), { x: 40, y: 15 });
   assert.throws(() => host.press("text:Save >> nth=2"), /does not take a press/);
   assert.throws(() => host.press("text:Save"), /nth=0/);
   assert.throws(() => host.press("missing"), /matches nothing/);
   assert.throws(() => host.press("below"), /not in view/);
+  assert.deepEqual(sink.presses, []);
 
-  host.type("Name", "ab");
-  assert.deepEqual(sink.changes, [
-    [5, "a"],
-    [5, "ab"],
-  ]);
-  assert.deepEqual(host.inputs(), ["ab"]);
-  assert.equal(host.tree().children.find((child) => child.testID === "name").value, "ab");
+  assert.deepEqual(host.field("Name"), { x: 40, y: 30 });
+  assert.throws(() => host.field("Save"), /is not an input/);
 
-  host.scroll("list", 30);
-  assert.equal(player.view(6).scrollTop, 30);
-  assert.deepEqual(sink.scrolls, [[6, "onScroll", 0, 30]]);
-  host.scroll("list", 1000);
-  assert.equal(player.view(6).scrollTop, 100);
-  assert.equal(host.tree().children.find((child) => child.testID === "list").offset.y, 100);
+  const scroll = host.scroll("list", 30);
+  assert.deepEqual(scroll.points, [{ x: 50, y: 20 }]);
+  assert.equal(scroll.horizontal, false);
+  assert.deepEqual(scroll.from, { x: 0, y: 0 });
+  assert.deepEqual(scroll.to, { x: 0, y: 30 });
+  assert.equal(scroll.delta, 30);
+  player.view(6).scrollTop = 30;
+  assert.deepEqual(host.offset("list"), { x: 0, y: 30 });
+  assert.deepEqual(host.scroll("list", 1000).to, { x: 0, y: 100 });
+  assert.throws(() => host.scroll("Save", 10), /not in a scroll view/);
+  assert.throws(() => host.offset("Save"), /not in a scroll view/);
 
   assert.equal(host.query("Save").state, "ready");
   assert.equal(host.query("missing").state, "wait");

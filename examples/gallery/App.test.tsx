@@ -200,14 +200,15 @@ test("scroll views overflow on each axis", () => {
 
 test("scroll callbacks report the offset, content, and viewport", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
-  for (const name of [
+  const names = [
     "onScroll",
     "onScrollEnd",
     "onScrollDragStart",
     "onScrollDragEnd",
     "onMomentumStart",
     "onMomentumEnd",
-  ]) {
+  ];
+  for (const name of names) {
     expect(app.texts()).toContain(`${name} none`);
   }
   reveal(app, (node) => node.testID === "events");
@@ -217,14 +218,10 @@ test("scroll callbacks report the offset, content, and viewport", () => {
   const content = must(events.content);
   expect(offset).toEqual({ x: 0, y: 40 });
   const metric = `${String(Math.round(offset.x))},${String(Math.round(offset.y))} ${String(Math.round(content.width))}x${String(Math.round(content.height))} ${String(Math.round(events.frame.width))}x${String(Math.round(events.frame.height))}`;
-  for (const name of [
-    "onScroll",
-    "onScrollEnd",
-    "onScrollDragStart",
-    "onScrollDragEnd",
-    "onMomentumStart",
-    "onMomentumEnd",
-  ]) {
+  // Web's step is a wheel, which is not a drag. A finger's drag and glide
+  // are covered by the browser input test (`web_test.rs`).
+  const fired = globalThis.__nlayerOs === "web" ? names.slice(0, 2) : names;
+  for (const name of fired) {
     app.waitFor(`${name} ${metric}`);
   }
 });
