@@ -20,6 +20,28 @@ fn text_encoder_and_decoder_round_trip() {
     "#);
 }
 
+/// Encoding's `decode()`: no input, a `DataView`, a BOM, and invalid UTF-8.
+#[test]
+fn text_decoder_accepts_missing_and_view_input() {
+    run(r#"
+        const dec = new TextDecoder();
+        if (dec.decode() !== "") throw new Error("no argument");
+        if (dec.decode(undefined) !== "") throw new Error("undefined");
+        const view = new DataView(new Uint8Array([0x78, 0x6f, 0x6b, 0x79]).buffer, 1, 2);
+        if (dec.decode(view) !== "ok") throw new Error(dec.decode(view));
+        const bom = dec.decode(new Uint8Array([0xef, 0xbb, 0xbf, 0x61]));
+        if (bom !== "a") throw new Error(JSON.stringify(bom));
+        const bad = dec.decode(new Uint8Array([0x61, 0xff, 0x62]));
+        if (bad !== "a\uFFFDb") throw new Error(JSON.stringify(bad));
+        try {
+            dec.decode("nope");
+            throw new Error("accepted a string");
+        } catch (e) {
+            if (!(e instanceof TypeError) || !String(e).includes("ArrayBuffer")) throw e;
+        }
+    "#);
+}
+
 #[test]
 fn base64_and_url() {
     run(r#"

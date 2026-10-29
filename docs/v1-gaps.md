@@ -38,7 +38,6 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 | P0-2 | `keyboardShouldPersistTaps="handled"` 在 web/Android 语义错误 | web `crates/nlayer-platform-web/web/nlayer.js:655-660`；Android `crates/nlayer-platform-android/java/dev/nlayer/android/ScrollBox.java:322-336`；契约 `docs/v1.md:15` | 点在 Text 内链接之外仍被当成 handled；点 Scroll 自身 `onPress` 会既触发 press 又收键盘 |
 | P0-3 | Android API 28–29 的 `env(keyboard-inset-height)` 恒为 0 | `crates/nlayer-platform-android/java/dev/nlayer/android/HostActivity.java:46-53` | 最低支持 API 28 上键盘 inset、键盘弹出检测、tap/drag 收键盘全部失效 |
 | P0-4 | Image 的 `borderRadius` 在 web/Android 不裁剪 | web `crates/nlayer-platform-web/web/base.css:47-57`、`web/nlayer.js:180-185`；Android `crates/nlayer-platform-android/java/dev/nlayer/android/ImageBox.java:123-141`；iOS 已裁剪 `crates/nlayer-platform-ios/src/mount.rs:1911-1912` | v1 要求宿主绘制 radius；同一张圆角图片在三端表现不一致 |
-| P0-5 | `TextDecoder.decode()` 无参、`decode(DataView)` 抛异常 | `crates/nlayer-js/src/standard.rs:690-708`；类型允许无参 `packages/globals/index.d.ts:41` | 合法 TS 代码运行时失败；错误表现为 `[uninitialized]`，没有可用异常信息 |
 | P0-6 | 无窗口 `type()` 不聚焦输入框 | `crates/nlayer-testing/src/lib.rs:584-625`；对应 `type_text` 的聚焦逻辑在 `:696-705`；契约 `docs/v1.md:20` | 同一套步骤在无窗口和宿主上语义不同；`focusStyle` 无法在无窗口路径体现；`Keyboard.dismiss()` 在 type 之后为空操作 |
 | P0-7 | `text:` 对嵌套 span 的匹配在无窗口/web 与 iOS/Android 不一致 | 无窗口 `crates/nlayer-testing/src/selector.rs:266-292`；web `web/host.js:159-176`；iOS/Android `scene.rs:701-711`（各一份） | 同一测试文件可能在一端通过、另一端失败，违反“同一套步骤” |
 | P0-8 | `Blob` 被暴露为可构造全局 | `crates/nlayer-js/src/standard.rs:183-193`、`:345-357`；类型 `packages/globals/index.d.ts:90-96`；契约 `docs/v1.md:17` 写明“只作为结果类型” | 超出 v1 产品面；与 AGENTS 的“不预承诺”冲突 |
@@ -51,7 +50,6 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 - P0-2：web/Android host 测试覆盖三种点按：Scroll 自身 `onPress`、Text 内链接外区域、Input。`handled` 只在不落在 `onPress` 或输入上时收键盘。
 - P0-3：API 28 或 29 模拟器上断言 `env(keyboard-inset-height) > 0`，且 `keyboardDismissMode` / `keyboardShouldPersistTaps` 能收键盘。
 - P0-4：web/Android 的 Image 加圆角后，四角被裁剪；iOS 保持现状。若宿主测试只能读树，需要补一项像素/绘制层断言或明确人工验收步骤。
-- P0-5：补 `TextDecoder` 单元测试：无参、`DataView`、带 BOM、非法 UTF-8；无参返回空串。
 - P0-6：`type()` 后 `tree()` 能读到该输入 focused；随后 `Keyboard.dismiss()` 清掉 focused。若 `focused` 是公开字段，补进 `packages/test/index.d.ts`。
 - P0-7：用同一个包含嵌套 span（有/无 `testID`）的应用，在无窗口、web、iOS、Android 跑同一选择器；四端结果一致。按 `docs/v1.md:15`，span 应由 `testID` 点名。
 - P0-8：二选一。优先按 AGENTS 删除构造器与类型声明，只保留 `Response.blob()` 的结果对象；或先改 `docs/v1.md` 再保留。
@@ -134,12 +132,10 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 
 ## 附件：已复现的 API 缺口
 
-临时应用 `/tmp/nlayer-probe`，用 `nlayer test` 无窗口运行。结果 `3 passed, 4 failed`：
+临时应用 `/tmp/nlayer-probe`，用 `nlayer test` 无窗口运行。结果 `3 passed, 4 failed`。`TextDecoder` 的两项已关闭。
 
 | 测试 | 结果 | 说明 |
-|---|---|---|
-| `TextDecoder decode with no argument` | fail | `[uninitialized]`；无 pending exception |
-| `TextDecoder decode a DataView` | fail | 同上 |
+|---|---|---|---|
 | `crypto.subtle is absent` | ok | QuickJS 宿主符合 v1 |
 | `URLSearchParams exposes entries` | fail | 运行时没有 `entries`；类型也未声明，属标准完整性而非类型漂移 |
 | `Headers exposes entries` | ok | 运行时存在，类型未声明 |
@@ -149,7 +145,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 
 ## 建议切片顺序
 
-1. **CLI/API 契约**：P0-5、P0-8、P0-9（P0-1 已关闭）；补 API 单元测试。
+1. **CLI/API 契约**：P0-8、P0-9（P0-1、P0-5 已关闭）；补 API 单元测试。
 2. **键盘/选择器**：P0-2、P0-3、P0-6、P0-7；补 host 测试。
 3. **绘制与宿主语义**：P0-4、P0-10、P1-2、P1-3；补 web/Android 绘制断言。
 4. **Scroll 定稿**：P1-1；先改文档或改实现，不要两份契约并存。

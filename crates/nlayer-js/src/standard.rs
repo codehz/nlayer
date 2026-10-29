@@ -698,50 +698,118 @@ unsafe extern "C" fn decode_utf8(
     } else {
         UNDEFINED
     };
-    let bytes = bytes_of(cx, value);
-    let Some(bytes) = bytes else {
-        return qjs::JS_EXCEPTION;
+    // Missing input is an empty sequence (Encoding: `decode()`).
+    if unsafe { qjs::JS_IsUndefined(value) || qjs::JS_IsNull(value) } {
+        return unsafe { qjs::JS_NewStringLen(cx, c"".as_ptr(), 0) };
+    }
+    let Some(bytes) = bytes_of(cx, value) else {
+        return unsafe {
+            qjs::JS_ThrowTypeError(
+                cx,
+                c"TextDecoder.decode: expected an ArrayBuffer or an ArrayBufferView".as_ptr(),
+            )
+        };
     };
-    let text = String::from_utf8_lossy(&bytes);
+    // Default `ignoreBOM` is false: a leading UTF-8 BOM is not part of the text.
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
+    let text = String::from_utf8_lossy(bytes);
     unsafe { qjs::JS_NewStringLen(cx, text.as_ptr().cast(), text.len() as _) }
 }
 
-/// The bytes of an `ArrayBuffer` or a typed array (borrowed).
+/// The bytes of an `ArrayBuffer`, a typed array, or a `DataView`. `None`
+/// is not a buffer source. The copy is taken before any further JS runs.
 fn bytes_of(cx: *mut JsContext, value: JsValue) -> Option<Vec<u8>> {
     // SAFETY: reads of a live value; the bytes are copied before JS runs.
     unsafe {
         if qjs::JS_IsArrayBuffer(value) {
-            let mut size: qjs::size_t = 0;
-            let data = qjs::JS_GetArrayBuffer(cx, &mut size, value);
-            if data.is_null() {
-                return None;
-            }
-            return Some(std::slice::from_raw_parts(data, size as usize).to_vec());
+            return copy_buffer(cx, value, 0, None);
         }
-        if qjs::JS_IsObject(value) {
-            let mut offset: qjs::size_t = 0;
-            let mut length: qjs::size_t = 0;
-            let mut _element: qjs::size_t = 0;
-            let buffer =
-                qjs::JS_GetTypedArrayBuffer(cx, value, &mut offset, &mut length, &mut _element);
-            if qjs::JS_IsException(buffer) {
-                qjs::JS_FreeValue(cx, qjs::JS_GetException(cx));
-                return None;
-            }
-            let mut size: qjs::size_t = 0;
-            let data = qjs::JS_GetArrayBuffer(cx, &mut size, buffer);
-            let out = if data.is_null() {
-                None
-            } else {
-                let offset = offset as usize;
-                let end = (offset + length as usize).min(size as usize);
-                Some(std::slice::from_raw_parts(data.add(offset), end - offset).to_vec())
-            };
+        if !qjs::JS_IsObject(value) {
+            return None;
+        }
+        let mut offset: qjs::size_t = 0;
+        let mut length: qjs::size_t = 0;
+        let mut element: qjs::size_t = 0;
+        let buffer = qjs::JS_GetTypedArrayBuffer(cx, value, &mut offset, &mut length, &mut element);
+        if !qjs::JS_IsException(buffer) {
+            let out = copy_buffer(cx, buffer, offset, Some(length));
             qjs::JS_FreeValue(cx, buffer);
             return out;
         }
+        qjs::JS_FreeValue(cx, qjs::JS_GetException(cx));
+        data_view_bytes(cx, value)
     }
-    None
+}
+
+/// A `DataView`'s bytes, by its `buffer` / `byteOffset` / `byteLength`.
+/// `None` when `value` is not one. Clears any exception it raises.
+fn data_view_bytes(cx: *mut JsContext, value: JsValue) -> Option<Vec<u8>> {
+    // SAFETY: reads of a live object; the buffer is copied before return.
+    unsafe {
+        let global = qjs::JS_GetGlobalObject(cx);
+        let ctor = qjs::JS_GetPropertyStr(cx, global, c"DataView".as_ptr());
+        qjs::JS_FreeValue(cx, global);
+        if qjs::JS_IsException(ctor) {
+            qjs::JS_FreeValue(cx, qjs::JS_GetException(cx));
+            return None;
+        }
+        let is = qjs::JS_IsInstanceOf(cx, value, ctor);
+        qjs::JS_FreeValue(cx, ctor);
+        if is != 1 {
+            if is < 0 {
+                qjs::JS_FreeValue(cx, qjs::JS_GetException(cx));
+            }
+            return None;
+        }
+        let buffer = qjs::JS_GetPropertyStr(cx, value, c"buffer".as_ptr());
+        let offset_v = qjs::JS_GetPropertyStr(cx, value, c"byteOffset".as_ptr());
+        let length_v = qjs::JS_GetPropertyStr(cx, value, c"byteLength".as_ptr());
+        let mut offset = 0i32;
+        let mut length = 0i32;
+        let bad = qjs::JS_ToInt32(cx, &mut offset, offset_v) != 0
+            || qjs::JS_ToInt32(cx, &mut length, length_v) != 0;
+        qjs::JS_FreeValue(cx, offset_v);
+        qjs::JS_FreeValue(cx, length_v);
+        if bad || !qjs::JS_IsArrayBuffer(buffer) {
+            qjs::JS_FreeValue(cx, buffer);
+            qjs::JS_FreeValue(cx, qjs::JS_GetException(cx));
+            return None;
+        }
+        let out = copy_buffer(
+            cx,
+            buffer,
+            offset as qjs::size_t,
+            Some(length as qjs::size_t),
+        );
+        qjs::JS_FreeValue(cx, buffer);
+        out
+    }
+}
+
+/// Copies `buffer[offset..offset+length]`, or the whole buffer when
+/// `length` is `None`. `None` when the buffer cannot be read.
+fn copy_buffer(
+    cx: *mut JsContext,
+    buffer: JsValue,
+    offset: qjs::size_t,
+    length: Option<qjs::size_t>,
+) -> Option<Vec<u8>> {
+    // SAFETY: the slice is copied before the buffer can move.
+    unsafe {
+        let mut size: qjs::size_t = 0;
+        let data = qjs::JS_GetArrayBuffer(cx, &mut size, buffer);
+        if data.is_null() {
+            qjs::JS_FreeValue(cx, qjs::JS_GetException(cx));
+            return None;
+        }
+        let size = size as usize;
+        let offset = (offset as usize).min(size);
+        let end = match length {
+            Some(length) => offset.saturating_add(length as usize).min(size),
+            None => size,
+        };
+        Some(std::slice::from_raw_parts(data.add(offset), end - offset).to_vec())
+    }
 }
 
 /// `crypto.getRandomValues(array)`: fills a typed array with random bytes.
