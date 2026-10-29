@@ -177,10 +177,9 @@ impl RootView {
         };
         let bounds = self.bounds().size;
         let height = overlap(bounds.width, bounds.height, local, hiding);
-        let Some(mounter) = self.ivars().mounter.borrow().upgrade() else {
-            return;
-        };
-        mounter.borrow_mut().set_keyboard(height);
+        // `endEditing:` posts this while a dismiss still holds the mounter.
+        // Run it now, or on the next main-queue turn if that borrow is live.
+        crate::mount::with_mounter(move |mounter| mounter.set_keyboard(height));
     }
 }
 

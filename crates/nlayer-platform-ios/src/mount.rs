@@ -19,8 +19,10 @@ use nlayer_core::{
 };
 use nlayer_engine::{EngineControl, EventPayload};
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
-use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel};
+use objc2::runtime::{AnyObject, Bool, NSObject, NSObjectProtocol, ProtocolObject};
+use objc2::{
+    ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel,
+};
 use objc2_core_foundation::{CGFloat, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::CGImage;
 use objc2_quartz_core::{CALayer, CAShapeLayer, CATransaction, CATransform3D, kCAGravityResize};
@@ -146,10 +148,10 @@ define_class!(
 
         #[unsafe(method(dismissKeyboard:))]
         fn dismiss_keyboard(&self, _gesture: &UITapGestureRecognizer) {
-            let Some(mounter) = self.ivars().mounter.borrow().upgrade() else {
+            let Some(shared) = self.ivars().mounter.borrow().upgrade() else {
                 return;
             };
-            mounter.borrow().end_editing();
+            resign_keyboard(&shared);
         }
 
         #[unsafe(method(returned:))]
@@ -160,7 +162,8 @@ define_class!(
             if !field.resigns_on_return() {
                 return;
             }
-            // SAFETY: UITextField resigns first responder.
+            // SAFETY: UITextField resigns first responder. The editing-ended
+            // callback defers if a borrow is still live.
             let _: bool = unsafe { msg_send![field, resignFirstResponder] };
         }
     }
@@ -177,11 +180,20 @@ define_class!(
             if scroll.isDecelerating() {
                 self.scroll_event(scroll, EventKind::MomentumEnd);
             }
-            if let Some(mounter) = self.ivars().mounter.borrow().upgrade()
-                && let Ok(mounter) = mounter.try_borrow()
-                && mounter.drag_dismisses(scroll)
-            {
-                mounter.end_editing();
+            let dismiss = self
+                .ivars()
+                .mounter
+                .borrow()
+                .upgrade()
+                .is_some_and(|shared| {
+                    shared
+                        .try_borrow()
+                        .is_ok_and(|mounter| mounter.drag_dismisses(scroll))
+                });
+            if dismiss {
+                if let Some(shared) = self.ivars().mounter.borrow().upgrade() {
+                    resign_keyboard(&shared);
+                }
             }
             self.scroll_event(scroll, EventKind::ScrollDragStart);
         }
@@ -215,20 +227,20 @@ define_class!(
 
     unsafe impl UIGestureRecognizerDelegate for Relay {
         #[unsafe(method(gestureRecognizerShouldBegin:))]
-        fn should_begin(&self, recognizer: &UIGestureRecognizer) -> bool {
+        fn should_begin(&self, recognizer: &UIGestureRecognizer) -> Bool {
             if !recognizer.isKindOfClass(UILongPressGestureRecognizer::class()) {
-                return true;
+                return true.into();
             }
             let Some(view) = recognizer.view() else {
-                return true;
+                return true.into();
             };
             let Some(mounter) = self.ivars().mounter.borrow().upgrade() else {
-                return true;
+                return true.into();
             };
             let Ok(mounter) = mounter.try_borrow() else {
-                return true;
+                return true.into();
             };
-            mounter.press_allowed(&view)
+            mounter.press_allowed(&view).into()
         }
 
         /// The keyboard tap only sees taps that should hide the keyboard.
@@ -237,20 +249,20 @@ define_class!(
             &self,
             recognizer: &UIGestureRecognizer,
             touch: &UITouch,
-        ) -> bool {
+        ) -> Bool {
             if !recognizer.isKindOfClass(UITapGestureRecognizer::class()) {
-                return true;
+                return true.into();
             }
             let Some(view) = touch.view() else {
-                return false;
+                return false.into();
             };
             let Some(mounter) = self.ivars().mounter.borrow().upgrade() else {
-                return false;
+                return false.into();
             };
             let Ok(mounter) = mounter.try_borrow() else {
-                return false;
+                return false.into();
             };
-            mounter.tap_dismisses(&view)
+            mounter.tap_dismisses(&view).into()
         }
     }
 
@@ -292,14 +304,14 @@ impl Relay {
             return;
         };
         let id = view.tag() as u32;
-        let Some(mounter) = self.ivars().mounter.borrow().upgrade() else {
-            return;
-        };
-        if on {
-            mounter.borrow_mut().begin_focus(id);
-        } else {
-            mounter.borrow_mut().end_focus(id);
-        }
+        // `endEditing:` calls this while a dismiss still holds the mounter.
+        with_mounter(move |mounter| {
+            if on {
+                mounter.begin_focus(id);
+            } else {
+                mounter.end_focus(id);
+            }
+        });
     }
 
     /// A scroll callback. Setting `contentOffset` while a batch is applied
@@ -739,7 +751,7 @@ impl Mounter {
             }
             ViewKind::Input => (Native::Input(Field::new(self.mtm, &self.relay)), None),
         };
-        let view = native.view();
+        let view = native.view().retain();
         view.setTag(id as isize);
         view.setOpaque(false);
         view.setBackgroundColor(Some(&objc2_ui_kit::UIColor::clearColor()));
@@ -747,7 +759,7 @@ impl Mounter {
         let mut slot = Slot::plain(native);
         slot.picture = picture;
         if kind == ViewKind::Scroll {
-            slot.keyboard_tap = Some(keyboard_tap(self.mtm, &self.relay, view));
+            slot.keyboard_tap = Some(keyboard_tap(self.mtm, &self.relay, &view));
         }
         self.slots[id as usize] = Some(slot);
     }
@@ -1713,6 +1725,51 @@ thread_local! {
 
 fn current() -> Option<Rc<std::cell::RefCell<Mounter>>> {
     CURRENT.with(|slot| slot.borrow().clone())
+}
+
+/// Runs `f` on the mounter. `endEditing:` posts the keyboard notification
+/// and `editingEnded:` while a dismiss or a batch may already hold it.
+/// Then the call waits for the next main-queue turn, as nsh's
+/// `with_mounter` does, instead of re-entering the `RefCell`.
+pub(crate) fn with_mounter(f: impl FnOnce(&mut Mounter) + Send + 'static) {
+    if let Some(shared) = current()
+        && let Ok(mut mounter) = shared.try_borrow_mut()
+    {
+        f(&mut mounter);
+        return;
+    }
+    DispatchQueue::main().exec_async(move || {
+        let Some(shared) = current() else {
+            return;
+        };
+        if let Ok(mut mounter) = shared.try_borrow_mut() {
+            f(&mut mounter);
+        }
+    });
+}
+
+/// Resigns the focused field without holding the mounter. `endEditing:`
+/// posts the keyboard notification and `editingEnded:` before it returns.
+fn resign_keyboard(shared: &Rc<std::cell::RefCell<Mounter>>) {
+    let window = {
+        let mounter = shared.borrow();
+        mounter.view(ROOT_ID).and_then(|view| view.window())
+    };
+    if let Some(window) = window {
+        // SAFETY: `endEditing:` walks the window's responders.
+        let _: bool = unsafe { msg_send![&*window, endEditing: true] };
+        return;
+    }
+    let field = {
+        let mounter = shared.borrow();
+        mounter.focused.and_then(|id| match mounter.native(id) {
+            Some(Native::Input(field)) => Some(field.retain()),
+            _ => None,
+        })
+    };
+    if let Some(field) = field {
+        let _: bool = unsafe { msg_send![&*field, resignFirstResponder] };
+    }
 }
 
 fn image_layers(mtm: MainThreadMarker) -> (Retained<UIView>, Picture) {
