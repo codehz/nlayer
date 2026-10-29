@@ -65,7 +65,13 @@ test("the page graph and a text mount do not need QuickJS", async () => {
   wasm.nlayer_browser_start(320, 480);
   facade.runtime.mount(() => {
     const view = facade.rt.element("view");
-    facade.rt.prop(view, "style", { padding: 16 });
+    facade.rt.prop(view, "style", {
+      padding: 16,
+      width: 80,
+      height: 40,
+      translate: [12, "25%"],
+      scale: [1.5, 2],
+    });
     facade.rt.prop(view, "onPress", () => {});
     const text = facade.rt.element("text");
     facade.rt.append(text, facade.rt.text("hello"));
@@ -74,6 +80,11 @@ test("the page graph and a text mount do not need QuickJS", async () => {
   });
   wasm.nlayer_pump();
   assert.ok(frames.length > 0, "a frame was submitted");
+  const frame = JSON.stringify(frames.at(-1));
+  assert.match(frame, /"translateX":12/);
+  assert.match(frame, /"translateY":10/);
+  assert.match(frame, /"scaleX":1\.5/);
+  assert.match(frame, /"scaleY":2/);
   assert.match(JSON.stringify(frames.at(-1)), /hello/);
   assert.equal(typeof global.gc, "function", "run node with --expose-gc");
   for (let i = 0; i < 5; i++) {

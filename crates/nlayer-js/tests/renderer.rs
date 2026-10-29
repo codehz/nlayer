@@ -4,6 +4,7 @@ use nlayer_core::{
     Command, Core, EventKind, MountBatch, MountItem, ViewKind,
     geometry::{Bounds, Points, Size},
     text::ApproxTextEngine,
+    transform::TransformKind,
 };
 use nlayer_js::{EventPayload, Host};
 
@@ -507,5 +508,94 @@ fn unknown_style_and_class_do_not_drop_known_styles() {
     assert_eq!(
         frame_of(&batch, view).unwrap().size,
         Size::new(Points(10.0), Points(10.0))
+    );
+}
+
+fn transforms_of(batch: &MountBatch, id: u32) -> Vec<(TransformKind, f32)> {
+    batch
+        .items
+        .iter()
+        .rev()
+        .find_map(|item| match item {
+            MountItem::ViewStyle { id: at, style } if *at == id => Some(
+                style
+                    .transform
+                    .ops()
+                    .iter()
+                    .map(|op| (op.kind, op.value))
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+fn view_sized(batch: &MountBatch, width: f32, height: f32) -> u32 {
+    batch
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MountItem::Frame { id, frame }
+                if frame.size.width.0 == width && frame.size.height.0 == height =>
+            {
+                Some(*id)
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no view {width}x{height}"))
+}
+
+/// `translate` / `scale` arrays are static transforms the host paints.
+#[test]
+fn translate_and_scale_arrays_reach_the_host() {
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r#"
+        import { mount } from "@nlayer/runtime";
+        import { element, prop, append } from "nlayer:rt";
+
+        function App() {
+            const root = element("view");
+            const pair = element("view");
+            prop(pair, "style", {
+                width: 100,
+                height: 40,
+                translate: [10, "50%"],
+                scale: ["150%", 2],
+            });
+            const one = element("view");
+            prop(one, "style", { width: 80, height: 20, translate: [12], scale: [1.25] });
+            const bad = element("view");
+            prop(bad, "style", { width: 30, height: 10, translate: [1, 2, 3] });
+            append(root, pair);
+            append(root, one);
+            append(root, bad);
+            return root;
+        }
+        mount(App);
+        "#,
+    )
+    .unwrap();
+    let mut core = core();
+    let batch = frame(&host, &mut core);
+    assert_eq!(
+        transforms_of(&batch, view_sized(&batch, 100.0, 40.0)),
+        [
+            (TransformKind::TranslateX, 10.0),
+            (TransformKind::TranslateY, 20.0),
+            (TransformKind::ScaleX, 1.5),
+            (TransformKind::ScaleY, 2.0),
+        ]
+    );
+    assert_eq!(
+        transforms_of(&batch, view_sized(&batch, 80.0, 20.0)),
+        [
+            (TransformKind::TranslateX, 12.0),
+            (TransformKind::Scale, 1.25),
+        ]
+    );
+    assert!(
+        transforms_of(&batch, view_sized(&batch, 30.0, 10.0)).is_empty(),
+        "an invalid array does not apply"
     );
 }

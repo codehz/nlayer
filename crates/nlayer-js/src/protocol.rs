@@ -331,6 +331,21 @@ fn decode_style<'js>(
             }
             continue;
         }
+        if let Some(property) = axis_property(&key)
+            && let Some(items) = value.as_array()
+        {
+            // `[x, y]`: numbers or CSS strings. Animated values are not v1.
+            if let Some(steps) = transform_axes(&key, items, warnings)? {
+                let decl = StyleDecl::SetTransform(property, steps);
+                if patch.push(&mut style, decl).is_err() {
+                    warnings.warn(format!(
+                        "too many transforms (at most {})",
+                        nlayer_core::MAX_TRANSFORMS
+                    ));
+                }
+            }
+            continue;
+        }
         let string;
         let v = match value.type_of() {
             rquickjs::Type::Int | rquickjs::Type::Float => {
@@ -403,4 +418,68 @@ fn transform_amount(_kind: TransformKind, value: &Value<'_>) -> Option<f32> {
         return px.trim().parse().ok();
     }
     text.parse().ok()
+}
+
+/// `translate` / `scale`, the properties that take `[x, y]`.
+fn axis_property(key: &str) -> Option<TransformProperty> {
+    match key {
+        "translate" => Some(TransformProperty::Translate),
+        "scale" => Some(TransformProperty::Scale),
+        _ => None,
+    }
+}
+
+/// `translate: [x, y]` / `scale: [x, y]`. `translate: [x]` is x alone;
+/// `scale: [k]` is both axes. An invalid value drops the property.
+fn transform_axes(
+    key: &str,
+    items: &Array<'_>,
+    warnings: &mut Warnings,
+) -> rquickjs::Result<Option<TransformSteps>> {
+    let translate = key == "translate";
+    let len = items.len();
+    if !(1..=2).contains(&len) {
+        warnings.warn(format!("style `{key}` takes one value, or `[x, y]`"));
+        return Ok(None);
+    }
+    let mut steps = Vec::with_capacity(len);
+    for (i, item) in items.iter::<Value>().enumerate() {
+        let item = item?;
+        let kind = match (translate, i, len) {
+            (true, 0, _) => TransformKind::TranslateX,
+            (true, _, _) => TransformKind::TranslateY,
+            (false, 0, 1) => TransformKind::Scale,
+            (false, 0, _) => TransformKind::ScaleX,
+            (false, _, _) => TransformKind::ScaleY,
+        };
+        let step = if let Some(n) = item.as_number() {
+            Some((kind, n as f32))
+        } else if let Some(text) = item.as_string() {
+            let text = text.to_string()?;
+            if translate {
+                nlayer_core::transform::translation(i == 1, &text).map(|op| (op.kind, op.value))
+            } else {
+                scale_amount(&text).map(|value| (kind, value))
+            }
+        } else {
+            None
+        };
+        match step {
+            Some((kind, value)) => steps.push((kind, value, None)),
+            None => {
+                warnings.warn(format!("invalid value in style `{key}`"));
+                return Ok(None);
+            }
+        }
+    }
+    Ok(Some(steps.into()))
+}
+
+/// CSS's `scale` amount: `1.5` or `150%`.
+fn scale_amount(text: &str) -> Option<f32> {
+    let text = text.trim();
+    match text.strip_suffix('%') {
+        Some(percent) => percent.trim().parse::<f32>().ok().map(|n| n / 100.0),
+        None => text.parse().ok(),
+    }
 }
