@@ -37,7 +37,9 @@ mod mount;
 mod pin;
 #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
 mod scene;
+#[cfg_attr(not(target_os = "ios"), allow(dead_code))]
 mod scroll_extent;
+#[cfg_attr(not(target_os = "ios"), allow(dead_code))]
 mod scroll_frame;
 #[cfg(target_os = "ios")]
 mod synth;

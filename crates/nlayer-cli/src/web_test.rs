@@ -222,6 +222,7 @@ impl WebApp {
     }
 
     /// A computed style of the view `selector` names, as the page reports it.
+    #[cfg(test)]
     fn computed(&mut self, selector: &str, property: &str) -> Result<String, String> {
         let value = self.call("computed", &[json!(selector), json!(property)])?;
         value
