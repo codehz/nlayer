@@ -49,6 +49,10 @@ struct ParamsIterData {
     kind: i32,
 }
 
+/// The next `entries` / `keys` / `values` answer: the iterator's kind and
+/// the pair, or the pending exception.
+type NextPair = Result<Option<(i32, (String, String))>, JsValue>;
+
 /// Parses `input` against `base`.
 fn parse(input: &str, base: Option<&str>) -> Option<Url> {
     match base {
@@ -212,10 +216,7 @@ fn iter_result(cx: *mut JsContext, value: JsValue, done: bool) -> JsValue {
 /// The iterator's kind and the next pair, or `None` past the end. Both
 /// `kind` and the pair are copies: the parameters may be changed between
 /// two `next()` calls.
-fn next_pair(
-    cx: *mut JsContext,
-    this: JsValue,
-) -> Result<Option<(i32, (String, String))>, JsValue> {
+fn next_pair(cx: *mut JsContext, this: JsValue) -> NextPair {
     let data = params_iter_data(cx, this)?;
     let kind = data.kind;
     let pair = params_data(cx, data.params)?.list.get(data.index).cloned();
