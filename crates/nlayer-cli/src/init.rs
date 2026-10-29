@@ -1,5 +1,5 @@
-//! `nlayer init`: a TSX app, its test, `tsconfig.json` and the declarations
-//! the editor reads. Existing files are kept.
+//! `nlayer init`: a TSX app, its test, `tsconfig.json` and `package.json`.
+//! Existing files are kept. Editor types are npm packages; init does not install them.
 
 use std::{
     fs,
@@ -29,6 +29,9 @@ impl std::fmt::Display for InitReport {
         }
         for path in &self.kept {
             writeln!(f, "kept {path}")?;
+        }
+        if self.wrote.iter().any(|path| path == "package.json") {
+            writeln!(f, "install editor types with: bun install")?;
         }
         Ok(())
     }
@@ -81,10 +84,10 @@ test("a press increases the count", () => {
 });
 "#;
 
-const GITIGNORE: &str = ".nlayer/\n";
+const GITIGNORE: &str = ".nlayer/\nnode_modules/\n";
 
-/// `jsxImportSource` is `@nlayer` (types only). The declarations init writes
-/// live in `.nlayer/types`, which `.gitignore` excludes.
+/// `jsxImportSource` is `@nlayer` (types only). `types: ["globals"]` loads
+/// `@nlayer/globals` from `typeRoots`. Init does not write `.nlayer/types`.
 const TSCONFIG: &str = r#"{
   "compilerOptions": {
     "target": "ES2022",
@@ -95,20 +98,16 @@ const TSCONFIG: &str = r#"{
     "strict": true,
     "noEmit": true,
     "lib": ["ES2022"],
-    "paths": {
-      "@nlayer/runtime": ["./.nlayer/types/@nlayer/runtime.d.ts"],
-      "@nlayer/ui": ["./.nlayer/types/@nlayer/ui.d.ts"],
-      "@nlayer/test": ["./.nlayer/types/@nlayer/test.d.ts"],
-      "@nlayer/jsx-runtime": ["./.nlayer/types/@nlayer/jsx-runtime.d.ts"]
-    }
+    "typeRoots": ["./node_modules/@nlayer", "./node_modules/@types"],
+    "types": ["globals"]
   },
-  "include": ["**/*.ts", "**/*.tsx", ".nlayer/types/globals.d.ts", ".nlayer/types/images.d.ts"]
+  "include": ["**/*.ts", "**/*.tsx"]
 }
 "#;
 
 /// Creates an app in `options.dir`: `App.tsx`, `App.test.tsx`,
-/// `tsconfig.json`, `.gitignore` and `.nlayer/types`. A file that already
-/// exists is kept. Generated declarations are rewritten when they changed.
+/// `tsconfig.json`, `package.json` and `.gitignore`. A file that already
+/// exists is kept.
 pub fn init(options: &InitOptions) -> Result<InitReport, InitError> {
     if options.dir.is_file() {
         return Err(InitError {
@@ -124,6 +123,12 @@ pub fn init(options: &InitOptions) -> Result<InitReport, InitError> {
     write_new(&options.dir, "App.test.tsx", APP_TEST, &mut report)?;
     write_new(&options.dir, "tsconfig.json", TSCONFIG, &mut report)?;
     write_new(&options.dir, ".gitignore", GITIGNORE, &mut report)?;
+    write_new(
+        &options.dir,
+        "package.json",
+        &package_json(&package_name(&options.dir)),
+        &mut report,
+    )?;
     Ok(report)
 }
 
@@ -139,4 +144,51 @@ fn write_new(dir: &Path, rel: &str, text: &str, report: &mut InitReport) -> Resu
     fs::write(path, text)?;
     report.wrote.push(rel.to_owned());
     Ok(())
+}
+
+fn package_json(name: &str) -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    format!(
+        r#"{{
+  "name": "{name}",
+  "private": true,
+  "dependencies": {{
+    "@nlayer/globals": "{version}",
+    "@nlayer/jsx-runtime": "{version}",
+    "@nlayer/runtime": "{version}",
+    "@nlayer/ui": "{version}"
+  }},
+  "devDependencies": {{
+    "@nlayer/test": "{version}"
+  }}
+}}
+"#
+    )
+}
+
+/// npm name from the directory: lowercase, with characters outside
+/// `a-z`, `0-9`, `.`, `_` and `-` replaced. A missing or empty result is `app`.
+fn package_name(dir: &Path) -> String {
+    let Some(name) = dir.file_name() else {
+        return "app".to_owned();
+    };
+    let raw = name.to_string_lossy();
+    if raw == "." || raw == ".." {
+        return "app".to_owned();
+    }
+    let mut out = String::new();
+    for c in raw.chars() {
+        let c = c.to_ascii_lowercase();
+        if c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-') {
+            out.push(c);
+        } else {
+            out.push('-');
+        }
+    }
+    let trimmed = out.trim_start_matches(['.', '-']);
+    if trimmed.is_empty() {
+        "app".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
 }

@@ -17,7 +17,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Bundle an app and write the bundle, its source map, imported images and the TypeScript declarations.
+    /// Bundle an app and write the bundle, its source map and imported images.
     Build {
         /// The entry module, or the app's directory (default: the current one), whose `App.tsx` is the entry.
         #[arg(default_value = ".")]
@@ -47,7 +47,7 @@ enum Command {
         #[arg(long, value_enum)]
         target: Option<TestHost>,
     },
-    /// Create a TSX app: `App.tsx`, its test, `tsconfig.json` and the editor's declarations.
+    /// Create a TSX app: `App.tsx`, its test, `tsconfig.json` and `package.json`.
     Init {
         /// The app directory (default: the current one).
         #[arg(default_value = ".")]
@@ -107,22 +107,26 @@ fn main() -> ExitCode {
             entry,
             out,
             release,
-        } => match build(&BuildOptions {
-            entry,
-            out,
-            release,
-        }) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(err) => {
-                eprintln!("{err}");
-                ExitCode::FAILURE
+        } => {
+            warn_types(&entry);
+            match build(&BuildOptions {
+                entry,
+                out,
+                release,
+            }) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
             }
-        },
+        }
         Command::Test {
             path,
             filter,
             target,
         } => {
+            warn_types(&path);
             let target = target.map(|target| match target {
                 TestHost::Web => TestTarget::Web,
                 TestHost::Ios => TestTarget::Ios,
@@ -163,40 +167,50 @@ fn main() -> ExitCode {
             port,
             release,
             no_open,
-        } => match target {
-            Target::Web => match run_web(entry, port, release, !no_open) {
-                Ok(server) => {
-                    server.park();
-                    ExitCode::SUCCESS
-                }
-                Err(err) => {
-                    eprintln!("{err}");
-                    ExitCode::FAILURE
-                }
-            },
-            Target::Ios => match run_ios(IosOptions { entry, release }) {
-                Ok(session) => {
-                    session.park();
-                    drop(session);
-                    ExitCode::SUCCESS
-                }
-                Err(err) => {
-                    eprintln!("{err}");
-                    ExitCode::FAILURE
-                }
-            },
-            Target::Android => match run_android(nlayer_cli::AndroidOptions { entry, release }) {
-                Ok(session) => {
-                    session.park();
-                    drop(session);
-                    ExitCode::SUCCESS
-                }
-                Err(err) => {
-                    eprintln!("{err}");
-                    ExitCode::FAILURE
-                }
-            },
-        },
+        } => {
+            warn_types(&entry);
+            match target {
+                Target::Web => match run_web(entry, port, release, !no_open) {
+                    Ok(server) => {
+                        server.park();
+                        ExitCode::SUCCESS
+                    }
+                    Err(err) => {
+                        eprintln!("{err}");
+                        ExitCode::FAILURE
+                    }
+                },
+                Target::Ios => match run_ios(IosOptions { entry, release }) {
+                    Ok(session) => {
+                        session.park();
+                        drop(session);
+                        ExitCode::SUCCESS
+                    }
+                    Err(err) => {
+                        eprintln!("{err}");
+                        ExitCode::FAILURE
+                    }
+                },
+                Target::Android => match run_android(nlayer_cli::AndroidOptions { entry, release })
+                {
+                    Ok(session) => {
+                        session.park();
+                        drop(session);
+                        ExitCode::SUCCESS
+                    }
+                    Err(err) => {
+                        eprintln!("{err}");
+                        ExitCode::FAILURE
+                    }
+                },
+            }
+        }
+    }
+}
+
+fn warn_types(start: &std::path::Path) {
+    if let Some(warning) = nlayer_cli::type_package_warning(start) {
+        eprintln!("{warning}");
     }
 }
 
