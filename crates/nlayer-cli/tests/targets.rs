@@ -1,4 +1,5 @@
-//! `nlayer test --target` on the three hosts, plus gallery on each.
+//! `nlayer test --target` on the three hosts, plus gallery and the data
+//! channel (resource and storage) on each.
 //!
 //! One binary, one lock: the simulator and the emulator cannot be driven
 //! twice at once, and `cargo test` would otherwise run these in parallel.
@@ -52,6 +53,18 @@ fn assert_small(target: Option<TestTarget>, label: &str) {
 
 fn gallery() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/gallery/App.test.tsx")
+}
+
+/// A copy of the app fixture `name`, for one run.
+fn app_fixture(name: &str) -> PathBuf {
+    let dir = scratch(&format!("target-{name}"));
+    let from = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name);
+    for file in ["App.tsx", "App.test.tsx", "quote.json"] {
+        fs::copy(from.join(file), dir.join(file)).unwrap();
+    }
+    dir
 }
 
 #[test]
@@ -110,5 +123,22 @@ fn gallery_runs_on_each_target() {
     ] {
         let report = run(&path, target);
         assert!(report.ok(), "{target:?}: {report}");
+    }
+}
+
+#[test]
+fn the_data_channel_runs_on_each_target() {
+    let _guard = lock();
+    for name in ["data", "resource"] {
+        let dir = app_fixture(name);
+        for target in [
+            Some(TestTarget::Web),
+            Some(TestTarget::Ios),
+            Some(TestTarget::Android),
+        ] {
+            let report = run(&dir.join("App.test.tsx"), target);
+            assert!(report.ok(), "{name} on {target:?}: {report}");
+        }
+        let _ = fs::remove_dir_all(&dir);
     }
 }
