@@ -1,0 +1,59 @@
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "native-layer",
+      "devDependencies": {
+        "typescript": "5.9.3",
+      },
+    },
+    "examples/gallery": {
+      "name": "gallery",
+      "dependencies": {
+        "@nlayer/globals": "workspace:*",
+        "@nlayer/jsx-runtime": "workspace:*",
+        "@nlayer/runtime": "workspace:*",
+        "@nlayer/ui": "workspace:*",
+      },
+      "devDependencies": {
+        "@nlayer/test": "workspace:*",
+      },
+    },
+    "packages/globals": {
+      "name": "@nlayer/globals",
+      "version": "0.1.0",
+    },
+    "packages/jsx-runtime": {
+      "name": "@nlayer/jsx-runtime",
+      "version": "0.1.0",
+    },
+    "packages/runtime": {
+      "name": "@nlayer/runtime",
+      "version": "0.1.0",
+    },
+    "packages/test": {
+      "name": "@nlayer/test",
+      "version": "0.1.0",
+    },
+    "packages/ui": {
+      "name": "@nlayer/ui",
+      "version": "0.1.0",
+    },
+  },
+  "packages": {
+    "@nlayer/globals": ["@nlayer/globals@workspace:packages/globals"],
+
+    "@nlayer/jsx-runtime": ["@nlayer/jsx-runtime@workspace:packages/jsx-runtime"],
+
+    "@nlayer/runtime": ["@nlayer/runtime@workspace:packages/runtime"],
+
+    "@nlayer/test": ["@nlayer/test@workspace:packages/test"],
+
+    "@nlayer/ui": ["@nlayer/ui@workspace:packages/ui"],
+
+    "gallery": ["gallery@workspace:examples/gallery"],
+
+    "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "gallery",
+  "private": true,
+  "dependencies": {
+    "@nlayer/globals": "workspace:*",
+    "@nlayer/jsx-runtime": "workspace:*",
+    "@nlayer/runtime": "workspace:*",
+    "@nlayer/ui": "workspace:*"
+  },
+  "devDependencies": {
+    "@nlayer/test": "workspace:*"
+  }
+}

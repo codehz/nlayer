@@ -1,0 +1,11 @@
+{
+  "name": "native-layer",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "examples/*"
+  ],
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}
