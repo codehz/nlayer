@@ -3,7 +3,8 @@
 //! Builds `libnlayer.so` and the Java host, packages a debug APK with the
 //! SDK's `aapt2` / `d8` / `zipalign` / `apksigner`, and installs it on an
 //! emulator or a connected device. A rebuild pushes `app.js` and restarts
-//! the activity. The APK is not reinstalled unless the host changed.
+//! the activity. The APK is not reinstalled unless the host changed, the
+//! package is missing, or its data directory cannot be entered.
 //!
 //! Packaging follows `nsh-cli/src/android.rs`, cut to one ABI and the v1
 //! host. There is no Gradle project and no dev server.
@@ -93,8 +94,8 @@ impl Drop for AndroidSession {
     }
 }
 
-/// Builds `options`, installs the host when it changed, pushes the bundle
-/// and launches it.
+/// Builds `options`, installs the host when it changed or the installed
+/// package cannot take a `run-as` push, pushes the bundle and launches it.
 ///
 /// The first build finishes before this returns. Later builds run on a
 /// background thread. A compile error does not restart the app.
@@ -655,17 +656,61 @@ fn debug_keystore() -> Result<PathBuf, RunError> {
     Ok(path)
 }
 
+/// Reinstalls when the APK is newer than the stamp, or the stamp is fresh
+/// but `pm path` misses the package or `run-as` cannot enter its data
+/// directory. Uninstall and a missing data directory leave the stamp; the
+/// next push would fail. A JS rebuild does not come through here.
 pub(crate) fn install_if_needed(sdk: &Sdk, serial: &str, apk: &Path) -> Result<(), RunError> {
     let stamp = apk.with_extension(format!("installed-{serial}"));
     let apk_time = apk.metadata().and_then(|meta| meta.modified()).ok();
     let installed = stamp.metadata().and_then(|meta| meta.modified()).ok();
-    if installed.is_some_and(|time| Some(time) >= apk_time) {
+    if installed.is_some_and(|time| Some(time) >= apk_time) && host_installed(sdk, serial)? {
         return Ok(());
     }
     eprintln!("installing {PACKAGE}");
     adb(sdk, serial, &["install", "-r", &apk.to_string_lossy()])?;
     fs::write(&stamp, b"")?;
     Ok(())
+}
+
+const READY_MARK: &str = "nlayer-ready";
+
+fn host_installed(sdk: &Sdk, serial: &str) -> Result<bool, RunError> {
+    let script =
+        format!("pm path {PACKAGE}; run-as {PACKAGE} /system/bin/sh -c 'echo {READY_MARK}'");
+    Ok(host_present(&adb_text(sdk, serial, &["shell", &script])?))
+}
+
+fn host_present(output: &str) -> bool {
+    let mut listed = false;
+    let mut ready = false;
+    for line in output.lines() {
+        let line = line.trim();
+        if line.starts_with("package:") && line.len() > "package:".len() {
+            listed = true;
+        }
+        if line == READY_MARK {
+            ready = true;
+        }
+    }
+    listed && ready
+}
+
+fn adb_text(sdk: &Sdk, serial: &str, args: &[&str]) -> Result<String, RunError> {
+    let output = Command::new(sdk.adb())
+        .arg("-s")
+        .arg(serial)
+        .args(args)
+        .output()
+        .map_err(|error| RunError::message(format!("adb: {error}")))?;
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    if !output.stderr.is_empty() {
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(&String::from_utf8_lossy(&output.stderr));
+    }
+    Ok(text)
 }
 
 pub(crate) fn publish(
@@ -840,5 +885,26 @@ mod tests {
         );
         assert_eq!(Abi::parse("x86_64").unwrap().clang, "x86_64-linux-android");
         assert!(Abi::parse("x86").is_none());
+    }
+
+    #[test]
+    fn host_present_requires_package_and_data_dir() {
+        assert!(super::host_present(
+            "package:/data/app/dev.nlayer.android/base.apk\nnlayer-ready\n"
+        ));
+        assert!(super::host_present(
+            "package:/data/app/~~x==/dev.nlayer.android-y==/base.apk\r\nnlayer-ready\r\n"
+        ));
+        // Package still listed, data directory gone: `run-as` prints no marker.
+        assert!(!super::host_present(
+            "package:/data/app/~~x==/dev.nlayer.android-y==/base.apk\nrun-as: couldn't stat /data/user/0/dev.nlayer.android: No such file or directory\n"
+        ));
+        assert!(!super::host_present(
+            "run-as: unknown package: dev.nlayer.android\n"
+        ));
+        assert!(!super::host_present("nlayer-ready\n"));
+        assert!(!super::host_present(""));
+        assert!(!super::host_present("Error: package not found\n"));
+        assert!(!super::host_present("package:\nnlayer-ready\n"));
     }
 }
