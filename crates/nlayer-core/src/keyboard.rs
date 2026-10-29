@@ -19,23 +19,25 @@ pub fn tap_dismisses(
     on_input: bool,
     handled: bool,
 ) -> bool {
-    if !(inset.0 > 0.0) {
-        return false;
-    }
-    match taps {
-        None | Some(KeyboardTaps::Always) => false,
-        Some(KeyboardTaps::Never) => !on_input,
-        Some(KeyboardTaps::Handled) => !handled && !on_input,
+    if inset.0 > 0.0 {
+        match taps {
+            None | Some(KeyboardTaps::Always) => false,
+            Some(KeyboardTaps::Never) => !on_input,
+            Some(KeyboardTaps::Handled) => !handled && !on_input,
+        }
+    } else {
+        false
     }
 }
 
 /// Whether a press should start. `never` swallows it unless the touch is
 /// on an input, so `onPress` and `activeStyle` do not run.
 pub fn press_allowed(inset: Points, taps: Option<KeyboardTaps>, on_input: bool) -> bool {
-    if !(inset.0 > 0.0) {
-        return true;
+    if inset.0 > 0.0 {
+        !matches!(taps, Some(KeyboardTaps::Never)) || on_input
+    } else {
+        true
     }
-    !matches!(taps, Some(KeyboardTaps::Never)) || on_input
 }
 
 /// Whether a drag along this scroll's own axis, past the platform slop,

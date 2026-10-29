@@ -159,7 +159,7 @@ mount(App);
         })
         .expect("a scroll end listener");
     page.scroll(
-        id.into(),
+        id,
         EventKind::ScrollEnd,
         0.0,
         24.0,
@@ -170,7 +170,7 @@ mount(App);
     );
     page.pump();
     assert_eq!(texts_of(&last_batch(&record)), ["y: 24"]);
-    page.scroll(id.into(), EventKind::Press, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0);
+    page.scroll(id, EventKind::Press, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0);
     page.pump();
     assert_eq!(texts_of(&last_batch(&record)), ["y: 24"]);
 }

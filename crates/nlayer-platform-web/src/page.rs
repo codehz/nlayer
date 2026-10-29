@@ -103,6 +103,7 @@ impl PageSession {
     /// Scroll view `id` reported `kind`. The page already moved. The payload
     /// is the content offset, content size and visible size, in points.
     /// Kinds other than the six scroll events are ignored.
+    #[allow(clippy::too_many_arguments)]
     pub fn scroll(
         &self,
         id: NodeId,

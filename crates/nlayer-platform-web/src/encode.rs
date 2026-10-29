@@ -21,8 +21,8 @@
 use std::fmt::Write as _;
 
 use nlayer_core::{
-    Color, Command, EventKind, EventMask, InputConfig, Interaction, KeyboardDismiss, KeyboardTaps,
-    KeyboardType, MountBatch, MountItem, NodeId, ResizeMode, ViewKind,
+    Color, Command, EventKind, EventMask, InputConfig, Interaction, KeyboardType, MountBatch,
+    MountItem, NodeId, ResizeMode, ViewKind,
     geometry::{DefiniteLength, Points, REM_SIZE, relative},
     style::{BorderStyle, TextAlign, TextStyle, TransformOrigin, ViewStyle},
     text::{AttributedText, ResolvedTextStyle},

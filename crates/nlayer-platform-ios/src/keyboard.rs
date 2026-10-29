@@ -10,6 +10,7 @@
 /// `(x, y, width, height)`. A hide, a missing frame, or a keyboard that does
 /// not cross the view horizontally (a floating keyboard off to the side, or
 /// one on another screen) is zero. The overlap is clamped to the view.
+#[cfg_attr(not(target_os = "ios"), allow(dead_code))]
 pub(crate) fn overlap(
     view_width: f64,
     view_height: f64,
