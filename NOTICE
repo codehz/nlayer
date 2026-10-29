@@ -12,6 +12,11 @@ Copied files:
 - `crates/nlayer-core/src/reactive.rs`
 - `crates/nlayer-core/src/reactive/tests.rs`
   from `crates/nsh-core/src/reactive.rs` and `reactive/tests.rs`
+- `crates/nlayer-core/src/resource.rs` from `crates/nsh-core/src/resource.rs`
+  (the load bookkeeping; the Rust `element::resource` face is not copied)
+- `crates/nlayer-core/src/storage.rs` from `crates/nsh-core/src/storage.rs`
+  (entries, quota and backend trait; the Rust `Storage` facade over the
+  element ambient is not copied)
 - `crates/nlayer-core/src/geometry/` from `crates/nsh-core/src/geometry/`
   (`Axis` does not derive `PropEnum` yet; that derive arrives with the element macros)
 - `crates/nlayer-core/src/{style,color,css,css_named,effects,transform,grid}.rs`

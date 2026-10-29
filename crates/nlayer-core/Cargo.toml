@@ -16,6 +16,7 @@ ordered-float.workspace = true
 slab.workspace = true
 rustc-hash.workspace = true
 unicode-linebreak.workspace = true
+log.workspace = true
 
 [dev-dependencies]
 syn = { version = "2", features = ["full", "visit"] }

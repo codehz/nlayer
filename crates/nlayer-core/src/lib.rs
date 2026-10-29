@@ -16,6 +16,8 @@ mod keyboard;
 mod mount;
 mod ops;
 pub mod reactive;
+pub mod resource;
+pub mod storage;
 pub mod style;
 mod tailwind;
 pub mod typescript;
