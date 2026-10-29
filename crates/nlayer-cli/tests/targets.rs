@@ -70,6 +70,20 @@ fn the_emulator_presses_types_and_scrolls() {
 }
 
 #[test]
+fn the_java_host_tests_pass_on_the_emulator() {
+    let _guard = lock();
+    let report = nlayer_cli::android_java_tests()
+        .unwrap_or_else(|error| panic!("android Java tests: {error}"));
+    assert!(
+        report.failures.is_empty(),
+        "android Java tests: {}",
+        report.failures.join("\n")
+    );
+    assert_eq!(report.passed, report.total, "android Java tests");
+    assert!(report.total > 0, "android Java tests: no tests ran");
+}
+
+#[test]
 fn gallery_runs_on_each_target() {
     let _guard = lock();
     let path = gallery();

@@ -23,7 +23,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub use android::{AndroidOptions, AndroidSession, run_android};
+pub use android::{
+    AndroidJavaTests, AndroidOptions, AndroidSession, android_java_tests, run_android,
+};
 pub use init::{InitError, InitOptions, InitReport, init};
 pub use ios::{IosOptions, IosSession, run_ios};
 use nlayer_bundler::{BundleError, BundleOptions, bundle};

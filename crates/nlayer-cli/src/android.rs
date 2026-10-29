@@ -36,6 +36,13 @@ pub(crate) const PACKAGE: &str = "dev.nlayer.android";
 const ACTIVITY: &str = "dev.nlayer.android.HostActivity";
 const MIN_SDK: u32 = 28;
 const TARGET_SDK: u32 = 35;
+/// The test APK's id and its instrumentation runner (`java-test/`).
+const TEST_PACKAGE: &str = "dev.nlayer.android.test";
+const TEST_RUNNER: &str = "dev.nlayer.android.JavaTests";
+#[cfg(windows)]
+const CLASSPATH_SEP: &str = ";";
+#[cfg(not(windows))]
+const CLASSPATH_SEP: &str = ":";
 
 static STOP: AtomicBool = AtomicBool::new(false);
 
@@ -540,19 +547,33 @@ fn add_payload(
     dex: &Path,
     abi: &Abi,
 ) -> Result<(), RunError> {
+    let so = format!("lib/{}/libnlayer.so", abi.name);
+    add_files(
+        base,
+        out,
+        &[
+            ("classes.dex", dex, CompressionMethod::Deflated),
+            (&so, library, CompressionMethod::Stored),
+        ],
+    )
+}
+
+fn add_files(
+    base: &Path,
+    out: &Path,
+    files: &[(&str, &Path, CompressionMethod)],
+) -> Result<(), RunError> {
     let mut input = ZipArchive::new(fs::File::open(base)?).map_err(zip_err)?;
     let mut zip = ZipWriter::new(fs::File::create(out)?);
     for index in 0..input.len() {
         zip.raw_copy_file(input.by_index_raw(index).map_err(zip_err)?)
             .map_err(zip_err)?;
     }
-    let deflate = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
-    let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
-    zip.start_file("classes.dex", deflate).map_err(zip_err)?;
-    zip.write_all(&fs::read(dex)?)?;
-    zip.start_file(format!("lib/{}/libnlayer.so", abi.name), stored)
-        .map_err(zip_err)?;
-    zip.write_all(&fs::read(library)?)?;
+    for (name, path, compression) in files {
+        let options = SimpleFileOptions::default().compression_method(*compression);
+        zip.start_file(*name, options).map_err(zip_err)?;
+        zip.write_all(&fs::read(path)?)?;
+    }
     zip.finish().map_err(zip_err)?;
     Ok(())
 }
@@ -614,6 +635,247 @@ pub(crate) fn install_if_needed(sdk: &Sdk, serial: &str, apk: &Path) -> Result<(
     adb(sdk, serial, &["install", "-r", &apk.to_string_lossy()])?;
     fs::write(&stamp, b"")?;
     Ok(())
+}
+
+/// The Android host's Java-layer tests, on an emulator or a connected
+/// device: what the Java sources in `java-test/` asserted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AndroidJavaTests {
+    /// Test methods that returned without error.
+    pub passed: usize,
+    /// Test methods run.
+    pub total: usize,
+    /// `name: failure` for each method that threw.
+    pub failures: Vec<String>,
+}
+
+/// Builds and installs the test APK and runs it against the installed
+/// host. Needs the Android SDK and a booted emulator or device, as
+/// `nlayer test --target android` does.
+pub fn android_java_tests() -> Result<AndroidJavaTests, RunError> {
+    let sdk = Sdk::find()?;
+    let serial = device(&sdk)?;
+    let workspace = workspace_root()
+        .ok_or_else(|| RunError::message("no Android runtime. Run nlayer from a checkout"))?;
+    let abi = device_abi(&sdk, &serial)?;
+    let host = host_apk(&sdk, &abi, false)?;
+    install_if_needed(&sdk, &serial, &host)?;
+    let apk = java_test_apk(&sdk, &workspace)?;
+    install_java_tests(&sdk, &serial, &apk)?;
+    // A running app process would answer for the test process, not the
+    // test runner's target.
+    let _ = adb(&sdk, &serial, &["shell", "am", "force-stop", PACKAGE]);
+    let output = adb_text(
+        &sdk,
+        &serial,
+        &[
+            "shell",
+            "am",
+            "instrument",
+            "-w",
+            "-r",
+            &format!("{TEST_PACKAGE}/{TEST_RUNNER}"),
+        ],
+    )?;
+    parse_java_tests(&output)
+}
+
+fn java_test_apk(sdk: &Sdk, workspace: &Path) -> Result<PathBuf, RunError> {
+    let sources_dir = workspace.join("crates/nlayer-platform-android/java-test");
+    let apk = workspace
+        .join("target/nlayer-android/java-tests")
+        .join("nlayer-tests.apk");
+    let mut sources_time = newest_source(workspace);
+    consider_tree(&sources_dir, &mut sources_time);
+    if apk
+        .metadata()
+        .and_then(|meta| meta.modified())
+        .is_ok_and(|modified| modified >= sources_time)
+    {
+        return Ok(apk);
+    }
+    eprintln!("building the Android Java tests");
+    let app_classes = workspace.join("target/nlayer-android/java/classes");
+    if !app_classes.is_dir() {
+        let _ = dex_host(sdk, workspace)?;
+    }
+    let work = workspace.join("target/nlayer-android/java-tests");
+    let classes = work.join("classes");
+    let _ = fs::remove_dir_all(&classes);
+    fs::create_dir_all(&classes)?;
+    let classpath = format!(
+        "{}{CLASSPATH_SEP}{}",
+        sdk.android_jar()?.display(),
+        app_classes.display()
+    );
+    let sources = java_sources(&sources_dir)?;
+    let mut javac = Command::new("javac");
+    javac
+        .args(["-source", "8", "-target", "8"])
+        .arg("-classpath")
+        .arg(&classpath)
+        .arg("-d")
+        .arg(&classes)
+        .args(&sources);
+    let status = javac
+        .status()
+        .map_err(|error| RunError::message(format!("javac: {error}")))?;
+    if !status.success() {
+        return Err(RunError::message(
+            "the Android Java tests failed to compile",
+        ));
+    }
+    let dex_dir = work.join("dex");
+    let _ = fs::remove_dir_all(&dex_dir);
+    fs::create_dir_all(&dex_dir)?;
+    let class_files = class_files(&classes)?;
+    let d8 = Command::new(sdk.tool("d8"))
+        .arg("--min-api")
+        .arg(MIN_SDK.to_string())
+        .arg("--lib")
+        .arg(sdk.android_jar()?)
+        .arg("--classpath")
+        .arg(&app_classes)
+        .arg("--output")
+        .arg(&dex_dir)
+        .args(&class_files)
+        .status()
+        .map_err(|error| RunError::message(format!("d8: {error}")))?;
+    if !d8.success() {
+        return Err(RunError::message("d8 failed to dex the Android Java tests"));
+    }
+    let dex = dex_dir.join("classes.dex");
+    if !dex.exists() {
+        return Err(RunError::message("d8 did not write the Android Java tests"));
+    }
+    if let Some(parent) = apk.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    package_java_tests(sdk, &dex, &apk)?;
+    Ok(apk)
+}
+
+fn package_java_tests(sdk: &Sdk, dex: &Path, out: &Path) -> Result<(), RunError> {
+    let work = out.with_extension("work");
+    if work.exists() {
+        fs::remove_dir_all(&work)?;
+    }
+    fs::create_dir_all(&work)?;
+    let manifest = work.join("AndroidManifest.xml");
+    fs::write(&manifest, test_manifest_xml())?;
+    let base = work.join("base.apk");
+    run(Command::new(sdk.tool("aapt2"))
+        .arg("link")
+        .arg("-o")
+        .arg(&base)
+        .arg("-I")
+        .arg(sdk.android_jar()?)
+        .arg("--manifest")
+        .arg(&manifest)
+        .args(["--min-sdk-version", &MIN_SDK.to_string()])
+        .args(["--target-sdk-version", &TARGET_SDK.to_string()])
+        .args(["--debug-mode"]))?;
+    let unaligned = work.join("unaligned.apk");
+    add_files(
+        &base,
+        &unaligned,
+        &[("classes.dex", dex, CompressionMethod::Deflated)],
+    )?;
+    let aligned = work.join("aligned.apk");
+    run(Command::new(sdk.tool("zipalign"))
+        .args(["-P", "16", "-f", "4"])
+        .arg(&unaligned)
+        .arg(&aligned))?;
+    sign(sdk, &aligned)?;
+    fs::rename(&aligned, out)?;
+    fs::remove_dir_all(&work)?;
+    Ok(())
+}
+
+fn test_manifest_xml() -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="{TEST_PACKAGE}">
+    <application android:label="nlayer tests" android:extractNativeLibs="false" />
+    <instrumentation android:name="{TEST_RUNNER}" android:targetPackage="{PACKAGE}"
+        android:functionalTest="true" />
+</manifest>
+"#
+    )
+}
+
+fn install_java_tests(sdk: &Sdk, serial: &str, apk: &Path) -> Result<(), RunError> {
+    let stamp = apk.with_extension(format!("installed-{serial}"));
+    let apk_time = apk.metadata().and_then(|meta| meta.modified()).ok();
+    let installed = stamp.metadata().and_then(|meta| meta.modified()).ok();
+    if installed.is_some_and(|time| Some(time) >= apk_time) && test_package_installed(sdk, serial)?
+    {
+        return Ok(());
+    }
+    eprintln!("installing {TEST_PACKAGE}");
+    adb(sdk, serial, &["install", "-r", &apk.to_string_lossy()])?;
+    fs::write(&stamp, b"")?;
+    Ok(())
+}
+
+fn test_package_installed(sdk: &Sdk, serial: &str) -> Result<bool, RunError> {
+    let list = adb_text(sdk, serial, &["shell", &format!("pm path {TEST_PACKAGE}")])?;
+    Ok(list
+        .lines()
+        .any(|line| line.trim().starts_with("package:") && line.len() > "package:".len()))
+}
+
+/// Reads the runner's JSON report out of `am instrument -w -r` output.
+fn parse_java_tests(output: &str) -> Result<AndroidJavaTests, RunError> {
+    let mut report = None;
+    let mut code = None;
+    for line in output.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("INSTRUMENTATION_RESULT: report=") {
+            report = Some(rest);
+        } else if let Some(rest) = line.strip_prefix("INSTRUMENTATION_CODE: ") {
+            code = rest.parse::<i32>().ok();
+        } else if line.starts_with("INSTRUMENTATION_FAILED")
+            || line.starts_with("INSTRUMENTATION_ABORTED")
+        {
+            return Err(RunError::message(format!(
+                "the Android Java tests did not run:\n{output}"
+            )));
+        }
+    }
+    if code != Some(0) {
+        return Err(RunError::message(format!(
+            "the Android Java tests did not finish:\n{output}"
+        )));
+    }
+    let report = report.ok_or_else(|| {
+        RunError::message(format!("the Android Java tests wrote no report:\n{output}"))
+    })?;
+    let value: serde_json::Value = serde_json::from_str(report)
+        .map_err(|error| RunError::message(format!("the Android Java test report: {error}")))?;
+    let passed = value
+        .get("passed")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| RunError::message("the Android Java test report has no passed count"))?
+        as usize;
+    let total = value
+        .get("total")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| RunError::message("the Android Java test report has no total"))?
+        as usize;
+    let mut failures = Vec::new();
+    if let Some(items) = value.get("failures").and_then(serde_json::Value::as_array) {
+        for item in items {
+            if let Some(message) = item.as_str() {
+                failures.push(message.to_owned());
+            }
+        }
+    }
+    Ok(AndroidJavaTests {
+        passed,
+        total,
+        failures,
+    })
 }
 
 const READY_MARK: &str = "nlayer-ready";
@@ -849,5 +1111,52 @@ mod tests {
         assert!(!super::host_present(""));
         assert!(!super::host_present("Error: package not found\n"));
         assert!(!super::host_present("package:\nnlayer-ready\n"));
+    }
+
+    #[test]
+    fn java_tests_report_parses_passed_and_failed_runs() {
+        let passed = super::parse_java_tests(
+            "INSTRUMENTATION_RESULT: report={\"passed\":13,\"total\":13,\"failures\":[]}\n\
+             INSTRUMENTATION_CODE: 0\n",
+        )
+        .unwrap();
+        assert_eq!(
+            passed,
+            super::AndroidJavaTests {
+                passed: 13,
+                total: 13,
+                failures: Vec::new(),
+            }
+        );
+
+        let failed = super::parse_java_tests(
+            "INSTRUMENTATION_RESULT: report={\"passed\":12,\"total\":13,\"failures\":[\"testScroll: want 1, have 2\\n  at x\"]}\n\
+             INSTRUMENTATION_CODE: 0\n",
+        )
+        .unwrap();
+        assert_eq!(failed.passed, 12);
+        assert_eq!(failed.total, 13);
+        assert_eq!(
+            failed.failures,
+            vec!["testScroll: want 1, have 2\n  at x".to_owned()]
+        );
+    }
+
+    #[test]
+    fn java_tests_report_requires_a_finished_run() {
+        for output in [
+            "",
+            "INSTRUMENTATION_FAILED: dev.nlayer.android.test/dev.nlayer.android.JavaTests\n\
+             INSTRUMENTATION_CODE: 0\n",
+            "INSTRUMENTATION_RESULT: report={\"passed\":1,\"total\":1,\"failures\":[]}\n\
+             INSTRUMENTATION_CODE: -1\n",
+            "INSTRUMENTATION_CODE: 0\n",
+            "INSTRUMENTATION_RESULT: report=not json\nINSTRUMENTATION_CODE: 0\n",
+        ] {
+            assert!(
+                super::parse_java_tests(output).is_err(),
+                "accepted {output:?}"
+            );
+        }
     }
 }
