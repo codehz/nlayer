@@ -10,9 +10,7 @@
 
 ## 结论
 
-v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bundle、五个宿主组件、三端平台 API、CLI 和类型包都有真实代码，没有 `todo!()` / 空实现。P0–P3 的条目都已关闭，复核留下的 API 面缺口已补齐。API 28/29 的键盘 inset 在设备上验过并修掉了一个真实缺口（P0-11）。仍有一处设备验收盲区：
-
-1. Android `focusStyle` 祖先链：`Mounter.chainFocused` / `focusChanged` 有实现，iOS 宿主测试覆盖；Android Java instrumentation 没有 focus 用例。
+v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bundle、五个宿主组件、三端平台 API、CLI 和类型包都有真实代码，没有 `todo!()` / 空实现。P0–P3 的条目都已关闭，复核留下的 API 面缺口已补齐。API 28/29 的键盘 inset 在设备上验过并修掉了一个真实缺口（P0-11）。P0-10 的 Android 设备验收盲区也已关闭：instrumentation 覆盖焦点进入/离开 field 时祖先 `focusStyle` 的重绘和树上的 `focused`。
 
 P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS 宿主。
 
@@ -41,14 +39,14 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 | ID | 缺口 | 证据 | 影响 |
 |---|---|---|---|
 | P0-4 | 已关闭。web 图片 `border-radius: inherit` 加 `overflow: clip`；Android `ImageBox` 按 `Decor` 圆角路径裁剪。树上报 `radius`（point，四角）。web target 断言 16px 圆角图片的计算半径 | `crates/nlayer-platform-web/web/base.css`；`crates/nlayer-platform-android/java/dev/nlayer/android/ImageBox.java`；`crates/nlayer-cli/tests/fixtures/App.test.tsx` | 三端圆角图片裁到半径 |
-| P0-10 | 已关闭。焦点变化沿父链重绘；`focusStyle` 在自身或子孙 field 聚焦时生效。touch mode 下普通 Box 只 `setFocusable`，点击不会聚焦它（与 `HostView` 一致）；键盘或方向键可以。祖先样式不依赖那条路径 | `Mounter.focusChanged` / `chainFocused` | 聚焦输入时祖先 `focusStyle` 亮；树上报 `focused` |
+| P0-10 | 已关闭。焦点变化沿父链重绘；`focusStyle` 在自身或子孙 field 聚焦时生效。touch mode 下普通 Box 只 `setFocusable`，点击不会聚焦它（与 `HostView` 一致）；键盘或方向键可以。祖先样式不依赖那条路径 | `Mounter.focusChanged` / `chainFocused`；`java-test/dev/nlayer/android/JavaTests.java` `testMountBatchFocusAncestors` | 聚焦输入时祖先 `focusStyle` 亮；树上报 `focused` |
 | P0-11 | 已关闭。API 28–29 没有 `WindowInsets.Type.ime()`，`adjustNothing` 下 `getWindowVisibleDisplayFrame` 不随键盘移动，`env(keyboard-inset-height)` 恒为 0。改为 API < 30 在 `onCreate` 设 `SOFT_INPUT_ADJUST_RESIZE`（布局 flags 保持全屏，surface 尺寸不变），安全区四边改用 stable insets，底边不再把键盘算进 safe area | `crates/nlayer-platform-android/java/dev/nlayer/android/HostActivity.java` | 键盘弹起时 `env(keyboard-inset-height)` 为键盘高度，safe area 仍为系统栏 |
 
 ### P0 验收方式
 
 
 - P0-4：已关闭。`nlayer test --target web` 断言 `radius` 为 `[16, 16, 16, 16]`。Android 树的 `radius` 来自 `onDraw` 使用的 fitted 半径。
-- P0-10：已关闭（实现）。touch mode 下普通 Box 的 `focusStyle` 不能靠点击点亮，靠内部 field 或非触摸焦点。iOS 宿主测试覆盖 focus 祖先链；Android Java instrumentation 还没有该用例，见“剩余工作”。
+- P0-10：已关闭（实现与设备回归）。touch mode 下普通 Box 的 `focusStyle` 不能靠点击点亮，靠内部 field 或非触摸焦点。iOS 宿主测试和 Android Java instrumentation 都覆盖 focus 祖先链：field 多层嵌套在带 `focusStyle` 的 Box 里，焦点进入后祖先样式生效、树上报 `focused`，`clearFocus` 后恢复基础样式并清除 `focused`。
 - P0-11：已关闭。API 28/29 emulator 上实机确认：点输入框弹出 IME 后 `env(keyboard-inset-height)` = 900px（343pt），`env(safe-area-inset-bottom)` 仍是 126px；tap 空白 Scroll 和 `keyboardDismissMode="on-drag"` 拖拽都把 inset 收回 0。AVD 是 `-ports 5554,5555`、`-wipe-data` 的 arm64 image，measure 用 `dumpsys activity top` 读 padding Box 的高度。
 
 ## P1：宿主语义与契约定稿
@@ -82,7 +80,7 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 | P2-3 | 已关闭。`<If>` 覆盖 when/else、函数 child 和分支切换；`<Each>` 覆盖 `key={fn}`、`key="index"` 和乱序重排；`ErrorBoundary` 覆盖 effect、listener、`reset` 和 fallback 再抛 | `crates/nlayer-js/tests/renderer.rs` | lowering 或运行时回归有测试 |
 | P2-4 | 已关闭。`nlayer test --filter` 只跑名字匹配的用例，无匹配也算成功；应用入口的真实 stdin 步骤驱动界面，失败步骤退出 1；类型版本不一致只警告、退出 0。iOS/Android 共用 `Watch`：源改动重建一次，坏源码保留上一个 app 并在修好后重试，发布失败在下一次改动重试 | `crates/nlayer-cli/tests/cli.rs`；`run.rs` 的 `Watch` 测试 | watch/rebuild/失败回退不再只有手工验证 |
 | P2-5 | 已关闭。web 的 press/type/scroll 走 CDP `Input.dispatchMouseEvent` / `Input.dispatchKeyEvent`，键盘 Return、拖拽、momentum 在真实浏览器里有 E2E | `web_test.rs`；`web/host.js` 只答坐标与滚动终点 | 测试输入和用户输入走同一条页面路径 |
-| P2-6 | 已关闭。`java-test/` 是独立测试 APK 上的 instrumentation：`Mounter` 的 mount batch、frame、样式、状态样式和删除，`ScrollBox` 的轴、内容尺寸和偏移，`InputBox` 的配置、受控值与输入计数，`ImageBox` 的 cover/contain/none、object position、圆角裁剪和 asset 解码都在 emulator / 设备上跑。`crates/nlayer-cli/src/android.rs` 的 `android_java_tests` 构建、安装并运行它，`cargo test -p nlayer-cli --test targets` 断言报告全过 | `crates/nlayer-platform-android/java-test/`；`crates/nlayer-cli/tests/targets.rs` | `Mounter`、`ScrollBox`、`InputBox`、`ImageBox` 的设备行为进 `cargo test` |
+| P2-6 | 已关闭。`java-test/` 是独立测试 APK 上的 instrumentation：`Mounter` 的 mount batch、frame、样式、状态样式、focus 祖先链和删除，`ScrollBox` 的轴、内容尺寸和偏移，`InputBox` 的配置、受控值与输入计数，`ImageBox` 的 cover/contain/none、object position、圆角裁剪和 asset 解码都在 emulator / 设备上跑。`crates/nlayer-cli/src/android.rs` 的 `android_java_tests` 构建、安装并运行它，`cargo test -p nlayer-cli --test targets` 断言报告全过 | `crates/nlayer-platform-android/java-test/`；`crates/nlayer-cli/tests/targets.rs` | `Mounter`、`ScrollBox`、`InputBox`、`ImageBox` 的设备行为进 `cargo test` |
 | P2-7 | 已关闭。`nlayer-platform-ios` 的 `host` 测试目标是 `harness = false` 的主线程二进制：`host`、`driver`、`mount`、`text` 的 13 个测试在模拟器里跑，覆盖错误浮层与根视图、测试协议 step、帧/样式/状态样式/删除、focus 祖先链、scroll 收窄与恢复、input 配置和 image、CoreText 换行和截断。`crates/nlayer-cli` 的 `ios_host_tests` 用 `aarch64-apple-ios-sim` 构建并由 `simctl spawn` 执行；`cargo test -p nlayer-cli --test targets` 断言报告全过 | `crates/nlayer-platform-ios/src/{host,driver,mount,text}.rs`；`tests/host.rs`；`src/lib.rs` `run_host_tests`；`ios.rs` `host_test_binary` | 设备层不再只有纯逻辑测试；`cargo test` 跑不动 UIKit 的部分由模拟器补上 |
 
 ### P2 建议的最小验收集
@@ -142,7 +140,3 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 | `Response has no clone` | ok | 与 v1 最小面一致 |
 
 类型侧用 `tsc` 复核：`headers.entries()`、`params.entries()`、`keys()` 和 `[...params]` 在 `scripts/test-types` 里通过。
-
-## 剩余工作
-
-1. **设备回归**：在 Android Java instrumentation 补 `focusStyle` 祖先链用例。键盘 inset 已在 API 28/29 emulator 上验过（P0-11），不在剩余项里。

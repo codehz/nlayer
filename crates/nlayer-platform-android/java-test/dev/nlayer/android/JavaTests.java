@@ -37,6 +37,7 @@ public final class JavaTests extends Instrumentation {
     "testMountBatchBuildsTree",
     "testMountBatchFramesAndStyles",
     "testMountBatchStateStyle",
+    "testMountBatchFocusAncestors",
     "testMountBatchDelete",
     "testScrollAxisAndOffsets",
     "testScrollContentSizing",
@@ -235,6 +236,103 @@ public final class JavaTests extends Instrumentation {
         });
     equal(1f, box.getAlpha(), "base opacity returns");
     equal(0xff0000ff, box.decor.fill, "base fill returns");
+  }
+
+  void testMountBatchFocusAncestors() {
+    Activity activity =
+        startActivitySync(
+            new Intent(context(), HostActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    try {
+      HostView host = main(() -> new HostView(activity));
+      Batch b = batch();
+      b.word(0).word(2).word(0); // a box ancestor with focusStyle
+      b.word(0).word(4).word(0); // a box between it and the field
+      b.word(0).word(3).word(4); // an input field inside the inner box
+      b.word(1).word(1).word(2).word(-1); // root <- outer box
+      b.word(1).word(2).word(4).word(-1); // outer <- inner box
+      b.word(1).word(4).word(3).word(-1); // inner <- input
+      b.word(4).word(2).real(0).real(0).real(200).real(100);
+      b.word(4).word(4).real(10).real(10).real(180).real(80);
+      b.word(4).word(3).real(0).real(0).real(200).real(40);
+      b.word(5).word(2); // base paint
+      style(b, 0xff0000ff, 0, 1, false);
+      b.word(5).word(3);
+      style(b, 0xffffffff, 0, 1, false);
+      b.word(12).word(2).word(2).word(1); // the ancestor's focus paint
+      style(b, 0, 0, 0.25f, false);
+      b.bool(false);
+      b.word(12).word(3).word(2).word(1); // the field's own focus paint
+      style(b, 0xffff0000, 0, 1, false);
+      b.bool(false);
+      main(
+          () -> {
+            activity.setContentView(host);
+            host.mounter.apply(b.bytes(), b.objects());
+            return null;
+          });
+      waitForIdleSync();
+      Box box = (Box) host.mounter.views.get(2);
+      InputBox input = (InputBox) host.mounter.views.get(3);
+      check(box != null && input != null, "views were not created");
+      // A window in non-touch mode may focus the first field as it attaches.
+      main(
+          () -> {
+            host.requestFocus();
+            return null;
+          });
+      waitForIdleSync();
+      check(!host.mounter.chainFocused(box), "no field has focus yet");
+      equal(1f, box.getAlpha(), "base opacity");
+      equal(0xff0000ff, box.decor.fill, "base fill");
+
+      main(
+          () -> {
+            input.edit.requestFocusFromTouch();
+            return null;
+          });
+      waitForIdleSync();
+      check(input.edit.isFocused(), "the field took focus");
+      check(host.mounter.chainFocused(box), "the ancestor sees the field");
+      equal(0.25f, box.getAlpha(), "ancestor focus opacity");
+      equal(0xffff0000, input.decor.fill, "field focus fill");
+      String tree = main(() -> Tree.snapshot(host));
+      check(focused(tree, 2), "the tree reports the ancestor focused");
+      check(focused(tree, 3), "the tree reports the field focused");
+
+      main(
+          () -> {
+            input.edit.clearFocus();
+            return null;
+          });
+      waitForIdleSync();
+      check(!host.mounter.chainFocused(box), "the ancestor no longer sees focus");
+      check(!input.edit.isFocused(), "the field lost focus");
+      equal(1f, box.getAlpha(), "base opacity returns");
+      equal(0xff0000ff, box.decor.fill, "base fill returns");
+      tree = main(() -> Tree.snapshot(host));
+      check(!focused(tree, 2), "the tree clears the ancestor focus");
+    } finally {
+      main(
+          () -> {
+            activity.finish();
+            return null;
+          });
+      waitForIdleSync();
+    }
+  }
+
+  /** Whether the tree snapshot marks node {@code id} focused. */
+  private static boolean focused(String tree, int id) {
+    try {
+      JSONArray nodes = new JSONObject(tree).getJSONArray("nodes");
+      for (int i = 0; i < nodes.length(); i++) {
+        JSONObject node = nodes.getJSONObject(i);
+        if (node.optInt("id") == id) return node.optBoolean("focused");
+      }
+    } catch (Exception error) {
+      throw new RuntimeException(error);
+    }
+    throw new AssertionError("no node " + id + " in " + tree);
   }
 
   void testMountBatchDelete() {
