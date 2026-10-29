@@ -488,3 +488,63 @@ test("a tap in a scroll blurs, and never swallows the press", () => {
   field.dispatch("keydown", { key: "Enter", preventDefault() {} });
   assert.equal(field.blurred, true);
 });
+
+test("handled dismisses only off a press and an input", () => {
+  const { doc, host, player } = page();
+  player.apply([
+    ["c", 5, "scroll"],
+    ["i", 1, 5, null],
+    ["sc", 5, false, "handled", "none"],
+    ["e", 5, ["onPress"]],
+    ["c", 3, "text"],
+    ["i", 5, 3, null],
+    ["t", 3, 0, 0, 80, 16, null, false, [["see "], ["docs"]], [], [[4, 8, 9]]],
+    ["c", 7, "input"],
+    ["i", 5, 7, null],
+    [
+      "in",
+      7,
+      null,
+      { placeholder: "", secure: false, keyboard: "text", disabled: false, rtl: false },
+    ],
+    ["c", 8, "view"],
+    ["i", 5, 8, null],
+  ]);
+  const scroll = player.view(5);
+  const text = player.view(3);
+  const blank = player.view(8);
+  const field = player.view(7)._field;
+  field.blur = () => {
+    field.blurred = true;
+    doc.activeElement = null;
+  };
+  const arm = () => {
+    field.blurred = false;
+    doc.activeElement = field;
+    player.setKeyboard(300);
+  };
+
+  arm();
+  scroll.dispatch("pointerdown", { button: 0, target: scroll });
+  scroll.dispatch("click", { target: scroll });
+  assert.equal(field.blurred, false);
+  assert.deepEqual(host.presses, [5]);
+
+  player.apply([["e", 5, []]]);
+
+  arm();
+  text.dispatch("pointerdown", { button: 0, _utf16: 1 });
+  assert.equal(field.blurred, true);
+
+  arm();
+  text.dispatch("pointerdown", { button: 0, _utf16: 5 });
+  assert.equal(field.blurred, false);
+
+  arm();
+  field.dispatch("pointerdown", { button: 0 });
+  assert.equal(field.blurred, false);
+
+  arm();
+  blank.dispatch("pointerdown", { button: 0 });
+  assert.equal(field.blurred, true);
+});

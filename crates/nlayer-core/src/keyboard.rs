@@ -11,8 +11,9 @@ use crate::ops::{KeyboardDismiss, KeyboardTaps, KeyboardType};
 ///
 /// `taps` is the nearest scroll's `keyboardShouldPersistTaps`. `None` means
 /// the tap is not inside a scroll. `on_input` is an input on the walk from
-/// the hit view up to that scroll; a disabled input counts. `handled` is an
-/// `onPress` (including a pressable span) or an input on that walk.
+/// the hit view through that scroll; a disabled input counts. `handled` is
+/// an `onPress` on that walk, including the scroll's own and a pressable
+/// span under the point (not the rest of that text), or an input.
 pub fn tap_dismisses(
     inset: Points,
     taps: Option<KeyboardTaps>,

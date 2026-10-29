@@ -225,7 +225,7 @@ final class ScrollBox extends FrameLayout {
       if (scrollUnder(this, e) == null) {
         View hit = leaf(this, e.getX(), e.getY());
         boolean onInput = onInput(hit);
-        boolean handled = handles(hit);
+        boolean handled = handles(hit, e);
         tapDismiss = shouldDismiss(onInput, handled);
         // `never`: the tap reaches nothing but the scroll view.
         swallowing = tapDismiss && taps == 0 && !onInput;
@@ -319,14 +319,22 @@ final class ScrollBox extends FrameLayout {
     return false;
   }
 
-  private boolean handles(android.view.View hit) {
-    for (android.view.View v = hit; v != null && v != this; v = parentOf(v)) {
-      if (v instanceof InputBox) return true;
-      if (v instanceof Box && (((Box) v).pressMask & 1) != 0) return true;
-      if (v instanceof TextBox
-          && ((((TextBox) v).pressMask & 1) != 0 || ((TextBox) v).hasPressLink())) return true;
-      if (v instanceof ImageBox && (((ImageBox) v).pressMask & 1) != 0) return true;
-      if (v instanceof ScrollBox && v != this && (((ScrollBox) v).pressMask & 1) != 0) return true;
+  private boolean handles(android.view.View hit, MotionEvent e) {
+    int[] origin = new int[2];
+    getLocationOnScreen(origin);
+    float sx = origin[0] + e.getX(), sy = origin[1] + e.getY();
+    for (android.view.View v = hit; v != null; v = parentOf(v)) {
+      if (v instanceof InputBox || v instanceof android.widget.EditText) return true;
+      if (v instanceof TextBox) {
+        TextBox text = (TextBox) v;
+        if ((text.pressMask & 1) != 0) return true;
+        int[] at = new int[2];
+        text.getLocationOnScreen(at);
+        if (text.pressLinkAt(sx - at[0], sy - at[1])) return true;
+      } else if (v instanceof Box && (((Box) v).pressMask & 1) != 0) return true;
+      else if (v instanceof ImageBox && (((ImageBox) v).pressMask & 1) != 0) return true;
+      else if (v instanceof ScrollBox && (((ScrollBox) v).pressMask & 1) != 0) return true;
+      if (v == this) return false;
     }
     return false;
   }

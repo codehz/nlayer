@@ -103,9 +103,19 @@ final class TextBox extends ViewGroup {
   }
 
   private int hitLink(MotionEvent e) {
+    return linkAt(e.getX(), e.getY());
+  }
+
+  /** A pressable span under a point in this view's coordinates. */
+  boolean pressLinkAt(float x, float y) {
+    return linkAt(x, y) >= 0;
+  }
+
+  private int linkAt(float x, float y) {
     if (layout == null) return -1;
-    int line = layout.getLineForVertical((int) (e.getY() - y));
-    int off = layout.getOffsetForHorizontal(line, e.getX() - x);
+    int line = layout.getLineForVertical((int) (y - this.y));
+    if (line < 0 || line >= layout.getLineCount()) return -1;
+    int off = layout.getOffsetForHorizontal(line, x - this.x);
     for (int i = 0; i < linkPress.length; i++) {
       if (linkPress[i] && off >= links[i * 3] && off < links[i * 3 + 1]) return i;
     }

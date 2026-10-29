@@ -266,7 +266,9 @@ define_class!(
             let Ok(mounter) = mounter.try_borrow() else {
                 return false.into();
             };
-            mounter.tap_dismisses(&view).into()
+            // SAFETY: the touch, in the view's coordinates.
+            let point: CGPoint = unsafe { msg_send![touch, locationInView: &*view] };
+            mounter.tap_dismisses(&view, point).into()
         }
     }
 
@@ -454,9 +456,9 @@ impl Mounter {
         nlayer_core::press_allowed(Points(self.keyboard_inset()), taps, on_input)
     }
 
-    fn tap_dismisses(&self, view: &UIView) -> bool {
+    fn tap_dismisses(&self, view: &UIView, at: CGPoint) -> bool {
         let (taps, on_input) = self.tap_context(view);
-        let handled = self.handled(view);
+        let handled = self.handled(view, at);
         nlayer_core::tap_dismisses(Points(self.keyboard_inset()), taps, on_input, handled)
     }
 
@@ -492,22 +494,30 @@ impl Mounter {
         (None, on_input)
     }
 
-    /// An `onPress` or an input between `view` and the nearest scroll.
-    fn handled(&self, view: &UIView) -> bool {
+    /// An `onPress` or an input from `view` through the nearest scroll.
+    /// A pressable span counts only under `at`, which is in `view`'s coordinates.
+    fn handled(&self, view: &UIView, at: CGPoint) -> bool {
         let mut current = Some(view.retain());
+        let mut point = Some(at);
         while let Some(v) = current {
             let id = v.tag() as NodeId;
             if let Some(slot) = self
                 .slot(id)
                 .filter(|slot| std::ptr::eq(slot.native.view(), &*v))
             {
+                let on_link = if let (Native::Text(text), Some(at)) = (&slot.native, point) {
+                    text.link_at(at).is_some()
+                } else {
+                    false
+                };
+                if matches!(slot.native, Native::Input(_)) || slot.own_press || on_link {
+                    return true;
+                }
                 if matches!(slot.native, Native::Scroll(_)) {
                     return false;
                 }
-                if matches!(slot.native, Native::Input(_)) || slot.own_press || slot.link_press {
-                    return true;
-                }
             }
+            point = None;
             current = v.superview();
         }
         false

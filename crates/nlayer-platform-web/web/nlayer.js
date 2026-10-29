@@ -652,10 +652,12 @@ export class Player {
     return false;
   }
 
-  handles(node, scroll) {
-    for (let el = node; el && el !== scroll; el = el.parentNode) {
+  handles(node, scroll, event) {
+    for (let el = node; el; el = el.parentNode) {
       if (el._kind === "input" || el.classList?.contains("nl-field")) return true;
-      if (el._events?.has("onPress") || el._links?.some((link) => link)) return true;
+      if (el._events?.has("onPress")) return true;
+      if (linkAt(el, event) != null) return true;
+      if (el === scroll) return false;
     }
     return false;
   }
@@ -665,7 +667,7 @@ export class Player {
     const scroll = this.nearestScroll(event.target);
     if (!scroll) return;
     const onInput = this.onInput(event.target, scroll);
-    const handled = this.handles(event.target, scroll);
+    const handled = this.handles(event.target, scroll, event);
     const taps = scroll._taps || "never";
     const dismiss =
       taps === "always" ? false : taps === "handled" ? !handled && !onInput : !onInput;
