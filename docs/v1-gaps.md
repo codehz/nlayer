@@ -14,7 +14,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 1. 明确的契约缺口（绘制）：P0-4 已关闭。
 2. 宿主语义偏差：本切片的 focusStyle、onScroll、transformOrigin 已关闭。
 3. 验收与回归覆盖（三端 target 测试、gallery 断言、If/Each/ErrorBoundary）
-4. 需要定稿的文档歧义（单实例双轴 Scroll、web 上的浏览器全局）
+4. 需要定稿的文档歧义（web 上的浏览器全局）
 
 ## 验证基线
 
@@ -48,7 +48,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 
 | ID | 项 | 现状 | 证据 |
 |---|---|---|---|
-| P1-1 | Scroll 是否单实例双轴 | 文档写“两轴”，实现是 `horizontal: bool` 单轴；gallery 用两个 Scroll 分别覆盖两轴并通过 | `crates/nlayer-core/src/mount.rs:27`、`ops.rs:452`；web `base.css:25-32`；Android `ScrollBox.java:15-17,206-217` |
+| P1-1 | 已关闭。每实例一轴。产品句改为「每实例一轴，横竖各一个 Scroll」；验收屏的「双轴 Scroll」仍指两个实例。iOS 纵向假宽只收原生可滑范围，事件和树仍报引擎尺寸 | `scroll_extent.rs`；iOS `settle_content_sizes` | 单实例不是双轴 |
 | P1-2 | 已关闭。web 用 `requestAnimationFrame`；iOS / Android 把同一帧的偏移合成一次，结束、拖动和惯性先发出等待中的 `onScroll` | `scroll_frame.rs`；`ScrollBox.queueScroll`；web `queueScroll` | `onScroll` 至多每帧一次 |
 | P1-3 | 已关闭。`frame` 布局后按当前宽高重算 pivot；百分比跟尺寸走，绝对长度不重算 | `Mounter.frame`；`Decor.applyPivot` | resize 后 `transformOrigin` 百分比不再陈旧 |
 | P1-4 | Android 安装判定只看 APK mtime | 应用被卸载或清数据后不会重装，后续 `run-as` push 失败；iOS 有容器探测 | `crates/nlayer-cli/src/android.rs:658-669`；iOS `ios.rs:281-291` |
@@ -58,7 +58,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 
 ### P1 处理建议
 
-- P1-1：先定稿。若保留单实例单轴，把 `docs/v1.md` 的“两轴”改成“每实例一轴，横竖各一个 Scroll”；若要单实例双轴，需要改 `ScrollConfig`、三个宿主编码器、`scroll()` 测试步骤。
+- P1-1：已关闭。文档与实现都是每实例一轴。
 - P1-2：已关闭。同一帧多次偏移只收到最后一次 `onScroll`。
 - P1-3：已关闭。尺寸变化后宿主重算 pivot，不依赖引擎重发样式。
 - P1-4：安装前用 `pm path` 或等价探测确认包存在，再决定是否安装。
@@ -134,5 +134,5 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 1. **CLI/API 契约**：P0-1、P0-5、P0-8、P0-9 已关闭。
 2. **键盘/选择器**：P0-2、P0-3、P0-6、P0-7 已关闭。
 3. **绘制与宿主语义**：P0-4、P0-10、P1-2、P1-3 已关闭。
-4. **Scroll 定稿**：P1-1；先改文档或改实现，不要两份契约并存。
+4. **Scroll 定稿**：P1-1 已关闭。
 5. **验收自动化**：P2-1 到 P2-3；把 gallery 和三端 target 测试接入 `cargo test` / CI。

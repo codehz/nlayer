@@ -4,7 +4,10 @@
 //! matrix, insert-below-sibling), `decor.rs` (the clipping image layer) and
 //! `input.rs` (the single-line field). Animation and gestures beyond press
 //! and hover are not applied. A scroll view's delegate reports the scroll
-//! events with the content offset, the content size and the view's size.
+//! events with the content offset, the engine's content size and the view's
+//! size. A vertical scroll may narrow `contentSize` when nothing inside
+//! reaches past the viewport; that native width is not what the event or
+//! `tree()` reports.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -103,6 +106,8 @@ impl Native {
 /// scroll views' delegate. The view's tag is the node id.
 struct RelayIvars {
     mounter: std::cell::RefCell<std::rc::Weak<std::cell::RefCell<Mounter>>>,
+    /// Engine content size by node id. Not the narrowed native `contentSize`.
+    content: RefCell<HashMap<NodeId, (f32, f32)>>,
 }
 
 define_class!(
@@ -279,6 +284,7 @@ impl Relay {
     fn new(mtm: MainThreadMarker) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(RelayIvars {
             mounter: std::cell::RefCell::new(std::rc::Weak::new()),
+            content: RefCell::new(HashMap::new()),
         });
         // SAFETY: NSObject's designated initializer.
         unsafe { msg_send![super(this), init] }
@@ -325,7 +331,8 @@ impl Relay {
     /// is coalesced to the latest offset, once per main-queue turn.
     fn scroll_event(&self, scroll: &UIScrollView, event: EventKind) {
         let id = scroll.tag() as NodeId;
-        let payload = scroll_metrics(scroll);
+        let content = self.ivars().content.borrow().get(&id).copied();
+        let payload = scroll_metrics(scroll, content);
         let Some(shared) = self.ivars().mounter.borrow().upgrade() else {
             return;
         };
@@ -342,17 +349,43 @@ impl Relay {
     }
 }
 
-fn scroll_metrics(scroll: &UIScrollView) -> EventPayload {
+fn scroll_metrics(scroll: &UIScrollView, content: Option<(f32, f32)>) -> EventPayload {
     let offset = scroll.contentOffset();
-    let content = scroll.contentSize();
+    let native = scroll.contentSize();
+    let (content_w, content_h) = content.unwrap_or((native.width as f32, native.height as f32));
     let size = scroll.bounds().size;
     EventPayload::Scroll {
         x: offset.x as f32,
         y: offset.y as f32,
-        content_w: content.width as f32,
-        content_h: content.height as f32,
+        content_w,
+        content_h,
         width: size.width as f32,
         height: size.height as f32,
+    }
+}
+
+/// Whether anything under `root` reaches past `limit` points from its left
+/// edge, in `root`'s space. A scroll view inside scrolls on its own, so what
+/// it holds does not count. Stops at the first view that reaches.
+fn reaches_beyond(root: &UIView, limit: CGFloat) -> bool {
+    let mut pending = Vec::new();
+    push_subviews(root, &mut pending);
+    while let Some(view) = pending.pop() {
+        let frame = view.convertRect_toView(view.bounds(), Some(root));
+        if frame.origin.x + frame.size.width > limit {
+            return true;
+        }
+        if view.downcast_ref::<UIScrollView>().is_none() {
+            push_subviews(&view, &mut pending);
+        }
+    }
+    false
+}
+
+fn push_subviews(view: &UIView, out: &mut Vec<Retained<UIView>>) {
+    let subs = view.subviews();
+    for index in 0..subs.count() {
+        out.push(subs.objectAtIndex(index));
     }
 }
 
@@ -375,6 +408,18 @@ pub(crate) struct Mounter {
     pin: Option<crate::pin::Pin>,
     /// Software keyboard overlap, in points. An explicit pin height replaces it.
     keyboard: Points,
+    /// Vertical scrolls whose content size arrived in this batch, with the
+    /// height that came with it. A size that looks too wide is judged only
+    /// after the batch has put every child's frame in place.
+    content_sizes: Vec<(NodeId, CGFloat)>,
+    /// The engine's width and height for every vertical scroll the platform
+    /// narrowed. The engine does not resend a content size it did not change,
+    /// so a later batch that widens what such a scroll holds gives that width
+    /// back from here.
+    narrowed: Vec<(NodeId, CGFloat, CGFloat)>,
+    /// Whether this batch moved any frame. Nothing under a narrowed scroll can
+    /// have grown otherwise, so that judgement is skipped.
+    frames_applied: bool,
 }
 
 impl Mounter {
@@ -400,6 +445,9 @@ impl Mounter {
             scrolls: RefCell::default(),
             pin: None,
             keyboard: Points::ZERO,
+            content_sizes: Vec::new(),
+            narrowed: Vec::new(),
+            frames_applied: false,
         }));
         CURRENT.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&mounter)));
         relay.bind(Rc::downgrade(&mounter));
@@ -615,6 +663,75 @@ impl Mounter {
             };
             scroll.setContentOffset_animated(CGPoint::new(x.0 as CGFloat, y.0 as CGFloat), true);
         }
+        self.settle_content_sizes();
+    }
+
+    /// Drops a deleted scroll's engine size and any width still being judged.
+    fn forget_scroll(&mut self, id: NodeId) {
+        self.relay.ivars().content.borrow_mut().remove(&id);
+        self.narrowed.retain(|&(n, ..)| n != id);
+        self.content_sizes.retain(|&(n, _)| n != id);
+    }
+
+    /// Narrows a vertical scroll's native content width to its viewport when
+    /// nothing inside reaches past it. Judged after the batch, so a child
+    /// that arrived with the size counts. The engine size stays on the relay.
+    fn settle_content_sizes(&mut self) {
+        let frames_applied = std::mem::take(&mut self.frames_applied);
+        for (id, height) in std::mem::take(&mut self.content_sizes) {
+            let mut narrowed = None;
+            if let Some(Native::Scroll(scroll)) = self.native(id) {
+                let viewport = scroll.bounds().size.width;
+                let content = scroll.contentSize().width;
+                // Content that fits cannot be narrowed; walking the subtree
+                // to learn that would cost the page on every batch.
+                if viewport > 0.0 && content > viewport {
+                    let width = crate::scroll_extent::settled_content_width(
+                        viewport as f64,
+                        content as f64,
+                        reaches_beyond(scroll, viewport + 0.5),
+                    );
+                    if width != content as f64 {
+                        scroll.setContentSize(CGSize::new(width as CGFloat, height));
+                        narrowed = Some((content, height));
+                    }
+                }
+            }
+            self.narrowed.retain(|&(n, ..)| n != id);
+            if let Some((width, height)) = narrowed {
+                self.narrowed.push((id, width, height));
+            }
+        }
+        if frames_applied {
+            self.rejudge_narrowed();
+        }
+    }
+
+    /// Gives the engine's width back once a later batch widens what a
+    /// narrowed scroll holds. Without this the tail stays out of reach.
+    fn rejudge_narrowed(&mut self) {
+        let mut i = 0;
+        while i < self.narrowed.len() {
+            let (id, core, height) = self.narrowed[i];
+            let mut done = true;
+            if let Some(Native::Scroll(scroll)) = self.native(id)
+                && crate::scroll_extent::still_judged(scroll.alwaysBounceHorizontal())
+            {
+                let viewport = scroll.bounds().size.width;
+                let reaches = reaches_beyond(scroll, viewport + 0.5);
+                let width =
+                    crate::scroll_extent::narrowed_width(viewport as f64, core as f64, reaches);
+                if width != scroll.contentSize().width as f64 {
+                    scroll.setContentSize(CGSize::new(width as CGFloat, height));
+                }
+                done = width == core as f64;
+            }
+            if done {
+                self.narrowed.swap_remove(i);
+            } else {
+                i += 1;
+            }
+        }
     }
 
     fn apply_item(&mut self, item: MountItem) {
@@ -631,6 +748,7 @@ impl Mounter {
                 }
             }
             MountItem::Delete { id } => {
+                self.forget_scroll(id);
                 if self.focused == Some(id) {
                     self.end_focus(id);
                 }
@@ -639,6 +757,7 @@ impl Mounter {
                 }
             }
             MountItem::Frame { id, frame } => {
+                self.frames_applied = true;
                 if id == ROOT_ID {
                     return;
                 }
@@ -706,6 +825,13 @@ impl Mounter {
                 scroll.setShowsHorizontalScrollIndicator(horizontal);
                 scroll.setShowsVerticalScrollIndicator(!horizontal);
                 scroll.setDirectionalLockEnabled(true);
+                // A node that stops being vertical drops the width narrowed
+                // while it was. Restoring that width would cut a horizontal
+                // extent short, so the native size stays until the engine
+                // sends the next content size.
+                if !crate::scroll_extent::still_judged(horizontal) {
+                    self.narrowed.retain(|&(n, ..)| n != id);
+                }
                 if let Some(slot) = self.slot_mut(id) {
                     slot.taps = taps;
                     slot.dismiss = dismiss;
@@ -715,10 +841,17 @@ impl Mounter {
                 let Some(Native::Scroll(scroll)) = self.native(id) else {
                     return;
                 };
-                scroll.setContentSize(CGSize::new(
-                    size.width.0 as CGFloat,
-                    size.height.0 as CGFloat,
-                ));
+                let width = size.width.0;
+                let height = size.height.0;
+                self.relay
+                    .ivars()
+                    .content
+                    .borrow_mut()
+                    .insert(id, (width, height));
+                scroll.setContentSize(CGSize::new(width as CGFloat, height as CGFloat));
+                if crate::scroll_extent::still_judged(scroll.alwaysBounceHorizontal()) {
+                    self.content_sizes.push((id, height as CGFloat));
+                }
             }
             MountItem::ScrollBy { id, dx, dy } => {
                 let Some(Native::Scroll(scroll)) = self.native(id) else {
@@ -1162,13 +1295,21 @@ impl Mounter {
             }
             if let Native::Scroll(scroll) = &slot.native {
                 let offset = scroll.contentOffset();
-                let content = scroll.contentSize();
+                let native = scroll.contentSize();
+                let (content_w, content_h) = self
+                    .relay
+                    .ivars()
+                    .content
+                    .borrow()
+                    .get(&id)
+                    .copied()
+                    .unwrap_or((native.width as f32, native.height as f32));
                 node.scroll = Some(ScrollSnap {
                     horizontal: scroll.alwaysBounceHorizontal(),
                     x: offset.x as f32,
                     y: offset.y as f32,
-                    content_w: content.width as f32,
-                    content_h: content.height as f32,
+                    content_w,
+                    content_h,
                 });
             }
             if let Some(picture) = &slot.picture {

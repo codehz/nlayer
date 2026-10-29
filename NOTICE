@@ -120,7 +120,11 @@ Copied files:
   `activeStyle` / `hoverStyle` / `focusStyle`, safe area, CoreText
   measurement, one-axis scroll, PNG / JPEG / WebP from a bundled file or
   `http(s)`, and a single-line field (`value`, `onChange`, `placeholder`,
-  `disabled`, `secureTextEntry`, `keyboardType`). The software keyboard's
+  `disabled`, `secureTextEntry`, `keyboardType`). Vertical false-width
+  narrowing (`crates/nlayer-platform-ios/src/scroll_extent.rs` and
+  `reaches_beyond` in `mount.rs`, from `mount.rs` `settled_content_width`,
+  `narrowed_width`, `still_judged`, `reaches_beyond`) keeps a stale content
+  width from panning a vertical scroll; zoom is not copied. The software keyboard's
   overlap (`crates/nlayer-platform-ios/src/keyboard.rs`, from
   `surface.rs` `keyboard_changed`) is `env(keyboard-inset-height)`; the
   animation and the mounter's scroll-into-view are not copied. Refresh, zoom,

@@ -3,10 +3,19 @@
 //! flushes that view first so the last offset is not reported after it.
 
 /// Latest scroll payload per view, armed until the host flushes the frame.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct ScrollFrames<T> {
     pending: Vec<(u32, T)>,
     armed: bool,
+}
+
+impl<T> Default for ScrollFrames<T> {
+    fn default() -> Self {
+        Self {
+            pending: Vec::new(),
+            armed: false,
+        }
+    }
 }
 
 impl<T> ScrollFrames<T> {
