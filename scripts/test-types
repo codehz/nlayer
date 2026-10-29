@@ -75,6 +75,11 @@ export function App() {
   const n = signal(icon.url);
   return <View>{n()}</View>;
 }
+
+const pairs: [string, string][] = [...new URLSearchParams("a=1").entries()];
+const headerNames: string[] = [...new Headers({ a: "1" }).keys()];
+void pairs;
+void headerNames;
 EOF
 
 (cd "$app" && bun install && bunx tsc --noEmit)

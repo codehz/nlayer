@@ -19,11 +19,13 @@ type JsValue = qjs::JSValue;
 
 const UNDEFINED: JsValue = qjs::JS_UNDEFINED;
 
-/// Class ids of the two globals, registered by [`install`].
+/// Class ids of the two globals and their iterator, registered by
+/// [`install`].
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Classes {
     url: qjs::JSClassID,
     params: qjs::JSClassID,
+    params_iter: qjs::JSClassID,
 }
 
 struct UrlData {
@@ -36,6 +38,15 @@ struct ParamsData {
     list: Vec<(String, String)>,
     /// The URL whose query these are, or [`UNDEFINED`] when standalone.
     url: JsValue,
+}
+
+/// A `URLSearchParams` iterator: `entries` (`0`), `keys` (`1`) or
+/// `values` (`2`), reading the parameters' list by index.
+struct ParamsIterData {
+    /// The parameters it reads (an extra ref).
+    params: JsValue,
+    index: usize,
+    kind: i32,
 }
 
 /// Parses `input` against `base`.
@@ -136,6 +147,82 @@ fn params_data<'a>(cx: *mut JsContext, this: JsValue) -> Result<&'a mut ParamsDa
 fn is_params(cx: *mut JsContext, value: JsValue) -> bool {
     // SAFETY: the class id of a non-object is not ours.
     unsafe { qjs::JS_IsObject(value) && qjs::JS_GetClassID(value) == classes(cx).params }
+}
+
+fn params_iter_data<'a>(
+    cx: *mut JsContext,
+    this: JsValue,
+) -> Result<&'a mut ParamsIterData, JsValue> {
+    // SAFETY: as [`params_data`], for a URLSearchParams iterator.
+    unsafe {
+        let p = qjs::JS_GetOpaque2(cx, this, classes(cx).params_iter) as *mut ParamsIterData;
+        if p.is_null() {
+            return Err(qjs::JS_EXCEPTION);
+        }
+        Ok(&mut *p)
+    }
+}
+
+/// An iterator over `this`'s list, as `entries` / `keys` / `values`.
+fn new_params_iter(cx: *mut JsContext, this: JsValue, kind: i32) -> JsValue {
+    if !is_params(cx, this) {
+        return type_error(
+            cx,
+            "URLSearchParams iterator: the receiver is not a URLSearchParams",
+        );
+    }
+    // SAFETY: a box the finalizer takes, holding an extra ref of `this`.
+    unsafe {
+        let data = Box::into_raw(Box::new(ParamsIterData {
+            params: qjs::JS_DupValue(cx, this),
+            index: 0,
+            kind,
+        }));
+        match object_with(cx, UNDEFINED, classes(cx).params_iter, data.cast()) {
+            Ok(obj) => obj,
+            Err(e) => {
+                let data = Box::from_raw(data);
+                qjs::JS_FreeValue(cx, data.params);
+                e
+            }
+        }
+    }
+}
+
+/// `{ value, done }`, the result an iterator's `next()` returns.
+fn iter_result(cx: *mut JsContext, value: JsValue, done: bool) -> JsValue {
+    // SAFETY: a new object takes `value`.
+    unsafe {
+        let result = qjs::JS_NewObject(cx);
+        if qjs::JS_IsException(result) {
+            qjs::JS_FreeValue(cx, value);
+            return result;
+        }
+        qjs::JS_SetPropertyStr(cx, result, c"value".as_ptr(), value);
+        qjs::JS_SetPropertyStr(
+            cx,
+            result,
+            c"done".as_ptr(),
+            if done { qjs::JS_TRUE } else { qjs::JS_FALSE },
+        );
+        result
+    }
+}
+
+/// The iterator's kind and the next pair, or `None` past the end. Both
+/// `kind` and the pair are copies: the parameters may be changed between
+/// two `next()` calls.
+fn next_pair(
+    cx: *mut JsContext,
+    this: JsValue,
+) -> Result<Option<(i32, (String, String))>, JsValue> {
+    let data = params_iter_data(cx, this)?;
+    let kind = data.kind;
+    let pair = params_data(cx, data.params)?.list.get(data.index).cloned();
+    if pair.is_some() {
+        data.index += 1;
+    }
+    Ok(pair.map(|pair| (kind, pair)))
 }
 
 /// An object of `class_id` holding `data`. `new_target` selects the
@@ -802,6 +889,83 @@ unsafe extern "C" fn params_for_each(
     UNDEFINED
 }
 
+unsafe extern "C" fn params_iter_next(
+    cx: *mut JsContext,
+    this: JsValue,
+    _argc: i32,
+    _argv: *mut JsValue,
+) -> JsValue {
+    let pair = match next_pair(cx, this) {
+        Ok(pair) => pair,
+        Err(e) => return e,
+    };
+    let Some((kind, (key, value))) = pair else {
+        return iter_result(cx, UNDEFINED, true);
+    };
+    let value = match kind {
+        0 => {
+            // SAFETY: a new array takes both strings.
+            unsafe {
+                let array = qjs::JS_NewArray(cx);
+                qjs::JS_SetPropertyUint32(cx, array, 0, new_string(cx, &key));
+                qjs::JS_SetPropertyUint32(cx, array, 1, new_string(cx, &value));
+                array
+            }
+        }
+        1 => new_string(cx, &key),
+        _ => new_string(cx, &value),
+    };
+    iter_result(cx, value, false)
+}
+
+/// `entries` / `keys` / `values` (the `magic` is the kind), and
+/// `[Symbol.iterator]` as `entries`.
+unsafe extern "C" fn params_iter_method(
+    cx: *mut JsContext,
+    this: JsValue,
+    _argc: i32,
+    _argv: *mut JsValue,
+    magic: i32,
+) -> JsValue {
+    new_params_iter(cx, this, magic)
+}
+
+/// The iterator is iterable itself, as the protocol requires.
+unsafe extern "C" fn params_iter_self(
+    cx: *mut JsContext,
+    this: JsValue,
+    _argc: i32,
+    _argv: *mut JsValue,
+    _magic: i32,
+) -> JsValue {
+    // SAFETY: an extra ref, returned.
+    unsafe { qjs::JS_DupValue(cx, this) }
+}
+
+unsafe extern "C" fn finalize_params_iter(rt: *mut qjs::JSRuntime, obj: JsValue) {
+    // SAFETY: as [`finalize_url`].
+    let p = unsafe { qjs::JS_GetOpaque(obj, qjs::JS_GetClassID(obj)) } as *mut ParamsIterData;
+    if p.is_null() {
+        return;
+    }
+    unsafe {
+        let data = Box::from_raw(p);
+        qjs::JS_FreeValueRT(rt, data.params);
+    }
+}
+
+unsafe extern "C" fn mark_params_iter(
+    rt: *mut qjs::JSRuntime,
+    obj: JsValue,
+    mark: qjs::JS_MarkFunc,
+) {
+    // SAFETY: marking reads the parameters the iterator holds.
+    let p = unsafe { qjs::JS_GetOpaque(obj, qjs::JS_GetClassID(obj)) } as *const ParamsIterData;
+    if !p.is_null() {
+        unsafe { qjs::JS_MarkValue(rt, (*p).params, mark) };
+    }
+}
+
 unsafe extern "C" fn finalize_url(rt: *mut qjs::JSRuntime, obj: JsValue) {
     // SAFETY: the opaque is the box `new_url` made, or null if it never
     // attached.
@@ -858,6 +1022,31 @@ fn new_function(
             length,
             qjs::JSCFunctionEnum_JS_CFUNC_generic,
             0,
+        )
+    }
+}
+
+fn new_function_magic(
+    cx: *mut JsContext,
+    name: &CStr,
+    f: unsafe extern "C" fn(*mut JsContext, JsValue, i32, *mut JsValue, i32) -> JsValue,
+    length: i32,
+    magic: i32,
+) -> JsValue {
+    // SAFETY: `magic` selects the magic C function shape; QuickJS reads the
+    // same pointer with one more argument.
+    unsafe {
+        let f = std::mem::transmute::<
+            unsafe extern "C" fn(*mut JsContext, JsValue, i32, *mut JsValue, i32) -> JsValue,
+            unsafe extern "C" fn(*mut JsContext, JsValue, i32, *mut JsValue) -> JsValue,
+        >(f);
+        qjs::JS_NewCFunction2(
+            cx,
+            Some(f),
+            name.as_ptr(),
+            length,
+            qjs::JSCFunctionEnum_JS_CFUNC_generic_magic,
+            magic,
         )
     }
 }
@@ -936,6 +1125,61 @@ fn method(
     }
 }
 
+/// A non-enumerable method with a magic, as `entries` / `keys` / `values`.
+fn method_magic(
+    cx: *mut JsContext,
+    proto: JsValue,
+    name: &CStr,
+    f: unsafe extern "C" fn(*mut JsContext, JsValue, i32, *mut JsValue, i32) -> JsValue,
+    length: i32,
+    magic: i32,
+) {
+    // SAFETY: as [`method`], with the magic variant.
+    unsafe {
+        let func = new_function_magic(cx, name, f, length, magic);
+        qjs::JS_DefinePropertyValueStr(
+            cx,
+            proto,
+            name.as_ptr(),
+            func,
+            (qjs::JS_PROP_CONFIGURABLE | qjs::JS_PROP_WRITABLE) as i32,
+        );
+    }
+}
+
+/// A non-enumerable method under a `Symbol` key, as `[Symbol.iterator]`.
+fn symbol_method(
+    cx: *mut JsContext,
+    proto: JsValue,
+    symbol: &CStr,
+    f: unsafe extern "C" fn(*mut JsContext, JsValue, i32, *mut JsValue, i32) -> JsValue,
+    magic: i32,
+) {
+    // SAFETY: `Symbol` is a platform global here; the property takes the
+    // function.
+    unsafe {
+        let global = qjs::JS_GetGlobalObject(cx);
+        let ctor = qjs::JS_GetPropertyStr(cx, global, c"Symbol".as_ptr());
+        let key = qjs::JS_GetPropertyStr(cx, ctor, symbol.as_ptr());
+        let atom = qjs::JS_ValueToAtom(cx, key);
+        qjs::JS_FreeValue(cx, key);
+        qjs::JS_FreeValue(cx, ctor);
+        qjs::JS_FreeValue(cx, global);
+        if atom == 0 {
+            return;
+        }
+        let func = new_function_magic(cx, symbol, f, 0, magic);
+        qjs::JS_DefinePropertyValue(
+            cx,
+            proto,
+            atom,
+            func,
+            (qjs::JS_PROP_CONFIGURABLE | qjs::JS_PROP_WRITABLE) as i32,
+        );
+        qjs::JS_FreeAtom(cx, atom);
+    }
+}
+
 fn register(
     cx: *mut JsContext,
     name: &'static CStr,
@@ -969,11 +1213,18 @@ pub(crate) fn install(cx: &rquickjs::Ctx<'_>) {
         Some(finalize_params),
         Some(mark_params),
     );
+    let iter_id = register(
+        raw,
+        c"URLSearchParams Iterator",
+        Some(finalize_params_iter),
+        Some(mark_params_iter),
+    );
     // SAFETY: the state `install` made, before the app runs.
     unsafe {
         (*state::state(raw)).url_classes = Classes {
             url: url_id,
             params: params_id,
+            params_iter: iter_id,
         };
     }
     // SAFETY: prototypes and constructors are new; the globals take the
@@ -1024,6 +1275,10 @@ pub(crate) fn install(cx: &rquickjs::Ctx<'_>) {
         crate::standard::set_global(raw, c"URL", url_ctor);
 
         let params_proto = qjs::JS_NewObject(raw);
+        let iter_proto = qjs::JS_NewObject(raw);
+        method(raw, iter_proto, c"next", params_iter_next, 0);
+        symbol_method(raw, iter_proto, c"iterator", params_iter_self, 0);
+        qjs::JS_SetClassProto(raw, iter_id, iter_proto);
         accessor(raw, params_proto, c"size", params_size, None, 0);
         for (name, f, length) in [
             (
@@ -1043,6 +1298,10 @@ pub(crate) fn install(cx: &rquickjs::Ctx<'_>) {
         ] {
             method(raw, params_proto, name, f, length);
         }
+        for (name, magic) in [(c"entries", 0), (c"keys", 1), (c"values", 2)] {
+            method_magic(raw, params_proto, name, params_iter_method, 0, magic);
+        }
+        symbol_method(raw, params_proto, c"iterator", params_iter_method, 0);
         let params_ctor = qjs::JS_NewCFunction2(
             raw,
             Some(params_constructor),

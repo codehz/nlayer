@@ -72,6 +72,10 @@ declare class URLSearchParams {
   set(name: string, value: string): void;
   sort(): void;
   forEach(callback: (value: string, key: string, parent: URLSearchParams) => void): void;
+  entries(): IterableIterator<[string, string]>;
+  keys(): IterableIterator<string>;
+  values(): IterableIterator<string>;
+  [Symbol.iterator](): IterableIterator<[string, string]>;
   toString(): string;
 }
 
@@ -85,6 +89,10 @@ declare class Headers {
   has(name: string): boolean;
   delete(name: string): void;
   forEach(callback: (value: string, key: string, parent: Headers) => void): void;
+  entries(): IterableIterator<[string, string]>;
+  keys(): IterableIterator<string>;
+  values(): IterableIterator<string>;
+  [Symbol.iterator](): IterableIterator<[string, string]>;
 }
 
 interface Blob {

@@ -142,23 +142,30 @@ const PRELUDE: &str = r#"
             callback.call(thisArg, this.get(key), key, this);
         }
     };
-    Headers.prototype.entries = function () {
-        var self = this;
+    function headersIterator(headers, kind) {
         var seen = new Set();
         var keys = [];
-        for (var i = 0; i < this._pairs.length; i++) {
-            var key = this._pairs[i][0];
+        for (var i = 0; i < headers._pairs.length; i++) {
+            var key = headers._pairs[i][0];
             if (!seen.has(key)) { seen.add(key); keys.push(key); }
         }
         var at = 0;
-        return {
+        var iterator = {
             next: function () {
                 if (at >= keys.length) return { done: true, value: undefined };
                 var key = keys[at++];
-                return { done: false, value: [key, self.get(key)] };
+                if (kind === 1) return { done: false, value: key };
+                if (kind === 2) return { done: false, value: headers.get(key) };
+                return { done: false, value: [key, headers.get(key)] };
             },
         };
-    };
+        iterator[Symbol.iterator] = function () { return this; };
+        return iterator;
+    }
+    Headers.prototype.entries = function () { return headersIterator(this, 0); };
+    Headers.prototype.keys = function () { return headersIterator(this, 1); };
+    Headers.prototype.values = function () { return headersIterator(this, 2); };
+    Headers.prototype[Symbol.iterator] = function () { return headersIterator(this, 0); };
 
     function bytesOf(part) {
         if (part === undefined || part === null) return new Uint8Array(0);

@@ -10,11 +10,10 @@
 
 ## 结论
 
-v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bundle、五个宿主组件、三端平台 API、CLI 和类型包都有真实代码，没有 `todo!()` / 空实现。P0–P3 的条目都已关闭，但复核仍留下两项 API 面缺口和两处设备验收盲区：
+v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bundle、五个宿主组件、三端平台 API、CLI 和类型包都有真实代码，没有 `todo!()` / 空实现。P0–P3 的条目都已关闭，复核留下的 API 面缺口已补齐，仍有两处设备验收盲区：
 
-1. `URLSearchParams` 运行时缺 `entries` / `keys` / `values` / `[Symbol.iterator]`，`@nlayer/globals` 也未声明；`Headers` 运行时只有 `entries`，类型未声明 `entries` / `keys` / `values` / `[Symbol.iterator]`。
-2. Android API 28–29 的键盘 inset：`HostActivity.keyboardOverlap` 有代码路径，但没有 API 28/29 的设备回归；现有 emulator-5554 是 API 36。
-3. Android `focusStyle` 祖先链：`Mounter.chainFocused` / `focusChanged` 有实现，iOS 宿主测试覆盖；Android Java instrumentation 没有 focus 用例。
+1. Android API 28–29 的键盘 inset：`HostActivity.keyboardOverlap` 有代码路径，但没有 API 28/29 的设备回归；现有 emulator-5554 是 API 36。
+2. Android `focusStyle` 祖先链：`Mounter.chainFocused` / `focusChanged` 有实现，iOS 宿主测试覆盖；Android Java instrumentation 没有 focus 用例。
 
 P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS 宿主。
 
@@ -32,7 +31,7 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 | `nlayer build examples/gallery --out /tmp/nlayer-build-check` | 写出 `bundle.js`、`bundle.js.map`、`mark.png`（沿用审计基线，本次未复跑） |
 | `nlayer init /tmp/nlayer-init-check` | 写出 `App.tsx`、`App.test.tsx`、`tsconfig.json`、`package.json`、`.gitignore`（沿用审计基线，本次未复跑） |
 | `scripts/test-types` | 五个类型包打包并在临时工程中 `tsc` 通过 |
-| API 探针（`/tmp/nlayer-gap-probe`） | 6/7；`URLSearchParams.entries` 失败，见附件 |
+| API 探针（`/tmp/nlayer-gap-probe`） | 6/6；`URLSearchParams` / `Headers` 的 `entries` / `keys` / `values` / 迭代全过 |
 
 `scripts/test-targets`（`cargo test -p nlayer-cli --test targets`）跑 gallery 四端、三端 press/type/scroll/safe-area，以及 Android Java 层在 emulator 上的 instrumentation。CI 是 `.github/workflows/targets.yml`。
 
@@ -127,21 +126,20 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 
 ## 附件：已复现的 API 缺口
 
-临时应用 `/tmp/nlayer-gap-probe`，用 `nlayer test` 无窗口运行。结果 `6 passed, 1 failed`。`TextDecoder` 的两项和 `Blob` 构造器已关闭。
+临时应用 `/tmp/nlayer-gap-probe`，用 `nlayer test` 无窗口运行。结果 `6 passed, 0 failed`。`TextDecoder` 的两项、`Blob` 构造器，以及 `URLSearchParams` / `Headers` 的迭代器都已关闭。
 
 | 测试 | 结果 | 说明 |
 |---|---|---|
 | `TextDecoder decode with no argument` | ok | 无参返回空串 |
 | `TextDecoder decode a DataView` | ok | DataView 按 Encoding 标准解码 |
 | `crypto.subtle is absent` | ok | QuickJS 宿主符合 v1 |
-| `URLSearchParams exposes entries` | fail | 运行时没有 `entries` / `keys` / `values` / `[Symbol.iterator]`；类型也未声明，属标准完整性而非类型漂移 |
-| `Headers exposes entries` | ok | 运行时只有 `entries`；`keys` / `values` / `[Symbol.iterator]` 缺失，类型未声明这些方法 |
+| `URLSearchParams exposes entries` | ok | `entries` / `keys` / `values` / `[Symbol.iterator]` 齐；类型为 `IterableIterator` |
+| `Headers exposes entries` | ok | `entries` / `keys` / `values` / `[Symbol.iterator]` 齐；类型为 `IterableIterator` |
 | `Blob is not a constructor in v1` | ok | 只作为 `Response.blob()` 的结果 |
 | `Response has no clone` | ok | 与 v1 最小面一致 |
 
-类型侧用 `tsc` 复核：`headers.entries()` 和 `params.entries()` 都报 `TS2339`。
+类型侧用 `tsc` 复核：`headers.entries()`、`params.entries()`、`keys()` 和 `[...params]` 在 `scripts/test-types` 里通过。
 
 ## 剩余工作
 
-1. **API 面**：给 `URLSearchParams` 补 `entries` / `keys` / `values` / `[Symbol.iterator]` 和对应类型；给 `Headers` 补类型声明，并按同一标准补齐 `keys` / `values` / `[Symbol.iterator]`。
-2. **设备回归**：在 API 28/29 emulator 上断言 `env(keyboard-inset-height) > 0` 和 tap/drag 收键盘；在 Android Java instrumentation 补 `focusStyle` 祖先链用例。
+1. **设备回归**：在 API 28/29 emulator 上断言 `env(keyboard-inset-height) > 0` 和 tap/drag 收键盘；在 Android Java instrumentation 补 `focusStyle` 祖先链用例。

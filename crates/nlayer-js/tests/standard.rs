@@ -116,6 +116,44 @@ fn url_search_params_stay_live() {
     "##);
 }
 
+/// `entries` / `keys` / `values`: the list in order, duplicates kept, and
+/// each iterator iterable itself.
+#[test]
+fn url_search_params_iterate() {
+    run(r#"
+        const params = new URLSearchParams("a=1&b=2&a=3");
+        const all = [];
+        for (const pair of params) all.push(pair[0] + "=" + pair[1]);
+        if (all.join(",") !== "a=1,b=2,a=3") throw new Error(all.join(","));
+        if (Array.from(params.entries()).map((p) => p.join(":")).join(",") !== "a:1,b:2,a:3") {
+            throw new Error("entries");
+        }
+        if (Array.from(params.keys()).join(",") !== "a,b,a") throw new Error("keys");
+        if (Array.from(params.values()).join(",") !== "1,2,3") throw new Error("values");
+        const it = params.values();
+        if (it[Symbol.iterator]() !== it) throw new Error("the iterator is not iterable");
+        if (it.next().value !== "1") throw new Error("next");
+        it.next(); it.next();
+        const end = it.next();
+        if (end.done !== true || end.value !== undefined) throw new Error("past the end");
+    "#);
+}
+
+#[test]
+fn headers_iterate() {
+    run(r#"
+        const headers = new Headers([["b", "2"], ["a", "1"], ["b", "3"]]);
+        const all = [];
+        for (const pair of headers) all.push(pair[0] + "=" + pair[1]);
+        if (all.join(",") !== "b=2, 3,a=1") throw new Error(all.join(","));
+        if (Array.from(headers.keys()).join(",") !== "b,a") throw new Error("keys");
+        if (Array.from(headers.values()).join(",") !== "2, 3,1") throw new Error("values");
+        const it = headers.entries();
+        if (it[Symbol.iterator]() !== it) throw new Error("the iterator is not iterable");
+        if (it.next().value.join("=") !== "b=2, 3") throw new Error("next");
+    "#);
+}
+
 #[test]
 fn performance_and_random_values() {
     run(r#"
