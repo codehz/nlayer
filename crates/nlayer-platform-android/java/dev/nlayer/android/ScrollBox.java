@@ -43,6 +43,13 @@ final class ScrollBox extends FrameLayout {
   private boolean armed;
   private float downX, downY;
   private boolean touching, dragging, flung, momentum, applying;
+
+  /** This gesture is swallowed: children do not see it, the scroller still does. */
+  private boolean swallowing;
+
+  /** A lift that never became a drag should resign. */
+  private boolean tapDismiss;
+
   private final Runnable rest = this::cameToRest;
 
   ScrollBox(Context c, Mounter m, int id) {
@@ -86,7 +93,8 @@ final class ScrollBox extends FrameLayout {
 
   /** A tap on the scroller, not a drag. A child that takes the touch never reaches here. */
   private boolean tap(MotionEvent e) {
-    if ((pressMask & 1) == 0) return false;
+    // `never` already resigns this gesture. It must not also fire `onPress`.
+    if (swallowing || (pressMask & 1) == 0) return false;
     int action = e.getActionMasked();
     if (action == MotionEvent.ACTION_DOWN) {
       armed = true;
@@ -210,16 +218,42 @@ final class ScrollBox extends FrameLayout {
 
   @Override
   public boolean dispatchTouchEvent(MotionEvent e) {
-    if (e.getActionMasked() == MotionEvent.ACTION_DOWN && scrollUnder(this, e) == null) {
-      View hit = leaf(this, e.getX(), e.getY());
-      boolean onInput = onInput(hit);
-      boolean handled = handles(hit);
-      if (shouldDismiss(onInput, handled)) {
-        Native.dismissKeyboard(this);
-        if (taps == 0 && !onInput) return true;
+    int action = e.getActionMasked();
+    if (action == MotionEvent.ACTION_DOWN) {
+      swallowing = false;
+      tapDismiss = false;
+      if (scrollUnder(this, e) == null) {
+        View hit = leaf(this, e.getX(), e.getY());
+        boolean onInput = onInput(hit);
+        boolean handled = handles(hit);
+        tapDismiss = shouldDismiss(onInput, handled);
+        // `never`: the tap reaches nothing but the scroll view.
+        swallowing = tapDismiss && taps == 0 && !onInput;
       }
     }
-    return super.dispatchTouchEvent(e);
+    // `released` clears `dragging` while handling the lift. Read it first.
+    boolean dragged = dragging;
+    boolean handledEvent;
+    if (swallowing) {
+      MotionEvent local = MotionEvent.obtain(e);
+      local.offsetLocation(
+          -scroller.getLeft() - scroller.getTranslationX(),
+          -scroller.getTop() - scroller.getTranslationY());
+      scroller.onTouchEvent(local);
+      local.recycle();
+      handledEvent = true;
+    } else {
+      handledEvent = super.dispatchTouchEvent(e);
+    }
+    // A tap resigns. A drag does not, unless `keyboardDismissMode` says so.
+    if (action == MotionEvent.ACTION_UP && tapDismiss && !dragged) {
+      Native.dismissKeyboard(this);
+    }
+    if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+      swallowing = false;
+      tapDismiss = false;
+    }
+    return handledEvent;
   }
 
   private boolean keyboardUp() {
