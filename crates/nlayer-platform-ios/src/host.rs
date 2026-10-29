@@ -23,6 +23,7 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::ptr::NonNull;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 struct RootIvars {
@@ -183,14 +184,29 @@ impl RootView {
     }
 }
 
-struct Queue(Mutex<Vec<nlayer_core::MountBatch>>);
+struct Queue {
+    batches: Mutex<Vec<nlayer_core::MountBatch>>,
+    /// A drain is already queued on the main thread.
+    scheduled: AtomicBool,
+}
 
 impl MountSink for Queue {
     fn submit(&self, batch: nlayer_core::MountBatch) {
-        self.0.lock().expect("mount queue").push(batch);
+        let schedule = {
+            let mut batches = self.batches.lock().expect("mount queue");
+            batches.push(batch);
+            !self.scheduled.swap(true, Ordering::AcqRel)
+        };
+        if !schedule {
+            return;
+        }
         DispatchQueue::main().exec_async(|| {
             let Some(queue) = queue() else { return };
-            let batches = std::mem::take(&mut *queue.0.lock().expect("mount queue"));
+            let batches = {
+                let mut batches = queue.batches.lock().expect("mount queue");
+                queue.scheduled.store(false, Ordering::Release);
+                std::mem::take(&mut *batches)
+            };
             let Some(mounter) = mounter() else { return };
             let mut mounter = mounter.borrow_mut();
             for batch in batches {
@@ -291,7 +307,10 @@ pub(crate) fn start(
         root.observe_keyboard();
     }
     MOUNTER.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&mounter)));
-    let queue = Arc::new(Queue(Mutex::new(Vec::new())));
+    let queue = Arc::new(Queue {
+        batches: Mutex::new(Vec::new()),
+        scheduled: AtomicBool::new(false),
+    });
     QUEUE.with(|slot| *slot.borrow_mut() = Some(Arc::clone(&queue)));
 
     if bundle.is_empty() {

@@ -6,9 +6,11 @@
 //! and hover are not applied. A scroll view's delegate reports the scroll
 //! events with the content offset, the content size and the view's size.
 
+use std::cell::Cell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use dispatch2::DispatchQueue;
 use nlayer_core::geometry::{Bounds, Point, Points, Size};
@@ -57,6 +59,8 @@ struct Slot {
     hover: Option<Retained<UIHoverGestureRecognizer>>,
     /// A dashed or dotted uniform border, above the children.
     dash: Option<Retained<CAShapeLayer>>,
+    /// Clip shape when the four radii differ. Reused across paints.
+    mask: Option<Retained<CAShapeLayer>>,
     /// Per-side borders when the four sides are not one width and color.
     sides: [Option<Retained<CALayer>>; 4],
     /// The fitted bitmap, present only for an image view.
@@ -570,8 +574,33 @@ impl Mounter {
     }
 
     pub(crate) fn apply(&mut self, batch: MountBatch) {
-        for item in batch.items {
-            self.apply_item(item);
+        // One transaction for the batch. nsh wraps each decoration the same
+        // way: a direct layer edit otherwise fades in over a quarter second.
+        // An animated `scrollTo` starts its own animation, so it runs after.
+        let mut animated = Vec::new();
+        quiet(|| {
+            for item in batch.items {
+                if let MountItem::Command {
+                    id,
+                    command:
+                        nlayer_core::Command::ScrollTo {
+                            x,
+                            y,
+                            animated: true,
+                        },
+                } = item
+                {
+                    animated.push((id, x, y));
+                    continue;
+                }
+                self.apply_item(item);
+            }
+        });
+        for (id, x, y) in animated {
+            let Some(Native::Scroll(scroll)) = self.native(id) else {
+                continue;
+            };
+            scroll.setContentOffset_animated(CGPoint::new(x.0 as CGFloat, y.0 as CGFloat), true);
         }
     }
 
@@ -600,10 +629,12 @@ impl Mounter {
                 if id == ROOT_ID {
                     return;
                 }
-                if let Some(view) = self.view(id) {
-                    set_frame(view, frame);
+                // Corners, borders and the image frame depend on the size,
+                // not where the view sits. A move leaves the paint alone.
+                let resized = self.view(id).is_some_and(|view| set_frame(view, frame));
+                if resized {
+                    self.repaint(id);
                 }
-                self.repaint(id);
             }
             MountItem::ViewStyle { id, style } => {
                 if let Some(slot) = self.slot_mut(id) {
@@ -911,25 +942,28 @@ impl Mounter {
     }
 
     fn repaint(&mut self, id: NodeId) {
-        let (view, paint, text_color, scroll) = {
-            let Some(slot) = self.slot(id) else { return };
-            (
-                slot.native.view().retain(),
-                painted(slot),
-                text_override(slot),
-                matches!(slot.native, Native::Scroll(_)),
-            )
-        };
-        if let Some(slot) = self.slot_mut(id) {
-            paint_view(&view, &paint, slot, scroll);
-            place_image(&view, &paint, slot);
-        }
-        if let Some(Native::Text(text)) = self.native(id) {
-            text.set_color(text_color);
-        }
-        if let Some(Native::Input(field)) = self.native(id) {
-            field.set_override_color(text_color);
-        }
+        // Gestures and image arrivals are outside the batch transaction.
+        quiet(|| {
+            let (view, paint, text_color, scroll) = {
+                let Some(slot) = self.slot(id) else { return };
+                (
+                    slot.native.view().retain(),
+                    painted(slot),
+                    text_override(slot),
+                    matches!(slot.native, Native::Scroll(_)),
+                )
+            };
+            if let Some(slot) = self.slot_mut(id) {
+                paint_view(&view, &paint, slot, scroll);
+                place_image(&view, &paint, slot);
+            }
+            if let Some(Native::Text(text)) = self.native(id) {
+                text.set_color(text_color);
+            }
+            if let Some(Native::Input(field)) = self.native(id) {
+                field.set_override_color(text_color);
+            }
+        });
     }
 
     fn report_input(&self, id: NodeId, text: String) {
@@ -1233,6 +1267,7 @@ impl Slot {
             link_press: false,
             hover: None,
             dash: None,
+            mask: None,
             sides: [None, None, None, None],
             picture: None,
             test_id: None,
@@ -1338,7 +1373,7 @@ fn paint_view(view: &UIView, style: &ViewStyle, slot: &mut Slot, scroll: bool) {
         Points(bounds.size.height as f32),
     );
     let radii = style.radii().fit(size);
-    apply_corners(&layer, radii, bounds);
+    apply_corners(&layer, radii, bounds, &mut slot.mask);
     // A drag moves children with the content offset. The scroll viewport
     // clips them, the way `overflow: auto` does. `overflow` only clips a
     // plain view.
@@ -1347,34 +1382,41 @@ fn paint_view(view: &UIView, style: &ViewStyle, slot: &mut Slot, scroll: bool) {
     layer.setTransform(transform_3d(style, bounds.size));
 }
 
-fn apply_corners(layer: &CALayer, radii: nlayer_core::style::CornerRadii, bounds: CGRect) {
-    // SAFETY: clearing the mask, or installing a shape the layer retains.
-    unsafe { layer.setMask(None) };
+fn apply_corners(
+    layer: &CALayer,
+    radii: nlayer_core::style::CornerRadii,
+    bounds: CGRect,
+    mask: &mut Option<Retained<CAShapeLayer>>,
+) {
     if let Some(shared) = radii.shared() {
+        if mask.take().is_some() {
+            // SAFETY: clearing a mask this slot installed.
+            unsafe { layer.setMask(None) };
+        }
         layer.setCornerRadius(shared.0 as CGFloat);
         // MinXMinY is the top left in UIKit's y-down space.
-        let mut mask: usize = 0;
+        let mut bits: usize = 0;
         if radii.top_left > Points::ZERO {
-            mask |= 1 << 0;
+            bits |= 1 << 0;
         }
         if radii.top_right > Points::ZERO {
-            mask |= 1 << 1;
+            bits |= 1 << 1;
         }
         if radii.bottom_left > Points::ZERO {
-            mask |= 1 << 2;
+            bits |= 1 << 2;
         }
         if radii.bottom_right > Points::ZERO {
-            mask |= 1 << 3;
+            bits |= 1 << 3;
         }
-        layer.setMaskedCorners(objc2_quartz_core::CACornerMask(mask));
+        layer.setMaskedCorners(objc2_quartz_core::CACornerMask(bits));
         return;
     }
     layer.setCornerRadius(0.0);
-    let path = rounded_path(bounds, radii);
-    let mask = CAShapeLayer::layer();
-    mask.setFrame(bounds);
-    mask.setPath(Some(&path));
-    unsafe { layer.setMask(Some(&mask)) };
+    let shape = mask.get_or_insert_with(CAShapeLayer::layer);
+    shape.setFrame(bounds);
+    shape.setPath(Some(&rounded_path(bounds, radii)));
+    // SAFETY: a mask layer owned by this slot; the layer retains it.
+    unsafe { layer.setMask(Some(shape)) };
 }
 
 fn rounded_path(
@@ -1477,17 +1519,7 @@ fn apply_border(view: &UIView, style: &ViewStyle, slot: &mut Slot) {
         dash.setFillColor(None);
         dash.setStrokeColor(Some(&*crate::text::cg_color(color)));
         dash.setLineWidth(width.0 as CGFloat);
-        let pattern: &[CGFloat] = match borders.style {
-            BorderStyle::Dotted => &[1.0, 2.0],
-            _ => &[4.0, 3.0],
-        };
-        let dashes: Vec<_> = pattern
-            .iter()
-            .map(|n| objc2_foundation::NSNumber::numberWithDouble(*n))
-            .collect();
-        dash.setLineDashPattern(Some(&objc2_foundation::NSArray::from_retained_slice(
-            &dashes,
-        )));
+        dash.setLineDashPattern(Some(&dash_pattern(borders.style == BorderStyle::Dotted)));
         dash.setZPosition(1_000.0);
         return;
     }
@@ -1542,19 +1574,23 @@ fn clear_sides(slot: &mut Slot) {
 }
 
 /// Keeps the bounds origin, which is a scroll view's content offset.
-fn set_frame(view: &UIView, frame: Bounds<Points>) {
-    let origin = view.bounds().origin;
-    view.setBounds(CGRect::new(
-        origin,
-        CGSize::new(
-            frame.size.width.0 as CGFloat,
-            frame.size.height.0 as CGFloat,
-        ),
-    ));
-    view.setCenter(CGPoint::new(
-        (frame.origin.x.0 + frame.size.width.0 / 2.0) as CGFloat,
-        (frame.origin.y.0 + frame.size.height.0 / 2.0) as CGFloat,
-    ));
+/// Returns whether the size changed. A move with the same size does not
+/// need a repaint.
+fn set_frame(view: &UIView, frame: Bounds<Points>) -> bool {
+    let bounds = view.bounds();
+    let width = frame.size.width.0 as CGFloat;
+    let height = frame.size.height.0 as CGFloat;
+    let resized = bounds.size.width != width || bounds.size.height != height;
+    let center = CGPoint::new(
+        frame.origin.x.0 as CGFloat + width / 2.0,
+        frame.origin.y.0 as CGFloat + height / 2.0,
+    );
+    let placed = view.center();
+    if resized || placed.x != center.x || placed.y != center.y {
+        view.setBounds(CGRect::new(bounds.origin, CGSize::new(width, height)));
+        view.setCenter(center);
+    }
+    resized
 }
 
 fn transform_3d(style: &ViewStyle, size: CGSize) -> CATransform3D {
@@ -1620,12 +1656,13 @@ struct Picture {
     generation: u64,
     /// Natural size in points, once decoded (`None` until then).
     natural: Option<Size<Points>>,
+    /// Clip shape when the four radii differ. Reused across paints.
+    mask: Option<Retained<CAShapeLayer>>,
 }
 
 impl Mounter {
     fn set_image(&mut self, id: NodeId, source: Option<ImageSource>, mode: ResizeMode) {
         let scale = screen_scale(self.mtm);
-        let assets = self.assets.clone();
         let reload = {
             let Some(slot) = self.slot_mut(id) else {
                 return;
@@ -1647,8 +1684,11 @@ impl Mounter {
                 Some((generation, next))
             }
         };
-        if let Some((generation, Some(uri))) = reload {
-            load_image(id, generation, uri, assets, scale);
+        if let Some((generation, Some(uri))) = reload
+            && let Some(decoded) = begin_load(id, generation, uri, &self.assets, scale)
+        {
+            self.finish_image(id, generation, scale, Ok(decoded));
+            return;
         }
         self.repaint(id);
     }
@@ -1700,22 +1740,75 @@ impl Mounter {
     }
 }
 
-fn load_image(id: NodeId, generation: u64, uri: Arc<str>, assets: PathBuf, scale: f32) {
-    use dispatch2::{DispatchQueue, DispatchQueueGlobalPriority, GlobalQueueIdentifier};
+struct Waiter {
+    id: NodeId,
+    generation: u64,
+    scale: f32,
+}
+
+fn inflight() -> &'static Mutex<HashMap<Arc<str>, Vec<Waiter>>> {
+    static INFLIGHT: OnceLock<Mutex<HashMap<Arc<str>, Vec<Waiter>>>> = OnceLock::new();
+    INFLIGHT.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Starts a decode of `uri`, or joins one already running. A cached bitmap
+/// is returned so the caller can paint it now.
+fn begin_load(
+    id: NodeId,
+    generation: u64,
+    uri: Arc<str>,
+    assets: &std::path::Path,
+    scale: f32,
+) -> Option<crate::image::Decoded> {
+    if let Some(decoded) = crate::image::cached(&uri) {
+        return Some(decoded);
+    }
+    {
+        let mut inflight = inflight().lock().expect("image loads");
+        if let Some(waiters) = inflight.get_mut(&uri) {
+            waiters.push(Waiter {
+                id,
+                generation,
+                scale,
+            });
+            return None;
+        }
+        inflight.insert(
+            Arc::clone(&uri),
+            vec![Waiter {
+                id,
+                generation,
+                scale,
+            }],
+        );
+    }
+    let assets = assets.to_path_buf();
+    let key = uri;
+    use dispatch2::{DispatchQueueGlobalPriority, GlobalQueueIdentifier};
     DispatchQueue::global_queue(GlobalQueueIdentifier::Priority(
         DispatchQueueGlobalPriority::Default,
     ))
     .exec_async(move || {
-        let loaded = crate::image::load(&assets, &uri).map_err(|error| format!("{uri}: {error}"));
+        let loaded = crate::image::load(&assets, &key).map_err(|error| format!("{key}: {error}"));
         DispatchQueue::main().exec_async(move || {
+            if let Ok(decoded) = &loaded {
+                crate::image::store(Arc::clone(&key), decoded);
+            }
+            let waiters = inflight()
+                .lock()
+                .expect("image loads")
+                .remove(&key)
+                .unwrap_or_default();
             let Some(mounter) = current() else {
                 return;
             };
-            mounter
-                .borrow_mut()
-                .finish_image(id, generation, scale, loaded);
+            let mut mounter = mounter.borrow_mut();
+            for waiter in waiters {
+                mounter.finish_image(waiter.id, waiter.generation, waiter.scale, loaded.clone());
+            }
         });
     });
+    None
 }
 
 thread_local! {
@@ -1790,13 +1883,14 @@ fn image_layers(mtm: MainThreadMarker) -> (Retained<UIView>, Picture) {
             uri: None,
             generation: 0,
             natural: None,
+            mask: None,
         },
     )
 }
 
 /// Frames the picture where `objectFit` puts it, and clips that to the view.
-fn place_image(view: &UIView, style: &ViewStyle, slot: &Slot) {
-    let Some(picture) = &slot.picture else {
+fn place_image(view: &UIView, style: &ViewStyle, slot: &mut Slot) {
+    let Some(picture) = &mut slot.picture else {
         return;
     };
     let bounds = view.bounds();
@@ -1814,25 +1908,74 @@ fn place_image(view: &UIView, style: &ViewStyle, slot: &Slot) {
     };
     let clip = picture.clip.clone();
     let layer = picture.layer.clone();
-    quiet(|| {
-        clip.setFrame(bounds);
-        apply_corners(&clip, radii, clip.bounds());
-        layer.setFrame(CGRect::new(
-            CGPoint::new(fitted.origin.x.0 as CGFloat, fitted.origin.y.0 as CGFloat),
-            CGSize::new(
-                fitted.size.width.0 as CGFloat,
-                fitted.size.height.0 as CGFloat,
-            ),
-        ));
-    });
+    clip.setFrame(bounds);
+    apply_corners(&clip, radii, clip.bounds(), &mut picture.mask);
+    layer.setFrame(CGRect::new(
+        CGPoint::new(fitted.origin.x.0 as CGFloat, fitted.origin.y.0 as CGFloat),
+        CGSize::new(
+            fitted.size.width.0 as CGFloat,
+            fitted.size.height.0 as CGFloat,
+        ),
+    ));
 }
 
+fn dash_pattern(dotted: bool) -> Retained<objc2_foundation::NSArray<objc2_foundation::NSNumber>> {
+    use objc2_foundation::{NSArray, NSNumber};
+    use std::cell::RefCell;
+    thread_local! {
+        static DASHED: RefCell<Option<Retained<NSArray<NSNumber>>>> = const { RefCell::new(None) };
+        static DOTTED: RefCell<Option<Retained<NSArray<NSNumber>>>> = const { RefCell::new(None) };
+    }
+    let fill = |slot: &RefCell<Option<Retained<NSArray<NSNumber>>>>, pattern: &[f64]| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            let dashes: Vec<_> = pattern
+                .iter()
+                .copied()
+                .map(NSNumber::numberWithDouble)
+                .collect();
+            *slot = Some(NSArray::from_retained_slice(&dashes));
+        }
+        slot.as_ref().expect("dash pattern").clone()
+    };
+    if dotted {
+        DOTTED.with(|slot| fill(slot, &[1.0, 2.0]))
+    } else {
+        DASHED.with(|slot| fill(slot, &[4.0, 3.0]))
+    }
+}
+
+thread_local! {
+    static QUIET: Cell<u32> = const { Cell::new(0) };
+}
+
+struct QuietGuard {
+    outer: bool,
+}
+
+impl Drop for QuietGuard {
+    fn drop(&mut self) {
+        if self.outer {
+            CATransaction::commit();
+        }
+        QUIET.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
+/// Runs `f` without Core Animation's implicit animations. Nested calls
+/// share the outer transaction, so a batch is one commit.
 fn quiet<R>(f: impl FnOnce() -> R) -> R {
-    CATransaction::begin();
-    CATransaction::setDisableActions(true);
-    let result = f();
-    CATransaction::commit();
-    result
+    let outer = QUIET.with(|depth| {
+        let current = depth.get();
+        depth.set(current + 1);
+        current == 0
+    });
+    if outer {
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+    }
+    let _guard = QuietGuard { outer };
+    f()
 }
 
 #[allow(deprecated)]

@@ -238,6 +238,24 @@ pub(crate) struct LaidLine {
     /// Where its caret positions end: before a hard break that ends the line.
     #[allow(dead_code)]
     pub(crate) caret_end: CFIndex,
+    width: CGFloat,
+    ascent: CGFloat,
+    descent: CGFloat,
+    leading: CGFloat,
+}
+
+impl LaidLine {
+    fn measure(&mut self) {
+        let (mut ascent, mut descent, mut leading) = (0.0, 0.0, 0.0);
+        // SAFETY: a valid line and out pointers.
+        self.width = unsafe {
+            self.line
+                .typographic_bounds(&mut ascent, &mut descent, &mut leading)
+        };
+        self.ascent = ascent;
+        self.descent = descent;
+        self.leading = leading;
+    }
 }
 
 /// Finished lines the text view draws. A finished `CTLine` is immutable;
@@ -499,7 +517,7 @@ impl TextEngine for CoreTextEngine {
         let framesetter = unsafe { CTFramesetter::with_attributed_string(attributed) };
         Prepared {
             framesetter,
-            length: text.text.encode_utf16().count() as CFIndex,
+            length: CFAttributedString::length(&string),
             string,
             max_lines: text.max_lines,
             ellipsize: text.ellipsize,
@@ -564,6 +582,10 @@ impl TextEngine for CoreTextEngine {
                         origin: origins[i as usize],
                         range,
                         caret_end,
+                        width: 0.0,
+                        ascent: 0.0,
+                        descent: 0.0,
+                        leading: 0.0,
                     }
                 })
                 .collect::<Vec<_>>()
@@ -586,6 +608,9 @@ impl TextEngine for CoreTextEngine {
                 last.caret_end = prepared.length;
             }
         }
+        for line in &mut lines {
+            line.measure();
+        }
         TextLayout(std::sync::Arc::new(CoreTextLayout { lines, height }))
     }
 
@@ -596,26 +621,18 @@ impl TextEngine for CoreTextEngine {
         layout
             .lines
             .iter()
-            .map(|l| {
-                let (mut ascent, mut descent, mut leading) = (0.0, 0.0, 0.0);
-                // SAFETY: a valid line and out pointers.
-                let width = unsafe {
-                    l.line
-                        .typographic_bounds(&mut ascent, &mut descent, &mut leading)
-                };
-                TextLine {
-                    text: String::new(),
-                    start: l.range.location as u32,
-                    end: (l.range.location + l.range.length) as u32,
-                    x: Points(l.origin.x as f32),
-                    y: Points((layout.height - l.origin.y - ascent) as f32),
-                    width: Points(width as f32),
-                    height: Points((ascent + descent + leading) as f32),
-                    ascender: Points(ascent as f32),
-                    descender: Points(descent as f32),
-                    cap_height: Points(ascent as f32),
-                    x_height: Points((ascent * 0.5) as f32),
-                }
+            .map(|l| TextLine {
+                text: String::new(),
+                start: l.range.location as u32,
+                end: (l.range.location + l.range.length) as u32,
+                x: Points(l.origin.x as f32),
+                y: Points((layout.height - l.origin.y - l.ascent) as f32),
+                width: Points(l.width as f32),
+                height: Points((l.ascent + l.descent + l.leading) as f32),
+                ascender: Points(l.ascent as f32),
+                descender: Points(l.descent as f32),
+                cap_height: Points(l.ascent as f32),
+                x_height: Points((l.ascent * 0.5) as f32),
             })
             .collect()
     }

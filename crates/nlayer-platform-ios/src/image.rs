@@ -1,9 +1,11 @@
 //! Image bytes for one view.
 //!
 //! Extracted from `nsh-platform-ios/src/image.rs` and cut to a bundled
-//! `asset:/` file or an `http(s)` URL, decoded once with ImageIO. Disk
-//! cache, downsampling, SVG, GIF frames, tint, blur and prefetch are not
-//! copied. v1 shows PNG, JPEG and WebP only.
+//! `asset:/` file or an `http(s)` URL. A URI is decoded once; later views
+//! share that bitmap, and a burst of the same URI shares the load. The
+//! cache is bounded and drops the least recently used bitmaps. Disk cache,
+//! downsampling, SVG, GIF frames, tint, blur and prefetch are not copied.
+//! v1 shows PNG, JPEG and WebP only.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -69,50 +71,130 @@ pub(crate) fn bitmap_kind(bytes: &[u8]) -> Option<BitmapKind> {
 }
 
 /// A decoded bitmap, in pixels, orientation already applied.
+///
+/// A finished `CGImage` is immutable. It is decoded off the main thread and
+/// then shared with every view that shows the same URI.
 #[cfg(target_os = "ios")]
+#[derive(Clone)]
 pub(crate) struct Decoded {
     pub(crate) image: objc2_core_foundation::CFRetained<objc2_core_graphics::CGImage>,
     pub(crate) width: u32,
     pub(crate) height: u32,
 }
 
+// SAFETY: ImageIO publishes a finished image; nothing mutates its pixels.
+#[cfg(target_os = "ios")]
+unsafe impl Send for Decoded {}
+
+/// Bytes of decoded pixels kept before the oldest entry is dropped.
+/// nsh's `NSCache` uses the same ceiling and is purged under pressure;
+/// this map only has the ceiling.
+#[cfg(target_os = "ios")]
+const CACHE_BYTES: usize = 96 << 20;
+
+#[cfg(target_os = "ios")]
+struct Cache {
+    /// Oldest at the front. A hit moves the entry to the back.
+    entries: Vec<(std::sync::Arc<str>, Decoded)>,
+    bytes: usize,
+}
+
+#[cfg(target_os = "ios")]
+fn cache() -> &'static std::sync::Mutex<Cache> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<Cache>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| {
+        std::sync::Mutex::new(Cache {
+            entries: Vec::new(),
+            bytes: 0,
+        })
+    })
+}
+
+#[cfg(target_os = "ios")]
+fn cost(decoded: &Decoded) -> usize {
+    (decoded.width as usize)
+        .saturating_mul(decoded.height as usize)
+        .saturating_mul(4)
+}
+
+/// A bitmap already decoded for `uri`, if one is still cached.
+#[cfg(target_os = "ios")]
+pub(crate) fn cached(uri: &str) -> Option<Decoded> {
+    let mut cache = cache().lock().expect("image cache");
+    let index = cache
+        .entries
+        .iter()
+        .position(|(key, _)| key.as_ref() == uri)?;
+    let decoded = cache.entries[index].1.clone();
+    let entry = cache.entries.remove(index);
+    cache.entries.push(entry);
+    Some(decoded)
+}
+
+/// Keeps `decoded` for later views of `uri`.
+#[cfg(target_os = "ios")]
+pub(crate) fn store(uri: std::sync::Arc<str>, decoded: &Decoded) {
+    let mut cache = cache().lock().expect("image cache");
+    if let Some(index) = cache
+        .entries
+        .iter()
+        .position(|(key, _)| key.as_ref() == uri.as_ref())
+    {
+        cache.bytes = cache.bytes.saturating_sub(cost(&cache.entries[index].1));
+        cache.entries.remove(index);
+    }
+    let added = cost(decoded);
+    while cache.bytes + added > CACHE_BYTES && !cache.entries.is_empty() {
+        let (_, old) = cache.entries.remove(0);
+        cache.bytes = cache.bytes.saturating_sub(cost(&old));
+    }
+    cache.bytes += added;
+    cache.entries.push((uri, decoded.clone()));
+}
+
 /// Reads `uri` and decodes it. The point size is `width` / `height` divided
 /// by the screen scale; this function does not know the scale.
 #[cfg(target_os = "ios")]
 pub(crate) fn load(assets: &Path, uri: &str) -> Result<Decoded, String> {
-    let bytes = read_uri(assets, uri)?;
-    if bitmap_kind(&bytes).is_none() {
+    let data = read_data(assets, uri)?;
+    // SAFETY: the data is immutable for this sniff.
+    let bytes = unsafe { data.as_bytes_unchecked() };
+    if bitmap_kind(bytes).is_none() {
         return Err("not a PNG, JPEG or WebP".to_owned());
     }
-    decode(&bytes)
+    decode(&data)
 }
 
 #[cfg(target_os = "ios")]
-fn read_uri(assets: &Path, uri: &str) -> Result<Vec<u8>, String> {
+fn read_data(
+    assets: &Path,
+    uri: &str,
+) -> Result<objc2::rc::Retained<objc2_foundation::NSData>, String> {
+    use objc2_foundation::{NSData, NSDataReadingOptions, NSString, NSURL};
+
     if uri.starts_with("asset:/") {
         let path = asset_file(assets, uri).ok_or_else(|| format!("bad asset URI {uri}"))?;
-        return std::fs::read(&path).map_err(|error| format!("{}: {error}", path.display()));
+        // Mapped when the file is a regular file: ImageIO reads it without
+        // a second copy into a `Vec`.
+        return NSData::dataWithContentsOfFile_options_error(
+            &NSString::from_str(&path.to_string_lossy()),
+            NSDataReadingOptions::MappedIfSafe,
+        )
+        .map_err(|error| format!("{}: {}", path.display(), error.localizedDescription()));
     }
     if is_http(uri) {
-        return read_http(uri);
+        let url = NSURL::URLWithString(&NSString::from_str(uri))
+            .ok_or_else(|| format!("bad URL {uri}"))?;
+        return NSData::dataWithContentsOfURL(&url).ok_or_else(|| format!("could not fetch {uri}"));
     }
     Err(format!("unsupported image URI {uri}"))
 }
 
-#[cfg(target_os = "ios")]
-fn read_http(uri: &str) -> Result<Vec<u8>, String> {
-    use objc2_foundation::{NSData, NSString, NSURL};
-    let url =
-        NSURL::URLWithString(&NSString::from_str(uri)).ok_or_else(|| format!("bad URL {uri}"))?;
-    NSData::dataWithContentsOfURL(&url)
-        .map(|data| data.to_vec())
-        .ok_or_else(|| format!("could not fetch {uri}"))
-}
-
 /// ImageIO, one frame, EXIF orientation applied. Copied from nsh's bitmap
-/// decode without the thumbnail cap, blur or animation.
+/// decode without the thumbnail cap, blur or animation. `data` is decoded
+/// in place: it is not copied into a `CFData`.
 #[cfg(target_os = "ios")]
-fn decode(bytes: &[u8]) -> Result<Decoded, String> {
+fn decode(data: &objc2_foundation::NSData) -> Result<Decoded, String> {
     use objc2_core_foundation::{
         CFBoolean, CFData, CFDictionary, CFString, CFType, kCFBooleanTrue,
     };
@@ -122,12 +204,14 @@ fn decode(bytes: &[u8]) -> Result<Decoded, String> {
         kCGImageSourceCreateThumbnailWithTransform, kCGImageSourceShouldCacheImmediately,
     };
 
-    let data = CFData::from_bytes(bytes);
-    // SAFETY: `data` is immutable for this call. The option dictionary holds
-    // the documented ImageIO keys and boolean values. The thumbnail is the
-    // whole image with its orientation transform applied.
+    // SAFETY: `data` is immutable for this call and outlives the source.
+    // NSData is toll-free bridged with CFData. The option dictionary holds
+    // the documented ImageIO keys. The thumbnail is the whole image with
+    // its orientation transform applied, and it is decoded now so a mapped
+    // file can be unmapped after this returns.
     let image = unsafe {
-        let source = CGImageSource::with_data(&data, None).ok_or("ImageIO could not read it")?;
+        let cf = &*(std::ptr::from_ref(data).cast::<CFData>());
+        let source = CGImageSource::with_data(cf, None).ok_or("ImageIO could not read it")?;
         let yes = kCFBooleanTrue.ok_or("missing kCFBooleanTrue")?;
         let yes: &CFType = &*(yes as *const CFBoolean).cast::<CFType>();
         let keys: [&CFString; 3] = [
