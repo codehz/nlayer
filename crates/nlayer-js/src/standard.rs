@@ -2,9 +2,10 @@
 //! timers, `URL` / `URLSearchParams`, `TextEncoder` / `TextDecoder`,
 //! `atob` / `btoa`, `performance.now` and `crypto.getRandomValues`.
 //!
-//! `fetch` (with `Request`, `Response`, `Headers`, `Blob` and
-//! `AbortController`) queues requests for the engine's HTTP stack and
-//! resolves their promises here.
+//! `fetch` (with `Request`, `Response`, `Headers` and `AbortController`)
+//! queues requests for the engine's HTTP stack and resolves their promises
+//! here. `Blob` is only the object `Response.blob()` returns, not a
+//! constructor.
 
 use std::ffi::CStr;
 
@@ -91,7 +92,8 @@ const PRELUDE: &str = r#"
     Object.defineProperty(globalThis, "clearInterval", { value: clearTimeout, writable: true, configurable: true });
     Object.defineProperty(globalThis, "__nlayerFireTimer", { value: __nlayerFireTimer, writable: false, configurable: false });
 
-    // --- fetch, Request, Response, Headers, Blob and AbortController ---
+    // --- fetch, Request, Response, Headers and AbortController ---
+    // `Blob` stays local: v1 exposes it only as `Response.blob()`'s result.
 
     function Headers(init) {
         this._pairs = [];
@@ -286,7 +288,13 @@ const PRELUDE: &str = r#"
         return this.text().then(function (text) { return JSON.parse(text); });
     };
     Response.prototype.blob = function () {
-        return this._share().then(function (bytes) { return new Blob([bytes]); });
+        var raw = this.headers && this.headers.get && this.headers.get("content-type");
+        var type = "";
+        if (raw) {
+            var semi = String(raw).indexOf(";");
+            type = (semi < 0 ? raw : String(raw).slice(0, semi)).trim();
+        }
+        return this._share().then(function (bytes) { return new Blob([bytes], { type: type }); });
     };
 
     var pendingFetch = new Map();
@@ -346,7 +354,6 @@ const PRELUDE: &str = r#"
         Headers: Headers,
         Request: Request,
         Response: Response,
-        Blob: Blob,
         AbortController: AbortController,
         AbortSignal: AbortSignal,
         fetch: fetch,

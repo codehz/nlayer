@@ -87,8 +87,7 @@ declare class Headers {
   forEach(callback: (value: string, key: string, parent: Headers) => void): void;
 }
 
-declare class Blob {
-  constructor(parts?: (string | Blob | ArrayBuffer | ArrayBufferView)[], options?: { type?: string });
+interface Blob {
   readonly size: number;
   readonly type: string;
   arrayBuffer(): Promise<ArrayBuffer>;

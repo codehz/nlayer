@@ -272,8 +272,8 @@ function App() {{
     const shown = signal("loading");
     fetch("{base}/bytes")
         .then(async (response) => {{
-            const bytes = await response.arrayBuffer();
-            const blob = new Blob([bytes], {{ type: "application/octet-stream" }});
+            const blob = await response.blob();
+            const bytes = await blob.arrayBuffer();
             return `${{bytes.byteLength}} ${{blob.size}} ${{blob.type}} ${{await blob.text()}}`;
         }})
         .then((text) => shown.set(text))

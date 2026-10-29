@@ -135,8 +135,7 @@ declare class Headers {
   forEach(callback: (value: string, key: string, parent: Headers) => void): void;
 }
 
-declare class Blob {
-  constructor(parts?: (string | Blob | ArrayBuffer | ArrayBufferView)[], options?: { type?: string });
+interface Blob {
   readonly size: number;
   readonly type: string;
   arrayBuffer(): Promise<ArrayBuffer>;
@@ -617,6 +616,11 @@ mod tests {
         assert!(globals.contains("fetch(input: string | URL | Request"));
         assert!(globals.contains("declare const console"));
         assert!(!globals.contains("subtle"), "crypto.subtle is absent in v1");
+        assert!(globals.contains("interface Blob"));
+        assert!(
+            !globals.contains("constructor(parts"),
+            "Blob is a result type, not a constructor"
+        );
         assert!(globals.contains("declare module \"*.png\""));
         assert!(globals.contains("declare module \"*.jpg\""));
         assert!(globals.contains("declare module \"*.jpeg\""));

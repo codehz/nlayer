@@ -42,6 +42,24 @@ fn text_decoder_accepts_missing_and_view_input() {
     "#);
 }
 
+/// `Blob` is `Response.blob()`'s result, not a global constructor.
+#[test]
+fn blob_is_a_result_not_a_constructor() {
+    run(r#"
+        if (typeof Blob !== "undefined") throw new Error(typeof Blob);
+        const typed = new Response({
+            status: 200,
+            headers: [["content-type", "text/plain; charset=utf-8"]],
+            body: new TextEncoder().encode("hi"),
+        });
+        const blob = await typed.blob();
+        if (blob.type !== "text/plain") throw new Error(blob.type);
+        if (blob.size !== 2 || await blob.text() !== "hi") throw new Error("text");
+        const bytes = await blob.arrayBuffer();
+        if (bytes.byteLength !== 2) throw new Error("arrayBuffer");
+    "#);
+}
+
 #[test]
 fn base64_and_url() {
     run(r#"
