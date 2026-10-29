@@ -73,6 +73,17 @@ fn platform(cx: *mut JsContext) -> JsValue {
     }
 }
 
+/// `storage`: the app's key-value storage the prelude made.
+fn storage(cx: *mut JsContext) -> JsValue {
+    // SAFETY: the prelude's object on the global; the result is new.
+    unsafe {
+        let global = qjs::JS_GetGlobalObject(cx);
+        let value = qjs::JS_GetPropertyStr(cx, global, c"__nlayerStorage".as_ptr());
+        qjs::JS_FreeValue(cx, global);
+        value
+    }
+}
+
 /// `Keyboard`: `{ dismiss() }`. The call is `Command::Blur` on the root.
 fn keyboard(cx: *mut JsContext) -> JsValue {
     // SAFETY: a new object; the module takes the function.
@@ -95,6 +106,7 @@ const RUNTIME: &[Item] = &[
     ("context", Export::Function(dom::context, 1)),
     ("mount", Export::Function(dom::mount, 2)),
     ("ErrorBoundary", Export::Function(dom::error_boundary, 1)),
+    ("storage", Export::Value(storage)),
 ];
 
 /// `@nlayer/ui`: the host components.

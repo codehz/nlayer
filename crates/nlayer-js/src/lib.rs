@@ -18,6 +18,7 @@ mod random;
 mod reactive;
 mod standard;
 mod state;
+mod storage;
 mod url;
 
 use std::time::Duration;
@@ -103,6 +104,15 @@ impl Host {
         });
         installed?;
         Ok(Host { rt, cx })
+    }
+
+    /// The app's key-value storage (`storage` of `@nlayer/runtime`). Set
+    /// it before the app runs; unset, it is in memory for the VM's life.
+    pub fn set_storage(&self, storage: nlayer_core::storage::Store) {
+        self.cx.with(|cx| {
+            // SAFETY: the state `install` made for this context.
+            unsafe { (*state::state(cx.as_raw().as_ptr())).storage = Some(storage) }
+        });
     }
 
     /// The OS [`Os::name`] `platform.os` reports. Set it before the app

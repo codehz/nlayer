@@ -26,6 +26,7 @@ thiserror.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = "3.1"
+serde_json.workspace = true
 
 [dev-dependencies]
 nlayer-bundler.workspace = true

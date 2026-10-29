@@ -153,6 +153,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_load(
     handle: jlong,
     code: JByteArray<'_>,
     _assets: JString<'_>,
+    data_dir: JString<'_>,
 ) {
     if handle == 0 {
         return;
@@ -176,11 +177,11 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_load(
     let sink = Arc::new(Sink {
         view: host.view.clone(),
     });
-    match Engine::start(
-        EngineConfig::new(bundle, viewport).with_os(Os::Android),
-        move || AndroidTextEngine { density },
-        sink,
-    ) {
+    let mut config = EngineConfig::new(bundle, viewport).with_os(Os::Android);
+    if let Ok(dir) = env.get_string(&data_dir) {
+        config = config.with_data_dir(String::from(dir));
+    }
+    match Engine::start(config, move || AndroidTextEngine { density }, sink) {
         Ok(engine) => {
             *host.control.lock().unwrap_or_else(|err| err.into_inner()) = Some(engine.control());
             *host.engine.lock().unwrap_or_else(|err| err.into_inner()) = Some(engine);

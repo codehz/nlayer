@@ -105,13 +105,19 @@ public final class HostView extends FrameLayout {
       Native.insets(handle, pin.top, pin.right, pin.bottom, pin.left, pin.keyboard);
     }
     if (code != null) {
-      Native.load(handle, code.getBytes(java.nio.charset.StandardCharsets.UTF_8), assetsDir);
+      Native.load(
+          handle, code.getBytes(java.nio.charset.StandardCharsets.UTF_8), assetsDir, dataDir());
       code = null;
     }
     if (!served && pin != null && pin.port != 0) {
       served = true;
       Native.serve(handle, pin.host, pin.port);
     }
+  }
+
+  /** Where the app's storage lives: `nlayer` in the private files directory. */
+  String dataDir() {
+    return new File(getContext().getFilesDir(), "nlayer").getAbsolutePath();
   }
 
   String assetsPath() {

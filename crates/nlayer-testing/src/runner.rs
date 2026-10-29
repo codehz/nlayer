@@ -21,9 +21,10 @@ use nlayer_bundler::{BundleOptions, bundle};
 use nlayer_core::{
     KeyboardType, ROOT_ID, ResizeMode, ViewKind,
     geometry::{Bounds, Edges, Points, Size, px},
+    text::ApproxTextEngine,
     transform::TransformKind,
 };
-use nlayer_engine::EngineError;
+use nlayer_engine::{EngineConfig, EngineError};
 use nlayer_js::Host;
 use serde::Deserialize;
 
@@ -190,6 +191,9 @@ pub struct HostOpen {
     pub safe_area: Option<HostInsets>,
     /// Pinned keyboard inset. `None` is zero.
     pub keyboard: Option<f32>,
+    /// The directory the headless app keeps its storage in. `None`: in
+    /// memory.
+    pub data_dir: Option<PathBuf>,
 }
 
 /// One app a test has opened. Dropping it closes the app.
@@ -572,6 +576,8 @@ struct OpenOptions {
     #[serde(rename = "safeArea")]
     safe_area: Option<SafeArea>,
     keyboard: Option<f32>,
+    #[serde(rename = "dataDir")]
+    data_dir: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -680,6 +686,10 @@ impl Session {
                 left: area.left,
             }),
             keyboard: options.keyboard,
+            data_dir: options
+                .data_dir
+                .map(|dir| resolve_dir(&self.dir, &dir))
+                .transpose()?,
         };
         let app = with_host(|host| host.open(opened))??;
         let id = self.apps.len();
@@ -733,11 +743,15 @@ impl AppHost for HeadlessHost {
             test: false,
         })
         .map_err(|e| e.plain)?;
-        let mut app = Headless::start(
+        let mut config = EngineConfig::new(
             with_fixture_origin(&bundled.code, &app_dir),
             Size::new(px(request.width), px(request.height)),
-        )
-        .map_err(engine_error)?;
+        );
+        if let Some(dir) = &request.data_dir {
+            config = config.with_data_dir(dir);
+        }
+        let mut app =
+            Headless::start_with_config(config, || ApproxTextEngine).map_err(engine_error)?;
         let mut nudges = 0;
         if let Some(area) = request.safe_area {
             app.control().set_safe_area(Edges {
@@ -829,6 +843,18 @@ fn parse_id(payload: &str) -> Result<usize, String> {
 
 fn json(value: &impl serde::Serialize) -> Result<String, String> {
     serde_json::to_string(value).map_err(|e| e.to_string())
+}
+
+/// A directory a test names: an absolute path, or one under its file.
+fn resolve_dir(dir: &Path, path: &str) -> Result<PathBuf, String> {
+    let path = Path::new(path);
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        dir.join(path)
+    };
+    fs::create_dir_all(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(path)
 }
 
 fn resolve_entry(dir: &Path, entry: &str) -> Result<PathBuf, String> {

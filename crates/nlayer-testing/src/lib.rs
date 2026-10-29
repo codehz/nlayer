@@ -470,12 +470,21 @@ impl Headless {
         M: nlayer_core::text::TextEngine + 'static,
         F: FnOnce() -> M + Send + 'static,
     {
+        Self::start_with_config(EngineConfig::new(bundle, viewport), text_engine)
+    }
+
+    /// Starts the app `config` describes, with text engine `text_engine`.
+    pub fn start_with_config<M, F>(
+        config: EngineConfig,
+        text_engine: F,
+    ) -> Result<Headless, EngineError>
+    where
+        M: nlayer_core::text::TextEngine + 'static,
+        F: FnOnce() -> M + Send + 'static,
+    {
+        let viewport = config.viewport;
         let (tx, rx) = unbounded();
-        let engine = Engine::start(
-            EngineConfig::new(bundle, viewport),
-            text_engine,
-            Arc::new(Sink { tx }),
-        )?;
+        let engine = Engine::start(config, text_engine, Arc::new(Sink { tx }))?;
         let mut app = Headless {
             engine,
             rx,

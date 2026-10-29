@@ -65,6 +65,11 @@ export interface OpenOptions {
   safeArea?: { top: number; right: number; bottom: number; left: number };
   /** `env(keyboard-inset-height)`, in points. */
   keyboard?: number;
+  /**
+   * The directory the headless app keeps its storage in, relative to the
+   * test file. Default: in memory.
+   */
+  dataDir?: string;
 }
 
 /** The app `open` started, on a headless engine. */

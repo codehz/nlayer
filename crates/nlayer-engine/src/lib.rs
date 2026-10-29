@@ -30,6 +30,12 @@ pub use host_types::{EventPayload, Os};
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "js"))]
 mod net;
+#[cfg(not(target_arch = "wasm32"))]
+mod storage;
+
+pub use nlayer_core::storage::{StorageBackend, StorageChange, Store};
+#[cfg(not(target_arch = "wasm32"))]
+pub use storage::{FileStorage, data_dir};
 
 use std::{
     collections::HashMap,
@@ -95,6 +101,12 @@ pub struct EngineConfig {
     pub safe_area: Edges<Points>,
     /// `env(keyboard-inset-height)` before the first frame.
     pub keyboard: Points,
+    /// Where the app keeps its data: `storage` of `@nlayer/runtime` is
+    /// `storage.json` there. [`EngineConfig::new`] is none (in memory).
+    pub data_dir: Option<std::path::PathBuf>,
+    /// The app's storage, overriding the file [`EngineConfig::data_dir`]
+    /// names.
+    pub storage: Option<Arc<dyn StorageBackend>>,
 }
 
 impl EngineConfig {
@@ -106,6 +118,8 @@ impl EngineConfig {
             os: Os::Web,
             safe_area: Edges::default(),
             keyboard: Points::ZERO,
+            data_dir: None,
+            storage: None,
         }
     }
 
@@ -121,6 +135,32 @@ impl EngineConfig {
         self.keyboard = keyboard;
         self
     }
+
+    /// The directory the app keeps its storage in.
+    pub fn with_data_dir(mut self, dir: impl Into<std::path::PathBuf>) -> Self {
+        self.data_dir = Some(dir.into());
+        self
+    }
+
+    /// The app's storage backend, overriding [`EngineConfig::data_dir`].
+    pub fn with_storage(mut self, storage: Arc<dyn StorageBackend>) -> Self {
+        self.storage = Some(storage);
+        self
+    }
+}
+
+/// The storage of the app `config` runs: [`EngineConfig::storage`], or a
+/// file in its directory of [`EngineConfig::data_dir`].
+#[cfg(feature = "js")]
+fn app_storage(config: &EngineConfig) -> Option<Arc<dyn StorageBackend>> {
+    if let Some(storage) = &config.storage {
+        return Some(storage.clone());
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(root) = &config.data_dir {
+        return Some(FileStorage::open(root));
+    }
+    None
 }
 
 /// One instruction for the engine thread.
@@ -452,6 +492,7 @@ impl<M: TextEngine> Session<M> {
         let host = {
             let host = nlayer_js::Host::new().map_err(|error| EngineError::new(error.message))?;
             host.set_os(config.os);
+            host.set_storage(Store::new(app_storage(&config)));
             host.eval_source(&config.bundle)
                 .map_err(|error| EngineError::new(error.message))?;
             host

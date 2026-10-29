@@ -16,10 +16,12 @@ fn the_browser_host_mounts_without_quickjs() {
         .status()
         .expect("cargo builds the browser wasm");
     assert!(status.success(), "browser wasm build failed");
-    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/web/browser/host.test.mjs");
-    let status = Command::new("node")
-        .args(["--expose-gc", "--test", script])
-        .status()
-        .expect("node runs the browser host test");
-    assert!(status.success(), "node --test {script}");
+    for name in ["host.test.mjs", "storage.test.mjs"] {
+        let script = format!("{}/web/browser/{name}", env!("CARGO_MANIFEST_DIR"));
+        let status = Command::new("node")
+            .args(["--expose-gc", "--test", &script])
+            .status()
+            .expect("node runs the browser host tests");
+        assert!(status.success(), "node --test {script}");
+    }
 }

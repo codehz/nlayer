@@ -17,6 +17,17 @@ Copied files:
 - `crates/nlayer-core/src/storage.rs` from `crates/nsh-core/src/storage.rs`
   (entries, quota and backend trait; the Rust `Storage` facade over the
   element ambient is not copied)
+- `crates/nlayer-engine/src/storage.rs` from `crates/nsh-engine/src/storage.rs`
+  (the `storage.json` file backend, set-aside of a corrupt file and the
+  system data directory; the cache directory and per-app-id directory
+  naming are not copied)
+- `crates/nlayer-js/src/storage.rs` and the prelude's `storage` wrapper from
+  `crates/nsh-core/src/runtime/storage.rs` (the JS face: natives wrapped in
+  promises; nsh's module macro is not copied)
+- `crates/nlayer-platform-web/web/browser/storage.js` from
+  `crates/nsh-platform-web/web/nsh.js`'s `storage_*` host calls and
+  `crates/nsh-engine/src/local_storage.rs` (localStorage entries under one
+  prefix and the quota; the wasm handoff is not copied)
 - `crates/nlayer-core/src/geometry/` from `crates/nsh-core/src/geometry/`
   (`Axis` does not derive `PropEnum` yet; that derive arrives with the element macros)
 - `crates/nlayer-core/src/{style,color,css,css_named,effects,transform,grid}.rs`

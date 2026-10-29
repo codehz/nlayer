@@ -368,12 +368,49 @@ const PRELUDE: &str = r#"
     for (var name in globals) {
         Object.defineProperty(globalThis, name, { value: globals[name], writable: true, configurable: true });
     }
+
+    // --- storage: the app's key-value storage, promises over the native calls ---
+    var storageGet = globalThis.__nlayerStorageGet;
+    var storageSet = globalThis.__nlayerStorageSet;
+    var storageRemove = globalThis.__nlayerStorageRemove;
+    var storageKeys = globalThis.__nlayerStorageKeys;
+    var storageClear = globalThis.__nlayerStorageClear;
+    delete globalThis.__nlayerStorageGet;
+    delete globalThis.__nlayerStorageSet;
+    delete globalThis.__nlayerStorageRemove;
+    delete globalThis.__nlayerStorageKeys;
+    delete globalThis.__nlayerStorageClear;
+    function storageWrite(call) {
+        // A throw of the native call rejects the promise it runs in.
+        return new Promise(function (resolve) {
+            call();
+            resolve();
+        });
+    }
+    var storage = {
+        getItem: function getItem(key) {
+            return Promise.resolve(storageGet(String(key)));
+        },
+        setItem: function setItem(key, value) {
+            return storageWrite(function () { storageSet(String(key), String(value)); });
+        },
+        removeItem: function removeItem(key) {
+            return storageWrite(function () { storageRemove(String(key)); });
+        },
+        keys: function keys() {
+            return Promise.resolve(storageKeys());
+        },
+        clear: function clear() {
+            return storageWrite(storageClear);
+        },
+    };
+    Object.defineProperty(globalThis, "__nlayerStorage", { value: storage, writable: false, configurable: false });
 })();
 "#;
 
 type Native = unsafe extern "C" fn(*mut JsContext, JsValue, i32, *mut JsValue) -> JsValue;
 
-fn new_function(cx: *mut JsContext, name: &CStr, f: Native, length: i32) -> JsValue {
+pub(crate) fn new_function(cx: *mut JsContext, name: &CStr, f: Native, length: i32) -> JsValue {
     // SAFETY: a plain C function.
     unsafe {
         qjs::JS_NewCFunction2(
@@ -429,6 +466,7 @@ pub(crate) fn install(cx: &Ctx<'_>) {
     encoding(raw);
     url(cx);
     network(raw);
+    crate::storage::install(raw);
     // SAFETY: a classic script's completion value is freed.
     unsafe {
         // QuickJS reads up to the NUL it requires after the source.

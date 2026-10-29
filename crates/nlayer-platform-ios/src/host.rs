@@ -327,6 +327,10 @@ pub(crate) fn start(
     let bounds = root.bounds().size;
     let viewport = Size::new(Points(bounds.width as f32), Points(bounds.height as f32));
     let mut config = EngineConfig::new(bundle, viewport).with_os(nlayer_engine::Os::Ios);
+    // The app's storage: a file in Application Support of its container.
+    if let Some(dir) = nlayer_engine::data_dir() {
+        config = config.with_data_dir(dir.join("nlayer"));
+    }
     if let Some(pin) = &pin {
         config = config.with_insets(
             nlayer_core::geometry::Edges {

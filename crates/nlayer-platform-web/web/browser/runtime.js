@@ -2,8 +2,13 @@
 // and the node table; this file is the facade `@nlayer/runtime`,
 // `@nlayer/ui` and `nlayer:rt` share.
 import { Values } from "./values.js";
+import { createStorage, storagePrefix } from "./storage.js";
 
-export function createFacade(wasm, requestPump) {
+/**
+ * `options.appId` names the app's `localStorage` prefix (`nlayer.json`'s
+ * id); without one it is the page's directory.
+ */
+export function createFacade(wasm, requestPump, options = {}) {
   const values = new Values();
   let live = true;
   const handlers = new Map();
@@ -244,6 +249,11 @@ export function createFacade(wasm, requestPump) {
     handlers.get(id)?.get(name)?.(payload);
   }
 
+  const storage = createStorage(
+    globalThis.localStorage,
+    storagePrefix(options.appId, globalThis.location?.href),
+  );
+
   const runtime = {
     signal,
     computed,
@@ -254,6 +264,7 @@ export function createFacade(wasm, requestPump) {
     context,
     mount,
     ErrorBoundary,
+    storage,
   };
   const ui = {
     View: (props) => host("view", props),

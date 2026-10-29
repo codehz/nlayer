@@ -44,3 +44,24 @@ export function ErrorBoundary(props: {
   fallback: unknown | ((error: unknown, reset: () => void) => unknown);
   children?: unknown;
 }): unknown;
+
+/**
+ * The app's key-value storage: strings by string key, kept on the device
+ * across launches (up to 5 MiB of keys and values).
+ */
+export interface Storage {
+  /** The value of `key`, `null` when it has none. */
+  getItem(key: string): Promise<string | null>;
+  /**
+   * Sets `key` to `value`. Rejects with an `Error` named
+   * `QuotaExceededError` (code `ERR_NLAYER_QUOTA_EXCEEDED`) when the
+   * storage would grow past its quota; the old value stays.
+   */
+  setItem(key: string, value: string): Promise<void>;
+  removeItem(key: string): Promise<void>;
+  /** Every key, in order. */
+  keys(): Promise<string[]>;
+  clear(): Promise<void>;
+}
+
+export const storage: Storage;
