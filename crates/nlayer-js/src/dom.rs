@@ -26,7 +26,7 @@ use std::{
     ptr,
 };
 
-use nlayer_core::{EventKind, NodeId, Op, ROOT_ID, Tag};
+use nlayer_core::{Command, EventKind, NodeId, Op, ROOT_ID, Tag};
 use rquickjs::{Ctx, Value, qjs};
 use rustc_hash::FxHashMap;
 
@@ -1924,6 +1924,21 @@ pub(crate) unsafe extern "C" fn mount(
         unsafe { qjs::JS_NewCFunctionData(cx, Some(unmount), 0, 0, 2, data.as_mut_ptr()) };
     unsafe { qjs::JS_FreeValue(cx, data[1]) };
     reactive::finish_value(cx, dispose)
+}
+
+/// `Keyboard.dismiss()`: resign the focused field. The platform hides the
+/// software keyboard. It does not depend on the keyboard inset.
+pub(crate) unsafe extern "C" fn dismiss_keyboard(
+    cx: *mut JsContext,
+    _this: JsValue,
+    _argc: c_int,
+    _argv: *mut JsValue,
+) -> JsValue {
+    dom(cx).push(Op::Command {
+        id: ROOT_ID,
+        command: Command::Blur,
+    });
+    UNDEFINED
 }
 
 unsafe extern "C" fn unmount(

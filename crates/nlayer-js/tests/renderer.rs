@@ -1,7 +1,7 @@
 //! The JSX runtime: compiled-shape calls building the shadow tree.
 
 use nlayer_core::{
-    Core, EventKind, MountBatch, MountItem, ViewKind,
+    Command, Core, EventKind, MountBatch, MountItem, ViewKind,
     geometry::{Bounds, Points, Size},
     text::ApproxTextEngine,
 };
@@ -381,6 +381,28 @@ fn platform_os_is_the_host() {
     )
     .unwrap();
     assert_eq!(host.global_string("__os").as_deref(), Some("web"));
+}
+
+/// `Keyboard.dismiss` is a blur command. The platform resigns the field.
+#[test]
+fn keyboard_dismiss_is_a_blur_command() {
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r#"
+        import { Keyboard } from "@nlayer/ui";
+        Keyboard.dismiss();
+        "#,
+    )
+    .unwrap();
+    let mut core = core();
+    let batch = frame(&host, &mut core);
+    assert!(batch.items.iter().any(|item| matches!(
+        item,
+        MountItem::Command {
+            command: Command::Blur,
+            ..
+        }
+    )));
 }
 
 /// `activeStyle` is paint in the mount batch. Its `width` is not layout.

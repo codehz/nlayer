@@ -480,6 +480,7 @@ function nodeJson(el, parent, root) {
     node.secure = !!field._secure;
     node.keyboard = field._keyboard || "text";
     node.disabled = !!field.disabled;
+    node.focused = field.ownerDocument?.activeElement === field;
   }
   if (el._kind === "image" && el._img) {
     node.src =

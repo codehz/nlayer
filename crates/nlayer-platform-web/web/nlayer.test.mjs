@@ -442,3 +442,49 @@ test("onScroll is once per frame, and an instant command is not an end", (t) => 
   el.dispatch("scrollend");
   assert.deepEqual(names(host), ["onScroll", "onScroll", "onScrollEnd"]);
 });
+
+test("a tap in a scroll blurs, and never swallows the press", () => {
+  const { doc, host, player } = page();
+  player.apply([
+    ["c", 5, "scroll"],
+    ["i", 1, 5, null],
+    ["sc", 5, false, "never", "none"],
+    ["c", 2, "view"],
+    ["i", 5, 2, null],
+    ["e", 2, ["onPress"]],
+    ["c", 7, "input"],
+    ["i", 5, 7, null],
+    [
+      "in",
+      7,
+      null,
+      { placeholder: "", secure: false, keyboard: "text", disabled: false, rtl: false },
+    ],
+  ]);
+  const scroll = player.view(5);
+  const row = player.view(2);
+  const field = player.view(7)._field;
+  field.blur = () => {
+    field.blurred = true;
+    doc.activeElement = null;
+  };
+  doc.activeElement = field;
+  player.setKeyboard(0);
+  row.dispatch("pointerdown", { button: 0, clientX: 1, clientY: 1 });
+  assert.equal(field.blurred, undefined);
+  player.setKeyboard(300);
+  row.dispatch("pointerdown", { button: 0, clientX: 1, clientY: 1 });
+  assert.equal(field.blurred, true);
+  row.dispatch("click");
+  assert.deepEqual(host.presses, []);
+  field.blurred = false;
+  doc.activeElement = field;
+  player.apply([["sc", 5, false, "always", "on-drag"]]);
+  row.dispatch("pointerdown", { button: 0, clientX: 1, clientY: 1 });
+  row.dispatch("click");
+  assert.equal(field.blurred, false);
+  assert.deepEqual(host.presses, [2]);
+  doc.activeElement = field;
+  field.dispatch("keydown", { key: "Enter", preventDefault() {} });
+  assert.equal(field.blurred, true);
+});

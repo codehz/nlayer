@@ -34,6 +34,20 @@ public final class HostView extends FrameLayout {
     mounter = new Mounter(this);
   }
 
+  /** `env(keyboard-inset-height)`, in points. A test pin replaces the live IME. */
+  float keyboardInsetPoints() {
+    if (pin != null) return pin.keyboard;
+    return density == 0 ? 0 : keyboard / density;
+  }
+
+  void dismissKeyboard() {
+    android.view.inputmethod.InputMethodManager imm =
+        (android.view.inputmethod.InputMethodManager)
+            getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+    if (imm != null) imm.hideSoftInputFromWindow(getWindowToken(), 0);
+    requestFocus();
+  }
+
   void start() {
     if (handle == 0) handle = Native.create(this, density);
   }

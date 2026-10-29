@@ -883,6 +883,7 @@ fn node_json(node: &TreeNode, screen: &Screen) -> serde_json::Value {
                 keyboard_name(input.config.keyboard).into(),
             );
             map.insert("disabled".into(), input.config.disabled.into());
+            map.insert("focused".into(), input.focused.into());
         }
         if let Some(source) = &view.source {
             map.insert("src".into(), source.uri.as_ref().into());

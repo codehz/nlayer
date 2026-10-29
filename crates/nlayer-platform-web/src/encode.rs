@@ -21,8 +21,8 @@
 use std::fmt::Write as _;
 
 use nlayer_core::{
-    Color, Command, EventKind, EventMask, InputConfig, Interaction, KeyboardType, MountBatch,
-    MountItem, NodeId, ResizeMode, ViewKind,
+    Color, Command, EventKind, EventMask, InputConfig, Interaction, KeyboardDismiss, KeyboardTaps,
+    KeyboardType, MountBatch, MountItem, NodeId, ResizeMode, ViewKind,
     geometry::{DefiniteLength, Points, REM_SIZE, relative},
     style::{BorderStyle, TextAlign, TextStyle, TransformOrigin, ViewStyle},
     text::{AttributedText, ResolvedTextStyle},
@@ -184,8 +184,18 @@ impl Encoder {
                     .str(resize_mode_css(*resize_mode))
                     .end();
             }
-            MountItem::ScrollConfig { id, horizontal } => {
-                out.item("sc").num(*id).bool(*horizontal).end();
+            MountItem::ScrollConfig {
+                id,
+                horizontal,
+                taps,
+                dismiss,
+            } => {
+                out.item("sc")
+                    .num(*id)
+                    .bool(*horizontal)
+                    .str(taps.name())
+                    .str(dismiss.name())
+                    .end();
             }
             MountItem::ScrollContent { id, size } => {
                 out.item("scs")
@@ -231,16 +241,20 @@ impl Encoder {
                     .num(content.size.height.0)
                     .end();
             }
-            MountItem::Command { id, command } => {
-                let Command::ScrollTo { x, y, animated } = command;
-                out.item("cmd")
-                    .num(*id)
-                    .str("scrollTo")
-                    .num(x.0)
-                    .num(y.0)
-                    .bool(*animated)
-                    .end();
-            }
+            MountItem::Command { id, command } => match command {
+                Command::ScrollTo { x, y, animated } => {
+                    out.item("cmd")
+                        .num(*id)
+                        .str("scrollTo")
+                        .num(x.0)
+                        .num(y.0)
+                        .bool(*animated)
+                        .end();
+                }
+                Command::Blur => {
+                    out.item("cmd").num(*id).str("blur").end();
+                }
+            },
             MountItem::TestId { id, test_id } => {
                 out.item("tid").num(*id).opt_str(test_id.as_deref()).end();
             }

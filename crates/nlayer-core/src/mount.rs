@@ -7,7 +7,10 @@ use std::sync::Arc;
 
 use crate::{
     geometry::{Bounds, Points, Size},
-    ops::{Command, EventMask, ImageSource, Interaction, KeyboardType, NodeId, ResizeMode},
+    ops::{
+        Command, EventMask, ImageSource, Interaction, KeyboardDismiss, KeyboardTaps, KeyboardType,
+        NodeId, ResizeMode,
+    },
     style::{TextAlign, ViewStyle},
     text::{AttributedText, ResolvedTextStyle, TextLayout},
 };
@@ -116,12 +119,16 @@ pub enum MountItem {
         /// How the image fits its box (`objectFit`; cover when unset).
         resize_mode: ResizeMode,
     },
-    /// Which axis a scroll view scrolls. The platform locks the other.
+    /// Axis and keyboard policy of a scroll view.
     ScrollConfig {
         /// Scroll view.
         id: NodeId,
         /// Scrolls horizontally. Otherwise it scrolls vertically.
         horizontal: bool,
+        /// `keyboardShouldPersistTaps`.
+        taps: KeyboardTaps,
+        /// `keyboardDismissMode`.
+        dismiss: KeyboardDismiss,
     },
     /// Set the scrollable content size.
     ScrollContent {

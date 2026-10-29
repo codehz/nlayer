@@ -405,9 +405,11 @@ final class Mounter {
   private void scrollConfig(ByteBuffer b) {
     int id = b.getInt();
     boolean horizontal = b.getInt() != 0;
+    int taps = b.getInt();
+    int dismiss = b.getInt();
     View v = views.get(id);
     if (v instanceof ScrollBox)
-      ((ScrollBox) v).configure(horizontal, true, host.getContext(), this);
+      ((ScrollBox) v).configure(horizontal, taps, dismiss, true, host.getContext(), this);
   }
 
   private void scrollContent(ByteBuffer b) {
@@ -593,6 +595,10 @@ final class Mounter {
 
   private void command(ByteBuffer b) {
     int id = b.getInt(), cmd = b.getInt();
+    if (cmd == 1) {
+      Native.dismissKeyboard(host);
+      return;
+    }
     float x = b.getFloat(), y = b.getFloat();
     b.getInt();
     View v = views.get(id);

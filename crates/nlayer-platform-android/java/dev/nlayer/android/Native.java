@@ -60,6 +60,11 @@ final class Native {
     if (host != null) scroll(host.handle(), id, kind, x, y, contentW, contentH, width, height);
   }
 
+  static void dismissKeyboard(android.view.View view) {
+    HostView host = host(view);
+    if (host != null) host.dismissKeyboard();
+  }
+
   private static HostView host(android.view.View view) {
     for (android.view.View v = view; v != null; ) {
       if (v instanceof HostView) return (HostView) v;

@@ -367,6 +367,13 @@ export interface ScrollEvent {
 export interface ScrollProps extends ViewProps {
   /** Scroll along x instead of y. */
   horizontal?: boolean;
+  /** `never` (default) dismisses and swallows the tap. `always` leaves the
+   * keyboard up. `handled` dismisses only a tap that hits nothing pressable.
+   * `true` is `always`, `false` is `never`. */
+  keyboardShouldPersistTaps?: boolean | "never" | "always" | "handled";
+  /** `none` (default) leaves a drag alone. `on-drag` and `interactive` both
+   * resign when the drag passes the platform slop. */
+  keyboardDismissMode?: "none" | "on-drag" | "interactive";
   onScroll?: (e: ScrollEvent) => void;
   onScrollEnd?: (e: ScrollEvent) => void;
   onScrollDragStart?: (e: ScrollEvent) => void;
@@ -409,6 +416,11 @@ export function Input(props: InputProps): unknown;
  * and `env(keyboard-inset-height)`. */
 export const platform: {
   readonly os: "web" | "ios" | "android";
+};
+
+/** Resigns the focused field and hides the software keyboard. */
+export const Keyboard: {
+  dismiss(): void;
 };
 "#
 }
@@ -538,8 +550,8 @@ mod tests {
             );
         }
         for name in nlayer_js::native_module_exports("@nlayer/ui").unwrap() {
-            if name == "platform" {
-                assert!(ui.contains("export const platform"));
+            if name == "platform" || name == "Keyboard" {
+                assert!(ui.contains(&format!("export const {name}")));
                 continue;
             }
             assert!(

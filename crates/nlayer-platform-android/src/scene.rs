@@ -74,6 +74,8 @@ pub(crate) struct InputSnap {
     pub secure: bool,
     pub keyboard: String,
     pub disabled: bool,
+    /// The field has focus.
+    pub focused: bool,
 }
 
 /// One style run, reported on the tree as `spans`.
@@ -488,6 +490,7 @@ impl Scene {
             map.insert("secure".into(), input.secure.into());
             map.insert("keyboard".into(), input.keyboard.clone().into());
             map.insert("disabled".into(), input.disabled.into());
+            map.insert("focused".into(), input.focused.into());
         }
         if let Some(image) = &node.image {
             map.insert("src".into(), image.src.clone().into());
@@ -860,6 +863,7 @@ mod tests {
             secure: false,
             keyboard: "text".into(),
             disabled: false,
+            focused: false,
         });
         let mut disabled = view(3, Some(1), rect(0.0, 30.0, 80.0, 24.0));
         disabled.kind = Kind::Input;
@@ -870,6 +874,7 @@ mod tests {
             secure: false,
             keyboard: "text".into(),
             disabled: true,
+            focused: false,
         });
         let scene = Scene::from_nodes(
             vec![view(1, None, rect(0.0, 0.0, 100.0, 100.0)), field, disabled],

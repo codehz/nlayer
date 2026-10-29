@@ -24,8 +24,8 @@ use crate::{
     geometry::{Bounds, Edges, Percentage, Points, Size, rect},
     mount::{InputConfig, MountBatch, MountItem, ViewKind},
     ops::{
-        Command, EventKind, EventMask, ImageSource, Interaction, NodeId, Op, Prop, ROOT_ID,
-        ResizeMode, Tag,
+        Command, EventKind, EventMask, ImageSource, Interaction, KeyboardDismiss, KeyboardTaps,
+        NodeId, Op, Prop, ROOT_ID, ResizeMode, Tag,
     },
     style::{self, EllipsizeMode, EnvEdges, Style, TextAlign, TextStyle, ViewStyle},
     text::{AttributedText, MeasureCache, ResolvedTextStyle, SpanTestId, TextEngine, TextLayout},
@@ -140,6 +140,8 @@ impl ApplyError {
 #[derive(Debug, Default)]
 struct ScrollState {
     horizontal: bool,
+    taps: KeyboardTaps,
+    dismiss: KeyboardDismiss,
     /// Last content size sent.
     content: Option<Size<Points>>,
     /// Index of that [`MountItem::ScrollContent`] in the current mount
@@ -488,6 +490,10 @@ impl<M: TextEngine> Core<M> {
                 Ok(())
             }
             Op::Release { id } => self.release(id),
+            Op::Command { id, command } => {
+                self.mount.push(MountItem::Command { id, command });
+                Ok(())
+            }
         }
     }
 
@@ -722,6 +728,32 @@ impl<M: TextEngine> Core<M> {
                 if changed {
                     self.mark(key, dirty::SCROLL);
                     self.sync_scroll_style(key);
+                }
+            }
+            Prop::KeyboardTaps(taps) => {
+                let changed = self.nodes[key as usize]
+                    .scroll
+                    .as_mut()
+                    .is_some_and(|scroll| {
+                        let changed = scroll.taps != taps;
+                        scroll.taps = taps;
+                        changed
+                    });
+                if changed {
+                    self.mark(key, dirty::SCROLL);
+                }
+            }
+            Prop::KeyboardDismiss(mode) => {
+                let changed = self.nodes[key as usize]
+                    .scroll
+                    .as_mut()
+                    .is_some_and(|scroll| {
+                        let changed = scroll.dismiss != mode;
+                        scroll.dismiss = mode;
+                        changed
+                    });
+                if changed {
+                    self.mark(key, dirty::SCROLL);
                 }
             }
             Prop::Value(value) => {
@@ -1163,12 +1195,14 @@ impl<M: TextEngine> Core<M> {
                 });
             }
             if flags & dirty::SCROLL != 0
-                && let Some(horizontal) = self.nodes[key as usize]
-                    .scroll
-                    .as_ref()
-                    .map(|scroll| scroll.horizontal)
+                && let Some(scroll) = self.nodes[key as usize].scroll.as_ref()
             {
-                self.mount.push(MountItem::ScrollConfig { id, horizontal });
+                self.mount.push(MountItem::ScrollConfig {
+                    id,
+                    horizontal: scroll.horizontal,
+                    taps: scroll.taps,
+                    dismiss: scroll.dismiss,
+                });
             }
             if flags & dirty::TEXT_MOUNT != 0 {
                 self.queue_text(key);
@@ -3293,7 +3327,8 @@ mod tests {
             item,
             MountItem::ScrollConfig {
                 id: 2,
-                horizontal: false
+                horizontal: false,
+                ..
             }
         )));
         assert_eq!(scroll_content(&batch, 2), size_pt(100.0, 120.0));
@@ -3337,11 +3372,75 @@ mod tests {
             item,
             MountItem::ScrollConfig {
                 id: 2,
-                horizontal: true
+                horizontal: true,
+                ..
             }
         )));
         assert_eq!(scroll_content(&batch, 2), size_pt(160.0, 40.0));
         assert_eq!(frame(&batch, 4).origin.x, px(80.0));
+    }
+
+    #[test]
+    fn scroll_keyboard_props_are_mounted_and_blur_is_a_command() {
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Scroll,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::KeyboardTaps(crate::KeyboardTaps::Handled),
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::KeyboardDismiss(crate::KeyboardDismiss::OnDrag),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Command {
+            id: ROOT_ID,
+            command: Command::Blur,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        assert!(batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::ScrollConfig {
+                id: 2,
+                taps: crate::KeyboardTaps::Handled,
+                dismiss: crate::KeyboardDismiss::OnDrag,
+                ..
+            }
+        )));
+        assert!(batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::Command {
+                command: Command::Blur,
+                ..
+            }
+        )));
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::KeyboardTaps(crate::KeyboardTaps::Always),
+        })
+        .unwrap();
+        // A later change is mounted again. Dismiss stays.
+        let batch = c.commit().unwrap();
+        assert!(batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::ScrollConfig {
+                taps: crate::KeyboardTaps::Always,
+                dismiss: crate::KeyboardDismiss::OnDrag,
+                ..
+            }
+        )));
     }
 
     /// `overflow: "hidden"` clips in layout as well as in paint: what a box

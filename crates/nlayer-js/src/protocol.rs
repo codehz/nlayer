@@ -4,7 +4,8 @@
 use std::sync::Arc;
 
 use nlayer_core::{
-    ImageScales, ImageSource, Interaction, KeyboardType, NodeId, Op, Prop, Tag,
+    ImageScales, ImageSource, Interaction, KeyboardDismiss, KeyboardTaps, KeyboardType, NodeId, Op,
+    Prop, Tag,
     geometry::{Points, Size},
     style::{
         Style, StyleDecl, StyleError, StylePatch, StyleValue, TextStyle, TransformProperty,
@@ -105,6 +106,26 @@ pub(crate) fn decode_prop<'js>(
     let prop = match (tag, name) {
         (Some(Tag::Image), "src") => Prop::Source(image_source(value)?),
         (Some(Tag::Scroll), "horizontal") => Prop::Horizontal(value.as_bool().unwrap_or(false)),
+        (Some(Tag::Scroll), "keyboardShouldPersistTaps") => match keyboard_taps(&value) {
+            Some(taps) => Prop::KeyboardTaps(taps),
+            None => {
+                warnings.warn(format!(
+                    "unknown keyboardShouldPersistTaps `{}`",
+                    string(&value)?
+                ));
+                return Ok(None);
+            }
+        },
+        (Some(Tag::Scroll), "keyboardDismissMode") => {
+            let name = string(&value)?;
+            match KeyboardDismiss::from_name(&name) {
+                Some(mode) => Prop::KeyboardDismiss(mode),
+                None => {
+                    warnings.warn(format!("unknown keyboardDismissMode `{name}`"));
+                    return Ok(None);
+                }
+            }
+        }
         (Some(Tag::Input), "value") => Prop::Value(string(&value)?),
         (Some(Tag::Input), "placeholder") => Prop::Placeholder(string(&value)?),
         (Some(Tag::Input), "secureTextEntry") => Prop::Secure(value.as_bool().unwrap_or(false)),
@@ -157,6 +178,19 @@ fn string(value: &Value<'_>) -> rquickjs::Result<String> {
         Some(s) => s.to_string(),
         None => Ok(String::new()),
     }
+}
+
+/// `true` is `always`, `false` is `never`. A string is the named mode.
+fn keyboard_taps(value: &Value<'_>) -> Option<KeyboardTaps> {
+    if let Some(on) = value.as_bool() {
+        return Some(if on {
+            KeyboardTaps::Always
+        } else {
+            KeyboardTaps::Never
+        });
+    }
+    let name = value.as_string()?.to_string().ok()?;
+    KeyboardTaps::from_name(&name)
 }
 
 fn truthy(value: &Value<'_>) -> rquickjs::Result<bool> {

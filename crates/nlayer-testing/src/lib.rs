@@ -87,6 +87,8 @@ pub struct InputView {
     pub config: Box<InputConfig>,
     /// The text it shows (the app's `value`).
     pub value: String,
+    /// The field is the one editing. `Keyboard.dismiss` clears it.
+    pub focused: bool,
 }
 
 /// One style run of a text view.
@@ -155,6 +157,15 @@ impl Screen {
         if let Some(view) = self.views.get_mut(&id) {
             view.scroll_x = x;
             view.scroll_y = y;
+        }
+    }
+
+    /// `Keyboard.dismiss`: no field is editing.
+    pub fn blur(&mut self) {
+        for view in self.views.values_mut() {
+            if let Some(input) = &mut view.input {
+                input.focused = false;
+            }
         }
     }
 
@@ -326,7 +337,7 @@ impl Screen {
                     view.resize_mode = *resize_mode;
                 }
             }
-            MountItem::ScrollConfig { id, horizontal } => {
+            MountItem::ScrollConfig { id, horizontal, .. } => {
                 self.ensure(*id, ViewKind::Scroll);
                 if let Some(view) = self.views.get_mut(id) {
                     view.scroll_horizontal = Some(*horizontal);
@@ -352,6 +363,7 @@ impl Screen {
                             .input
                             .as_ref()
                             .map_or_else(String::new, |i| i.value.clone()),
+                        focused: view.input.as_ref().is_some_and(|i| i.focused),
                     });
                 }
             }
@@ -365,6 +377,7 @@ impl Screen {
             MountItem::InputContent { .. } | MountItem::StateStyle { .. } => {}
             MountItem::Command { id, command } => match command {
                 Command::ScrollTo { x, y, .. } => self.set_scroll(*id, x.0, y.0),
+                Command::Blur => self.blur(),
             },
             MountItem::TestId { id, test_id } => {
                 if let Some(view) = self.views.get_mut(id) {
@@ -683,10 +696,13 @@ impl Headless {
     pub fn type_text(&mut self, id: NodeId, text: impl Into<String>) {
         let text = text.into();
         self.refresh();
-        if let Some(view) = self.screen.views.get_mut(&id)
-            && let Some(input) = &mut view.input
-        {
-            input.value = text.clone();
+        for (other, view) in self.screen.views.iter_mut() {
+            if let Some(input) = &mut view.input {
+                input.focused = *other == id;
+                if *other == id {
+                    input.value = text.clone();
+                }
+            }
         }
         self.engine.control().input_changed(id, text);
     }

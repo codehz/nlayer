@@ -2,6 +2,7 @@ package dev.nlayer.android;
 
 import android.content.Context;
 import android.view.MotionEvent;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
@@ -31,6 +32,13 @@ final class ScrollBox extends FrameLayout {
   int contentW, contentH;
   float contentPointsW, contentPointsH, offsetX, offsetY;
   int pressMask;
+
+  /** `keyboardShouldPersistTaps`: 0 never, 1 always, 2 handled. */
+  int taps;
+
+  /** `keyboardDismissMode`: 0 none, 1 on-drag, 2 interactive. */
+  int dismiss;
+
   private final float density;
   private boolean armed;
   private float downX, downY;
@@ -136,6 +144,7 @@ final class ScrollBox extends FrameLayout {
     }
     if (touching && !dragging) {
       dragging = true;
+      if (dismiss != 0 && keyboardUp()) Native.dismissKeyboard(this);
       // Caught while gliding: the glide ended.
       if (momentum) {
         momentum = false;
@@ -188,13 +197,109 @@ final class ScrollBox extends FrameLayout {
     if (velocity != 0) flung = true;
   }
 
-  void configure(boolean h, boolean indicator, Context c, Mounter m) {
+  void configure(boolean h, int taps, int dismiss, boolean indicator, Context c, Mounter m) {
+    this.taps = taps;
+    this.dismiss = dismiss;
     if (horizontal != h) {
       horizontal = h;
       build(c);
     }
     scroller.setVerticalScrollBarEnabled(indicator && !horizontal);
     scroller.setHorizontalScrollBarEnabled(indicator && horizontal);
+  }
+
+  @Override
+  public boolean dispatchTouchEvent(MotionEvent e) {
+    if (e.getActionMasked() == MotionEvent.ACTION_DOWN && scrollUnder(this, e) == null) {
+      View hit = leaf(this, e.getX(), e.getY());
+      boolean onInput = onInput(hit);
+      boolean handled = handles(hit);
+      if (shouldDismiss(onInput, handled)) {
+        Native.dismissKeyboard(this);
+        if (taps == 0 && !onInput) return true;
+      }
+    }
+    return super.dispatchTouchEvent(e);
+  }
+
+  private boolean keyboardUp() {
+    for (android.view.ViewParent p = getParent(); p != null; p = p.getParent()) {
+      if (p instanceof HostView) return ((HostView) p).keyboardInsetPoints() > 0;
+    }
+    return false;
+  }
+
+  private boolean shouldDismiss(boolean onInput, boolean handled) {
+    if (!keyboardUp() || taps == 1) return false;
+    if (taps == 2) return !handled && !onInput;
+    return !onInput;
+  }
+
+  /** A descendant scroll under the touch. That scroll decides, not this one. */
+  private ScrollBox scrollUnder(View root, MotionEvent e) {
+    int[] origin = new int[2];
+    getLocationOnScreen(origin);
+    return scrollAt(root, origin[0] + e.getX(), origin[1] + e.getY());
+  }
+
+  private ScrollBox scrollAt(View v, float sx, float sy) {
+    if (!(v instanceof ViewGroup)) return null;
+    ViewGroup group = (ViewGroup) v;
+    for (int i = group.getChildCount() - 1; i >= 0; i--) {
+      android.view.View child = group.getChildAt(i);
+      ScrollBox found = scrollAt(child, sx, sy);
+      if (found != null) return found;
+      if (child instanceof ScrollBox && child != this && onScreen(child, sx, sy))
+        return (ScrollBox) child;
+    }
+    return null;
+  }
+
+  private static boolean onScreen(android.view.View v, float sx, float sy) {
+    int[] loc = new int[2];
+    v.getLocationOnScreen(loc);
+    return sx >= loc[0]
+        && sy >= loc[1]
+        && sx < loc[0] + v.getWidth()
+        && sy < loc[1] + v.getHeight();
+  }
+
+  private android.view.View leaf(android.view.View v, float x, float y) {
+    if (!(v instanceof ViewGroup)) return v;
+    ViewGroup group = (ViewGroup) v;
+    float sx = x + group.getScrollX(), sy = y + group.getScrollY();
+    for (int i = group.getChildCount() - 1; i >= 0; i--) {
+      android.view.View child = group.getChildAt(i);
+      if (child.getVisibility() != VISIBLE) continue;
+      float lx = sx - child.getLeft(), ly = sy - child.getTop();
+      if (lx >= 0 && ly >= 0 && lx < child.getWidth() && ly < child.getHeight())
+        return leaf(child, lx, ly);
+    }
+    return v;
+  }
+
+  private boolean onInput(android.view.View hit) {
+    for (android.view.View v = hit; v != null && v != this; v = parentOf(v)) {
+      if (v instanceof InputBox || v instanceof android.widget.EditText) return true;
+    }
+    return false;
+  }
+
+  private boolean handles(android.view.View hit) {
+    for (android.view.View v = hit; v != null && v != this; v = parentOf(v)) {
+      if (v instanceof InputBox) return true;
+      if (v instanceof Box && (((Box) v).pressMask & 1) != 0) return true;
+      if (v instanceof TextBox
+          && ((((TextBox) v).pressMask & 1) != 0 || ((TextBox) v).hasPressLink())) return true;
+      if (v instanceof ImageBox && (((ImageBox) v).pressMask & 1) != 0) return true;
+      if (v instanceof ScrollBox && v != this && (((ScrollBox) v).pressMask & 1) != 0) return true;
+    }
+    return false;
+  }
+
+  private static android.view.View parentOf(android.view.View v) {
+    android.view.ViewParent p = v.getParent();
+    return p instanceof android.view.View ? (android.view.View) p : null;
   }
 
   void size(int w, int h) {

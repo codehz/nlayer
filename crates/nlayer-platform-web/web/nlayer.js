@@ -116,7 +116,8 @@ export class Player {
     this.views = new Map();
     this.pointers = new Map();
     this.touchDrags = new Set();
-    this.holding = 0;
+    this.keyboard = 0;
+    this.swallowTarget = null;
     this.onTouchEnd = (event) => this.touchEnded(event);
     root._id = 1;
     root._kind = "view";
@@ -132,6 +133,11 @@ export class Player {
       view.addEventListener("touchcancel", this.onTouchEnd);
     }
     if (options.baseCSS != null) installBase(this.doc, options.baseCSS);
+  }
+
+  /** `env(keyboard-inset-height)`. A pin of 0 leaves taps alone. */
+  setKeyboard(height) {
+    this.keyboard = height > 0 ? height : 0;
   }
 
   apply(batch) {
@@ -180,6 +186,18 @@ export class Player {
     }
     if (kind === "scroll") this.wireScroll(el);
     el.addEventListener("click", (event) => {
+      if (this.swallowTarget) {
+        const swallow = this.swallowTarget;
+        this.swallowTarget = null;
+        if (
+          swallow === event.target ||
+          swallow.contains?.(event.target) ||
+          event.target?.contains?.(swallow)
+        ) {
+          event.stopPropagation?.();
+          return;
+        }
+      }
       const link = linkAt(el, event);
       if (link != null) {
         event.stopPropagation?.();
@@ -363,6 +381,8 @@ export class Player {
   }
 
   pointerDown(event) {
+    this.swallowTarget = null;
+    this.noteKeyboardTap(event);
     if (event.pointerType === "mouse" || event.button > 0) return;
     const scrolls = this.scrollChain(event.target);
     if (!scrolls.length) return;
@@ -390,6 +410,7 @@ export class Player {
 
   beginDrag(el) {
     if (!el || el._touchDrag) return;
+    if (this.keyboard > 0 && el._dismiss && el._dismiss !== "none") this.blurField();
     el._touchDrag = true;
     el._released = 0;
     el._settled = false;
@@ -498,10 +519,12 @@ export class Player {
     }, 200);
   }
 
-  op_sc([, id, horizontal]) {
+  op_sc([, id, horizontal, taps, dismiss]) {
     const el = this.view(id);
     if (!el) return;
     el._horizontal = horizontal;
+    el._taps = taps || "never";
+    el._dismiss = dismiss || "none";
     swapClass(el, "_overflow", horizontal ? "nl-ox" : "nl-oy");
   }
 
@@ -534,6 +557,13 @@ export class Player {
         field._known = field.value;
         field._count++;
         this.host.change?.(id, field.value);
+      });
+      field.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        const kind = field._keyboard;
+        if (kind && kind !== "text" && kind !== "email") return;
+        event.preventDefault();
+        field.blur();
       });
       el._field = field;
       el.append(field);
@@ -589,6 +619,10 @@ export class Player {
   }
 
   op_cmd([, id, name, x, y, animated]) {
+    if (name === "blur") {
+      this.blurField();
+      return;
+    }
     const el = this.view(id);
     if (!el || name !== "scrollTo") return;
     if (!animated) this.noteInstant(el);
@@ -596,6 +630,51 @@ export class Player {
     if (!el.scrollTo) {
       el.scrollLeft = x;
       el.scrollTop = y;
+    }
+  }
+
+  blurField() {
+    const active = this.doc.activeElement;
+    if (active && active.classList?.contains("nl-field")) active.blur();
+  }
+
+  nearestScroll(node) {
+    for (let el = node; el; el = el.parentNode) {
+      if (el._kind === "scroll") return el;
+    }
+    return null;
+  }
+
+  onInput(node, scroll) {
+    for (let el = node; el && el !== scroll; el = el.parentNode) {
+      if (el._kind === "input" || el.classList?.contains("nl-field")) return true;
+    }
+    return false;
+  }
+
+  handles(node, scroll) {
+    for (let el = node; el && el !== scroll; el = el.parentNode) {
+      if (el._kind === "input" || el.classList?.contains("nl-field")) return true;
+      if (el._events?.has("onPress") || el._links?.some((link) => link)) return true;
+    }
+    return false;
+  }
+
+  noteKeyboardTap(event) {
+    if (event.button > 0 || !(this.keyboard > 0)) return;
+    const scroll = this.nearestScroll(event.target);
+    if (!scroll) return;
+    const onInput = this.onInput(event.target, scroll);
+    const handled = this.handles(event.target, scroll);
+    const taps = scroll._taps || "never";
+    const dismiss =
+      taps === "always" ? false : taps === "handled" ? !handled && !onInput : !onInput;
+    if (!dismiss) return;
+    this.blurField();
+    if (taps === "never" && !onInput) {
+      this.swallowTarget = event.target;
+      event.preventDefault?.();
+      event.stopPropagation?.();
     }
   }
 }

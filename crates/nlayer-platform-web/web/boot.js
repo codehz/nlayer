@@ -199,6 +199,7 @@ function watchSurface(root) {
     const [width, height] = surfaceSize(root);
     const [top, right, bottom, left] = readInsets(root);
     const keyboard = keyboardInset();
+    player?.setKeyboard?.(keyboard);
     enter(() => {
       wasm.nlayer_resize(width, height);
       wasm.nlayer_insets(top, right, bottom, left, keyboard);
@@ -256,6 +257,7 @@ export async function startPage(root, options = {}) {
   const [width, height] = surfaceSize(root);
   const [top, right, bottom, left] = readInsets(root);
   const keyboard = keyboardInset();
+  player.setKeyboard(keyboard);
   if (
     typeof wasm.nlayer_browser_initialize !== "function" ||
     typeof wasm.nlayer_start === "function"

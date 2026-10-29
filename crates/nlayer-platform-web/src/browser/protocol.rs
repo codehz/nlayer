@@ -4,7 +4,8 @@
 use std::cell::RefCell;
 
 use nlayer_core::{
-    ImageScales, ImageSource, Interaction, KeyboardType, NodeId, Op, Prop, Tag,
+    ImageScales, ImageSource, Interaction, KeyboardDismiss, KeyboardTaps, KeyboardType, NodeId, Op,
+    Prop, Tag,
     geometry::{Points, Size},
     style::{
         Style, StyleDecl, StyleError, StylePatch, StyleValue, TextStyle, TransformProperty,
@@ -77,6 +78,26 @@ pub(super) fn decode_prop(
     let prop = match (tag, name) {
         (Some(Tag::Image), "src") => Prop::Source(image_source(value)?),
         (Some(Tag::Scroll), "horizontal") => Prop::Horizontal(value.bool()),
+        (Some(Tag::Scroll), "keyboardShouldPersistTaps") => match keyboard_taps(value) {
+            Some(taps) => Prop::KeyboardTaps(taps),
+            None => {
+                warnings.warn(format!(
+                    "unknown keyboardShouldPersistTaps `{}`",
+                    string(value)
+                ));
+                return Ok(None);
+            }
+        },
+        (Some(Tag::Scroll), "keyboardDismissMode") => {
+            let name = string(value);
+            match KeyboardDismiss::from_name(&name) {
+                Some(mode) => Prop::KeyboardDismiss(mode),
+                None => {
+                    warnings.warn(format!("unknown keyboardDismissMode `{name}`"));
+                    return Ok(None);
+                }
+            }
+        }
         (Some(Tag::Input), "value") => Prop::Value(string(value)),
         (Some(Tag::Input), "placeholder") => Prop::Placeholder(string(value)),
         (Some(Tag::Input), "secureTextEntry") => Prop::Secure(value.bool()),
@@ -125,6 +146,18 @@ fn state_style(id: NodeId, name: &str, paint: Option<Box<(ViewStyle, TextStyle)>
 
 fn string(value: &Value) -> String {
     value.as_string().unwrap_or_default()
+}
+
+/// `true` is `always`, `false` is `never`. A string is the named mode.
+fn keyboard_taps(value: &Value) -> Option<KeyboardTaps> {
+    if value.kind() == 2 {
+        return Some(if value.bool() {
+            KeyboardTaps::Always
+        } else {
+            KeyboardTaps::Never
+        });
+    }
+    KeyboardTaps::from_name(&string(value))
 }
 
 /// `classList`: the names whose value is truthy.

@@ -374,6 +374,81 @@ impl KeyboardType {
     }
 }
 
+/// Whether a tap in a scroll view dismisses the keyboard
+/// (`keyboardShouldPersistTaps`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeyboardTaps {
+    /// The tap dismisses the keyboard and reaches nothing else (default).
+    #[default]
+    Never,
+    /// The tap never dismisses the keyboard.
+    Always,
+    /// The tap dismisses the keyboard unless an `onPress` or an input handles it.
+    Handled,
+}
+
+impl KeyboardTaps {
+    /// Parses `never` / `always` / `handled`. A boolean is the caller's.
+    #[inline]
+    pub fn from_name(name: &str) -> Option<KeyboardTaps> {
+        match name {
+            "never" => Some(KeyboardTaps::Never),
+            "always" => Some(KeyboardTaps::Always),
+            "handled" => Some(KeyboardTaps::Handled),
+            _ => None,
+        }
+    }
+
+    /// The prop string.
+    #[inline]
+    pub fn name(self) -> &'static str {
+        match self {
+            KeyboardTaps::Never => "never",
+            KeyboardTaps::Always => "always",
+            KeyboardTaps::Handled => "handled",
+        }
+    }
+}
+
+/// When a drag dismisses the keyboard (`keyboardDismissMode`).
+///
+/// `on-drag` and `interactive` both dismiss once the drag along this
+/// scroll's own axis passes the platform slop. The keyboard does not
+/// follow the finger.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeyboardDismiss {
+    /// A drag leaves the keyboard up (default).
+    #[default]
+    None,
+    /// Hide it when a drag starts along this scroll's axis.
+    OnDrag,
+    /// Same as [`KeyboardDismiss::OnDrag`] on every v1 host.
+    Interactive,
+}
+
+impl KeyboardDismiss {
+    /// Parses `none` / `on-drag` / `interactive`.
+    #[inline]
+    pub fn from_name(name: &str) -> Option<KeyboardDismiss> {
+        match name {
+            "none" => Some(KeyboardDismiss::None),
+            "on-drag" => Some(KeyboardDismiss::OnDrag),
+            "interactive" => Some(KeyboardDismiss::Interactive),
+            _ => None,
+        }
+    }
+
+    /// The prop string.
+    #[inline]
+    pub fn name(self) -> &'static str {
+        match self {
+            KeyboardDismiss::None => "none",
+            KeyboardDismiss::OnDrag => "on-drag",
+            KeyboardDismiss::Interactive => "interactive",
+        }
+    }
+}
+
 /// Which pointer state a [`Prop::StateStyle`] paints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Interaction {
@@ -420,6 +495,10 @@ pub enum Prop {
     Source(Option<ImageSource>),
     /// `horizontal`: the scroll view scrolls along x instead of y.
     Horizontal(bool),
+    /// `keyboardShouldPersistTaps`: `never` (default), `always` or `handled`.
+    KeyboardTaps(KeyboardTaps),
+    /// `keyboardDismissMode`: `none` (default), `on-drag` or `interactive`.
+    KeyboardDismiss(KeyboardDismiss),
     /// `value`: the text of an input, controlled by JS.
     Value(String),
     /// `placeholder`: shown while an input is empty.
@@ -516,6 +595,13 @@ pub enum Op {
         /// Node id.
         id: NodeId,
     },
+    /// An imperative call. `Keyboard.dismiss` is [`Command::Blur`] on the root.
+    Command {
+        /// View the call names. Blur ignores it and resigns the focused field.
+        id: NodeId,
+        /// The call.
+        command: Command,
+    },
 }
 
 /// An imperative call on a native view.
@@ -530,4 +616,6 @@ pub enum Command {
         /// Animate the change.
         animated: bool,
     },
+    /// Resign the focused field and hide the software keyboard.
+    Blur,
 }

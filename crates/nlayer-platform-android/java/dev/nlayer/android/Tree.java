@@ -182,6 +182,7 @@ final class Tree {
     input.put("secure", box.secure);
     input.put("keyboard", box.keyboardName);
     input.put("disabled", box.disabled);
+    input.put("focused", box.edit.isFocused());
     o.put("input", input);
   }
 

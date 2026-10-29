@@ -86,6 +86,8 @@ struct WireInput {
     secure: bool,
     keyboard: String,
     disabled: bool,
+    #[serde(default)]
+    focused: bool,
 }
 
 #[derive(Deserialize)]
@@ -168,6 +170,7 @@ pub(crate) fn scene_of(text: &str) -> Result<Scene, String> {
                     secure: input.secure,
                     keyboard: input.keyboard,
                     disabled: input.disabled,
+                    focused: input.focused,
                 }),
                 runs: wire
                     .runs

@@ -131,6 +131,8 @@ mod field {
         /// Color from the text style. An `activeStyle` / `hoverStyle` /
         /// `focusStyle` color replaces it while that state wins.
         color: Cell<Color>,
+        /// `keyboardType`. Return resigns text and email only.
+        keyboard: Cell<nlayer_core::KeyboardType>,
     }
 
     define_class!(
@@ -169,6 +171,7 @@ mod field {
                 }),
                 text: RefCell::new(FieldText::default()),
                 color: Cell::new(Color::BLACK),
+                keyboard: Cell::new(nlayer_core::KeyboardType::Text),
             });
             // SAFETY: UITextField's superclass initializer. The field is main-thread only.
             let this: Retained<Self> = unsafe { msg_send![super(this), init] };
@@ -190,6 +193,11 @@ mod field {
                     sel!(editingEnded:),
                     UIControlEvents::EditingDidEnd,
                 );
+                this.addTarget_action_forControlEvents(
+                    Some(relay),
+                    sel!(returned:),
+                    UIControlEvents::EditingDidEndOnExit,
+                );
             }
             this
         }
@@ -206,6 +214,7 @@ mod field {
                 UISemanticContentAttribute::ForceLeftToRight
             });
             let keyboard = keyboard_type(config.keyboard);
+            self.ivars().keyboard.set(config.keyboard);
             let align = text_alignment(config.align);
             // SAFETY: UITextField adopts UITextInputTraits. UIKit implements
             // those setters by forwarding, so the debug signature check
@@ -297,6 +306,11 @@ mod field {
 
         pub(crate) fn disabled(&self) -> bool {
             !self.isEnabled()
+        }
+
+        /// text and email Return resigns. number and phone have no Return.
+        pub(crate) fn resigns_on_return(&self) -> bool {
+            nlayer_core::return_resigns(self.ivars().keyboard.get())
         }
 
         fn string(&self) -> String {

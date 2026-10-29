@@ -282,6 +282,12 @@ export function createFacade(wasm, requestPump) {
     Scroll: (props) => host("scroll", props),
     Input: (props) => host("input", props),
     platform: { os: "web" },
+    Keyboard: {
+      dismiss() {
+        const active = globalThis.document?.activeElement;
+        if (active && active.classList?.contains("nl-field")) active.blur();
+      },
+    },
   };
 
   function host(tag, props) {

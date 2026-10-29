@@ -73,6 +73,17 @@ fn platform(cx: *mut JsContext) -> JsValue {
     }
 }
 
+/// `Keyboard`: `{ dismiss() }`. The call is `Command::Blur` on the root.
+fn keyboard(cx: *mut JsContext) -> JsValue {
+    // SAFETY: a new object; the module takes the function.
+    unsafe {
+        let object = qjs::JS_NewObject(cx);
+        let dismiss = reactive::new_function(cx, c"dismiss", dom::dismiss_keyboard, 0);
+        qjs::JS_SetPropertyStr(cx, object, c"dismiss".as_ptr(), dismiss);
+        object
+    }
+}
+
 /// `@nlayer/runtime`: the reactive graph and the tree entry an app mounts.
 const RUNTIME: &[Item] = &[
     ("signal", Export::Function(reactive::signal, 2)),
@@ -94,6 +105,7 @@ const UI: &[Item] = &[
     ("Scroll", Export::Value(scroll)),
     ("Input", Export::Value(input)),
     ("platform", Export::Value(platform)),
+    ("Keyboard", Export::Value(keyboard)),
 ];
 
 pub(crate) const MODULES: &[NativeModule] = &[

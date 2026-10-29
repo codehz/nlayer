@@ -147,6 +147,24 @@ final class InputBox extends FrameLayout {
                     ? InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL
                     : keyboard == 3 ? InputType.TYPE_CLASS_PHONE : InputType.TYPE_CLASS_TEXT;
     edit.setInputType(type);
+    final boolean resign = keyboard == 0 || keyboard == 1;
+    edit.setImeOptions(
+        resign
+            ? android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+            : android.view.inputmethod.EditorInfo.IME_ACTION_NONE);
+    edit.setOnEditorActionListener(
+        new android.widget.TextView.OnEditorActionListener() {
+          public boolean onEditorAction(
+              android.widget.TextView v, int action, android.view.KeyEvent event) {
+            if (!resign) return false;
+            if (action == android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+                || (event != null && event.getKeyCode() == android.view.KeyEvent.KEYCODE_ENTER)) {
+              Native.dismissKeyboard(InputBox.this);
+              return true;
+            }
+            return false;
+          }
+        });
     // Password input types reset the typeface. Set it after.
     edit.setTypeface(
         android.graphics.Typeface.create(

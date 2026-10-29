@@ -12,6 +12,7 @@ mod css_named;
 pub mod effects;
 pub mod geometry;
 mod grid;
+mod keyboard;
 mod mount;
 mod ops;
 mod props;
@@ -27,10 +28,11 @@ pub mod transform;
 
 pub use color::{Hsla, Rgba};
 pub use core::{ApplyError, Core};
+pub use keyboard::{drag_dismisses, press_allowed, return_resigns, tap_dismisses};
 pub use mount::{InputConfig, MountBatch, MountItem, ViewKind};
 pub use ops::{
-    Command, EventKind, IMAGE_SCALES, ImageScales, ImageSource, Interaction, KeyboardType, Op,
-    Prop, Tag,
+    Command, EventKind, IMAGE_SCALES, ImageScales, ImageSource, Interaction, KeyboardDismiss,
+    KeyboardTaps, KeyboardType, Op, Prop, Tag,
 };
 pub use style::Color;
 pub use tailwind::{class_tokens, unknown_classes_warning};

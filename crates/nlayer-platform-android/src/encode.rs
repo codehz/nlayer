@@ -15,8 +15,8 @@ use nlayer_core::geometry::{DefiniteLength, Points, REM_SIZE};
 use nlayer_core::style::{BorderStyle, Color, PositionAxis, TextAlign, TextStyle, ViewStyle};
 use nlayer_core::text::AttributedText;
 use nlayer_core::{
-    Command, EventMask, ImageSource, InputConfig, Interaction, KeyboardType, MountBatch, MountItem,
-    NodeId, ResizeMode, ViewKind,
+    Command, EventMask, ImageSource, InputConfig, Interaction, KeyboardDismiss, KeyboardTaps,
+    KeyboardType, MountBatch, MountItem, NodeId, ResizeMode, ViewKind,
 };
 
 const CREATE: i32 = 0;
@@ -172,10 +172,25 @@ pub fn encode(batch: MountBatch) -> Encoded {
                     ResizeMode::ScaleDown => 4,
                 });
             }
-            MountItem::ScrollConfig { id, horizontal } => {
+            MountItem::ScrollConfig {
+                id,
+                horizontal,
+                taps,
+                dismiss,
+            } => {
                 e.int(SCROLL_CONFIG);
                 e.id(id);
                 e.bool(horizontal);
+                e.int(match taps {
+                    KeyboardTaps::Never => 0,
+                    KeyboardTaps::Always => 1,
+                    KeyboardTaps::Handled => 2,
+                });
+                e.int(match dismiss {
+                    KeyboardDismiss::None => 0,
+                    KeyboardDismiss::OnDrag => 1,
+                    KeyboardDismiss::Interactive => 2,
+                });
             }
             MountItem::ScrollContent { id, size } => {
                 e.int(SCROLL_CONTENT);
@@ -226,6 +241,7 @@ pub fn encode(batch: MountBatch) -> Encoded {
                         e.float(y.0);
                         e.bool(animated);
                     }
+                    Command::Blur => e.int(1),
                 }
             }
         }
@@ -481,8 +497,8 @@ mod tests {
     use nlayer_core::style::{BorderStyle, Borders, Color, TextStyle, ViewStyle};
     use nlayer_core::text::{AttributedText, SpanTestId, TextLayout, TextLink};
     use nlayer_core::{
-        Command, EventKind, EventMask, ImageSource, InputConfig, Interaction, KeyboardType,
-        MountBatch, MountItem, ResizeMode, ViewKind,
+        Command, EventKind, EventMask, ImageSource, InputConfig, Interaction, KeyboardDismiss,
+        KeyboardTaps, KeyboardType, MountBatch, MountItem, ResizeMode, ViewKind,
     };
 
     use super::{CREATE, Encoded, FRAME, IMAGE, INPUT, Object, SCROLL_CONFIG, TEST_ID, TEXT};
@@ -724,6 +740,8 @@ mod tests {
                 MountItem::ScrollConfig {
                     id: 5,
                     horizontal: true,
+                    taps: KeyboardTaps::Never,
+                    dismiss: KeyboardDismiss::None,
                 },
                 MountItem::ScrollContent {
                     id: 5,
@@ -779,7 +797,10 @@ mod tests {
         let mut words = read(&encoded);
         assert_eq!((words.int(), words.int(), words.int()), (CREATE, 5, 3));
         assert_eq!(words.int(), SCROLL_CONFIG);
-        assert_eq!((words.int(), words.int()), (5, 1));
+        assert_eq!(
+            (words.int(), words.int(), words.int(), words.int()),
+            (5, 1, 0, 0)
+        );
         assert_eq!(words.int(), super::SCROLL_CONTENT);
         assert_eq!(words.int(), 5);
         assert_eq!((words.float(), words.float()), (40.0, 10.0));

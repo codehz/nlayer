@@ -14,8 +14,8 @@ use dispatch2::DispatchQueue;
 use nlayer_core::geometry::{Bounds, Point, Points, Size};
 use nlayer_core::style::{BorderStyle, Color, TextStyle, TransformOrigin, ViewStyle};
 use nlayer_core::{
-    EventKind, EventMask, ImageSource, Interaction, MountBatch, MountItem, NodeId, ROOT_ID,
-    ResizeMode, ViewKind,
+    EventKind, EventMask, ImageSource, Interaction, KeyboardDismiss, KeyboardTaps, MountBatch,
+    MountItem, NodeId, ROOT_ID, ResizeMode, ViewKind,
 };
 use nlayer_engine::{EngineControl, EventPayload};
 use objc2::rc::Retained;
@@ -25,8 +25,10 @@ use objc2_core_foundation::{CGFloat, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::CGImage;
 use objc2_quartz_core::{CALayer, CAShapeLayer, CATransaction, CATransform3D, kCAGravityResize};
 use objc2_ui_kit::{
-    UIGestureRecognizerState, UIHoverGestureRecognizer, UILongPressGestureRecognizer, UIScreen,
-    UIScrollView, UIScrollViewContentInsetAdjustmentBehavior, UIScrollViewDelegate, UIView,
+    UIGestureRecognizer, UIGestureRecognizerDelegate, UIGestureRecognizerState,
+    UIHoverGestureRecognizer, UILongPressGestureRecognizer, UIScreen, UIScrollView,
+    UIScrollViewContentInsetAdjustmentBehavior, UIScrollViewDelegate, UITapGestureRecognizer,
+    UITouch, UIView,
 };
 
 use crate::input::Field;
@@ -59,6 +61,12 @@ struct Slot {
     picture: Option<Picture>,
     /// `testID`. Not drawn, and not an accessibility id.
     test_id: Option<Arc<str>>,
+    /// `keyboardShouldPersistTaps`.
+    taps: KeyboardTaps,
+    /// `keyboardDismissMode`.
+    dismiss: KeyboardDismiss,
+    /// Tap that resigns the keyboard. Only a scroll has one.
+    keyboard_tap: Option<Retained<UITapGestureRecognizer>>,
 }
 
 struct Paint {
@@ -135,6 +143,26 @@ define_class!(
         fn editing_ended(&self, sender: &AnyObject) {
             self.focus_edit(sender, false);
         }
+
+        #[unsafe(method(dismissKeyboard:))]
+        fn dismiss_keyboard(&self, _gesture: &UITapGestureRecognizer) {
+            let Some(mounter) = self.ivars().mounter.borrow().upgrade() else {
+                return;
+            };
+            mounter.borrow().end_editing();
+        }
+
+        #[unsafe(method(returned:))]
+        fn returned(&self, sender: &AnyObject) {
+            let Some(field) = sender.downcast_ref::<Field>() else {
+                return;
+            };
+            if !field.resigns_on_return() {
+                return;
+            }
+            // SAFETY: UITextField resigns first responder.
+            let _: bool = unsafe { msg_send![field, resignFirstResponder] };
+        }
     }
 
     unsafe impl UIScrollViewDelegate for Relay {
@@ -148,6 +176,12 @@ define_class!(
             // Caught while gliding: the glide ended.
             if scroll.isDecelerating() {
                 self.scroll_event(scroll, EventKind::MomentumEnd);
+            }
+            if let Some(mounter) = self.ivars().mounter.borrow().upgrade()
+                && let Ok(mounter) = mounter.try_borrow()
+                && mounter.drag_dismisses(scroll)
+            {
+                mounter.end_editing();
             }
             self.scroll_event(scroll, EventKind::ScrollDragStart);
         }
@@ -176,6 +210,47 @@ define_class!(
         #[unsafe(method(scrollViewDidEndScrollingAnimation:))]
         fn scroll_view_did_end_scrolling_animation(&self, scroll: &UIScrollView) {
             self.scroll_event(scroll, EventKind::ScrollEnd);
+        }
+    }
+
+    unsafe impl UIGestureRecognizerDelegate for Relay {
+        #[unsafe(method(gestureRecognizerShouldBegin:))]
+        fn should_begin(&self, recognizer: &UIGestureRecognizer) -> bool {
+            if !recognizer.isKindOfClass(UILongPressGestureRecognizer::class()) {
+                return true;
+            }
+            let Some(view) = recognizer.view() else {
+                return true;
+            };
+            let Some(mounter) = self.ivars().mounter.borrow().upgrade() else {
+                return true;
+            };
+            let Ok(mounter) = mounter.try_borrow() else {
+                return true;
+            };
+            mounter.press_allowed(&view)
+        }
+
+        /// The keyboard tap only sees taps that should hide the keyboard.
+        #[unsafe(method(gestureRecognizer:shouldReceiveTouch:))]
+        fn should_receive_touch(
+            &self,
+            recognizer: &UIGestureRecognizer,
+            touch: &UITouch,
+        ) -> bool {
+            if !recognizer.isKindOfClass(UITapGestureRecognizer::class()) {
+                return true;
+            }
+            let Some(view) = touch.view() else {
+                return false;
+            };
+            let Some(mounter) = self.ivars().mounter.borrow().upgrade() else {
+                return false;
+            };
+            let Ok(mounter) = mounter.try_borrow() else {
+                return false;
+            };
+            mounter.tap_dismisses(&view)
         }
     }
 
@@ -334,6 +409,94 @@ impl Mounter {
         }
     }
 
+    /// The height `env(keyboard-inset-height)` is using. A pin replaces the
+    /// live keyboard, including a pin of 0.
+    fn keyboard_inset(&self) -> f32 {
+        self.pin
+            .as_ref()
+            .and_then(|pin| pin.keyboard)
+            .unwrap_or(self.keyboard.0)
+    }
+
+    /// Resigns the focused field. A missing window still resigns the field
+    /// the mounter is tracking.
+    fn end_editing(&self) {
+        if let Some(window) = self.view(ROOT_ID).and_then(|view| view.window()) {
+            // SAFETY: `endEditing:` walks the window's responders.
+            let _: bool = unsafe { msg_send![&*window, endEditing: true] };
+            return;
+        }
+        if let Some(id) = self.focused
+            && let Some(Native::Input(field)) = self.native(id)
+        {
+            let _: bool = unsafe { msg_send![field, resignFirstResponder] };
+        }
+    }
+
+    fn press_allowed(&self, view: &UIView) -> bool {
+        let (taps, on_input) = self.tap_context(view);
+        nlayer_core::press_allowed(Points(self.keyboard_inset()), taps, on_input)
+    }
+
+    fn tap_dismisses(&self, view: &UIView) -> bool {
+        let (taps, on_input) = self.tap_context(view);
+        let handled = self.handled(view);
+        nlayer_core::tap_dismisses(Points(self.keyboard_inset()), taps, on_input, handled)
+    }
+
+    fn drag_dismisses(&self, scroll: &UIScrollView) -> bool {
+        let id = scroll.tag() as NodeId;
+        let mode = self
+            .slot(id)
+            .filter(|slot| std::ptr::eq(slot.native.view(), scroll as &UIView))
+            .map(|slot| slot.dismiss)
+            .unwrap_or_default();
+        nlayer_core::drag_dismisses(Points(self.keyboard_inset()), mode)
+    }
+
+    /// The nearest scroll's tap mode, and whether the walk to it hits an input.
+    fn tap_context(&self, view: &UIView) -> (Option<KeyboardTaps>, bool) {
+        let mut on_input = false;
+        let mut current = Some(view.retain());
+        while let Some(v) = current {
+            let id = v.tag() as NodeId;
+            if let Some(slot) = self
+                .slot(id)
+                .filter(|slot| std::ptr::eq(slot.native.view(), &*v))
+            {
+                if matches!(slot.native, Native::Input(_)) {
+                    on_input = true;
+                }
+                if matches!(slot.native, Native::Scroll(_)) {
+                    return (Some(slot.taps), on_input);
+                }
+            }
+            current = v.superview();
+        }
+        (None, on_input)
+    }
+
+    /// An `onPress` or an input between `view` and the nearest scroll.
+    fn handled(&self, view: &UIView) -> bool {
+        let mut current = Some(view.retain());
+        while let Some(v) = current {
+            let id = v.tag() as NodeId;
+            if let Some(slot) = self
+                .slot(id)
+                .filter(|slot| std::ptr::eq(slot.native.view(), &*v))
+            {
+                if matches!(slot.native, Native::Scroll(_)) {
+                    return false;
+                }
+                if matches!(slot.native, Native::Input(_)) || slot.own_press || slot.link_press {
+                    return true;
+                }
+            }
+            current = v.superview();
+        }
+        false
+    }
+
     pub(crate) fn set_pin(&mut self, pin: crate::pin::Pin) {
         self.viewport = Size::new(Points(pin.width), Points(pin.height));
         self.insets = nlayer_core::geometry::Edges {
@@ -473,7 +636,12 @@ impl Mounter {
                 self.sync_press(id);
             }
             MountItem::Events { id, events } => self.set_events(id, events),
-            MountItem::ScrollConfig { id, horizontal } => {
+            MountItem::ScrollConfig {
+                id,
+                horizontal,
+                taps,
+                dismiss,
+            } => {
                 let Some(Native::Scroll(scroll)) = self.native(id) else {
                     return;
                 };
@@ -482,6 +650,10 @@ impl Mounter {
                 scroll.setShowsHorizontalScrollIndicator(horizontal);
                 scroll.setShowsVerticalScrollIndicator(!horizontal);
                 scroll.setDirectionalLockEnabled(true);
+                if let Some(slot) = self.slot_mut(id) {
+                    slot.taps = taps;
+                    slot.dismiss = dismiss;
+                }
             }
             MountItem::ScrollContent { id, size } => {
                 let Some(Native::Scroll(scroll)) = self.native(id) else {
@@ -502,16 +674,18 @@ impl Mounter {
                     offset.y + dy.0 as CGFloat,
                 ));
             }
-            MountItem::Command { id, command } => {
-                let nlayer_core::Command::ScrollTo { x, y, animated } = command;
-                let Some(Native::Scroll(scroll)) = self.native(id) else {
-                    return;
-                };
-                scroll.setContentOffset_animated(
-                    CGPoint::new(x.0 as CGFloat, y.0 as CGFloat),
-                    animated,
-                );
-            }
+            MountItem::Command { id, command } => match command {
+                nlayer_core::Command::ScrollTo { x, y, animated } => {
+                    let Some(Native::Scroll(scroll)) = self.native(id) else {
+                        return;
+                    };
+                    scroll.setContentOffset_animated(
+                        CGPoint::new(x.0 as CGFloat, y.0 as CGFloat),
+                        animated,
+                    );
+                }
+                nlayer_core::Command::Blur => self.end_editing(),
+            },
             MountItem::Image {
                 id,
                 source,
@@ -572,6 +746,9 @@ impl Mounter {
         self.ensure(id);
         let mut slot = Slot::plain(native);
         slot.picture = picture;
+        if kind == ViewKind::Scroll {
+            slot.keyboard_tap = Some(keyboard_tap(self.mtm, &self.relay, view));
+        }
         self.slots[id as usize] = Some(slot);
     }
 
@@ -632,6 +809,7 @@ impl Mounter {
                     )
                 };
                 gesture.setMinimumPressDuration(0.0);
+                gesture.setDelegate(Some(ProtocolObject::from_ref(&*relay)));
                 if input {
                     gesture.setCancelsTouchesInView(false);
                 }
@@ -894,6 +1072,7 @@ impl Mounter {
                     secure: field.secure(),
                     keyboard: field.keyboard_name().to_owned(),
                     disabled: field.disabled(),
+                    focused: field.isFirstResponder(),
                 });
             }
             if let Native::Scroll(scroll) = &slot.native {
@@ -1045,8 +1224,32 @@ impl Slot {
             sides: [None, None, None, None],
             picture: None,
             test_id: None,
+            taps: KeyboardTaps::Never,
+            dismiss: KeyboardDismiss::None,
+            keyboard_tap: None,
         }
     }
+}
+
+/// A tap on a scroll view that resigns the keyboard. Its delegate lets
+/// through only taps that should.
+fn keyboard_tap(
+    mtm: MainThreadMarker,
+    relay: &Relay,
+    view: &UIView,
+) -> Retained<UITapGestureRecognizer> {
+    // SAFETY: the relay implements `dismissKeyboard:` and outlives the scroll.
+    let tap = unsafe {
+        UITapGestureRecognizer::initWithTarget_action(
+            UITapGestureRecognizer::alloc(mtm),
+            Some(relay),
+            Some(sel!(dismissKeyboard:)),
+        )
+    };
+    tap.setCancelsTouchesInView(false);
+    tap.setDelegate(Some(ProtocolObject::from_ref(relay)));
+    view.addGestureRecognizer(&tap);
+    tap
 }
 
 fn state_index(interaction: Interaction) -> usize {
