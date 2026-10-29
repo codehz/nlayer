@@ -17,3 +17,8 @@ for the Apache-2.0 provenance of copied code.
 Editor types are the npm packages `@nlayer/runtime`, `@nlayer/ui`, `@nlayer/jsx-runtime`, `@nlayer/test` and `@nlayer/globals`, versioned with `nlayer --version`. `nlayer init` writes `package.json`; `bun install` fetches them. The build does not need them.
 
 Licensed under the [Apache License, Version 2.0](LICENSE-APACHE).
+
+v2 is planned in [`docs/v2.md`](docs/v2.md): a virtualized `List`, animated
+values and long press, `resource` and `storage`, the system color scheme and
+accessibility props, multiline input with selection and IME events, the
+system back button, and unsigned `nlayer package` for web, Android and iOS.
