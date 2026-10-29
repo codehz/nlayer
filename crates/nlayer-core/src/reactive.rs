@@ -287,23 +287,6 @@ impl<H: Host> Graph<H> {
         id
     }
 
-    /// A new signal holding `value` (owned), compared by `equals`, owned by
-    /// the current owner: disposed with it (with no owner, it lives as long
-    /// as the graph).
-    pub fn owned_signal(&mut self, value: H::Value, equals: Equals<H::Equals>) -> u32 {
-        let id = self.alloc(Kind::Signal);
-        let owner = self.owner;
-        let n = &mut self.nodes[id as usize];
-        let old = std::mem::replace(&mut n.value, value);
-        n.equals = equals;
-        n.owner = if is_node(owner) { owner } else { NONE };
-        drop(old);
-        if is_node(owner) {
-            self.nodes[owner as usize].owned.push(id);
-        }
-        id
-    }
-
     /// Makes a computation running `func` under the current owner, with
     /// first value `value`; it has not run yet ([`update_computation`]).
     pub fn computation(&mut self, kind: Kind, func: H::Func, value: H::Value) -> u32 {
@@ -415,11 +398,6 @@ impl<H: Host> Graph<H> {
         }
     }
 
-    /// Node `id`'s comparison.
-    pub fn set_equals(&mut self, id: u32, equals: Equals<H::Equals>) -> Equals<H::Equals> {
-        std::mem::replace(&mut self.nodes[id as usize].equals, equals)
-    }
-
     /// Marks node `id` as named by a handle.
     pub fn set_handle(&mut self, id: u32) {
         self.nodes[id as usize].handle = true;
@@ -508,30 +486,9 @@ impl<H: Host> Graph<H> {
         Ok(())
     }
 
-    /// Removes from owner `id` the first cleanup `matches` accepts, which
-    /// then never runs: what it was to undo ended by itself.
-    pub fn remove_cleanup(
-        &mut self,
-        id: u32,
-        matches: impl Fn(&H::Cleanup) -> bool,
-    ) -> Option<H::Cleanup> {
-        if !is_node(id) {
-            return None;
-        }
-        let cleanups = &mut self.nodes.get_mut(id as usize)?.cleanups;
-        let at = cleanups.iter().position(matches)?;
-        Some(cleanups.remove(at))
-    }
-
     /// Whether a round is running (its end reports errors).
     pub fn in_round(&self) -> bool {
         self.updates.is_some()
-    }
-
-    /// Whether effects are being collected (a new user effect waits for
-    /// them).
-    pub fn collecting_effects(&self) -> bool {
-        self.effects.is_some()
     }
 
     /// A round ended: the runaway count starts over.
@@ -1074,17 +1031,6 @@ pub fn with_root<H: Host, R>(h: H, f: impl FnOnce() -> R) -> (u32, R) {
     }
     let id = g(h).root();
     (id, with_owner(h, id, f))
-}
-
-/// [`with_root`] as if run under `owner`: what is made later (a list's
-/// rows) sees that owner's context.
-pub fn with_root_under<H: Host, R>(h: H, owner: u32, f: impl FnOnce() -> R) -> (u32, R) {
-    let graph = g(h);
-    let live = graph.is_live_owner(owner);
-    let previous = graph.enter_owner(if live { owner } else { NONE });
-    let r = with_root(h, f);
-    g(h).leave_owner(previous);
-    r
 }
 
 /// Disposes owner `id`, untracked.

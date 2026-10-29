@@ -96,7 +96,7 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 | ID | 项 | 证据 |
 |---|---|---|
 | P3-1 | 已关闭。`pointerEvents` 不在 v1 样式面；样式 IR、类型和 class 侧信道已删除该入口 | `crates/nlayer-core/src/style.rs`；`packages/ui/styles.d.ts` |
-| P3-2 | 未接线的通用 reactive API | `crates/nlayer-core/src/reactive.rs`：`owned_signal`、`set_equals`、`remove_cleanup`、`collecting_effects`、`with_root_under` |
+| P3-2 | 已关闭。未接线的通用 reactive API（`owned_signal`、`set_equals`、`remove_cleanup`、`collecting_effects`、`with_root_under`）已删除 | `crates/nlayer-core/src/reactive.rs` |
 | P3-3 | web 有两份 `ErrorBoundary`，第一份被覆盖 | `crates/nlayer-platform-web/web/browser/runtime.js:106-121` vs `:305-323` |
 | P3-5 | test bundle 导出 `finish`，但 `@nlayer/test` 类型未声明 | `crates/nlayer-bundler/src/test_api.rs:9`；`crates/nlayer-bundler/src/types.rs:452-536` |
 | P3-6 | web 不绘制 `visibility: hidden` | `crates/nlayer-core/src/style.rs:3618`；web `encode.rs:562-614` |
