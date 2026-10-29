@@ -9,7 +9,11 @@ use nlayer_cli::{
 };
 
 #[derive(Parser)]
-#[command(name = "nlayer", about = "Create, build, test and run nlayer apps")]
+#[command(
+    name = "nlayer",
+    version,
+    about = "Create, build, test and run nlayer apps"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,

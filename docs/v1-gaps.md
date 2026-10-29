@@ -11,7 +11,7 @@
 
 v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bundle、五个宿主组件、三端平台 API、CLI 和类型包都有真实代码，没有 `todo!()` / 空实现。当前剩余工作集中在四类：
 
-1. 明确的契约缺口（CLI 版本、键盘策略、API 边界、绘制）
+1. 明确的契约缺口（键盘策略、API 边界、绘制）
 2. 宿主语义偏差（Android inset、focusStyle、onScroll 节流）
 3. 验收与回归覆盖（三端 target 测试、gallery 断言、If/Each/ErrorBoundary）
 4. 需要定稿的文档歧义（单实例双轴 Scroll、web 上的浏览器全局）
@@ -35,7 +35,6 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 
 | ID | 缺口 | 证据 | 影响 |
 |---|---|---|---|
-| P0-1 | `nlayer --version` 不存在 | `crates/nlayer-cli/src/main.rs:11-13` 没有 `#[command(version)]`；`docs/v1.md:29`、`README.md:17` 要求类型包版本与它一致 | 类型包版本没有 CLI 来源；用户无法查询版本；`--version` 退出码 2 |
 | P0-2 | `keyboardShouldPersistTaps="handled"` 在 web/Android 语义错误 | web `crates/nlayer-platform-web/web/nlayer.js:655-660`；Android `crates/nlayer-platform-android/java/dev/nlayer/android/ScrollBox.java:322-336`；契约 `docs/v1.md:15` | 点在 Text 内链接之外仍被当成 handled；点 Scroll 自身 `onPress` 会既触发 press 又收键盘 |
 | P0-3 | Android API 28–29 的 `env(keyboard-inset-height)` 恒为 0 | `crates/nlayer-platform-android/java/dev/nlayer/android/HostActivity.java:46-53` | 最低支持 API 28 上键盘 inset、键盘弹出检测、tap/drag 收键盘全部失效 |
 | P0-4 | Image 的 `borderRadius` 在 web/Android 不裁剪 | web `crates/nlayer-platform-web/web/base.css:47-57`、`web/nlayer.js:180-185`；Android `crates/nlayer-platform-android/java/dev/nlayer/android/ImageBox.java:123-141`；iOS 已裁剪 `crates/nlayer-platform-ios/src/mount.rs:1911-1912` | v1 要求宿主绘制 radius；同一张圆角图片在三端表现不一致 |
@@ -48,7 +47,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 
 ### P0 验收方式
 
-- P0-1：`nlayer --version` 输出 `0.1.0`，退出码 0；同一版本出现在五个 `packages/*/package.json`。
+
 - P0-2：web/Android host 测试覆盖三种点按：Scroll 自身 `onPress`、Text 内链接外区域、Input。`handled` 只在不落在 `onPress` 或输入上时收键盘。
 - P0-3：API 28 或 29 模拟器上断言 `env(keyboard-inset-height) > 0`，且 `keyboardDismissMode` / `keyboardShouldPersistTaps` 能收键盘。
 - P0-4：web/Android 的 Image 加圆角后，四角被裁剪；iOS 保持现状。若宿主测试只能读树，需要补一项像素/绘制层断言或明确人工验收步骤。
@@ -147,17 +146,10 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 | `Blob is not a constructor in v1` | fail | `typeof Blob === "function"`，与 `docs/v1.md:17` 冲突 |
 | `Response has no clone` | ok | 与 v1 最小面一致 |
 
-`nlayer --version` 单独实测：
-
-```text
-error: unexpected argument '--version' found
-Usage: nlayer <COMMAND>
-exit=2
-```
 
 ## 建议切片顺序
 
-1. **CLI/API 契约**：P0-1、P0-5、P0-8、P0-9；补 `--version` 与 API 单元测试。
+1. **CLI/API 契约**：P0-5、P0-8、P0-9（P0-1 已关闭）；补 API 单元测试。
 2. **键盘/选择器**：P0-2、P0-3、P0-6、P0-7；补 host 测试。
 3. **绘制与宿主语义**：P0-4、P0-10、P1-2、P1-3；补 web/Android 绘制断言。
 4. **Scroll 定稿**：P1-1；先改文档或改实现，不要两份契约并存。
