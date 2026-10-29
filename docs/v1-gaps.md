@@ -14,8 +14,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 
 **尚未完全解决，本文保留。** P0–P3 没有未关闭项；未关闭的是验收矩阵里的验证薄弱处：
 
-1. iOS / Android 宿主没有断言 `text` / `email` 输入的 Return 收键盘（web E2E 已覆盖）。
-2. iOS 图片只有 source / fit 断言，没有解码和圆角裁剪的设备断言。
+iOS 图片只有 source / fit 断言，没有解码和圆角裁剪的设备断言。
 
 P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS 宿主。
 
@@ -29,7 +28,7 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 | `nlayer test examples/gallery/App.test.tsx --target ios` | 12/12，沿用复核记录 |
 | `nlayer test examples/gallery/App.test.tsx --target android` | 12/12，沿用复核记录 |
 | `scripts/test-targets` | 6/6；`gallery_runs_on_each_target`、三端 press/type/scroll、Android Java instrumentation、iOS 宿主测试 |
-| `nlayer-platform-ios` host tests in the simulator | 13/13；`cargo test -p nlayer-cli --test targets the_ios_host_tests_pass_in_the_simulator` |
+| `nlayer-platform-ios` host tests in the simulator | 15/15；`cargo test -p nlayer-cli --test targets the_ios_host_tests_pass_in_the_simulator` |
 | `nlayer build examples/gallery --out /tmp/nlayer-build-check` | 写出 `bundle.js`、`bundle.js.map`、`mark.png`（沿用审计基线，本次未复跑） |
 | `nlayer init /tmp/nlayer-init-check` | 写出 `App.tsx`、`App.test.tsx`、`tsconfig.json`、`package.json`、`.gitignore`（沿用审计基线，本次未复跑） |
 | `scripts/test-types` | 五个类型包打包并在临时工程中 `tsc` 通过，本次复跑 |
@@ -86,7 +85,7 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 | P2-4 | 已关闭。`nlayer test --filter` 只跑名字匹配的用例，无匹配也算成功；应用入口的真实 stdin 步骤驱动界面，失败步骤退出 1；类型版本不一致只警告、退出 0。iOS/Android 共用 `Watch`：源改动重建一次，坏源码保留上一个 app 并在修好后重试，发布失败在下一次改动重试 | `crates/nlayer-cli/tests/cli.rs`；`run.rs` 的 `Watch` 测试 | watch/rebuild/失败回退不再只有手工验证 |
 | P2-5 | 已关闭。web 的 press/type/scroll 走 CDP `Input.dispatchMouseEvent` / `Input.dispatchKeyEvent`，键盘 Return、拖拽、momentum 在真实浏览器里有 E2E | `web_test.rs`；`web/host.js` 只答坐标与滚动终点 | 测试输入和用户输入走同一条页面路径 |
 | P2-6 | 已关闭。`java-test/` 是独立测试 APK 上的 instrumentation：`Mounter` 的 mount batch、frame、样式、状态样式、focus 祖先链和删除，`ScrollBox` 的轴、内容尺寸和偏移，`InputBox` 的配置、受控值与输入计数，`ImageBox` 的 cover/contain/none、object position、圆角裁剪和 asset 解码都在 emulator / 设备上跑。`crates/nlayer-cli/src/android.rs` 的 `android_java_tests` 构建、安装并运行它，`cargo test -p nlayer-cli --test targets` 断言报告全过 | `crates/nlayer-platform-android/java-test/`；`crates/nlayer-cli/tests/targets.rs` | `Mounter`、`ScrollBox`、`InputBox`、`ImageBox` 的设备行为进 `cargo test` |
-| P2-7 | 已关闭。`nlayer-platform-ios` 的 `host` 测试目标是 `harness = false` 的主线程二进制：`host`、`driver`、`mount`、`text` 的 13 个测试在模拟器里跑，覆盖错误浮层与根视图、测试协议 step、帧/样式/状态样式/删除、focus 祖先链、scroll 收窄与恢复、input 配置和 image、CoreText 换行和截断。`crates/nlayer-cli` 的 `ios_host_tests` 用 `aarch64-apple-ios-sim` 构建并由 `simctl spawn` 执行；`cargo test -p nlayer-cli --test targets` 断言报告全过 | `crates/nlayer-platform-ios/src/{host,driver,mount,text}.rs`；`tests/host.rs`；`src/lib.rs` `run_host_tests`；`ios.rs` `host_test_binary` | 设备层不再只有纯逻辑测试；`cargo test` 跑不动 UIKit 的部分由模拟器补上 |
+| P2-7 | 已关闭。`nlayer-platform-ios` 的 `host` 测试目标是 `harness = false` 的主线程二进制：`host`、`driver`、`mount`、`text` 的 15 个测试在模拟器里跑，覆盖错误浮层与根视图、测试协议 step、帧/样式/状态样式/删除、transformOrigin 重算、focus 祖先链、scroll 收窄与恢复、input 配置、Return 收键盘、image 和 CoreText 换行与截断。`crates/nlayer-cli` 的 `ios_host_tests` 用 `aarch64-apple-ios-sim` 构建并由 `simctl spawn` 执行；`cargo test -p nlayer-cli --test targets` 断言报告全过 | `crates/nlayer-platform-ios/src/{host,driver,mount,text}.rs`；`tests/host.rs`；`src/lib.rs` `run_host_tests`；`ios.rs` `host_test_binary` | 设备层不再只有纯逻辑测试；`cargo test` 跑不动 UIKit 的部分由模拟器补上 |
 
 ### P2 建议的最小验收集
 
@@ -123,7 +122,7 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 | 双轴 Scroll | `App.tsx:219-232` | 垂直溢出 + 水平滚到 x=40；每实例一轴 | 未断言绘制；offset / content / size 已断言，像素对齐不在 v1 | 已关闭 |
 | 滚动回调 | `App.tsx:247-275` | 六个回调都等到同一 metric | 无 | 已关闭 |
 | active/hover/focus | `App.tsx:129-178` | 基础宽高 + 文案；web E2E 用 `Input.dispatchMouseEvent` 移入/移出断言计算后的 `opacity`；宿主测试断言 active/hover/focus 的实际绘制状态 | 无 | 已关闭 |
-| 受控 Input | `App.tsx:290-354` | 输入、`Name: ada`、disabled | Return 只在 web E2E 断言；`Keyboard.dismiss` 和 placeholder 选择器由无窗口 suite 覆盖；iOS/Android 的 Return 未断言 | 未关闭 |
+| 受控 Input | `App.tsx:290-354` | 输入、`Name: ada`、disabled；web E2E 断言 Return 收键盘；iOS host 和 Android instrumentation 断言 `text` / `email` 的 Return 收键盘、`number` 不收 | 无 | 已关闭 |
 | onPress | `App.tsx:85-96,129,144` | 文案变化 | gallery 未覆盖嵌套 span press；四端 targets fixture 用 `id:docs` 覆盖 | 已关闭 |
 | 静态 transform | `App.tsx:97-107` | transform 步骤列表；Android instrumentation 和 iOS host 断言百分比 `transformOrigin` 在 resize 后按新尺寸重算 | 无 | 已关闭 |
 | fetch JSON | `App.tsx:359-375` | 等到 `Gallery: 5`；引擎 `fetch.rs` 用本地 302 断言跟随重定向、最终 URL、`redirected` 和 JSON body | 无 | 已关闭 |

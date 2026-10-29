@@ -2236,6 +2236,10 @@ pub(crate) mod tests {
                 an_input_takes_its_configuration_and_value as fn(),
             ),
             (
+                "mount::a_return_resigns_text_and_email_but_not_number",
+                a_return_resigns_text_and_email_but_not_number as fn(),
+            ),
+            (
                 "mount::an_image_records_its_source_and_fit",
                 an_image_records_its_source_and_fit as fn(),
             ),
@@ -2586,6 +2590,57 @@ pub(crate) mod tests {
         assert_eq!(node["secure"], true);
         assert_eq!(node["keyboard"], "email");
         assert_eq!(node["disabled"], true);
+    }
+
+    fn a_return_resigns_text_and_email_but_not_number() {
+        use objc2_ui_kit::UIWindow;
+
+        let mtm =
+            MainThreadMarker::new().expect("the iOS host test runner runs on the main thread");
+        let bounds = CGRect::new(CGPoint::ZERO, CGSize::new(320.0, 480.0));
+        let window = UIWindow::initWithFrame(UIWindow::alloc(mtm), bounds);
+        let root = UIView::new(mtm);
+        root.setFrame(bounds);
+        window.addSubview(&root);
+        window.makeKeyAndVisible();
+        let mounter = Mounter::new(mtm, root, PathBuf::new());
+
+        let keyboards = [
+            (2, nlayer_core::KeyboardType::Text, true),
+            (3, nlayer_core::KeyboardType::Email, true),
+            (4, nlayer_core::KeyboardType::Number, false),
+        ];
+        let mut items = Vec::new();
+        for (id, keyboard, _) in keyboards {
+            items.extend(child(id, ViewKind::Input, frame(0.0, 0.0, 200.0, 40.0)));
+            items.push(MountItem::Input {
+                id,
+                config: Box::new(nlayer_core::InputConfig {
+                    keyboard,
+                    ..nlayer_core::InputConfig::default()
+                }),
+            });
+        }
+        apply(&mounter, items);
+
+        for (id, keyboard, resigns) in keyboards {
+            let field = mounter.borrow().field(id).expect("field").retain();
+            assert!(
+                field.becomeFirstResponder(),
+                "{keyboard:?} takes the keyboard"
+            );
+            // `EditingDidEndOnExit` is what UIKit sends when Return is pressed;
+            // the handler resigns text and email only.
+            let relay = mounter.borrow().relay.clone();
+            // SAFETY: `Relay` implements `returned:`.
+            let _: () = unsafe { objc2::msg_send![&*relay, returned: &*field] };
+            assert_eq!(
+                field.isFirstResponder(),
+                !resigns,
+                "{keyboard:?}: Return resigns text and email, not number"
+            );
+        }
+        drop(window);
     }
 
     fn an_image_records_its_source_and_fit() {

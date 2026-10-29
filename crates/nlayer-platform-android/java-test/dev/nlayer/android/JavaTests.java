@@ -45,6 +45,7 @@ public final class JavaTests extends Instrumentation {
     "testInputConfigure",
     "testInputValueRevisions",
     "testInputTypingCounts",
+    "testInputReturnDismisses",
     "testImageFitModes",
     "testImageObjectPosition",
     "testImageRadiusClips",
@@ -525,6 +526,71 @@ public final class JavaTests extends Instrumentation {
     equal("typed", box.edit.getText().toString(), "typed text");
     check(box.count >= 1, "typing counts a change");
     check(!box.setting, "typing is not a programmatic set");
+  }
+
+  void testInputReturnDismisses() {
+    Activity activity =
+        startActivitySync(
+            new Intent(context(), HostActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    try {
+      int[] keyboards = {0, 1, 2};
+      String[] names = {"text", "email", "number"};
+      boolean[] resigns = {true, true, false};
+      InputBox[] boxes = new InputBox[keyboards.length];
+      HostView host =
+          main(
+              () -> {
+                HostView view =
+                    (HostView)
+                        ((FrameLayout) activity.findViewById(android.R.id.content)).getChildAt(0);
+                for (int i = 0; i < boxes.length; i++) {
+                  InputBox box = new InputBox(activity, 10 + i);
+                  box.configure(
+                      16,
+                      400,
+                      false,
+                      0xff000000,
+                      0,
+                      0,
+                      0,
+                      "",
+                      false,
+                      keyboards[i],
+                      false,
+                      false,
+                      view.density);
+                  view.addView(box, new FrameLayout.LayoutParams(200, 40));
+                  boxes[i] = box;
+                }
+                return view;
+              });
+
+      for (int i = 0; i < boxes.length; i++) {
+        InputBox box = boxes[i];
+        main(
+            () -> {
+              box.edit.requestFocus();
+              return null;
+            });
+        check(main(() -> box.edit.hasFocus()), names[i] + " field took focus");
+        main(
+            () -> {
+              box.edit.onEditorAction(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
+              return null;
+            });
+        equal(!resigns[i], main(() -> box.edit.hasFocus()), names[i] + " focus after Return");
+        if (resigns[i]) {
+          check(main(() -> host.findFocus() != box.edit), names[i] + " keyboard focus");
+        }
+      }
+    } finally {
+      main(
+          () -> {
+            activity.finish();
+            return null;
+          });
+      waitForIdleSync();
+    }
   }
 
   // --- ImageBox ------------------------------------------------------------
