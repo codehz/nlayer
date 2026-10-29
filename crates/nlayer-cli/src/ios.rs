@@ -12,9 +12,9 @@ use std::{
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicBool, Ordering},
-        mpsc::{Receiver, Sender, channel},
+        mpsc::{Sender, channel},
     },
     thread::{self, JoinHandle},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -25,12 +25,11 @@ use serde::Deserialize;
 
 use crate::{
     RunError, resolve_entry,
-    run::{consider, consider_tree, stamp, watch_paths, workspace_root},
+    run::{Watch, consider, consider_tree, workspace_root},
 };
 
 pub(crate) const BUNDLE_ID: &str = "dev.nlayer.ios";
 const EXECUTABLE: &str = "nlayer-ios-app";
-const POLL: Duration = Duration::from_millis(150);
 
 static STOP: AtomicBool = AtomicBool::new(false);
 
@@ -116,23 +115,25 @@ pub fn run_ios(options: IosOptions) -> Result<IosSession, RunError> {
     publish(&docs, &app_dir, &bundled)?;
     relaunch(&udid)?;
     eprintln!("launched on {name}");
-    let watched = watch_paths(&app_dir, Some(&bundled));
-    let initial = stamp(&watched);
+    let mut watch = Watch::new(entry, app_dir.clone(), options.release, &bundled);
     let stop = Arc::new(AtomicBool::new(false));
     let (stop_tx, stop_rx) = channel();
     let shared = Arc::new(Shared {
-        entry,
         app_dir,
-        release: options.release,
         udid: udid.clone(),
         docs,
-        watched: Mutex::new(watched),
-        stamp: Mutex::new(initial),
-        stop: Arc::clone(&stop),
     });
     let watch = thread::Builder::new()
         .name("nlayer-ios".to_owned())
-        .spawn(move || watch_loop(shared, stop_rx))
+        .spawn(move || {
+            watch.run(stop_rx, move |bundled| {
+                if publish(&shared.docs, &shared.app_dir, bundled)? {
+                    relaunch(&shared.udid)?;
+                    eprintln!("rebuilt in {:.0} ms", bundled.elapsed_ms);
+                }
+                Ok(())
+            });
+        })
         .map_err(|error| RunError::message(format!("watch thread: {error}")))?;
     Ok(IosSession {
         udid,
@@ -143,70 +144,9 @@ pub fn run_ios(options: IosOptions) -> Result<IosSession, RunError> {
 }
 
 struct Shared {
-    entry: PathBuf,
     app_dir: PathBuf,
-    release: bool,
     udid: String,
     docs: PathBuf,
-    watched: Mutex<Vec<PathBuf>>,
-    stamp: Mutex<u64>,
-    stop: Arc<AtomicBool>,
-}
-
-fn watch_loop(shared: Arc<Shared>, stop: Receiver<()>) {
-    loop {
-        if shared.stop.load(Ordering::Relaxed) {
-            break;
-        }
-        let watched = shared.watched.lock().expect("ios watch").clone();
-        let next = stamp(&watched);
-        let changed = *shared.stamp.lock().expect("ios watch") != next;
-        if changed {
-            rebuild(&shared);
-        }
-        match stop.recv_timeout(POLL) {
-            Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-        }
-    }
-}
-
-fn rebuild(shared: &Shared) {
-    let built = bundle(&BundleOptions {
-        entry: shared.entry.clone(),
-        minify: shared.release,
-        test: false,
-    });
-    let watched;
-    let stamp = match built {
-        Ok(bundled) => match publish(&shared.docs, &shared.app_dir, &bundled) {
-            Ok(true) => {
-                if let Err(error) = relaunch(&shared.udid) {
-                    eprintln!("{error}");
-                } else {
-                    eprintln!("rebuilt in {:.0} ms", bundled.elapsed_ms);
-                }
-                watched = watch_paths(&shared.app_dir, Some(&bundled));
-                stamp(&watched)
-            }
-            Ok(false) => {
-                watched = watch_paths(&shared.app_dir, Some(&bundled));
-                stamp(&watched)
-            }
-            Err(error) => {
-                eprintln!("{error}");
-                watched = watch_paths(&shared.app_dir, Some(&bundled));
-                stamp(&watched)
-            }
-        },
-        Err(error) => {
-            eprintln!("{}", error.colored);
-            watched = watch_paths(&shared.app_dir, None);
-            stamp(&watched)
-        }
-    };
-    *shared.watched.lock().expect("ios watch") = watched;
-    *shared.stamp.lock().expect("ios watch") = stamp;
 }
 
 /// Writes the bundle and its imported assets. Returns whether anything

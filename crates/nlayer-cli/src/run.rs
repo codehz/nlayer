@@ -578,6 +578,81 @@ pub(crate) fn stamp(paths: &[PathBuf]) -> u64 {
     hasher.finish()
 }
 
+/// A host app after its first build. A watched file that changes rebuilds
+/// once; a failed build prints and leaves the last app running.
+pub(crate) struct Watch {
+    entry: PathBuf,
+    app_dir: PathBuf,
+    release: bool,
+    watched: Vec<PathBuf>,
+    stamp: u64,
+}
+
+impl Watch {
+    /// Starts from `bundled`, which is already published.
+    pub(crate) fn new(entry: PathBuf, app_dir: PathBuf, release: bool, bundled: &Bundle) -> Self {
+        let watched = watch_paths(&app_dir, Some(bundled));
+        let stamp = stamp(&watched);
+        Self {
+            entry,
+            app_dir,
+            release,
+            watched,
+            stamp,
+        }
+    }
+
+    /// Bundles the entry and hands it to `publish`. A compile error prints its
+    /// diagnostic and keeps the last app; its assets leave the watched set
+    /// until a build succeeds. A failed publish prints and is retried on the
+    /// next change. Returns whether `publish` succeeded.
+    pub(crate) fn rebuild(
+        &mut self,
+        publish: impl FnOnce(&Bundle) -> Result<(), RunError>,
+    ) -> bool {
+        let (published, watched) = match bundle(&BundleOptions {
+            entry: self.entry.clone(),
+            minify: self.release,
+            test: false,
+        }) {
+            Ok(bundled) => {
+                let published = match publish(&bundled) {
+                    Ok(()) => true,
+                    Err(error) => {
+                        eprintln!("{error}");
+                        false
+                    }
+                };
+                (published, watch_paths(&self.app_dir, Some(&bundled)))
+            }
+            Err(error) => {
+                eprintln!("{}", error.colored);
+                (false, watch_paths(&self.app_dir, None))
+            }
+        };
+        self.stamp = stamp(&watched);
+        self.watched = watched;
+        published
+    }
+
+    /// Rebuilds whenever a watched file changed, until `stop` closes.
+    pub(crate) fn run(
+        &mut self,
+        stop: Receiver<()>,
+        mut publish: impl FnMut(&Bundle) -> Result<(), RunError>,
+    ) {
+        loop {
+            if stamp(&self.watched) != self.stamp {
+                self.rebuild(&mut publish);
+            }
+            match stop.recv_timeout(POLL) {
+                Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            }
+        }
+    }
+}
+
 fn watch_loop(shared: Arc<Shared>, stop: Receiver<()>) {
     loop {
         if shared.stop.load(Ordering::Relaxed) {
@@ -828,7 +903,62 @@ fn respond(
 
 #[cfg(test)]
 mod tests {
-    use super::route;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        sync::{Arc, Mutex, mpsc::channel},
+        thread,
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    };
+
+    use super::{BundleOptions, RunError, Watch, bundle, route};
+
+    fn source(label: &str) -> String {
+        r#"import { mount } from "@nlayer/runtime";
+import { Text, View } from "@nlayer/ui";
+
+function App() {
+    return <View style={{ width: 80, height: 40 }}><Text>LABEL</Text></View>;
+}
+mount(App);
+"#
+        .replace("LABEL", label)
+    }
+
+    fn scratch(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|time| time.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!(
+            "nlayer-watch-{label}-{}-{nanos}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("App.tsx"), source("Hello")).unwrap();
+        dir
+    }
+
+    fn built(entry: &Path) -> nlayer_bundler::Bundle {
+        bundle(&BundleOptions {
+            entry: entry.to_path_buf(),
+            minify: false,
+            test: false,
+        })
+        .expect("the app builds")
+    }
+
+    fn wait_for(limit: Duration, mut pred: impl FnMut() -> bool) {
+        let start = Instant::now();
+        while start.elapsed() < limit {
+            if pred() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(30));
+        }
+        assert!(pred(), "timed out");
+    }
 
     #[test]
     fn routes_reject_dot_dot_after_decoding() {
@@ -837,5 +967,72 @@ mod tests {
         assert!(route("/../Cargo.toml").is_err());
         assert!(route("/%2e%2e/Cargo.toml").is_err());
         assert!(route("/%").is_err());
+    }
+
+    #[test]
+    fn a_watched_change_rebuilds_and_a_broken_source_keeps_the_last_app() {
+        let dir = scratch("run");
+        let entry = dir.join("App.tsx");
+        let mut watch = Watch::new(entry.clone(), dir.clone(), false, &built(&entry));
+        let (stop_tx, stop_rx) = channel();
+        let published: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&published);
+        let running = thread::spawn(move || {
+            watch.run(stop_rx, move |bundled| {
+                seen.lock().expect("published").push(bundled.code.clone());
+                Ok(())
+            });
+        });
+
+        thread::sleep(Duration::from_millis(400));
+        assert_eq!(published.lock().expect("published").len(), 0);
+
+        fs::write(&entry, source("Hola")).unwrap();
+        wait_for(Duration::from_secs(30), || {
+            !published.lock().expect("published").is_empty()
+        });
+        assert!(published.lock().expect("published")[0].contains("Hola"));
+        thread::sleep(Duration::from_millis(300));
+
+        fs::write(&entry, "const = ;\n").unwrap();
+        thread::sleep(Duration::from_millis(700));
+        assert_eq!(
+            published.lock().expect("published").len(),
+            1,
+            "a broken source must not publish"
+        );
+
+        fs::write(&entry, source("Adios")).unwrap();
+        wait_for(Duration::from_secs(30), || {
+            published.lock().expect("published").len() == 2
+        });
+        assert!(published.lock().expect("published")[1].contains("Adios"));
+
+        stop_tx.send(()).unwrap();
+        running.join().unwrap();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_publish_is_retried_on_the_next_change() {
+        let dir = scratch("publish");
+        let entry = dir.join("App.tsx");
+        let mut watch = Watch::new(entry.clone(), dir.clone(), false, &built(&entry));
+        fs::write(&entry, source("Hola")).unwrap();
+        let mut attempts = 0;
+        assert!(!watch.rebuild(|_| {
+            attempts += 1;
+            Err(RunError::message("the device is gone"))
+        }));
+        assert_eq!(attempts, 1);
+
+        fs::write(&entry, source("Adios")).unwrap();
+        let mut code = String::new();
+        assert!(watch.rebuild(|bundled| {
+            code = bundled.code.clone();
+            Ok(())
+        }));
+        assert!(code.contains("Adios"));
+        let _ = fs::remove_dir_all(&dir);
     }
 }
