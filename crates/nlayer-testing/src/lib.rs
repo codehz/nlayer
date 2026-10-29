@@ -579,8 +579,9 @@ impl Headless {
         Ok(())
     }
 
-    /// Types `text` into the single-line input `selector` names, one change
-    /// per character, appended to the value it already shows.
+    /// Types `text` into the single-line input `selector` names. Focuses
+    /// that field first (and no other), then appends one change per
+    /// character to the value it already shows.
     pub fn type_selector(&mut self, selector: &str, text: &str) -> Result<(), String> {
         self.refresh();
         let target = selector::resolve(&self.screen, selector)?;
@@ -595,6 +596,7 @@ impl Headless {
         {
             return Err(format!("`{selector}` is disabled"));
         }
+        self.focus_input(id);
         let mut value = self
             .screen
             .view(id)
@@ -690,21 +692,28 @@ impl Headless {
         }
     }
 
-    /// The user typed `text` into input `id`. The native field shows it at
-    /// once (as a platform's does); the app's `onChange` decides what the
-    /// controlled value becomes.
+    /// The user typed `text` into input `id`. The field is the one editing.
+    /// The native field shows the text at once (as a platform's does); the
+    /// app's `onChange` decides what the controlled value becomes.
     pub fn type_text(&mut self, id: NodeId, text: impl Into<String>) {
         let text = text.into();
         self.refresh();
+        self.focus_input(id);
+        if let Some(view) = self.screen.views.get_mut(&id)
+            && let Some(input) = &mut view.input
+        {
+            input.value = text.clone();
+        }
+        self.engine.control().input_changed(id, text);
+    }
+
+    /// `id` is the field being edited. Every other field is not.
+    fn focus_input(&mut self, id: NodeId) {
         for (other, view) in self.screen.views.iter_mut() {
             if let Some(input) = &mut view.input {
                 input.focused = *other == id;
-                if *other == id {
-                    input.value = text.clone();
-                }
             }
         }
-        self.engine.control().input_changed(id, text);
     }
 
     /// The surface changed size.

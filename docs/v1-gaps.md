@@ -38,7 +38,6 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 | P0-2 | `keyboardShouldPersistTaps="handled"` 在 web/Android 语义错误 | web `crates/nlayer-platform-web/web/nlayer.js:655-660`；Android `crates/nlayer-platform-android/java/dev/nlayer/android/ScrollBox.java:322-336`；契约 `docs/v1.md:15` | 点在 Text 内链接之外仍被当成 handled；点 Scroll 自身 `onPress` 会既触发 press 又收键盘 |
 | P0-3 | Android API 28–29 的 `env(keyboard-inset-height)` 恒为 0 | `crates/nlayer-platform-android/java/dev/nlayer/android/HostActivity.java:46-53` | 最低支持 API 28 上键盘 inset、键盘弹出检测、tap/drag 收键盘全部失效 |
 | P0-4 | Image 的 `borderRadius` 在 web/Android 不裁剪 | web `crates/nlayer-platform-web/web/base.css:47-57`、`web/nlayer.js:180-185`；Android `crates/nlayer-platform-android/java/dev/nlayer/android/ImageBox.java:123-141`；iOS 已裁剪 `crates/nlayer-platform-ios/src/mount.rs:1911-1912` | v1 要求宿主绘制 radius；同一张圆角图片在三端表现不一致 |
-| P0-6 | 无窗口 `type()` 不聚焦输入框 | `crates/nlayer-testing/src/lib.rs:584-625`；对应 `type_text` 的聚焦逻辑在 `:696-705`；契约 `docs/v1.md:20` | 同一套步骤在无窗口和宿主上语义不同；`focusStyle` 无法在无窗口路径体现；`Keyboard.dismiss()` 在 type 之后为空操作 |
 | P0-7 | `text:` 对嵌套 span 的匹配在无窗口/web 与 iOS/Android 不一致 | 无窗口 `crates/nlayer-testing/src/selector.rs:266-292`；web `web/host.js:159-176`；iOS/Android `scene.rs:701-711`（各一份） | 同一测试文件可能在一端通过、另一端失败，违反“同一套步骤” |
 | P0-10 | Android `focusStyle` 不绘制聚焦输入的祖先 | `crates/nlayer-platform-android/java/dev/nlayer/android/Mounter.java:474`；语义定义 `crates/nlayer-core/src/ops.rs:459`；iOS 会标记焦点链 `crates/nlayer-platform-ios/src/mount.rs:975-1019` | “view 或其中的 field 有焦点”只在 iOS 成立；Android 上祖先 focusStyle 永远不亮 |
 
@@ -48,7 +47,6 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 - P0-2：web/Android host 测试覆盖三种点按：Scroll 自身 `onPress`、Text 内链接外区域、Input。`handled` 只在不落在 `onPress` 或输入上时收键盘。
 - P0-3：API 28 或 29 模拟器上断言 `env(keyboard-inset-height) > 0`，且 `keyboardDismissMode` / `keyboardShouldPersistTaps` 能收键盘。
 - P0-4：web/Android 的 Image 加圆角后，四角被裁剪；iOS 保持现状。若宿主测试只能读树，需要补一项像素/绘制层断言或明确人工验收步骤。
-- P0-6：`type()` 后 `tree()` 能读到该输入 focused；随后 `Keyboard.dismiss()` 清掉 focused。若 `focused` 是公开字段，补进 `packages/test/index.d.ts`。
 - P0-7：用同一个包含嵌套 span（有/无 `testID`）的应用，在无窗口、web、iOS、Android 跑同一选择器；四端结果一致。按 `docs/v1.md:15`，span 应由 `testID` 点名。
 - P0-10：Android 上给包含 Input 的 View 加 `focusStyle`，聚焦后断言祖先样式生效；同时确认 touch mode 下普通 Box 的 focusStyle 是否可达。
 
@@ -101,7 +99,6 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 | P3-1 | `PointerEvents` 解析进样式 IR，但 hit-test 从不读取 | `crates/nlayer-core/src/props.rs`、`style.rs:1044` |
 | P3-2 | 未接线的通用 reactive API | `crates/nlayer-core/src/reactive.rs`：`owned_signal`、`set_equals`、`remove_cleanup`、`collecting_effects`、`with_root_under` |
 | P3-3 | web 有两份 `ErrorBoundary`，第一份被覆盖 | `crates/nlayer-platform-web/web/browser/runtime.js:106-121` vs `:305-323` |
-| P3-4 | `tree()` 输出 `focused`，但 `@nlayer/test` 的 `Node` 未声明 | `crates/nlayer-testing/src/runner.rs:886`；`packages/test/index.d.ts:24-53` |
 | P3-5 | test bundle 导出 `finish`，但 `@nlayer/test` 类型未声明 | `crates/nlayer-bundler/src/test_api.rs:9`；`crates/nlayer-bundler/src/types.rs:452-536` |
 | P3-6 | web 不绘制 `visibility: hidden` | `crates/nlayer-core/src/style.rs:3618`；web `encode.rs:562-614` |
 | P3-7 | Android 丢弃 `skewX` / `skewY` | `crates/nlayer-platform-android/src/encode.rs:323-326`；v1 未点名 skew，属残留 |
@@ -141,7 +138,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 ## 建议切片顺序
 
 1. **CLI/API 契约**：P0-1、P0-5、P0-8、P0-9 已关闭。
-2. **键盘/选择器**：P0-2、P0-3、P0-6、P0-7；补 host 测试。
+2. **键盘/选择器**：P0-2、P0-3、P0-7；补 host 测试。P0-6 已关闭。
 3. **绘制与宿主语义**：P0-4、P0-10、P1-2、P1-3；补 web/Android 绘制断言。
 4. **Scroll 定稿**：P1-1；先改文档或改实现，不要两份契约并存。
 5. **验收自动化**：P2-1 到 P2-3；把 gallery 和三端 target 测试接入 `cargo test` / CI。

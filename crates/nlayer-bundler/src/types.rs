@@ -490,6 +490,8 @@ export interface Node {
   secure?: boolean;
   keyboard?: "text" | "email" | "number" | "phone";
   disabled?: boolean;
+  /** The field is the one editing. `Keyboard.dismiss()` clears it. */
+  focused?: boolean;
   src?: string;
   /** An image's `objectFit`. */
   fit?: "fill" | "contain" | "cover" | "none" | "scale-down";

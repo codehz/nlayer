@@ -178,3 +178,59 @@ test("scroll moves the offset toward the content", () => {
     assert!(report.ok(), "{report}");
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn type_focuses_the_field_and_dismiss_clears_it() {
+    let dir = app(
+        "focus",
+        &[
+            (
+                "App.tsx",
+                r#"
+import { mount, signal } from "@nlayer/runtime";
+import { Input, Keyboard, Text, View } from "@nlayer/ui";
+
+function App() {
+    const name = signal("");
+    return (
+        <View style={{ width: 200, height: 80 }}>
+            <Input testID="name" value={name()} placeholder="Name" onChange={(value) => name.set(value)} />
+            <Text testID="done" onPress={() => Keyboard.dismiss()}>done</Text>
+        </View>
+    );
+}
+mount(App);
+"#,
+            ),
+            (
+                "App.test.tsx",
+                r#"
+import { expect, open, test } from "@nlayer/test";
+
+function field(node) {
+    if (node.kind === "input") return node;
+    for (const child of node.children ?? []) {
+        const found = field(child);
+        if (found) return found;
+    }
+    return null;
+}
+
+test("type focuses the input and dismiss clears it", () => {
+    const app = open("./App.tsx", { width: 200, height: 80 });
+    expect(field(app.tree()).focused).toBe(false);
+    app.type("name", "a");
+    expect(field(app.tree()).focused).toBe(true);
+    expect(field(app.tree()).value).toBe("a");
+    app.press("done");
+    expect(field(app.tree()).focused).toBe(false);
+    expect(field(app.tree()).value).toBe("a");
+});
+"#,
+            ),
+        ],
+    );
+    let report = run(&dir, None).expect("the file runs");
+    assert!(report.ok(), "{report}");
+    let _ = fs::remove_dir_all(&dir);
+}
