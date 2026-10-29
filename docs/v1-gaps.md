@@ -15,8 +15,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 **尚未完全解决，本文保留。** P0–P3 没有未关闭项；未关闭的是验收矩阵里的验证薄弱处：
 
 1. iOS / Android 宿主没有断言 `text` / `email` 输入的 Return 收键盘（web E2E 已覆盖）。
-2. `hoverStyle` 没有真实的 hover 输入步骤，只有 web 规则单测。
-3. iOS 图片只有 source / fit 断言，没有解码和圆角裁剪的设备断言。
+2. iOS 图片只有 source / fit 断言，没有解码和圆角裁剪的设备断言。
 
 P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS 宿主。
 
@@ -123,7 +122,7 @@ P1-7 已关闭：web 的浏览器全局不遮蔽，缺失契约只约束 QuickJS
 | 打包图片 | `App.tsx:3,207` | `asset:/mark.png`、cover、32×32 | gallery 只读挂载元数据；Android 设备测试断言解码和圆角裁剪，web target 断言 radius；iOS 只有 source / fit 断言 | 未关闭 |
 | 双轴 Scroll | `App.tsx:219-232` | 垂直溢出 + 水平滚到 x=40；每实例一轴 | 未断言绘制；offset / content / size 已断言，像素对齐不在 v1 | 已关闭 |
 | 滚动回调 | `App.tsx:247-275` | 六个回调都等到同一 metric | 无 | 已关闭 |
-| active/hover/focus | `App.tsx:129-178` | 基础宽高 + 文案 | web 单测断言 active/hover 规则应用；未断言实际像素；无 hover 输入步骤 | 未关闭 |
+| active/hover/focus | `App.tsx:129-178` | 基础宽高 + 文案；web E2E 用 `Input.dispatchMouseEvent` 移入/移出断言计算后的 `opacity`；宿主测试断言 active/hover/focus 的实际绘制状态 | 无 | 已关闭 |
 | 受控 Input | `App.tsx:290-354` | 输入、`Name: ada`、disabled | Return 只在 web E2E 断言；`Keyboard.dismiss` 和 placeholder 选择器由无窗口 suite 覆盖；iOS/Android 的 Return 未断言 | 未关闭 |
 | onPress | `App.tsx:85-96,129,144` | 文案变化 | gallery 未覆盖嵌套 span press；四端 targets fixture 用 `id:docs` 覆盖 | 已关闭 |
 | 静态 transform | `App.tsx:97-107` | transform 步骤列表；Android instrumentation 和 iOS host 断言百分比 `transformOrigin` 在 resize 后按新尺寸重算 | 无 | 已关闭 |

@@ -56,6 +56,11 @@ export function installHost(player, root) {
       if (!el) throw new Error(`\`${selector}\` is not in a scroll view`);
       return { x: el.scrollLeft || 0, y: el.scrollTop || 0 };
     },
+    computed(selector, property) {
+      const target = one(player, root, selector);
+      const value = getComputedStyle(target.el)[property];
+      return value == null ? "" : String(value);
+    },
     query(selector) {
       try {
         const target = resolve(player, selector);

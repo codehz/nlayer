@@ -204,6 +204,15 @@ impl WebApp {
         let value = self.call("offset", &[json!(selector)])?;
         Ok((number(&value, "x")?, number(&value, "y")?))
     }
+
+    /// A computed style of the view `selector` names, as the page reports it.
+    fn computed(&mut self, selector: &str, property: &str) -> Result<String, String> {
+        let value = self.call("computed", &[json!(selector), json!(property)])?;
+        value
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| format!("the page returned no `{property}`"))
+    }
 }
 
 /// A field of the JSON an `__nlayerHost` call answered.
@@ -808,6 +817,11 @@ function App() {
         style={{ width: 200, height: 32 }}
       />
       <Text>{`input ${name()}`}</Text>
+      <View
+        testID="hover"
+        hoverStyle={{ opacity: 0.4 }}
+        style={{ width: 100, height: 40, backgroundColor: "red" }}
+      />
       <Events />
     </View>
   );
@@ -876,6 +890,30 @@ mount(App);
         texts
             .iter()
             .find_map(|text| text.strip_prefix(name)?.trim().to_owned().into())
+    }
+
+    #[test]
+    fn the_browser_hovers_a_view() {
+        let (mut app, dir) = open_app();
+        assert_eq!(app.computed("hover", "opacity").unwrap(), "1");
+        let (x, y) = app.point("point", "hover").expect("the hover view");
+        app.mouse("mouseMoved", x, y, 0).expect("the pointer moves");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while app.computed("hover", "opacity").unwrap() != "0.4" {
+            assert!(Instant::now() < deadline, "the pointer did not hover");
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        // The pointer leaving takes the hover rule away again.
+        app.mouse("mouseMoved", 2.0, 830.0, 0)
+            .expect("the pointer moves away");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while app.computed("hover", "opacity").unwrap() != "1" {
+            assert!(Instant::now() < deadline, "the hover rule stayed");
+            thread::sleep(Duration::from_millis(10));
+        }
+        app.close();
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
