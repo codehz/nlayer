@@ -15,7 +15,6 @@ mod grid;
 mod keyboard;
 mod mount;
 mod ops;
-mod props;
 pub mod reactive;
 pub mod style;
 mod tailwind;

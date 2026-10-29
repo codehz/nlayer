@@ -6,10 +6,7 @@
 //! style IR already writes, copied from `nsh_core::tailwind`.
 #![allow(dead_code)]
 
-use crate::{
-    props::PointerEvents,
-    style::{Color, EllipsizeMode, PropertyValue, Style, StyleKey, StyleValue, TextShadow},
-};
+use crate::style::{Color, EllipsizeMode, PropertyValue, Style, StyleKey, StyleValue, TextShadow};
 
 /// Values classes and the style itself contribute besides the layout style.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -21,8 +18,6 @@ pub(crate) struct ClassProps {
     pub ellipsize: Option<EllipsizeMode>,
     /// `whitespace-nowrap`, `text-nowrap`, `truncate`: lines never wrap.
     pub no_wrap: Option<bool>,
-    /// `pointerEvents` (`pointer-events-none` / `-auto`).
-    pub pointer_events: Option<PointerEvents>,
     /// `userSelect` (`select-none` / `select-text`; `auto`: none).
     pub selectable: Option<bool>,
     /// `placeholder:text-*` (inputs).

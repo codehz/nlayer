@@ -161,7 +161,6 @@ fn press_handlers_are_listened_and_called() {
             prop(view, "style", { width: 10, height: 10 });
             prop(view, "onPress", () => pressed.set(pressed() + 1));
             prop(view, "onLongPress", () => {});
-            prop(view, "pointerEvents", "auto");
             return view;
         }
         mount(App);

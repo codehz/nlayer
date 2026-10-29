@@ -1040,8 +1040,6 @@ pub(crate) struct Pending {
     /// `userSelect`: whether a text can be selected (`None`, `auto`: the
     /// view's around it, else the platform's).
     pub(crate) user_select: Option<bool>,
-    /// `pointerEvents`: which touches the view and the views in it take.
-    pub(crate) pointer_events: Option<crate::props::PointerEvents>,
     /// The `boxShadow` layers (by index) that name no color: CSS's
     /// `currentColor`, filled in by [`Style::apply_current_color`].
     current_shadows: u64,
@@ -1644,7 +1642,6 @@ style_keys! {
     NumberOfLines = "numberOfLines": Text "number" "The most lines a `<Text>` shows (CSS's `line-clamp`, class `line-clamp-*`); 0 shows them all.",
     TextOverflow = "textOverflow": Text "\"ellipsis\" | \"clip\" | \"ellipsis-start\" | \"ellipsis-middle\"" "CSS's `text-overflow`: how a clamped `<Text>` is cut, with an ellipsis at its end (the default), clipped, or with the ellipsis at its start or in its middle.",
     UserSelect = "userSelect": View "\"auto\" | \"none\" | \"text\"" "CSS's `user-select`: whether a `<Text>` can be selected (`\"text\"`) or not (`\"none\"`); a view's reaches the texts in it; `\"auto\"` leaves it to the view around it, else to the platform.",
-    PointerEvents = "pointerEvents": View "\"auto\" | \"none\" | \"box-none\" | \"box-only\"" "CSS's `pointer-events`: `\"none\"` takes no touches, for the view and the views in it unless one says `\"auto\"`; `\"box-none\"` takes none on the view itself, only on the views in it; `\"box-only\"` takes them on the view itself, never on the views in it.",
     VerticalAlign = "verticalAlign": View "\"baseline\" | \"text-top\" | \"text-bottom\" | \"middle\"" "Where a view or image inside a `<Text>` sits in its line (CSS `vertical-align`, `align-*`): its bottom on the baseline (the default), its top or bottom at the top or bottom of the text's font, or its middle half the font's x height above the baseline. The line grows to hold it.",
 }
 
@@ -1818,8 +1815,6 @@ pub enum PropertyValue {
     NumberOfLines(Option<u32>),
     /// `textOverflow`.
     TextOverflow(Option<EllipsizeMode>),
-    /// `pointerEvents`.
-    PointerEvents(Option<crate::props::PointerEvents>),
     /// `textDecorationStyle`.
     DecorationStyle(Option<DecorationStyle>),
     /// `gridTemplateColumns`, `gridTemplateRows`.
@@ -3010,17 +3005,6 @@ impl StyleKey {
                 Some("text") => Some(true),
                 Some(_) => return Err(StyleError::InvalidValue),
             }),
-            K::PointerEvents => {
-                use crate::props::PointerEvents as P;
-                PropertyValue::PointerEvents(match keyword(value)? {
-                    None => None,
-                    Some("auto") => Some(P::Auto),
-                    Some("none") => Some(P::None),
-                    Some("box-none") => Some(P::BoxNone),
-                    Some("box-only") => Some(P::BoxOnly),
-                    Some(_) => return Err(StyleError::InvalidValue),
-                })
-            }
             K::TextAlignVertical => PropertyValue::AlignVertical(match keyword(value)? {
                 None => None,
                 Some("auto" | "top") => Some(percentage(0.0)),
@@ -3250,13 +3234,12 @@ impl Style {
     }
 
     /// What the style says of the node's own props: `numberOfLines`,
-    /// `textOverflow`, `userSelect` and `pointerEvents`, into `props`.
+    /// `textOverflow` and `userSelect`, into `props`.
     pub(crate) fn node_props(&self, props: &mut crate::tailwind::ClassProps) {
         let p = &self.pending;
         props.number_of_lines = p.number_of_lines;
         props.ellipsize = p.text_overflow;
         props.selectable = p.user_select;
-        props.pointer_events = p.pointer_events;
     }
 
     /// `objectFit` (the `object-*` classes set it too): how an image or a
@@ -3667,7 +3650,6 @@ impl Style {
             (K::NumberOfLines, V::NumberOfLines(v)) => self.pending.number_of_lines = *v,
             (K::TextOverflow, V::TextOverflow(v)) => self.pending.text_overflow = *v,
             (K::UserSelect, V::OptBool(v)) => self.pending.user_select = *v,
-            (K::PointerEvents, V::PointerEvents(v)) => self.pending.pointer_events = *v,
             (K::FontVariant, V::FontVariant(v)) => self.text.font_variant = *v,
             (K::TextShadow, V::TextShadow(v)) => {
                 self.pending.current_text_shadow = v.is_some_and(|(_, colored)| !colored);
