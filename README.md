@@ -14,4 +14,6 @@ failed rebuild is printed and the previous page keeps running. `nlayer run
 after a rebuild without reinstalling it. See `NOTICE`
 for the Apache-2.0 provenance of copied code.
 
+Editor types are the npm packages `@nlayer/runtime`, `@nlayer/ui`, `@nlayer/jsx-runtime`, `@nlayer/test` and `@nlayer/globals`, versioned with `nlayer --version`. `nlayer init` writes `package.json`; `bun install` fetches them. The build does not need them.
+
 Licensed under the [Apache License, Version 2.0](LICENSE-APACHE).

@@ -57,6 +57,8 @@ v1 不做。不写后期做不做，也不写后期方案。
 
 仓库 `native-layer`，二进制 `nlayer`，crate 前缀 `nlayer-`。应用源码不写裸 `@nlayer`。公开两个原生模块，互不重导出：`@nlayer/runtime` 和 `@nlayer/ui`。导出名单在 `docs/v1.md`。`@nlayer/jsx-runtime` 只有类型，没有实现：`jsx` 为 `react-jsx`，`jsxImportSource` 为 `@nlayer`，这个裸 scope 只写在 tsconfig。编译后的 JSX 导入内部模块 `nlayer:rt`，应用不写它，也不写 `@nlayer/jsx-runtime`。v1 没有 `@nlayer/jsx-dev-runtime`。
 
+类型包在 bun workspace `packages/`，`.d.ts` 由 `nlayer-bundler` 的 `gen-types` 生成。`init` 不写 `.nlayer/types`。不要把 `.nlayer/types` 或 `paths` 映射加回来。公开模块仍是那两个，应用源码仍不写裸 `@nlayer`，也不写 `@nlayer/jsx-runtime` 和 `@nlayer/globals`。
+
 ## 仓库
 
 只有这些 crate：`nlayer-core`、`nlayer-js`、`nlayer-engine`、`nlayer-bundler`、`nlayer-platform-web`、`nlayer-platform-ios`、`nlayer-platform-android`、`nlayer-cli`、`nlayer-testing`。没有 `nlayer-dev`，没有 `nlayer-package`，没有 `nlayer-base`。`nlayer package` 和 `nsh-dev` 协议以后要做，v1 不为此加 crate。
