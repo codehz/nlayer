@@ -15,6 +15,8 @@ pub(crate) struct Node {
     pub children: Vec<u32>,
     pub kind: Kind,
     pub test_id: Option<String>,
+    /// `role`, label, hint, state, value and whether the subtree is hidden.
+    pub accessibility: nlayer_core::Accessibility,
     pub text: Option<String>,
     /// Layout frame in the parent's box, in points.
     pub frame: Rect,
@@ -246,7 +248,11 @@ impl Scene {
         }
         match hit {
             Match::Span { view, index } => {
-                let span = &self.nodes[view as usize].as_ref().unwrap().spans[index];
+                let node = self.nodes[view as usize].as_ref().unwrap();
+                let span = &node.spans[index];
+                if node.accessibility.blocks_press() {
+                    return Err(format!("`{selector}` does not take a press"));
+                }
                 if span.node.is_none() && !self.pressable(view) {
                     return Err(format!("`{selector}` does not take a press"));
                 }
@@ -337,6 +343,9 @@ impl Scene {
             let Some(node) = self.nodes.get(id as usize).and_then(|node| node.as_ref()) else {
                 return false;
             };
+            if node.accessibility.blocks_press() {
+                return false;
+            }
             if node.pressable {
                 return true;
             }
@@ -468,6 +477,54 @@ impl Scene {
         if let Some(test_id) = &node.test_id {
             map.insert("testID".into(), test_id.clone().into());
         }
+        let a = &node.accessibility;
+        if a.role != nlayer_core::AccessibilityRole::None {
+            map.insert("role".into(), a.role.name().into());
+        }
+        if let Some(label) = &a.label {
+            map.insert("accessibilityLabel".into(), label.to_string().into());
+        }
+        if let Some(hint) = &a.hint {
+            map.insert("accessibilityHint".into(), hint.to_string().into());
+        }
+        if a.hidden {
+            map.insert("accessibilityHidden".into(), true.into());
+        }
+        if a.state != nlayer_core::AccessibilityState::default() {
+            let mut state = serde_json::Map::new();
+            state.insert("disabled".into(), a.state.disabled.into());
+            state.insert("selected".into(), a.state.selected.into());
+            if let Some(checked) = a.state.checked {
+                state.insert(
+                    "checked".into(),
+                    match checked {
+                        nlayer_core::Checked::False => false.into(),
+                        nlayer_core::Checked::True => true.into(),
+                        nlayer_core::Checked::Mixed => "mixed".into(),
+                    },
+                );
+            }
+            if let Some(expanded) = a.state.expanded {
+                state.insert("expanded".into(), expanded.into());
+            }
+            map.insert("accessibilityState".into(), state.into());
+        }
+        if let Some(value) = &a.value {
+            let mut json = serde_json::Map::new();
+            if let Some(min) = value.min {
+                json.insert("min".into(), min.into());
+            }
+            if let Some(max) = value.max {
+                json.insert("max".into(), max.into());
+            }
+            if let Some(now) = value.now {
+                json.insert("now".into(), now.into());
+            }
+            if let Some(text) = &value.text {
+                json.insert("text".into(), text.to_string().into());
+            }
+            map.insert("accessibilityValue".into(), json.into());
+        }
         if !node.runs.is_empty() {
             map.insert(
                 "spans".into(),
@@ -593,6 +650,11 @@ fn color_hex(packed: u32) -> String {
 enum Matcher<'a> {
     TestId(&'a str),
     Text(&'a str),
+    Label(&'a str),
+    Role {
+        role: nlayer_core::AccessibilityRole,
+        name: Option<&'a str>,
+    },
     Any(&'a str),
 }
 
@@ -625,6 +687,19 @@ fn parse(source: &str) -> Result<Selector<'_>, String> {
         let matcher = match piece.split_once(':') {
             Some(("id", value)) => Matcher::TestId(value),
             Some(("text", value)) => Matcher::Text(value.trim()),
+            Some(("label", value)) => Matcher::Label(value),
+            Some(("role", value)) => {
+                let (name, label) = match value.find('[') {
+                    Some(open) if value.ends_with(']') => {
+                        (&value[..open], Some(&value[open + 1..value.len() - 1]))
+                    }
+                    _ => (value, None),
+                };
+                let Some(role) = nlayer_core::AccessibilityRole::from_name(name) else {
+                    return Err(format!("`{piece}`: unknown role `{name}`"));
+                };
+                Matcher::Role { role, name: label }
+            }
             _ => Matcher::Any(piece),
         };
         parts.push(Part { matcher, nth: None });
@@ -709,6 +784,17 @@ fn push(scene: &Scene, id: u32, matcher: Matcher<'_>, out: &mut Vec<Match>) {
             }
             push_span_text(node, id, want, out);
         }
+        Matcher::Label(want) => {
+            if node.accessibility.label.as_deref() == Some(want) {
+                out.push(Match::View(id));
+            }
+        }
+        Matcher::Role { role, name } => {
+            let a = &node.accessibility;
+            if a.role == role && name.is_none_or(|want| a.label.as_deref() == Some(want)) {
+                out.push(Match::View(id));
+            }
+        }
         Matcher::Any(_) => {}
     }
 }
@@ -764,6 +850,7 @@ mod tests {
             children: Vec::new(),
             kind: Kind::View,
             test_id: None,
+            accessibility: nlayer_core::Accessibility::default(),
             text: None,
             frame,
             hidden: false,

@@ -60,8 +60,8 @@ fn input(cx: *mut JsContext) -> JsValue {
     dom::host_component(cx, "input", false)
 }
 
-/// `platform`: `{ os }`. Safe area and the keyboard inset are not on it;
-/// padding and margin read them through `env()`.
+/// `platform`: `{ os, colorScheme }`. Safe area and the keyboard inset are
+/// not on it; padding and margin read them through `env()`.
 fn platform(cx: *mut JsContext) -> JsValue {
     // SAFETY: the state of this context; the object is new and the module takes it.
     unsafe {
@@ -69,7 +69,36 @@ fn platform(cx: *mut JsContext) -> JsValue {
         let object = qjs::JS_NewObject(cx);
         let name = qjs::JS_NewStringLen(cx, os.as_ptr().cast(), os.len() as _);
         qjs::JS_SetPropertyStr(cx, object, c"os".as_ptr(), name);
+        let scheme = reactive::new_function(cx, c"colorScheme", color_scheme, 0);
+        qjs::JS_SetPropertyStr(cx, object, c"colorScheme".as_ptr(), scheme);
         object
+    }
+}
+
+/// `platform.colorScheme()`: the system's scheme. Reading it inside an
+/// effect or a style follows a change.
+unsafe extern "C" fn color_scheme(
+    cx: *mut JsContext,
+    _this: JsValue,
+    _argc: c_int,
+    _argv: *mut JsValue,
+) -> JsValue {
+    // SAFETY: the context's signal, called on the live context; the result
+    // is owned.
+    unsafe {
+        let signal = (*crate::state::state(cx)).color_scheme.get();
+        qjs::JS_Call(cx, signal, qjs::JS_UNDEFINED, 0, std::ptr::null_mut())
+    }
+}
+
+/// `BackHandler`: the prelude's listener table.
+fn back_handler(cx: *mut JsContext) -> JsValue {
+    // SAFETY: the prelude's object on the global; the result is new.
+    unsafe {
+        let global = qjs::JS_GetGlobalObject(cx);
+        let value = qjs::JS_GetPropertyStr(cx, global, c"__nlayerBackHandler".as_ptr());
+        qjs::JS_FreeValue(cx, global);
+        value
     }
 }
 
@@ -118,6 +147,7 @@ const UI: &[Item] = &[
     ("Scroll", Export::Value(scroll)),
     ("Input", Export::Value(input)),
     ("platform", Export::Value(platform)),
+    ("BackHandler", Export::Value(back_handler)),
     ("Keyboard", Export::Value(keyboard)),
 ];
 

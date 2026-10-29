@@ -17,7 +17,7 @@ use objc2_foundation::{NSNotification, NSNotificationCenter, NSOperationQueue, N
 use objc2_ui_kit::{
     NSValueUIGeometryExtensions, UIKeyboardFrameEndUserInfoKey,
     UIKeyboardWillChangeFrameNotification, UIKeyboardWillHideNotification, UILabel, UIResponder,
-    UIView, UIViewAutoresizing,
+    UITraitEnvironment, UIUserInterfaceStyle, UIView, UIViewAutoresizing,
 };
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -67,6 +67,23 @@ define_class!(
             // SAFETY: the superclass implementation.
             let _: () = unsafe { msg_send![super(self), safeAreaInsetsDidChange] };
             self.publish();
+        }
+
+        #[unsafe(method(traitCollectionDidChange:))]
+        fn trait_collection_did_change(
+            &self,
+            previous: Option<&objc2_ui_kit::UITraitCollection>,
+        ) {
+            // SAFETY: the superclass implementation.
+            let _: () = unsafe { msg_send![super(self), traitCollectionDidChange: previous] };
+            let dark = unsafe {
+                self.traitCollection().userInterfaceStyle() == UIUserInterfaceStyle::Dark
+            };
+            if let Some(mounter) = self.ivars().mounter.borrow().upgrade()
+                && let Ok(mut mounter) = mounter.try_borrow_mut()
+            {
+                mounter.set_color_scheme(dark);
+            }
         }
     }
 
@@ -298,7 +315,7 @@ pub(crate) fn start(
         root.setAutoresizingMask(UIViewAutoresizing::empty());
     }
     container.addSubview(&root);
-    let mounter = Mounter::new(mtm, root.retain().into_super(), assets);
+    let mounter = Mounter::new(mtm, root.retain().into_super(), assets.clone());
     if let Some(pin) = pin.clone() {
         mounter.borrow_mut().set_pin(pin);
     }
@@ -326,7 +343,17 @@ pub(crate) fn start(
 
     let bounds = root.bounds().size;
     let viewport = Size::new(Points(bounds.width as f32), Points(bounds.height as f32));
-    let mut config = EngineConfig::new(bundle, viewport).with_os(nlayer_engine::Os::Ios);
+    let scheme = pin
+        .as_ref()
+        .and_then(|pin| pin.color_scheme.as_deref())
+        .map(|name| nlayer_core::ColorScheme::from_dark(name == "dark"))
+        .unwrap_or_else(|| {
+            let style = unsafe { container.traitCollection().userInterfaceStyle() };
+            nlayer_core::ColorScheme::from_dark(style == UIUserInterfaceStyle::Dark)
+        });
+    let mut config = EngineConfig::new(bundle, viewport)
+        .with_os(nlayer_engine::Os::Ios)
+        .with_color_scheme(scheme);
     // The app's storage: a file in Application Support of its container.
     if let Some(dir) = nlayer_engine::data_dir() {
         config = config.with_data_dir(dir.join("nlayer"));

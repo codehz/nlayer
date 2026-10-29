@@ -4,6 +4,7 @@
 use std::cell::RefCell;
 
 use nlayer_core::{
+    AccessibilityProp, AccessibilityRole, AccessibilityState, AccessibilityValue, Checked,
     ImageScales, ImageSource, Interaction, KeyboardDismiss, KeyboardTaps, KeyboardType, NodeId, Op,
     Prop, Tag,
     geometry::{Points, Size},
@@ -75,6 +76,19 @@ pub(super) fn decode_prop(
         }
         return Ok(None);
     }
+    if name == "disabled" {
+        return Ok(Some(Op::SetProp {
+            id,
+            prop: Prop::Disabled(value.bool()),
+        }));
+    }
+    if let Some(prop) = accessibility_prop(name, value, warnings)? {
+        return Ok(Some(Op::SetProp { id, prop }));
+    }
+    if name == "role" || name == "accessibilityState" || name == "accessibilityValue" {
+        // An unknown role warned above; a non-object state / value is empty.
+        return Ok(None);
+    }
     let prop = match (tag, name) {
         (Some(Tag::Image), "src") => Prop::Source(image_source(value)?),
         (Some(Tag::Scroll), "horizontal") => Prop::Horizontal(value.bool()),
@@ -111,13 +125,88 @@ pub(super) fn decode_prop(
                 }
             }
         }
-        (Some(Tag::Input), "disabled") => Prop::Disabled(value.bool()),
         _ => {
             warnings.warn(format!("unsupported prop `{name}`"));
             return Ok(None);
         }
     };
     Ok(Some(Op::SetProp { id, prop }))
+}
+
+/// An accessibility prop, when `name` is one. An unknown `role` warns.
+fn accessibility_prop(
+    name: &str,
+    value: &Value,
+    warnings: &Warnings,
+) -> Result<Option<Prop>, PropError> {
+    let prop = match name {
+        "accessibilityLabel" => AccessibilityProp::Label(optional_string(value)),
+        "accessibilityHint" => AccessibilityProp::Hint(optional_string(value)),
+        "accessibilityElementsHidden" => AccessibilityProp::Hidden(value.bool()),
+        "accessibilityValue" => AccessibilityProp::Value(accessibility_value(value)?),
+        "accessibilityState" => AccessibilityProp::State(accessibility_state(value)?),
+        "role" => {
+            if nullish(value) {
+                AccessibilityProp::Role(AccessibilityRole::None)
+            } else {
+                let name = string(value);
+                match AccessibilityRole::from_name(&name) {
+                    Some(role) => AccessibilityProp::Role(role),
+                    None => {
+                        warnings.warn(format!("unknown role `{name}`"));
+                        return Ok(None);
+                    }
+                }
+            }
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(Prop::Accessibility(prop)))
+}
+
+fn nullish(value: &Value) -> bool {
+    matches!(value.kind(), 0 | 1)
+}
+
+fn optional_string(value: &Value) -> Option<std::sync::Arc<str>> {
+    if nullish(value) {
+        return None;
+    }
+    value.as_string().map(Into::into)
+}
+
+fn accessibility_state(value: &Value) -> Result<AccessibilityState, PropError> {
+    if value.kind() != 7 {
+        return Ok(AccessibilityState::default());
+    }
+    let checked = match value.get("checked")? {
+        v if v.kind() == 2 && v.bool() => Some(Checked::True),
+        v if v.kind() == 2 => Some(Checked::False),
+        v if v.as_string().as_deref() == Some("mixed") => Some(Checked::Mixed),
+        _ => None,
+    };
+    let expanded = match value.get("expanded")? {
+        v if v.kind() == 2 => Some(v.bool()),
+        _ => None,
+    };
+    Ok(AccessibilityState {
+        disabled: value.get("disabled")?.kind() == 2 && value.get("disabled")?.bool(),
+        selected: value.get("selected")?.kind() == 2 && value.get("selected")?.bool(),
+        checked,
+        expanded,
+    })
+}
+
+fn accessibility_value(value: &Value) -> Result<Option<AccessibilityValue>, PropError> {
+    if value.kind() != 7 {
+        return Ok(None);
+    }
+    Ok(Some(AccessibilityValue {
+        min: value.get("min")?.number_value().map(|n| n as f32),
+        max: value.get("max")?.number_value().map(|n| n as f32),
+        now: value.get("now")?.number_value().map(|n| n as f32),
+        text: optional_string(&value.get("text")?),
+    }))
 }
 
 fn is_state_style(name: &str) -> bool {

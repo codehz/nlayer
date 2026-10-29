@@ -397,7 +397,87 @@ export type StyleList<T> = readonly (T | StyleList<T> | false | null | undefined
 
 export type Children = unknown;
 
-export interface ViewProps {
+/** What an element is, for assistive technologies. */
+export type AccessibilityRole =
+  | "none"
+  | "button"
+  | "link"
+  | "search"
+  | "image"
+  | "imagebutton"
+  | "keyboardkey"
+  | "text"
+  | "adjustable"
+  | "header"
+  | "summary"
+  | "alert"
+  | "checkbox"
+  | "combobox"
+  | "menu"
+  | "menubar"
+  | "menuitem"
+  | "progressbar"
+  | "radio"
+  | "radiogroup"
+  | "scrollbar"
+  | "spinbutton"
+  | "switch"
+  | "tab"
+  | "tablist"
+  | "timer"
+  | "toolbar"
+  | "list"
+  | "grid"
+  | "table"
+  | "row"
+  | "cell"
+  | "columnheader"
+  | "rowgroup"
+  | "listbox"
+  | "option"
+  | "group"
+  | "region"
+  | "navigation"
+  | "tree"
+  | "treeitem"
+  | "menuitemcheckbox"
+  | "menuitemradio";
+
+/** `accessibilityState`. */
+export interface AccessibilityState {
+  disabled?: boolean;
+  selected?: boolean;
+  checked?: boolean | "mixed";
+  expanded?: boolean;
+}
+
+/** `accessibilityValue`. */
+export interface AccessibilityValue {
+  min?: number;
+  max?: number;
+  now?: number;
+  text?: string;
+}
+
+/** The accessibility and press properties every host view takes. */
+export interface AccessibilityProps {
+  /** What assistive technologies call this element. */
+  role?: AccessibilityRole;
+  /** What screen readers read. Nothing is read from the children: an icon
+   * button needs one. */
+  accessibilityLabel?: string;
+  /** What activating the element does. */
+  accessibilityHint?: string;
+  /** Hide the view and its subtree from assistive technologies. */
+  accessibilityElementsHidden?: boolean;
+  accessibilityState?: AccessibilityState;
+  accessibilityValue?: AccessibilityValue;
+  /** Takes no presses (and an input ignores edits). A disabled view under a
+   * pressable ancestor blocks its press. */
+  disabled?: boolean;
+}
+
+export interface ViewProps extends AccessibilityProps {
   style?: StyleProp<ViewStyle>;
   /** Painted while pressed. The platform applies it; layout does not change. */
   activeStyle?: StyleProp<ViewStyle>;
@@ -415,7 +495,7 @@ export interface ViewProps {
   onPress?: () => void;
 }
 
-export interface TextProps {
+export interface TextProps extends AccessibilityProps {
   style?: StyleProp<TextStyle>;
   /** Painted while pressed. The platform applies it; layout does not change. */
   activeStyle?: StyleProp<TextStyle>;
@@ -433,7 +513,7 @@ export interface TextProps {
   onPress?: () => void;
 }
 
-export interface ImageProps {
+export interface ImageProps extends AccessibilityProps {
   style?: StyleProp<ImageStyle>;
   /** Painted while pressed. The platform applies it; layout does not change. */
   activeStyle?: StyleProp<ImageStyle>;
@@ -479,7 +559,7 @@ export interface ScrollProps extends ViewProps {
   onMomentumEnd?: (e: ScrollEvent) => void;
 }
 
-export interface InputProps {
+export interface InputProps extends AccessibilityProps {
   style?: StyleProp<InputStyle>;
   /** Painted while pressed. The platform applies it; layout does not change. */
   activeStyle?: StyleProp<InputStyle>;
@@ -496,7 +576,6 @@ export interface InputProps {
   placeholder?: string;
   secureTextEntry?: boolean;
   keyboardType?: "text" | "email" | "number" | "phone";
-  disabled?: boolean;
   /** A name tests use to find this field. The platform does not draw it. */
   testID?: string;
   onPress?: () => void;
@@ -513,6 +592,16 @@ export function Input(props: InputProps): unknown;
  * and `env(keyboard-inset-height)`. */
 export const platform: {
   readonly os: "web" | "ios" | "android";
+  /** The system's color scheme. Reading it in a style or an effect follows a
+   * change. */
+  colorScheme(): "light" | "dark";
+};
+
+/** The platform's back button (Android) or history back. */
+export const BackHandler: {
+  /** Adds a listener, called newest first; `true` means it handled the
+   * press. Returns an unsubscribe function. */
+  addEventListener(handler: () => boolean): () => void;
 };
 
 /** Resigns the focused field and hides the software keyboard. */
@@ -550,6 +639,13 @@ export interface Node {
   frame: Frame;
   /** A view's `testID`, when it has one. */
   testID?: string;
+  /** Its accessibility: what VoiceOver, TalkBack or ARIA reads. */
+  role?: AccessibilityRole;
+  accessibilityLabel?: string;
+  accessibilityHint?: string;
+  accessibilityHidden?: boolean;
+  accessibilityState?: AccessibilityState;
+  accessibilityValue?: AccessibilityValue;
   text?: string;
   /** Style runs of a text view, in order. `color` is `#rrggbb` or `#rrggbbaa`. */
   spans?: Array<{
@@ -589,6 +685,8 @@ export interface OpenOptions {
   safeArea?: { top: number; right: number; bottom: number; left: number };
   /** `env(keyboard-inset-height)`, in points. */
   keyboard?: number;
+  /** The system color scheme before the first frame. Default: `light`. */
+  colorScheme?: "light" | "dark";
   /**
    * The directory the headless app keeps its storage in, relative to the
    * test file. Default: in memory.
@@ -666,7 +764,7 @@ mod tests {
             );
         }
         for name in nlayer_js::native_module_exports("@nlayer/ui").unwrap() {
-            if name == "platform" || name == "Keyboard" {
+            if name == "platform" || name == "Keyboard" || name == "BackHandler" {
                 assert!(ui.contains(&format!("export const {name}")));
                 continue;
             }

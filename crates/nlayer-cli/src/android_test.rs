@@ -82,6 +82,7 @@ impl AppHost for AndroidHost {
             "safeArea": area(request.safe_area),
             "host": "127.0.0.1",
             "port": port,
+            "colorScheme": request.color_scheme.map(|scheme| scheme.name()),
         });
         android::push_bytes(
             sdk,

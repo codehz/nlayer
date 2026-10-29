@@ -421,6 +421,36 @@ const PRELUDE: &str = r#"
         writable: false,
         configurable: false,
     });
+
+    // --- BackHandler: the listeners, newest first; `true` handles it ---
+    var backListeners = [];
+    var backHandler = {
+        addEventListener: function addEventListener(handler) {
+            if (typeof handler !== "function") {
+                throw new TypeError("BackHandler.addEventListener: the handler is not a function");
+            }
+            var entry = { handler: handler };
+            backListeners.push(entry);
+            var removed = false;
+            return function remove() {
+                if (removed) return;
+                removed = true;
+                var i = backListeners.indexOf(entry);
+                if (i >= 0) backListeners.splice(i, 1);
+            };
+        },
+    };
+    Object.defineProperty(globalThis, "__nlayerBackHandler", { value: backHandler, writable: false, configurable: false });
+    Object.defineProperty(globalThis, "__nlayerDispatchBack", {
+        value: function () {
+            for (var i = backListeners.length - 1; i >= 0; i--) {
+                if (backListeners[i].handler()) return true;
+            }
+            return false;
+        },
+        writable: false,
+        configurable: false,
+    });
 })();
 "#;
 

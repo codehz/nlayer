@@ -111,6 +111,7 @@ export function createFacade(wasm, requestPump, options = {}) {
   // Rust's catch looks up this object. The facade's key is the one the
   // graph was given at startup, swapped in once the bridge can be called.
   function installBoundary() {
+    installColorScheme();
     boundaryProvide = call(116);
     call(400, event);
   }
@@ -254,6 +255,56 @@ export function createFacade(wasm, requestPump, options = {}) {
     storagePrefix(options.appId, globalThis.location?.href),
   );
 
+  // The system's color scheme. `options.colorScheme` pins it (`nlayer test`
+  // passes one so a run does not depend on the machine's appearance).
+  const pinnedScheme =
+    options.colorScheme === "dark" ? "dark" : options.colorScheme === "light" ? "light" : null;
+  const media = globalThis.matchMedia?.("(prefers-color-scheme: dark)");
+  // Made after the browser host is initialized (the signal is its op).
+  let colorScheme = null;
+  function installColorScheme() {
+    if (colorScheme) return;
+    colorScheme = signal(pinnedScheme ?? (media?.matches ? "dark" : "light"));
+    applyRootScheme();
+  }
+  function applyRootScheme() {
+    const doc = globalThis.document;
+    if (!colorScheme || !doc?.documentElement) return;
+    doc.documentElement.style.colorScheme = colorScheme();
+  }
+  const onScheme = (event) => {
+    if (pinnedScheme || !colorScheme) return;
+    colorScheme.set(event.matches ? "dark" : "light");
+    applyRootScheme();
+  };
+  media?.addEventListener?.("change", onScheme);
+
+  // `BackHandler`: history back. A listener that returns `true` handled it;
+  // without one the browser's back stands.
+  const backListeners = [];
+  const onPopState = () => {
+    for (let i = backListeners.length - 1; i >= 0; i--) {
+      if (backListeners[i].handler()) return;
+    }
+  };
+  globalThis.addEventListener?.("popstate", onPopState);
+  const BackHandler = {
+    addEventListener(handler) {
+      if (typeof handler !== "function") {
+        throw new TypeError("BackHandler.addEventListener: the handler is not a function");
+      }
+      const entry = { handler };
+      backListeners.push(entry);
+      let removed = false;
+      return () => {
+        if (removed) return;
+        removed = true;
+        const i = backListeners.indexOf(entry);
+        if (i >= 0) backListeners.splice(i, 1);
+      };
+    },
+  };
+
   // `resource(source, fetcher)` on the facade's signals and effects: the
   // same states and cancellation as the QuickJS host's class.
   function resource(source, fetcher) {
@@ -372,7 +423,14 @@ export function createFacade(wasm, requestPump, options = {}) {
     Image: (props) => host("image", props),
     Scroll: (props) => host("scroll", props),
     Input: (props) => host("input", props),
-    platform: { os: "web" },
+    platform: {
+      os: "web",
+      colorScheme: () => {
+        installColorScheme();
+        return colorScheme();
+      },
+    },
+    BackHandler,
     Keyboard: {
       dismiss() {
         const active = globalThis.document?.activeElement;
@@ -422,6 +480,8 @@ export function createFacade(wasm, requestPump, options = {}) {
     dispose() {
       live = false;
       values.closed = true;
+      media?.removeEventListener?.("change", onScheme);
+      globalThis.removeEventListener?.("popstate", onPopState);
     },
   };
 }

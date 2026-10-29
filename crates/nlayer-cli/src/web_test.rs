@@ -390,8 +390,12 @@ fn pinned_url(base: &str, request: &HostOpen) -> String {
         left: 0.0,
     });
     let keyboard = request.keyboard.unwrap_or(0.0);
+    let scheme = request
+        .color_scheme
+        .map(|scheme| format!("&scheme={}", scheme.name()))
+        .unwrap_or_default();
     format!(
-        "{base}?pin=1&w={}&h={}&sat={}&sar={}&sab={}&sal={}&kb={keyboard}",
+        "{base}?pin=1&w={}&h={}&sat={}&sar={}&sab={}&sal={}&kb={keyboard}{scheme}",
         request.width, request.height, area.top, area.right, area.bottom, area.left,
     )
 }
@@ -872,6 +876,7 @@ mount(App);
                 height: 844.0,
                 safe_area: None,
                 keyboard: None,
+                color_scheme: None,
                 data_dir: None,
             })
             .expect("the browser opens the app");

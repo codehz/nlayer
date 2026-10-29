@@ -53,7 +53,7 @@ use std::thread::JoinHandle;
 use browser::Script as Vm;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use nlayer_core::{
-    Core, EventKind, MountBatch, NodeId,
+    ColorScheme, Core, EventKind, MountBatch, NodeId,
     geometry::{Edges, Points, Size},
     text::TextEngine,
 };
@@ -72,6 +72,11 @@ pub trait MountSink: Send + Sync + 'static {
     fn failed(&self, error: EngineError) {
         log::error!("{error}");
     }
+
+    /// The back button reached the app and no `BackHandler` listener
+    /// handled it: the platform's default (Android: send the task to the
+    /// background; a page: nothing, the browser already went back).
+    fn back_unhandled(&self) {}
 }
 
 /// A failure to start or run the app.
@@ -104,6 +109,9 @@ pub struct EngineConfig {
     /// Where the app keeps its data: `storage` of `@nlayer/runtime` is
     /// `storage.json` there. [`EngineConfig::new`] is none (in memory).
     pub data_dir: Option<std::path::PathBuf>,
+    /// The system color scheme `platform.colorScheme()` reports before the
+    /// first frame. [`EngineConfig::new`] is [`ColorScheme::Light`].
+    pub color_scheme: ColorScheme,
     /// The app's storage, overriding the file [`EngineConfig::data_dir`]
     /// names.
     pub storage: Option<Arc<dyn StorageBackend>>,
@@ -120,6 +128,7 @@ impl EngineConfig {
             keyboard: Points::ZERO,
             data_dir: None,
             storage: None,
+            color_scheme: ColorScheme::Light,
         }
     }
 
@@ -145,6 +154,12 @@ impl EngineConfig {
     /// The app's storage backend, overriding [`EngineConfig::data_dir`].
     pub fn with_storage(mut self, storage: Arc<dyn StorageBackend>) -> Self {
         self.storage = Some(storage);
+        self
+    }
+
+    /// The system color scheme before the first frame.
+    pub fn with_color_scheme(mut self, scheme: ColorScheme) -> Self {
+        self.color_scheme = scheme;
         self
     }
 }
@@ -178,6 +193,10 @@ enum Message {
     Resize(Size<Points>),
     SafeArea(Edges<Points>),
     KeyboardInset(Points),
+    /// The system's color scheme changed.
+    ColorScheme(ColorScheme),
+    /// The platform's back button, or history back.
+    Back,
     /// A request finished (its result is in the engine's slot).
     NetworkDone,
     /// The engine thread was asked to exit.
@@ -220,6 +239,19 @@ impl EngineControl {
     /// follows it.
     pub fn set_keyboard_inset(&self, height: Points) {
         let _ = self.tx.send(Message::KeyboardInset(height));
+    }
+
+    /// The system's color scheme changed: `platform.colorScheme()` follows
+    /// it, and what read it lays out again.
+    pub fn set_color_scheme(&self, scheme: ColorScheme) {
+        let _ = self.tx.send(Message::ColorScheme(scheme));
+    }
+
+    /// The platform's back button (Android) or history back (a page that
+    /// pushed an entry). `BackHandler` listeners run newest first; when
+    /// none handles it, [`MountSink::back_unhandled`] runs.
+    pub fn back(&self) {
+        let _ = self.tx.send(Message::Back);
     }
 }
 
@@ -496,6 +528,7 @@ impl<M: TextEngine> Session<M> {
         let host = {
             let host = nlayer_js::Host::new().map_err(|error| EngineError::new(error.message))?;
             host.set_os(config.os);
+            host.set_color_scheme(config.color_scheme);
             host.set_storage(Store::new(app_storage(&config)));
             host.eval_source(&config.bundle)
                 .map_err(|error| EngineError::new(error.message))?;
@@ -572,6 +605,27 @@ impl<M: TextEngine> Session<M> {
             Message::Resize(size) => self.core.set_viewport(size),
             Message::SafeArea(insets) => self.core.set_safe_area(insets),
             Message::KeyboardInset(height) => self.core.set_keyboard_inset(height),
+            Message::ColorScheme(scheme) => {
+                #[cfg(feature = "js")]
+                self.host.set_color_scheme(scheme);
+                #[cfg(feature = "browser")]
+                let _ = scheme;
+            }
+            Message::Back => {
+                let handled = {
+                    #[cfg(feature = "js")]
+                    {
+                        self.host.dispatch_back()
+                    }
+                    #[cfg(feature = "browser")]
+                    {
+                        false
+                    }
+                };
+                if !handled {
+                    self.sink.back_unhandled();
+                }
+            }
             Message::NetworkDone => {}
             #[cfg(not(target_arch = "wasm32"))]
             Message::Stop => return false,

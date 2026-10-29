@@ -9,6 +9,9 @@ final class Pin {
   final String host;
   final int port;
 
+  /** `light` or `dark`, pinned by `nlayer test`; null follows the system. */
+  final String colorScheme;
+
   private Pin(
       float width,
       float height,
@@ -18,7 +21,8 @@ final class Pin {
       float bottom,
       float left,
       String host,
-      int port) {
+      int port,
+      String colorScheme) {
     this.width = width;
     this.height = height;
     this.keyboard = keyboard;
@@ -28,6 +32,7 @@ final class Pin {
     this.left = left;
     this.host = host;
     this.port = port;
+    this.colorScheme = colorScheme;
   }
 
   static Pin read(File file) {
@@ -49,7 +54,8 @@ final class Pin {
           (float) area.optDouble("bottom", 0),
           (float) area.optDouble("left", 0),
           json.optString("host", ""),
-          json.optInt("port", 0));
+          json.optInt("port", 0),
+          json.has("colorScheme") ? json.optString("colorScheme", null) : null);
     } catch (Exception e) {
       return null;
     }

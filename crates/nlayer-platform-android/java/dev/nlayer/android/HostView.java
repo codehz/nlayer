@@ -24,6 +24,12 @@ public final class HostView extends FrameLayout {
   private int safeTop, safeRight, safeBottom, safeLeft, keyboard;
   private boolean served;
 
+  /** The engine is running: a back button can reach it. */
+  private boolean started;
+
+  /** The system's appearance, until a test pin says otherwise. */
+  boolean dark;
+
   public HostView(Context c) {
     this(c, null);
   }
@@ -105,8 +111,15 @@ public final class HostView extends FrameLayout {
       Native.insets(handle, pin.top, pin.right, pin.bottom, pin.left, pin.keyboard);
     }
     if (code != null) {
+      boolean scheme = dark;
+      if (pin != null && pin.colorScheme != null) scheme = pin.colorScheme.equals("dark");
+      started = true;
       Native.load(
-          handle, code.getBytes(java.nio.charset.StandardCharsets.UTF_8), assetsDir, dataDir());
+          handle,
+          code.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+          assetsDir,
+          dataDir(),
+          scheme);
       code = null;
     }
     if (!served && pin != null && pin.port != 0) {
@@ -151,6 +164,32 @@ public final class HostView extends FrameLayout {
     keyboard = k;
     if (handle != 0)
       Native.insets(handle, t / density, r / density, b / density, l / density, k / density);
+  }
+
+  /** The system's color scheme changed (`onConfigurationChanged`). */
+  public void setColorScheme(boolean dark) {
+    this.dark = dark;
+    // A test pin replaces the system for the run.
+    if (pin != null && pin.colorScheme != null) return;
+    Native.colorScheme(handle, dark);
+  }
+
+  /** The back button reached the app. The engine reports it to `BackHandler`. */
+  public boolean back() {
+    if (!started) return false;
+    Native.back(handle);
+    return true;
+  }
+
+  /** No `BackHandler` handled the back: Android sends the task to the background. */
+  public void backUnhandled() {
+    post(
+        new Runnable() {
+          public void run() {
+            android.app.Activity activity = (android.app.Activity) getContext();
+            activity.moveTaskToBack(true);
+          }
+        });
   }
 
   public String snapshot() {

@@ -25,6 +25,8 @@ pub(crate) struct State {
     pub(crate) net: crate::net::Queue,
     /// What `platform.os` reports. Set before the app imports `@nlayer/ui`.
     pub(crate) os: std::cell::Cell<crate::Os>,
+    /// The signal `platform.colorScheme()` reads (owned).
+    pub(crate) color_scheme: std::cell::Cell<qjs::JSValue>,
     /// Class ids of `URL` and `URLSearchParams`.
     pub(crate) url_classes: crate::url::Classes,
     /// The app's storage, once the host sets one (`None`: made in memory
@@ -107,11 +109,28 @@ pub(crate) fn install(cx: &Ctx<'_>) {
             timers: crate::state::Timers::default(),
             net: crate::net::Queue::default(),
             os: std::cell::Cell::new(crate::Os::Web),
+            color_scheme: std::cell::Cell::new(qjs::JS_UNDEFINED),
             url_classes: crate::url::Classes::default(),
             storage: None,
         }));
         qjs::JS_SetContextOpaque(raw, state as *mut c_void);
         STATES.with(|m| m.borrow_mut().insert(rt as usize, state as usize));
+        // After the opaque pointer: making a signal reads the graph.
+        let light = qjs::JS_NewStringLen(raw, b"light".as_ptr().cast(), 5);
+        let color_scheme = crate::reactive::new_signal(raw, light);
+        qjs::JS_FreeValue(raw, light);
+        // The accessor reads it from Rust; the hidden global keeps the
+        // object alive across a collection during module evaluation.
+        let global = qjs::JS_GetGlobalObject(raw);
+        qjs::JS_DefinePropertyValueStr(
+            raw,
+            global,
+            c"__nlayerColorScheme".as_ptr(),
+            qjs::JS_DupValue(raw, color_scheme),
+            0,
+        );
+        qjs::JS_FreeValue(raw, global);
+        (*state).color_scheme.set(color_scheme);
     }
 }
 
@@ -132,6 +151,7 @@ pub(crate) fn uninstall(cx: &Ctx<'_>) {
         qjs::JS_SetContextOpaque(raw, ptr::null_mut());
         let mut state = Box::from_raw(p);
         state.dom.free_all(raw);
+        qjs::JS_FreeValue(raw, state.color_scheme.replace(qjs::JS_UNDEFINED));
         crate::reactive::free_all(&mut state.graph, raw);
     }
 }

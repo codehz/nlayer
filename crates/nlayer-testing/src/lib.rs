@@ -27,8 +27,8 @@ use std::{
 
 use crossbeam_channel::{Receiver, unbounded};
 use nlayer_core::{
-    Command, EventKind, EventMask, ImageSource, InputConfig, MountBatch, MountItem, NodeId,
-    ResizeMode, ViewKind,
+    Accessibility, Command, EventKind, EventMask, ImageSource, InputConfig, MountBatch, MountItem,
+    NodeId, ResizeMode, ViewKind,
     geometry::{Bounds, Points, Size},
     style::ViewStyle,
     text::{ApproxTextEngine, SpanTestId, TextLayout, TextLink},
@@ -66,6 +66,9 @@ pub struct View {
     pub spans: Vec<TextRun>,
     /// `testID`. The screen keeps it; nothing is drawn from it.
     pub test_id: Option<Arc<str>>,
+    /// `role`, label, hint, state, value and whether the subtree is hidden
+    /// from assistive technologies.
+    pub accessibility: Accessibility,
     /// Nested spans named by `testID`, on the text view that draws them.
     pub span_ids: Vec<SpanTestId>,
     /// Nested spans that take presses, on the text view that draws them.
@@ -225,6 +228,21 @@ impl Screen {
         }
     }
 
+    /// The view a press on `id` acts on: the nearest listener, unless a
+    /// disabled view comes first (the press is blocked, not passed on).
+    pub fn press_listener(&self, mut id: NodeId) -> Option<NodeId> {
+        loop {
+            let view = self.views.get(&id)?;
+            if view.accessibility.blocks_press() {
+                return None;
+            }
+            if view.events.contains(EventKind::Press) {
+                return Some(id);
+            }
+            id = view.parent?;
+        }
+    }
+
     /// The view showing `text` (a text view whose content contains it).
     pub fn find_text(&self, text: &str) -> Option<NodeId> {
         let mut ids: Vec<(NodeId, &str)> = self
@@ -267,6 +285,7 @@ impl Screen {
                     scroll_horizontal: None,
                     spans: Vec::new(),
                     test_id: None,
+                    accessibility: Accessibility::default(),
                     span_ids: Vec::new(),
                     links: Vec::new(),
                     scroll_x: 0.0,
@@ -384,6 +403,11 @@ impl Screen {
                     view.test_id = test_id.clone();
                 }
             }
+            MountItem::Accessibility { id, accessibility } => {
+                if let Some(view) = self.views.get_mut(id) {
+                    view.accessibility = (**accessibility).clone();
+                }
+            }
         }
     }
 
@@ -403,6 +427,7 @@ impl Screen {
             scroll_horizontal: None,
             spans: Vec::new(),
             test_id: None,
+            accessibility: Accessibility::default(),
             span_ids: Vec::new(),
             links: Vec::new(),
             scroll_x: 0.0,
@@ -564,7 +589,7 @@ impl Headless {
         let Some(id) = self.screen.find_text(text) else {
             return false;
         };
-        let Some(listener) = self.screen.listener(id, EventKind::Press) else {
+        let Some(listener) = self.screen.press_listener(id) else {
             return false;
         };
         self.press(listener);
@@ -581,7 +606,7 @@ impl Headless {
             selector::Target::Span { node: Some(id), .. } => id,
             _ => self
                 .screen
-                .listener(target.view(), EventKind::Press)
+                .press_listener(target.view())
                 .ok_or_else(|| format!("`{selector}` does not take a press"))?,
         };
         self.press(id);

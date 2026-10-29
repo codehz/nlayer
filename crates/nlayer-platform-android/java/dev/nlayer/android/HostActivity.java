@@ -1,7 +1,10 @@
 package dev.nlayer.android;
 
 import android.app.Activity;
+import android.content.res.Configuration;
+import android.graphics.Color;
 import android.graphics.Rect;
+import android.graphics.drawable.ColorDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
@@ -14,20 +17,14 @@ import java.nio.file.Files;
 public class HostActivity extends Activity {
   private HostView host;
   private int safeTop, safeRight, safeBottom, safeLeft, keyboard = -1;
+  private boolean dark;
 
   @Override
   protected void onCreate(Bundle state) {
     super.onCreate(state);
     Window w = getWindow();
-    if (Build.VERSION.SDK_INT >= 28) {
-      w.getDecorView()
-          .setSystemUiVisibility(
-              View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                  | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                  | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
-      w.setStatusBarColor(android.graphics.Color.TRANSPARENT);
-      w.setNavigationBarColor(android.graphics.Color.TRANSPARENT);
-    }
+    dark = isDark(getResources().getConfiguration());
+    applyChrome(dark);
     // API 28–29 have no WindowInsets.Type.ime(). adjustResize is the only
     // window mode whose content insets include the keyboard there; the
     // layout flags above keep the surface at the full window, so the app
@@ -35,6 +32,7 @@ public class HostActivity extends Activity {
     if (Build.VERSION.SDK_INT < 30)
       w.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     host = new HostView(this);
+    host.dark = dark;
     setContentView(host);
     host.setOnApplyWindowInsetsListener(
         new View.OnApplyWindowInsetsListener() {
@@ -72,6 +70,44 @@ public class HostActivity extends Activity {
               }
           }
         });
+  }
+
+  static boolean isDark(Configuration config) {
+    return (config.uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+  }
+
+  /** The root background and the status / navigation bar icons follow the scheme. */
+  private void applyChrome(boolean dark) {
+    Window w = getWindow();
+    int background = dark ? Color.BLACK : Color.WHITE;
+    w.setBackgroundDrawable(new ColorDrawable(background));
+    w.getDecorView().setBackgroundColor(background);
+    w.setStatusBarColor(Color.TRANSPARENT);
+    w.setNavigationBarColor(Color.TRANSPARENT);
+    int flags =
+        View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+    if (Build.VERSION.SDK_INT >= 23 && !dark) flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+    if (Build.VERSION.SDK_INT >= 26 && !dark) flags |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+    w.getDecorView().setSystemUiVisibility(flags);
+  }
+
+  @Override
+  public void onConfigurationChanged(Configuration config) {
+    super.onConfigurationChanged(config);
+    boolean next = isDark(config);
+    if (next != dark) {
+      dark = next;
+      applyChrome(dark);
+      if (host != null) host.setColorScheme(dark);
+    }
+  }
+
+  @Override
+  public void onBackPressed() {
+    if (host != null && host.back()) return;
+    super.onBackPressed();
   }
 
   private void publish(View v, WindowInsets insets) {

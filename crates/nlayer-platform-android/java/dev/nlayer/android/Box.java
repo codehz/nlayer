@@ -14,6 +14,7 @@ class Box extends ViewGroup {
   boolean clip;
   float alpha = 1;
   int pressMask;
+  boolean disabled;
 
   Box(Context c, Mounter m, int id) {
     super(c);
@@ -103,6 +104,10 @@ class Box extends ViewGroup {
 
   @Override
   public boolean onTouchEvent(android.view.MotionEvent e) {
+    if (disabled || Mounter.blocked(getParent())) {
+      if (e.getAction() == android.view.MotionEvent.ACTION_DOWN) setPressed(false);
+      return true;
+    }
     if ((pressMask & 1) == 0) return false;
     int action = e.getAction();
     if (action == android.view.MotionEvent.ACTION_DOWN) setPressed(true);

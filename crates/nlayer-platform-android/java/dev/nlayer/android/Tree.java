@@ -42,6 +42,33 @@ final class Tree {
     o.put("kind", kind(v));
     String testId = m.testIds.get(id);
     if (testId != null) o.put("testID", testId);
+    A11y.Info a = m.accessibility.get(id);
+    if (a != null) {
+      if (a.role != null) o.put("role", a.role);
+      if (a.label != null) o.put("accessibilityLabel", a.label);
+      if (a.hint != null) o.put("accessibilityHint", a.hint);
+      if (a.hidden) o.put("accessibilityHidden", true);
+      JSONObject state = new JSONObject();
+      if (a.disabled) state.put("disabled", true);
+      if (a.selected) state.put("selected", true);
+      if (a.checked == 2) state.put("checked", true);
+      else if (a.checked == 1) state.put("checked", false);
+      else if (a.checked == 3) state.put("checked", "mixed");
+      if (a.expanded == 2) state.put("expanded", true);
+      else if (a.expanded == 1) state.put("expanded", false);
+      if (state.length() > 0) o.put("accessibilityState", state);
+      if (!Float.isNaN(a.min)
+          || !Float.isNaN(a.max)
+          || !Float.isNaN(a.now)
+          || a.valueText != null) {
+        JSONObject value = new JSONObject();
+        if (!Float.isNaN(a.min)) value.put("min", a.min);
+        if (!Float.isNaN(a.max)) value.put("max", a.max);
+        if (!Float.isNaN(a.now)) value.put("now", a.now);
+        if (a.valueText != null) value.put("text", a.valueText);
+        o.put("accessibilityValue", value);
+      }
+    }
     Frame frame = frame(v, density, id == 1);
     if (id == 1 && m.host.pin != null) frame = new Frame(0, 0, m.host.pin.width, m.host.pin.height);
     o.put("frame", frame.json());

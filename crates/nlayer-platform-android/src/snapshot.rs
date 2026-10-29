@@ -25,6 +25,18 @@ struct Wire {
     #[serde(default, rename = "testID")]
     test_id: Option<String>,
     #[serde(default)]
+    role: Option<String>,
+    #[serde(default, rename = "accessibilityLabel")]
+    accessibility_label: Option<String>,
+    #[serde(default, rename = "accessibilityHint")]
+    accessibility_hint: Option<String>,
+    #[serde(default, rename = "accessibilityHidden")]
+    accessibility_hidden: bool,
+    #[serde(default, rename = "accessibilityState")]
+    accessibility_state: Option<WireState>,
+    #[serde(default, rename = "accessibilityValue")]
+    accessibility_value: Option<WireValue>,
+    #[serde(default)]
     text: Option<String>,
     frame: Frame,
     #[serde(default)]
@@ -49,6 +61,39 @@ struct Wire {
     image: Option<WireImage>,
     #[serde(default)]
     transform: Vec<WireOp>,
+}
+
+#[derive(Deserialize, Default)]
+struct WireState {
+    #[serde(default)]
+    disabled: bool,
+    #[serde(default)]
+    selected: bool,
+    #[serde(default)]
+    checked: Option<serde_json::Value>,
+    #[serde(default)]
+    expanded: Option<bool>,
+}
+
+#[derive(Deserialize, Default)]
+struct WireValue {
+    #[serde(default)]
+    min: Option<f32>,
+    #[serde(default)]
+    max: Option<f32>,
+    #[serde(default)]
+    now: Option<f32>,
+    #[serde(default)]
+    text: Option<String>,
+}
+
+fn checked(value: Option<serde_json::Value>) -> Option<nlayer_core::Checked> {
+    match value? {
+        serde_json::Value::Bool(true) => Some(nlayer_core::Checked::True),
+        serde_json::Value::Bool(false) => Some(nlayer_core::Checked::False),
+        serde_json::Value::String(text) if text == "mixed" => Some(nlayer_core::Checked::Mixed),
+        _ => None,
+    }
 }
 
 #[derive(Deserialize)]
@@ -163,6 +208,43 @@ pub(crate) fn scene_of(text: &str) -> Result<Scene, String> {
                 children: wire.children,
                 kind,
                 test_id: wire.test_id,
+                accessibility: nlayer_core::Accessibility {
+                    role: wire
+                        .role
+                        .as_deref()
+                        .and_then(nlayer_core::AccessibilityRole::from_name)
+                        .unwrap_or_default(),
+                    label: wire.accessibility_label.map(Into::into),
+                    hint: wire.accessibility_hint.map(Into::into),
+                    hidden: wire.accessibility_hidden,
+                    state: nlayer_core::AccessibilityState {
+                        disabled: wire
+                            .accessibility_state
+                            .as_ref()
+                            .is_some_and(|state| state.disabled),
+                        selected: wire
+                            .accessibility_state
+                            .as_ref()
+                            .is_some_and(|state| state.selected),
+                        checked: checked(
+                            wire.accessibility_state
+                                .as_ref()
+                                .and_then(|state| state.checked.clone()),
+                        ),
+                        expanded: wire
+                            .accessibility_state
+                            .as_ref()
+                            .and_then(|state| state.expanded),
+                    },
+                    value: wire
+                        .accessibility_value
+                        .map(|value| nlayer_core::AccessibilityValue {
+                            min: value.min,
+                            max: value.max,
+                            now: value.now,
+                            text: value.text.map(Into::into),
+                        }),
+                },
                 text: wire.text,
                 frame: frame(wire.frame),
                 hidden: wire.hidden,

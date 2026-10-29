@@ -111,9 +111,8 @@ fn connect(mtm: MainThreadMarker, scene: &UIWindowScene) {
     let window = UIWindow::initWithWindowScene(UIWindow::alloc(mtm), scene);
     let controller = RootController::new(mtm);
     let root = controller.view().expect("view controller has a view");
-    // A window is black until something paints. Text defaults to black, so
-    // the root is white, as React Native's is.
-    root.setBackgroundColor(Some(&UIColor::whiteColor()));
+    // The root follows the system's appearance (black in dark mode).
+    root.setBackgroundColor(Some(&UIColor::systemBackgroundColor()));
     window.setRootViewController(Some(&controller));
     window.makeKeyAndVisible();
     let session = host::start(mtm, &root, &bundle, assets);

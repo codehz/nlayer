@@ -38,6 +38,7 @@ const INPUT_VALUE: i32 = 14;
 const INPUT_CONTENT: i32 = 15;
 const TEST_ID: i32 = 16;
 const COMMAND: i32 = 17;
+const ACCESSIBILITY: i32 = 18;
 
 /// A `StaticLayout` measured on the engine thread and drawn on the UI thread.
 #[cfg(target_os = "android")]
@@ -228,6 +229,50 @@ pub fn encode(batch: MountBatch) -> Encoded {
                 e.id(id);
                 match test_id {
                     Some(name) => e.string(name.to_string()),
+                    None => e.int(-1),
+                }
+            }
+            MountItem::Accessibility { id, accessibility } => {
+                let a = accessibility.as_ref();
+                e.int(ACCESSIBILITY);
+                e.id(id);
+                e.string(a.role.name().to_string());
+                match &a.label {
+                    Some(label) => e.string(label.to_string()),
+                    None => e.int(-1),
+                }
+                match &a.hint {
+                    Some(hint) => e.string(hint.to_string()),
+                    None => e.int(-1),
+                }
+                let mut flags = 0;
+                if a.hidden {
+                    flags |= 1;
+                }
+                if a.state.disabled {
+                    flags |= 2;
+                }
+                if a.state.selected {
+                    flags |= 4;
+                }
+                e.int(flags);
+                e.int(match a.state.checked {
+                    None => 0,
+                    Some(nlayer_core::Checked::False) => 1,
+                    Some(nlayer_core::Checked::True) => 2,
+                    Some(nlayer_core::Checked::Mixed) => 3,
+                });
+                e.int(match a.state.expanded {
+                    None => 0,
+                    Some(false) => 1,
+                    Some(true) => 2,
+                });
+                let value = a.value.as_ref();
+                e.float(value.and_then(|v| v.min).unwrap_or(f32::NAN));
+                e.float(value.and_then(|v| v.max).unwrap_or(f32::NAN));
+                e.float(value.and_then(|v| v.now).unwrap_or(f32::NAN));
+                match value.and_then(|v| v.text.as_deref()) {
+                    Some(text) => e.string(text.to_string()),
                     None => e.int(-1),
                 }
             }

@@ -145,6 +145,14 @@ function matcher(piece) {
     const value = piece.slice(split + 1);
     if (kind === "id") return { kind: "id", value };
     if (kind === "text") return { kind: "text", value: value.trim() };
+    if (kind === "label") return { kind: "label", value };
+    if (kind === "role") {
+      const open = value.indexOf("[");
+      if (open >= 0 && value.endsWith("]")) {
+        return { kind: "role", value: value.slice(0, open), name: value.slice(open + 1, -1) };
+      }
+      return { kind: "role", value, name: null };
+    }
   }
   return { kind: "any", value: piece };
 }
@@ -178,6 +186,17 @@ function walk(el, matcher, out) {
 }
 
 function pushMatches(el, matcher, out) {
+  if (matcher.kind === "label") {
+    if (el._a11y?.label === matcher.value) out.push(viewTarget(el));
+    return;
+  }
+  if (matcher.kind === "role") {
+    const a = el._a11y;
+    if (a?.role === matcher.value && (matcher.name == null || a.label === matcher.name)) {
+      out.push(viewTarget(el));
+    }
+    return;
+  }
   if (matcher.kind === "id") {
     if (el._testId && el._testId === matcher.value) out.push(viewTarget(el));
     for (const span of el._spanIds ?? []) {
@@ -385,8 +404,9 @@ function pointIn(root, index) {
 }
 
 function canPress(target) {
-  if (target.span?.node != null) return true;
   for (let el = target.el; el; el = parentView(el)) {
+    if (el._disabled) return false;
+    if (el === target.el && target.span?.node != null) return true;
     if (el._events?.has("onPress")) return true;
   }
   return false;
@@ -504,6 +524,32 @@ function nodeJson(el, parent, root) {
   const text = textOf(el);
   if (text != null) node.text = text;
   if (el._testId) node.testID = el._testId;
+  if (el._a11y) {
+    const a = el._a11y;
+    if (a.role) node.role = a.role;
+    if (a.label != null) node.accessibilityLabel = a.label;
+    if (a.hint != null) node.accessibilityHint = a.hint;
+    if (a.hidden) node.accessibilityHidden = true;
+    const state = a.state;
+    if (state.disabled || state.selected || state.checked || state.expanded) {
+      node.accessibilityState = {};
+      if (state.disabled) node.accessibilityState.disabled = true;
+      if (state.selected) node.accessibilityState.selected = true;
+      if (state.checked === 2) node.accessibilityState.checked = true;
+      else if (state.checked === 1) node.accessibilityState.checked = false;
+      else if (state.checked === 3) node.accessibilityState.checked = "mixed";
+      if (state.expanded === 2) node.accessibilityState.expanded = true;
+      else if (state.expanded === 1) node.accessibilityState.expanded = false;
+    }
+    const value = a.value;
+    if (value.min != null || value.max != null || value.now != null || value.text != null) {
+      node.accessibilityValue = {};
+      if (value.min != null) node.accessibilityValue.min = value.min;
+      if (value.max != null) node.accessibilityValue.max = value.max;
+      if (value.now != null) node.accessibilityValue.now = value.now;
+      if (value.text != null) node.accessibilityValue.text = value.text;
+    }
+  }
   const spans = spanJson(el);
   if (spans) node.spans = spans;
   const field = el._field;

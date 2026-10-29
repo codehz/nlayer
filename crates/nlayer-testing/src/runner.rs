@@ -191,6 +191,8 @@ pub struct HostOpen {
     pub safe_area: Option<HostInsets>,
     /// Pinned keyboard inset. `None` is zero.
     pub keyboard: Option<f32>,
+    /// The color scheme before the first frame. `None`: light.
+    pub color_scheme: Option<nlayer_core::ColorScheme>,
     /// The directory the headless app keeps its storage in. `None`: in
     /// memory.
     pub data_dir: Option<PathBuf>,
@@ -576,6 +578,8 @@ struct OpenOptions {
     #[serde(rename = "safeArea")]
     safe_area: Option<SafeArea>,
     keyboard: Option<f32>,
+    #[serde(rename = "colorScheme")]
+    color_scheme: Option<String>,
     #[serde(rename = "dataDir")]
     data_dir: Option<String>,
 }
@@ -675,6 +679,11 @@ impl Session {
         let request: OpenRequest = serde_json::from_str(payload).map_err(|e| e.to_string())?;
         let entry = resolve_entry(&self.dir, &request.entry)?;
         let options = request.options.unwrap_or_default();
+        let color_scheme = match options.color_scheme.as_deref() {
+            None | Some("light") => Some(nlayer_core::ColorScheme::Light),
+            Some("dark") => Some(nlayer_core::ColorScheme::Dark),
+            Some(other) => return Err(format!("unknown colorScheme `{other}`")),
+        };
         let opened = HostOpen {
             entry,
             width: options.width.unwrap_or(VIEWPORT_WIDTH),
@@ -686,6 +695,7 @@ impl Session {
                 left: area.left,
             }),
             keyboard: options.keyboard,
+            color_scheme,
             data_dir: options
                 .data_dir
                 .map(|dir| resolve_dir(&self.dir, &dir))
@@ -749,6 +759,9 @@ impl AppHost for HeadlessHost {
         );
         if let Some(dir) = &request.data_dir {
             config = config.with_data_dir(dir);
+        }
+        if let Some(scheme) = request.color_scheme {
+            config = config.with_color_scheme(scheme);
         }
         let mut app =
             Headless::start_with_config(config, || ApproxTextEngine).map_err(engine_error)?;
@@ -899,6 +912,54 @@ fn node_json(node: &TreeNode, screen: &Screen) -> serde_json::Value {
         map.insert("testID".into(), test_id.as_ref().into());
     }
     if let Some(view) = view {
+        let a = &view.accessibility;
+        if a.role != nlayer_core::AccessibilityRole::None {
+            map.insert("role".into(), a.role.name().into());
+        }
+        if let Some(label) = &a.label {
+            map.insert("accessibilityLabel".into(), label.as_ref().into());
+        }
+        if let Some(hint) = &a.hint {
+            map.insert("accessibilityHint".into(), hint.as_ref().into());
+        }
+        if a.hidden {
+            map.insert("accessibilityHidden".into(), true.into());
+        }
+        if a.state != nlayer_core::AccessibilityState::default() {
+            let mut state = serde_json::Map::new();
+            state.insert("disabled".into(), a.state.disabled.into());
+            state.insert("selected".into(), a.state.selected.into());
+            if let Some(checked) = a.state.checked {
+                state.insert(
+                    "checked".into(),
+                    match checked {
+                        nlayer_core::Checked::False => false.into(),
+                        nlayer_core::Checked::True => true.into(),
+                        nlayer_core::Checked::Mixed => "mixed".into(),
+                    },
+                );
+            }
+            if let Some(expanded) = a.state.expanded {
+                state.insert("expanded".into(), expanded.into());
+            }
+            map.insert("accessibilityState".into(), state.into());
+        }
+        if let Some(value) = &a.value {
+            let mut json = serde_json::Map::new();
+            if let Some(min) = value.min {
+                json.insert("min".into(), min.into());
+            }
+            if let Some(max) = value.max {
+                json.insert("max".into(), max.into());
+            }
+            if let Some(now) = value.now {
+                json.insert("now".into(), now.into());
+            }
+            if let Some(text) = &value.text {
+                json.insert("text".into(), text.as_ref().into());
+            }
+            map.insert("accessibilityValue".into(), json.into());
+        }
         if !view.spans.is_empty() {
             map.insert(
                 "spans".into(),

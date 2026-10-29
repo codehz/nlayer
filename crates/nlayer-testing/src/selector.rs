@@ -2,12 +2,14 @@
 //!
 //! `id:<testID>` is that `testID`. `text:<text>` is a text view's content,
 //! an input's value, or an empty input's placeholder, compared with the
-//! ends trimmed. Anything else is a `testID`, then that text. ` >> ` looks
-//! inside the previous match. `nth=<n>` keeps the nth match, from 0. None
-//! or several is an error.
+//! ends trimmed. `label:<text>` is a view's `accessibilityLabel`.
+//! `role:<role>[<label>]` is a view's `role`, and with a label the view
+//! whose `accessibilityLabel` is it. Anything else is a `testID`, then that
+//! text. ` >> ` looks inside the previous match. `nth=<n>` keeps the nth
+//! match, from 0. None or several is an error.
 
 use nlayer_core::{
-    NodeId, ViewKind,
+    AccessibilityRole, NodeId, ViewKind,
     geometry::{Bounds, Points, point, px},
     text::{ApproxTextEngine, TextEngine},
 };
@@ -57,6 +59,11 @@ struct Part {
 enum Matcher {
     TestId(String),
     Text(String),
+    Label(String),
+    Role {
+        role: AccessibilityRole,
+        name: Option<String>,
+    },
     Any(String),
 }
 
@@ -79,7 +86,7 @@ impl Selector {
                 return Err(format!("`{source}`: an empty selector"));
             }
             parts.push(Part {
-                matcher: Matcher::parse(piece),
+                matcher: Matcher::parse(piece)?,
                 nth: None,
             });
         }
@@ -94,12 +101,26 @@ impl Selector {
 }
 
 impl Matcher {
-    fn parse(piece: &str) -> Self {
-        match piece.split_once(':') {
+    fn parse(piece: &str) -> Result<Self, String> {
+        Ok(match piece.split_once(':') {
             Some(("id", value)) => Self::TestId(value.to_owned()),
             Some(("text", value)) => Self::Text(value.trim().to_owned()),
+            Some(("label", value)) => Self::Label(value.to_owned()),
+            Some(("role", value)) => {
+                let (name, label) = match value.find('[') {
+                    Some(open) if value.ends_with(']') => (
+                        &value[..open],
+                        Some(value[open + 1..value.len() - 1].to_owned()),
+                    ),
+                    _ => (value, None),
+                };
+                let Some(role) = AccessibilityRole::from_name(name) else {
+                    return Err(format!("`{piece}`: unknown role `{name}`"));
+                };
+                Self::Role { role, name: label }
+            }
             _ => Self::Any(piece.to_owned()),
-        }
+        })
     }
 }
 
@@ -240,6 +261,21 @@ fn push_matches(screen: &Screen, id: NodeId, matcher: &Matcher, out: &mut Vec<Ta
                 out.push(Target::View(id));
             }
             push_span_text(view, id, want, out);
+        }
+        Matcher::Label(want) => {
+            if view.accessibility.label.as_deref() == Some(want.as_str()) {
+                out.push(Target::View(id));
+            }
+        }
+        Matcher::Role { role, name } => {
+            let accessibility = &view.accessibility;
+            if accessibility.role == *role
+                && name
+                    .as_deref()
+                    .is_none_or(|want| accessibility.label.as_deref() == Some(want))
+            {
+                out.push(Target::View(id));
+            }
         }
         Matcher::Any(want) => {
             let mut ids = Vec::new();

@@ -33,6 +33,7 @@ final class ScrollBox extends FrameLayout {
   int contentW, contentH;
   float contentPointsW, contentPointsH, offsetX, offsetY;
   int pressMask;
+  boolean disabled;
 
   /** `keyboardShouldPersistTaps`: 0 never, 1 always, 2 handled. */
   int taps;

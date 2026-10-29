@@ -126,6 +126,55 @@ impl Host {
         });
     }
 
+    /// The system color scheme `platform.colorScheme()` reports. Set it
+    /// before the app runs, and again whenever the system changes: styles
+    /// that read it are laid out again.
+    pub fn set_color_scheme(&self, scheme: nlayer_core::ColorScheme) {
+        self.cx.with(|cx| {
+            let raw = cx.as_raw().as_ptr();
+            // SAFETY: the state `install` made for this context, and the
+            // signal it owns; the write takes the new value.
+            unsafe {
+                let signal = (*state::state(raw)).color_scheme.get();
+                let name = scheme.name();
+                let value = qjs::JS_NewStringLen(raw, name.as_ptr().cast(), name.len() as _);
+                reactive::set_signal(raw, signal, value);
+            }
+        });
+    }
+
+    /// Delivers the platform's back button (Android) or history back (a
+    /// page that pushed an entry): whether a `BackHandler` listener
+    /// handled it. Listeners run newest first.
+    pub fn dispatch_back(&self) -> bool {
+        let handled = self.cx.with(|cx| {
+            let raw = cx.as_raw().as_ptr();
+            // SAFETY: the prelude's global, called on the live context; the
+            // function and its result are freed here.
+            unsafe {
+                let global = qjs::JS_GetGlobalObject(raw);
+                let f = qjs::JS_GetPropertyStr(raw, global, c"__nlayerDispatchBack".as_ptr());
+                qjs::JS_FreeValue(raw, global);
+                if !qjs::JS_IsFunction(raw, f) {
+                    qjs::JS_FreeValue(raw, f);
+                    return false;
+                }
+                let value = qjs::JS_Call(raw, f, qjs::JS_UNDEFINED, 0, std::ptr::null_mut());
+                qjs::JS_FreeValue(raw, f);
+                if qjs::JS_IsException(value) {
+                    let error = JsError::from_engine(&cx, rquickjs::Error::Exception);
+                    log::error!("{}", error.message);
+                    return false;
+                }
+                let handled = qjs::JS_ToBool(raw, value) == 1;
+                qjs::JS_FreeValue(raw, value);
+                handled
+            }
+        });
+        self.run_jobs();
+        handled
+    }
+
     /// Evaluates the app bundle (an ES module) and runs its jobs: its
     /// synchronous part and what its microtasks reach.
     pub fn eval_source(&self, source: &str) -> Result<(), JsError> {

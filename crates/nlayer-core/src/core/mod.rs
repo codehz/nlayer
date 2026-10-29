@@ -24,8 +24,8 @@ use crate::{
     geometry::{Bounds, Edges, Percentage, Points, Size, rect},
     mount::{InputConfig, MountBatch, MountItem, ViewKind},
     ops::{
-        Command, EventKind, EventMask, ImageSource, Interaction, KeyboardDismiss, KeyboardTaps,
-        NodeId, Op, Prop, ROOT_ID, ResizeMode, Tag,
+        Accessibility, AccessibilityProp, Command, EventKind, EventMask, ImageSource, Interaction,
+        KeyboardDismiss, KeyboardTaps, NodeId, Op, Prop, ROOT_ID, ResizeMode, Tag,
     },
     style::{self, EllipsizeMode, EnvEdges, Style, TextAlign, TextStyle, ViewStyle},
     text::{AttributedText, MeasureCache, ResolvedTextStyle, SpanTestId, TextEngine, TextLayout},
@@ -59,6 +59,8 @@ mod dirty {
     pub(super) const STATE: u32 = 1 << 8;
     /// Emit [`crate::MountItem::TestId`].
     pub(super) const TEST_ID: u32 = 1 << 9;
+    /// Emit [`crate::MountItem::Accessibility`].
+    pub(super) const ACCESSIBILITY: u32 = 1 << 10;
 }
 
 /// Host kind.
@@ -225,6 +227,9 @@ struct Node {
     state_dirty: u8,
     /// `testID`. Absent until set. A span's is also copied into its block.
     test_id: Option<Arc<str>>,
+    /// `role`, label, hint, state, value and whether the subtree is hidden
+    /// from assistive technologies.
+    accessibility: Accessibility,
 }
 impl Node {
     fn new(id: NodeId, kind: Kind) -> Self {
@@ -259,6 +264,7 @@ impl Node {
             state: [None, None, None],
             state_dirty: 0,
             test_id: None,
+            accessibility: Accessibility::default(),
         }
     }
 }
@@ -789,11 +795,53 @@ impl<M: TextEngine> Core<M> {
                 self.mark(key, dirty::INPUT);
             }
             Prop::Disabled(disabled) => {
-                let Some(input) = self.nodes[key as usize].input.as_mut() else {
-                    return Ok(());
+                if let Some(input) = self.nodes[key as usize].input.as_mut() {
+                    input.config.disabled = disabled;
+                    self.mark(key, dirty::INPUT);
+                }
+                if self.nodes[key as usize].accessibility.state.disabled != disabled {
+                    self.nodes[key as usize].accessibility.state.disabled = disabled;
+                    self.mark(key, dirty::ACCESSIBILITY);
+                }
+            }
+            Prop::Accessibility(prop) => {
+                let node = &mut self.nodes[key as usize];
+                let accessibility = &mut node.accessibility;
+                let changed = match prop {
+                    AccessibilityProp::Label(label) => {
+                        let changed = accessibility.label != label;
+                        accessibility.label = label;
+                        changed
+                    }
+                    AccessibilityProp::Hint(hint) => {
+                        let changed = accessibility.hint != hint;
+                        accessibility.hint = hint;
+                        changed
+                    }
+                    AccessibilityProp::Role(role) => {
+                        let changed = accessibility.role != role;
+                        accessibility.role = role;
+                        changed
+                    }
+                    AccessibilityProp::State(state) => {
+                        let changed = accessibility.state != state;
+                        accessibility.state = state;
+                        changed
+                    }
+                    AccessibilityProp::Value(value) => {
+                        let changed = accessibility.value != value;
+                        accessibility.value = value;
+                        changed
+                    }
+                    AccessibilityProp::Hidden(hidden) => {
+                        let changed = accessibility.hidden != hidden;
+                        accessibility.hidden = hidden;
+                        changed
+                    }
                 };
-                input.config.disabled = disabled;
-                self.mark(key, dirty::INPUT);
+                if changed {
+                    self.mark(key, dirty::ACCESSIBILITY);
+                }
             }
             Prop::TestId(value) => {
                 let node = &mut self.nodes[key as usize];
@@ -1113,6 +1161,9 @@ impl<M: TextEngine> Core<M> {
         if node.test_id.is_some() {
             flags |= dirty::TEST_ID;
         }
+        if !node.accessibility.is_default() {
+            flags |= dirty::ACCESSIBILITY;
+        }
         self.mount.push(MountItem::Create {
             id,
             kind: kind.view_kind(),
@@ -1221,6 +1272,11 @@ impl<M: TextEngine> Core<M> {
             if flags & dirty::TEST_ID != 0 {
                 let test_id = self.nodes[key as usize].test_id.clone();
                 self.mount.push(MountItem::TestId { id, test_id });
+            }
+            if flags & dirty::ACCESSIBILITY != 0 {
+                let accessibility = Box::new(self.nodes[key as usize].accessibility.clone());
+                self.mount
+                    .push(MountItem::Accessibility { id, accessibility });
             }
         }
     }

@@ -19,6 +19,7 @@ final class ImageBox extends View {
   final Decor decor = new Decor();
   Bitmap bitmap;
   int mode, pressMask;
+  boolean disabled;
   float xValue = .5f, yValue = .5f;
   int xKind = 1, yKind = 1;
   boolean xEnd, yEnd;
@@ -43,6 +44,10 @@ final class ImageBox extends View {
 
   @Override
   public boolean onTouchEvent(android.view.MotionEvent e) {
+    if (disabled || Mounter.blocked(getParent())) {
+      if (e.getAction() == android.view.MotionEvent.ACTION_DOWN) Mounter.pressed(this, id, false);
+      return true;
+    }
     if ((pressMask & 1) == 0) return false;
     int action = e.getAction();
     if (action == android.view.MotionEvent.ACTION_DOWN) Mounter.pressed(this, id, true);

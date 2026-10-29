@@ -488,6 +488,293 @@ impl Interaction {
     }
 }
 
+/// What an element is, for assistive technologies (`role`).
+///
+/// Names follow React Native's roles (and nsh's): hosts map them to their
+/// own vocabulary. Copied from `nsh_core::props::AccessibilityRole` and cut
+/// to the names every v2 host can express.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AccessibilityRole {
+    /// No particular role.
+    #[default]
+    None,
+    /// A button.
+    Button,
+    /// A link.
+    Link,
+    /// A search field.
+    Search,
+    /// An image.
+    Image,
+    /// An image that acts as a button.
+    ImageButton,
+    /// A key of a keyboard.
+    KeyboardKey,
+    /// Static text.
+    Text,
+    /// A value that can be adjusted (slider).
+    Adjustable,
+    /// A section header.
+    Header,
+    /// A summary of the app's state.
+    Summary,
+    /// An alert.
+    Alert,
+    /// A checkbox.
+    Checkbox,
+    /// A combo box.
+    Combobox,
+    /// A menu.
+    Menu,
+    /// A menu bar.
+    Menubar,
+    /// An item of a menu.
+    Menuitem,
+    /// A progress bar.
+    Progressbar,
+    /// A radio button.
+    Radio,
+    /// A group of radio buttons.
+    Radiogroup,
+    /// A scroll bar.
+    Scrollbar,
+    /// A spin button.
+    Spinbutton,
+    /// A switch.
+    Switch,
+    /// A tab.
+    Tab,
+    /// A list of tabs.
+    Tablist,
+    /// A timer.
+    Timer,
+    /// A toolbar.
+    Toolbar,
+    /// A list.
+    List,
+    /// A grid.
+    Grid,
+    /// A table: rows of cells under column headers.
+    Table,
+    /// A row of a table.
+    Row,
+    /// A cell of a table's row.
+    Cell,
+    /// A column's header cell.
+    ColumnHeader,
+    /// A group of a table's rows: its header, body or footer.
+    RowGroup,
+    /// A list of options to choose from.
+    Listbox,
+    /// An option of a listbox; `accessibilityState.selected` marks the chosen
+    /// one.
+    Option,
+    /// A group of related elements that is no landmark.
+    Group,
+    /// A section of the page a user may want to reach (a landmark).
+    Region,
+    /// A landmark of links or controls that move around the app.
+    Navigation,
+    /// A tree of items that expand and collapse.
+    Tree,
+    /// An item of a tree.
+    TreeItem,
+    /// An item of a menu that is checked or not.
+    MenuItemCheckbox,
+    /// An item of a menu that is one choice of a group of them.
+    MenuItemRadio,
+}
+
+impl AccessibilityRole {
+    /// Parses a `role` value (`"button"`, `"imagebutton"`, ...).
+    pub fn from_name(name: &str) -> Option<AccessibilityRole> {
+        Some(match name {
+            "none" => AccessibilityRole::None,
+            "button" => AccessibilityRole::Button,
+            "link" => AccessibilityRole::Link,
+            "search" => AccessibilityRole::Search,
+            "image" => AccessibilityRole::Image,
+            "imagebutton" => AccessibilityRole::ImageButton,
+            "keyboardkey" => AccessibilityRole::KeyboardKey,
+            "text" => AccessibilityRole::Text,
+            "adjustable" => AccessibilityRole::Adjustable,
+            "header" => AccessibilityRole::Header,
+            "summary" => AccessibilityRole::Summary,
+            "alert" => AccessibilityRole::Alert,
+            "checkbox" => AccessibilityRole::Checkbox,
+            "combobox" => AccessibilityRole::Combobox,
+            "menu" => AccessibilityRole::Menu,
+            "menubar" => AccessibilityRole::Menubar,
+            "menuitem" => AccessibilityRole::Menuitem,
+            "progressbar" => AccessibilityRole::Progressbar,
+            "radio" => AccessibilityRole::Radio,
+            "radiogroup" => AccessibilityRole::Radiogroup,
+            "scrollbar" => AccessibilityRole::Scrollbar,
+            "spinbutton" => AccessibilityRole::Spinbutton,
+            "switch" => AccessibilityRole::Switch,
+            "tab" => AccessibilityRole::Tab,
+            "tablist" => AccessibilityRole::Tablist,
+            "timer" => AccessibilityRole::Timer,
+            "toolbar" => AccessibilityRole::Toolbar,
+            "list" => AccessibilityRole::List,
+            "grid" => AccessibilityRole::Grid,
+            "table" => AccessibilityRole::Table,
+            "row" => AccessibilityRole::Row,
+            "cell" => AccessibilityRole::Cell,
+            "columnheader" => AccessibilityRole::ColumnHeader,
+            "rowgroup" => AccessibilityRole::RowGroup,
+            "listbox" => AccessibilityRole::Listbox,
+            "option" => AccessibilityRole::Option,
+            "group" => AccessibilityRole::Group,
+            "region" => AccessibilityRole::Region,
+            "navigation" => AccessibilityRole::Navigation,
+            "tree" => AccessibilityRole::Tree,
+            "treeitem" => AccessibilityRole::TreeItem,
+            "menuitemcheckbox" => AccessibilityRole::MenuItemCheckbox,
+            "menuitemradio" => AccessibilityRole::MenuItemRadio,
+            _ => return None,
+        })
+    }
+
+    /// The protocol name.
+    pub fn name(self) -> &'static str {
+        match self {
+            AccessibilityRole::None => "none",
+            AccessibilityRole::Button => "button",
+            AccessibilityRole::Link => "link",
+            AccessibilityRole::Search => "search",
+            AccessibilityRole::Image => "image",
+            AccessibilityRole::ImageButton => "imagebutton",
+            AccessibilityRole::KeyboardKey => "keyboardkey",
+            AccessibilityRole::Text => "text",
+            AccessibilityRole::Adjustable => "adjustable",
+            AccessibilityRole::Header => "header",
+            AccessibilityRole::Summary => "summary",
+            AccessibilityRole::Alert => "alert",
+            AccessibilityRole::Checkbox => "checkbox",
+            AccessibilityRole::Combobox => "combobox",
+            AccessibilityRole::Menu => "menu",
+            AccessibilityRole::Menubar => "menubar",
+            AccessibilityRole::Menuitem => "menuitem",
+            AccessibilityRole::Progressbar => "progressbar",
+            AccessibilityRole::Radio => "radio",
+            AccessibilityRole::Radiogroup => "radiogroup",
+            AccessibilityRole::Scrollbar => "scrollbar",
+            AccessibilityRole::Spinbutton => "spinbutton",
+            AccessibilityRole::Switch => "switch",
+            AccessibilityRole::Tab => "tab",
+            AccessibilityRole::Tablist => "tablist",
+            AccessibilityRole::Timer => "timer",
+            AccessibilityRole::Toolbar => "toolbar",
+            AccessibilityRole::List => "list",
+            AccessibilityRole::Grid => "grid",
+            AccessibilityRole::Table => "table",
+            AccessibilityRole::Row => "row",
+            AccessibilityRole::Cell => "cell",
+            AccessibilityRole::ColumnHeader => "columnheader",
+            AccessibilityRole::RowGroup => "rowgroup",
+            AccessibilityRole::Listbox => "listbox",
+            AccessibilityRole::Option => "option",
+            AccessibilityRole::Group => "group",
+            AccessibilityRole::Region => "region",
+            AccessibilityRole::Navigation => "navigation",
+            AccessibilityRole::Tree => "tree",
+            AccessibilityRole::TreeItem => "treeitem",
+            AccessibilityRole::MenuItemCheckbox => "menuitemcheckbox",
+            AccessibilityRole::MenuItemRadio => "menuitemradio",
+        }
+    }
+}
+
+/// Whether a checkable element is checked (`accessibilityState.checked`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Checked {
+    /// Not checked.
+    False,
+    /// Checked.
+    True,
+    /// Partially checked.
+    Mixed,
+}
+
+/// Dynamic state of an element (`accessibilityState`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AccessibilityState {
+    /// Disabled. Blocks presses on the view and its subtree.
+    pub disabled: bool,
+    /// Selected.
+    pub selected: bool,
+    /// Checked state of checkable elements.
+    pub checked: Option<Checked>,
+    /// Expanded or collapsed, for expandable elements.
+    pub expanded: Option<bool>,
+}
+
+/// The value of a range or textual element (`accessibilityValue`).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct AccessibilityValue {
+    /// Minimum of the range.
+    pub min: Option<f32>,
+    /// Maximum of the range.
+    pub max: Option<f32>,
+    /// Current value in the range.
+    pub now: Option<f32>,
+    /// A textual description of the value; wins over the range.
+    pub text: Option<Arc<str>>,
+}
+
+/// Accessibility of one view. v2 names are explicit: nothing is read from
+/// the children.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Accessibility {
+    /// `accessibilityLabel`: what screen readers read.
+    pub label: Option<Arc<str>>,
+    /// `accessibilityHint`: what activating the element does.
+    pub hint: Option<Arc<str>>,
+    /// `role`.
+    pub role: AccessibilityRole,
+    /// `accessibilityState`.
+    pub state: AccessibilityState,
+    /// `accessibilityValue`.
+    pub value: Option<AccessibilityValue>,
+    /// `accessibilityElementsHidden`: hide the view and its subtree.
+    pub hidden: bool,
+}
+
+impl Accessibility {
+    /// True if nothing is set.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The view is an accessibility element: it has something to say.
+    pub fn is_element(&self) -> bool {
+        !self.hidden && (self.label.is_some() || self.role != AccessibilityRole::None)
+    }
+
+    /// Presses from this view do not happen and do not reach an ancestor.
+    pub fn blocks_press(&self) -> bool {
+        self.state.disabled
+    }
+}
+
+/// One accessibility property, as set from JS.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AccessibilityProp {
+    /// `accessibilityLabel`.
+    Label(Option<Arc<str>>),
+    /// `accessibilityHint`.
+    Hint(Option<Arc<str>>),
+    /// `role`.
+    Role(AccessibilityRole),
+    /// `accessibilityState`.
+    State(AccessibilityState),
+    /// `accessibilityValue`.
+    Value(Option<AccessibilityValue>),
+    /// `accessibilityElementsHidden`.
+    Hidden(bool),
+}
+
 /// A non-style property of a host node.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Prop {
@@ -507,8 +794,10 @@ pub enum Prop {
     Secure(bool),
     /// `keyboardType`.
     Keyboard(KeyboardType),
-    /// `disabled`: the input ignores edits.
+    /// `disabled`: the view takes no presses, and an input ignores edits.
     Disabled(bool),
+    /// An accessibility property (`role`, label, hint, state, value, hidden).
+    Accessibility(AccessibilityProp),
     /// `testID`: a name tests use to find the view. The platform draws
     /// nothing from it. `None` clears it.
     TestId(Option<Arc<str>>),

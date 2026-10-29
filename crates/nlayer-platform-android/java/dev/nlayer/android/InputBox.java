@@ -63,7 +63,7 @@ final class InputBox extends FrameLayout {
 
   /** `onPress` on the field. Returning false leaves focus and typing to the `EditText`. */
   private boolean tap(android.view.MotionEvent e) {
-    if ((pressMask & 1) == 0 || disabled) return false;
+    if ((pressMask & 1) == 0 || disabled || Mounter.blocked(getParent())) return false;
     int action = e.getActionMasked();
     if (action == android.view.MotionEvent.ACTION_DOWN) {
       armed = true;

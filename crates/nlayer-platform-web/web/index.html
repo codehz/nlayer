@@ -5,11 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>nlayer</title>
     <style>
+      html {
+        color-scheme: light dark;
+      }
       html,
       body {
         margin: 0;
         height: 100%;
-        background: #fff;
+        background: Canvas;
         overflow: hidden;
       }
       #app {
@@ -70,6 +73,7 @@
           baseCSS,
           assetBase: "./",
           pin,
+          colorScheme: schemeOf(q),
           onError(message) {
             status.style.display = "";
             status.textContent = message;
@@ -79,6 +83,12 @@
         const message = String(error && error.message ? error.message : error);
         globalThis.__nlayerFailed = message;
         status.textContent = message;
+      }
+
+      /** `?scheme=light|dark` pins `platform.colorScheme()` (tests only). */
+      function schemeOf(q) {
+        const scheme = q.get("scheme");
+        return scheme === "light" || scheme === "dark" ? scheme : undefined;
       }
 
       async function load(path, read) {

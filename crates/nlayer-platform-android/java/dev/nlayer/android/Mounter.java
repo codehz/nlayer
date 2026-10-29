@@ -25,12 +25,14 @@ final class Mounter {
       INPUT_VALUE = 14,
       INPUT_CONTENT = 15,
       TEST_ID = 16,
-      COMMAND = 17;
+      COMMAND = 17,
+      ACCESSIBILITY = 18;
   final HostView host;
   final float density;
   final SparseArray<View> views = new SparseArray<>();
   final SparseArray<Integer> events = new SparseArray<>();
   final SparseArray<String> testIds = new SparseArray<>();
+  final SparseArray<A11y.Info> accessibility = new SparseArray<>();
   final SparseArray<Style> bases = new SparseArray<>();
   final SparseArray<Style> active = new SparseArray<>();
   final SparseArray<Style> hover = new SparseArray<>();
@@ -106,6 +108,9 @@ final class Mounter {
         case COMMAND:
           command(b);
           break;
+        case ACCESSIBILITY:
+          accessibility(b, objects);
+          break;
         default:
           throw new IllegalArgumentException("Unknown nlayer opcode");
       }
@@ -130,6 +135,55 @@ final class Mounter {
     if (v instanceof ScrollBox) ((ScrollBox) v).pressMask = mask;
     if (v instanceof InputBox) ((InputBox) v).pressMask = mask;
     v.setClickable(press);
+  }
+
+  private void accessibility(ByteBuffer b, Object[] objects) {
+    int id = b.getInt();
+    String role = string(objects, b.getInt());
+    String label = string(objects, b.getInt());
+    String hint = string(objects, b.getInt());
+    int flags = b.getInt();
+    A11y.Info info = new A11y.Info();
+    info.role = role == null || role.equals("none") ? null : role;
+    info.label = label;
+    info.hint = hint;
+    info.hidden = (flags & 1) != 0;
+    info.disabled = (flags & 2) != 0;
+    info.selected = (flags & 4) != 0;
+    info.checked = b.getInt();
+    info.expanded = b.getInt();
+    info.min = b.getFloat();
+    info.max = b.getFloat();
+    info.now = b.getFloat();
+    info.valueText = string(objects, b.getInt());
+    accessibility.put(id, info);
+    View v = views.get(id);
+    if (v == null) return;
+    A11y.apply(v, info);
+    setDisabled(v, info.disabled);
+  }
+
+  private static String string(Object[] objects, int index) {
+    return index < 0 ? null : (String) objects[index];
+  }
+
+  /** A view above `v` (not `v`) is disabled: its presses do not happen there. */
+  static boolean blocked(android.view.ViewParent parent) {
+    while (parent != null) {
+      if (parent instanceof Box && ((Box) parent).disabled) return true;
+      if (parent instanceof ScrollBox && ((ScrollBox) parent).disabled) return true;
+      if (parent instanceof InputBox && ((InputBox) parent).disabled) return true;
+      parent = parent.getParent();
+    }
+    return false;
+  }
+
+  private static void setDisabled(View v, boolean disabled) {
+    if (v instanceof Box) ((Box) v).disabled = disabled;
+    if (v instanceof TextBox) ((TextBox) v).disabled = disabled;
+    if (v instanceof ImageBox) ((ImageBox) v).disabled = disabled;
+    if (v instanceof ScrollBox) ((ScrollBox) v).disabled = disabled;
+    if (v instanceof InputBox) ((InputBox) v).disabled = disabled;
   }
 
   private void create(int id, int kind) {
@@ -209,6 +263,7 @@ final class Mounter {
     views.remove(id);
     events.remove(id);
     testIds.remove(id);
+    accessibility.remove(id);
     bases.remove(id);
     active.remove(id);
     hover.remove(id);

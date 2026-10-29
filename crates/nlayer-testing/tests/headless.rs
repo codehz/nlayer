@@ -104,3 +104,90 @@ mount(App);
     assert_eq!(app.screen().input_values(), ["abc"]);
     app.stop();
 }
+
+#[test]
+fn the_color_scheme_follows_the_platform() {
+    let source = r#"
+import { mount } from "@nlayer/runtime";
+import { Text, View, platform } from "@nlayer/ui";
+
+function App() {
+    return (
+        <View style={{ width: 200, height: 40 }}>
+            <Text>{`scheme: ${platform.colorScheme()}`}</Text>
+        </View>
+    );
+}
+mount(App);
+"#;
+    let bundle = nlayer_bundler::compile_module("App.tsx", source).unwrap();
+    let mut config = nlayer_engine::EngineConfig::new(bundle, Size::new(px(390.0), px(844.0)));
+    config = config.with_color_scheme(nlayer_core::ColorScheme::Light);
+    let mut app =
+        Headless::start_with_config(config, || nlayer_core::text::ApproxTextEngine).unwrap();
+    assert_eq!(app.texts(), ["scheme: light"]);
+    app.control()
+        .set_color_scheme(nlayer_core::ColorScheme::Dark);
+    assert!(
+        app.wait_for("scheme: dark", Duration::from_secs(1)),
+        "{:?}",
+        app.texts()
+    );
+    app.stop();
+}
+
+#[test]
+fn accessibility_is_recorded_and_disabled_blocks_a_press() {
+    let source = r#"
+import { mount, signal } from "@nlayer/runtime";
+import { Text, View } from "@nlayer/ui";
+
+function App() {
+    const count = signal(0);
+    return (
+        <View onPress={() => count.set(count() + 1)} style={{ width: 300, height: 200 }}>
+            <View
+                accessibilityLabel="inner"
+                accessibilityHint="does nothing"
+                role="button"
+                accessibilityState={{ disabled: true, selected: true, checked: "mixed", expanded: false }}
+                accessibilityValue={{ min: 0, max: 10, now: 5, text: "five" }}
+                disabled
+                style={{ width: 100, height: 50 }}
+            />
+            <Text>{`count: ${count()}`}</Text>
+        </View>
+    );
+}
+mount(App);
+"#;
+    let mut app = app(source);
+    let id = app
+        .screen()
+        .views()
+        .find_map(|(id, view)| (view.accessibility.label.as_deref() == Some("inner")).then_some(id))
+        .expect("the labelled view");
+    let view = app.screen().view(id).unwrap();
+    assert_eq!(
+        view.accessibility.role,
+        nlayer_core::AccessibilityRole::Button
+    );
+    assert_eq!(view.accessibility.hint.as_deref(), Some("does nothing"));
+    assert!(view.accessibility.state.disabled);
+    assert!(view.accessibility.state.selected);
+    assert_eq!(
+        view.accessibility.state.checked,
+        Some(nlayer_core::Checked::Mixed)
+    );
+    assert_eq!(view.accessibility.state.expanded, Some(false));
+    let value = view.accessibility.value.as_ref().expect("a value");
+    assert_eq!(
+        (value.min, value.max, value.now),
+        (Some(0.0), Some(10.0), Some(5.0))
+    );
+    assert_eq!(value.text.as_deref(), Some("five"));
+    // The parent takes presses; the disabled child blocks them.
+    assert!(app.press_selector("label:inner").is_err());
+    assert_eq!(app.texts(), ["count: 0"]);
+    app.stop();
+}

@@ -173,6 +173,15 @@ pub enum MountItem {
         /// Content box relative to the view.
         content: Bounds<Points>,
     },
+    /// Accessibility of a view: its label, hint, role, state, value and
+    /// whether its subtree is hidden from assistive technologies. The
+    /// platform reports these and draws nothing from them.
+    Accessibility {
+        /// View.
+        id: NodeId,
+        /// The properties; boxed because they are large.
+        accessibility: Box<crate::Accessibility>,
+    },
     /// `testID`. The platform draws nothing from it. `None` clears it.
     /// Nested `<Text>` spans do not get this item: their ids are
     /// [`crate::text::AttributedText::test_ids`].

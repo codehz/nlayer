@@ -47,12 +47,56 @@ test("the page graph and a text mount do not need QuickJS", async () => {
       },
     },
   };
+  // `prefers-color-scheme` and history back, as a page provides them.
+  let darkMedia = false;
+  let mediaListener = null;
+  const pageListeners = new Map();
+  globalThis.matchMedia = () => ({
+    get matches() {
+      return darkMedia;
+    },
+    addEventListener(type, listener) {
+      if (type === "change") mediaListener = listener;
+    },
+    removeEventListener() {},
+  });
+  globalThis.addEventListener = (type, listener) => pageListeners.set(type, listener);
+  globalThis.removeEventListener = (type, listener) => {
+    if (pageListeners.get(type) === listener) pageListeners.delete(type);
+  };
   const instance = await WebAssembly.instantiate(module, imports);
   const wasm = instance.exports;
   assert.equal(typeof wasm.nlayer_browser_initialize, "function");
   facade = createFacade(wasm, () => {});
   wasm.nlayer_browser_initialize();
   facade.installBoundary();
+
+  // `platform.colorScheme` follows the media query, and a read follows it.
+  let scheme = "";
+  facade.runtime.effect(() => {
+    scheme = facade.ui.platform.colorScheme();
+  });
+  assert.equal(scheme, "light");
+  darkMedia = true;
+  mediaListener({ matches: true });
+  assert.equal(scheme, "dark");
+
+  // `BackHandler` runs newest first; `true` stops the walk.
+  let back = "";
+  const removeOlder = facade.ui.BackHandler.addEventListener(() => {
+    back += "older";
+    return true;
+  });
+  const removeNewer = facade.ui.BackHandler.addEventListener(() => {
+    back += "newer";
+    return true;
+  });
+  pageListeners.get("popstate")();
+  assert.equal(back, "newer");
+  removeNewer();
+  pageListeners.get("popstate")();
+  assert.equal(back, "newerolder");
+  removeOlder();
 
   const count = facade.runtime.signal(1);
   const doubled = facade.runtime.computed(() => count() * 2);

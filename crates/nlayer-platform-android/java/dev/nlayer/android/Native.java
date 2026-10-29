@@ -9,7 +9,7 @@ final class Native {
 
   static native void destroy(long handle);
 
-  static native void load(long handle, byte[] code, String assetsDir, String dataDir);
+  static native void load(long handle, byte[] code, String assetsDir, String dataDir, boolean dark);
 
   static native void resize(long handle, float widthDp, float heightDp);
 
@@ -17,6 +17,12 @@ final class Native {
       long handle, float top, float right, float bottom, float left, float keyboard);
 
   static native void serve(long handle, String host, int port);
+
+  /** The system's color scheme changed. */
+  static native void colorScheme(long handle, boolean dark);
+
+  /** The back button: `BackHandler` listeners, then the platform default. */
+  static native void back(long handle);
 
   static native void press(long handle, int id);
 

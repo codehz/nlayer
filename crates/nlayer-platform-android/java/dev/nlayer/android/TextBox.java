@@ -20,6 +20,7 @@ final class TextBox extends ViewGroup {
   float[] runSize = new float[0];
   boolean clip;
   int pressMask;
+  boolean disabled;
   private int pressedLink = -1;
 
   TextBox(Context c, int id) {
@@ -124,6 +125,10 @@ final class TextBox extends ViewGroup {
 
   @Override
   public boolean onTouchEvent(MotionEvent e) {
+    if (disabled || Mounter.blocked(getParent())) {
+      if (e.getActionMasked() == MotionEvent.ACTION_DOWN) Mounter.pressed(this, id, false);
+      return true;
+    }
     int action = e.getActionMasked();
     if (action == MotionEvent.ACTION_DOWN) {
       pressedLink = hitLink(e);

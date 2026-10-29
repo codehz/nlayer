@@ -18,6 +18,10 @@ pub(crate) struct Pin {
     pub keyboard: Option<f32>,
     #[serde(default, rename = "safeArea")]
     pub safe_area: Area,
+    /// `light` or `dark`, pinned by `nlayer test`; `None` follows the
+    /// system.
+    #[serde(default, rename = "colorScheme")]
+    pub color_scheme: Option<String>,
     #[serde(default)]
     pub host: String,
     #[serde(default)]

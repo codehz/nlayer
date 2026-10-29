@@ -171,6 +171,27 @@ Copied files:
   `apksigner`), one device ABI, install once, then push the bundle and
   restart. Multi-ABI packaging, release keystores and the dev server are
   not copied.
+- `Accessibility`, `AccessibilityRole`, `AccessibilityState`, `AccessibilityValue`,
+  `Checked` and the accessibility props in `crates/nlayer-core/src/ops.rs` from
+  `nsh_core::props` (roles, states and values; actions, live regions and levels
+  are not copied)
+- `ColorScheme` in `crates/nlayer-core/src/platform.rs` from
+  `nsh_core::platform` (light and dark; no app appearance override)
+- the accessibility mappings of `crates/nlayer-platform-ios/src/mount.rs`
+  (label, hint, value, traits, element and hidden) from
+  `nsh-platform-ios/src/native_view.rs`, and the root background and trait
+  change report from `nsh-platform-ios/src/app.rs` / `surface.rs`
+- `crates/nlayer-platform-android/java/dev/nlayer/android/A11y.java` from
+  `nsh-platform-android/java/com/longbridge/nsh/A11y.java` (role classes,
+  label, hint, state, range value and hidden; custom actions and live
+  regions are not copied)
+- the ARIA attributes of `crates/nlayer-platform-web/web/nlayer.js` and the
+  `label:` / `role:` selectors of `web/host.js` follow
+  `nsh-platform-web/web/nsh.js`'s accessibility mapping
+- `BackHandler` follows `nsh-js/src/platform_modules.rs` (newest listener
+  first, `true` handles it, the subscription removes) and nsh's Android
+  activity back delegation; the listener table here is written for these
+  modules
 - app-entry steps in `crates/nlayer-testing/src/runner.rs` follow
   `crates/nsh-cli/src/test.rs` (`steps_file`): open the entry, then run
   standard input. The idle wait, live network and trace are not copied.

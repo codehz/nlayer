@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use jni::{
     JNIEnv,
     objects::{JByteArray, JClass, JObject, JString, JValue},
-    sys::{jfloat, jint, jlong},
+    sys::{jboolean, jfloat, jint, jlong},
 };
 use nlayer_core::geometry::{Edges, Points, Size, px};
 use nlayer_core::{EventKind, NodeId};
@@ -72,6 +72,21 @@ impl MountSink for Sink {
 
     fn failed(&self, error: nlayer_engine::EngineError) {
         report(&self.view, &error.message);
+    }
+
+    fn back_unhandled(&self) {
+        with_env(|env| {
+            // SAFETY: matches the signature checked in `java::init`.
+            unsafe {
+                env.call_method_unchecked(
+                    self.view.as_obj(),
+                    java().view_back_unhandled,
+                    jni::signature::ReturnType::Primitive(jni::signature::Primitive::Void),
+                    &[],
+                )
+            }?;
+            Ok(())
+        });
     }
 }
 
@@ -154,6 +169,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_load(
     code: JByteArray<'_>,
     _assets: JString<'_>,
     data_dir: JString<'_>,
+    dark: jboolean,
 ) {
     if handle == 0 {
         return;
@@ -177,7 +193,9 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_load(
     let sink = Arc::new(Sink {
         view: host.view.clone(),
     });
-    let mut config = EngineConfig::new(bundle, viewport).with_os(Os::Android);
+    let mut config = EngineConfig::new(bundle, viewport)
+        .with_os(Os::Android)
+        .with_color_scheme(nlayer_core::ColorScheme::from_dark(dark != 0));
     if let Ok(dir) = env.get_string(&data_dir) {
         config = config.with_data_dir(String::from(dir));
     }
@@ -215,6 +233,53 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_resize(
         .as_ref()
     {
         control.resize(size);
+    }
+}
+
+/// # Safety
+///
+/// `handle` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_colorScheme(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    dark: jboolean,
+) {
+    if handle == 0 {
+        return;
+    }
+    let host = unsafe { host(handle) };
+    if let Some(control) = host
+        .control
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .as_ref()
+    {
+        control.set_color_scheme(nlayer_core::ColorScheme::from_dark(dark != 0));
+    }
+}
+
+/// # Safety
+///
+/// `handle` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_back(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+) {
+    if handle == 0 {
+        return;
+    }
+    let host = unsafe { host(handle) };
+    if let Some(control) = host
+        .control
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .as_ref()
+    {
+        control.back();
     }
 }
 

@@ -26,6 +26,13 @@ export interface Node {
   frame: Frame;
   /** A view's `testID`, when it has one. */
   testID?: string;
+  /** Its accessibility: what VoiceOver, TalkBack or ARIA reads. */
+  role?: AccessibilityRole;
+  accessibilityLabel?: string;
+  accessibilityHint?: string;
+  accessibilityHidden?: boolean;
+  accessibilityState?: AccessibilityState;
+  accessibilityValue?: AccessibilityValue;
   text?: string;
   /** Style runs of a text view, in order. `color` is `#rrggbb` or `#rrggbbaa`. */
   spans?: Array<{
@@ -65,6 +72,8 @@ export interface OpenOptions {
   safeArea?: { top: number; right: number; bottom: number; left: number };
   /** `env(keyboard-inset-height)`, in points. */
   keyboard?: number;
+  /** The system color scheme before the first frame. Default: `light`. */
+  colorScheme?: "light" | "dark";
   /**
    * The directory the headless app keeps its storage in, relative to the
    * test file. Default: in memory.

@@ -17,6 +17,16 @@
  */
 const CLASSES = { sheets: {}, rules: new Map(), texts: new Map() };
 
+/** Roles whose ARIA name differs (`""`: no role attribute). */
+const ARIA_ROLES = {
+  imagebutton: "button",
+  keyboardkey: "button",
+  adjustable: "slider",
+  header: "heading",
+  text: "",
+  summary: "",
+};
+
 /** The sheet of generated classes, or of the views' own rules. */
 function classSheet(doc, id) {
   if (!CLASSES.sheets[id]) {
@@ -176,6 +186,7 @@ export class Player {
     el._id = id;
     el._kind = kind;
     el._events = new Set();
+    el._disabled = false;
     el.className = kind === "scroll" ? "nl-v nl-scroll" : "nl-v";
     if (kind === "image") {
       const img = this.doc.createElement("img");
@@ -189,6 +200,13 @@ export class Player {
     }
     if (kind === "scroll") this.wireScroll(el);
     el.addEventListener("click", (event) => {
+      for (let node = el; node; node = node.parentNode) {
+        if (node._disabled) {
+          event.stopPropagation?.();
+          event.preventDefault?.();
+          return;
+        }
+      }
       if (this.swallowTarget) {
         const swallow = this.swallowTarget;
         this.swallowTarget = null;
@@ -325,6 +343,63 @@ export class Player {
   op_tid([, id, name]) {
     const el = this.view(id);
     if (el) el._testId = name || "";
+  }
+
+  /**
+   * Accessibility: `[a, id, role, label, hint, hidden, disabled, selected,
+   * checked, expanded, min, max, now, valueText]`. `checked` is 0 none, 1
+   * false, 2 true, 3 mixed; `expanded` 0 none, 1 false, 2 true.
+   */
+  op_a(item) {
+    const [
+      ,
+      id,
+      role,
+      label,
+      hint,
+      hidden,
+      disabled,
+      selected,
+      checked,
+      expanded,
+      min,
+      max,
+      now,
+      valueText,
+    ] = item;
+    const el = this.view(id);
+    if (!el) return;
+    el._disabled = !!disabled;
+    el.classList.toggle("nl-disabled", !!disabled);
+    const target = el._field ?? el;
+    const set = (name, value) =>
+      value == null || value === false
+        ? target.removeAttribute(name)
+        : target.setAttribute(name, String(value));
+    const aria = role === "none" ? null : (ARIA_ROLES[role] ?? role ?? null);
+    set("role", aria === "" ? null : aria);
+    set("aria-label", label);
+    set("aria-description", hint);
+    set("aria-hidden", hidden ? "true" : null);
+    set("aria-disabled", disabled ? "true" : null);
+    set("aria-selected", selected ? "true" : null);
+    set(
+      "aria-checked",
+      checked === 3 ? "mixed" : checked === 2 ? "true" : checked === 1 ? "false" : null,
+    );
+    set("aria-expanded", expanded === 2 ? "true" : expanded === 1 ? "false" : null);
+    set("aria-valuemin", min);
+    set("aria-valuemax", max);
+    set("aria-valuenow", now);
+    set("aria-valuetext", valueText);
+    el._a11y = {
+      role: role || null,
+      label: label ?? null,
+      hint: hint ?? null,
+      hidden: !!hidden,
+      state: { disabled: !!disabled, selected: !!selected, checked, expanded },
+      value: { min, max, now, text: valueText ?? null },
+    };
   }
 
   op_img([, id, uri, mode]) {

@@ -264,7 +264,10 @@ export async function startPage(root, options = {}) {
   ) {
     throw new Error("nlayer.wasm must be the browser host and must not export nlayer_start");
   }
-  facade = createFacade(wasm, requestPump, { appId: options.appId });
+  facade = createFacade(wasm, requestPump, {
+    appId: options.appId,
+    colorScheme: options.colorScheme,
+  });
   enter(() => {
     wasm.nlayer_browser_initialize();
     facade.installBoundary();

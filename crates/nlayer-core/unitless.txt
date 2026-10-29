@@ -53,3 +53,6 @@ transform::TransformOp.value                                     # a transform o
 text::ResolvedTextStyle.line_height_multiple                     # a multiple of the font's line height
 ops::IMAGE_SCALES                                                # pixel densities (device pixels per point)
 ops::ImageScales::iter ->                                        # pixel densities (device pixels per point)
+ops::AccessibilityValue.min                                     # a screen-reader range value (unitless)
+ops::AccessibilityValue.max                                     # a screen-reader range value (unitless)
+ops::AccessibilityValue.now                                     # a screen-reader range value (unitless)

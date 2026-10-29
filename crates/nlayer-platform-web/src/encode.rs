@@ -258,6 +258,36 @@ impl Encoder {
             MountItem::TestId { id, test_id } => {
                 out.item("tid").num(*id).opt_str(test_id.as_deref()).end();
             }
+            MountItem::Accessibility { id, accessibility } => {
+                let a = accessibility.as_ref();
+                let checked = match a.state.checked {
+                    None => 0,
+                    Some(nlayer_core::Checked::False) => 1,
+                    Some(nlayer_core::Checked::True) => 2,
+                    Some(nlayer_core::Checked::Mixed) => 3,
+                };
+                let expanded = match a.state.expanded {
+                    None => 0,
+                    Some(false) => 1,
+                    Some(true) => 2,
+                };
+                let value = a.value.as_ref();
+                out.item("a")
+                    .num(*id)
+                    .str(a.role.name())
+                    .opt_str(a.label.as_deref())
+                    .opt_str(a.hint.as_deref())
+                    .bool(a.hidden)
+                    .bool(a.state.disabled)
+                    .bool(a.state.selected)
+                    .num(checked)
+                    .num(expanded)
+                    .opt_num(value.and_then(|v| v.min))
+                    .opt_num(value.and_then(|v| v.max))
+                    .opt_num(value.and_then(|v| v.now))
+                    .opt_str(value.and_then(|v| v.text.as_deref()))
+                    .end();
+            }
             MountItem::StateStyle {
                 id,
                 interaction,
@@ -420,6 +450,13 @@ impl Out {
 
     fn bool(&mut self, v: bool) -> &mut Self {
         self.raw(if v { "true" } else { "false" })
+    }
+
+    fn opt_num(&mut self, n: Option<f32>) -> &mut Self {
+        match n {
+            Some(n) => self.num(n),
+            None => self.raw("null"),
+        }
     }
 
     fn raw(&mut self, json: &str) -> &mut Self {

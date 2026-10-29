@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use nlayer_core::{
+    AccessibilityProp, AccessibilityRole, AccessibilityState, AccessibilityValue, Checked,
     ImageScales, ImageSource, Interaction, KeyboardDismiss, KeyboardTaps, KeyboardType, NodeId, Op,
     Prop, Tag,
     geometry::{Points, Size},
@@ -103,6 +104,15 @@ pub(crate) fn decode_prop<'js>(
         }
         return Ok(None);
     }
+    if name == "disabled" {
+        return Ok(Some(Op::SetProp {
+            id,
+            prop: Prop::Disabled(value.as_bool().unwrap_or(false)),
+        }));
+    }
+    if let Some(prop) = accessibility_prop(name, &value, warnings)? {
+        return Ok(Some(Op::SetProp { id, prop }));
+    }
     let prop = match (tag, name) {
         (Some(Tag::Image), "src") => Prop::Source(image_source(value)?),
         (Some(Tag::Scroll), "horizontal") => Prop::Horizontal(value.as_bool().unwrap_or(false)),
@@ -139,13 +149,99 @@ pub(crate) fn decode_prop<'js>(
                 }
             }
         }
-        (Some(Tag::Input), "disabled") => Prop::Disabled(value.as_bool().unwrap_or(false)),
         _ => {
             warnings.warn(format!("unsupported prop `{name}`"));
             return Ok(None);
         }
     };
     Ok(Some(Op::SetProp { id, prop }))
+}
+
+/// An accessibility prop, when `name` is one. `Role` warns and sets
+/// nothing for an unknown name; a null label, hint or value clears it.
+fn accessibility_prop<'js>(
+    name: &str,
+    value: &Value<'js>,
+    warnings: &mut Warnings,
+) -> rquickjs::Result<Option<Prop>> {
+    let prop = match name {
+        "accessibilityLabel" => AccessibilityProp::Label(optional_string(value)?),
+        "accessibilityHint" => AccessibilityProp::Hint(optional_string(value)?),
+        "accessibilityElementsHidden" => {
+            AccessibilityProp::Hidden(value.as_bool().unwrap_or(false))
+        }
+        "accessibilityValue" => AccessibilityProp::Value(accessibility_value(value)?),
+        "accessibilityState" => AccessibilityProp::State(accessibility_state(value)?),
+        "role" => {
+            let Some(name) = value.as_string().map(|s| s.to_string()).transpose()? else {
+                return Ok(Some(Prop::Accessibility(AccessibilityProp::Role(
+                    AccessibilityRole::None,
+                ))));
+            };
+            match AccessibilityRole::from_name(&name) {
+                Some(role) => AccessibilityProp::Role(role),
+                None => {
+                    warnings.warn(format!("unknown role `{name}`"));
+                    return Ok(None);
+                }
+            }
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(Prop::Accessibility(prop)))
+}
+
+/// A label or hint: `undefined` / `null` clears it.
+fn optional_string(value: &Value<'_>) -> rquickjs::Result<Option<Arc<str>>> {
+    if value.is_null() || value.is_undefined() {
+        return Ok(None);
+    }
+    Ok(value
+        .as_string()
+        .map(|s| Arc::<str>::from(s.to_string().unwrap_or_default())))
+}
+
+/// `accessibilityState`: absent fields are false / none.
+fn accessibility_state(value: &Value<'_>) -> rquickjs::Result<AccessibilityState> {
+    let Some(object) = value.as_object() else {
+        return Ok(AccessibilityState::default());
+    };
+    let checked = match object.get::<_, Option<Value>>("checked")? {
+        Some(value) if value.as_bool() == Some(true) => Some(Checked::True),
+        Some(value) if value.as_bool() == Some(false) => Some(Checked::False),
+        Some(value)
+            if value
+                .as_string()
+                .and_then(|s| s.to_string().ok())
+                .as_deref()
+                == Some("mixed") =>
+        {
+            Some(Checked::Mixed)
+        }
+        _ => None,
+    };
+    Ok(AccessibilityState {
+        disabled: object.get::<_, Option<bool>>("disabled")?.unwrap_or(false),
+        selected: object.get::<_, Option<bool>>("selected")?.unwrap_or(false),
+        checked,
+        expanded: object.get::<_, Option<bool>>("expanded")?,
+    })
+}
+
+/// `accessibilityValue`: `min` / `max` / `now` numbers, `text` a string.
+fn accessibility_value(value: &Value<'_>) -> rquickjs::Result<Option<AccessibilityValue>> {
+    if value.is_null() || value.is_undefined() {
+        return Ok(None);
+    }
+    let Some(object) = value.as_object() else {
+        return Ok(None);
+    };
+    Ok(Some(AccessibilityValue {
+        min: field_f32(object, "min")?,
+        max: field_f32(object, "max")?,
+        now: field_f32(object, "now")?,
+        text: optional_string(&object.get::<_, Value>("text")?)?,
+    }))
 }
 
 fn is_state_style(name: &str) -> bool {
