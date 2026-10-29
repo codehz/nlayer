@@ -1,4 +1,4 @@
-//! `nlayer build` writes the bundle, its source map, imported images and types.
+//! `nlayer build` writes the bundle, its source map and imported images.
 
 use std::fs;
 
@@ -13,7 +13,7 @@ fn png(w: u32, h: u32) -> Vec<u8> {
 }
 
 #[test]
-fn build_writes_the_bundle_map_asset_and_types() {
+fn build_writes_the_bundle_map_and_asset() {
     let dir = std::env::temp_dir().join(format!("nlayer-build-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("img")).unwrap();
@@ -47,24 +47,7 @@ mount(App);
     let map = fs::read_to_string(out.join("bundle.js.map")).unwrap();
     assert!(map.contains("App.tsx"), "{map}");
     assert_eq!(fs::read(out.join("img/icon.png")).unwrap(), image);
+    assert!(!out.join("types").exists());
 
-    let styles = fs::read_to_string(out.join("types/styles.d.ts")).unwrap();
-    assert!(styles.contains("gridTemplateColumns?:"));
-    assert!(styles.contains("boxShadow?:"));
-    let ui = fs::read_to_string(out.join("types/@nlayer/ui.d.ts")).unwrap();
-    assert!(ui.contains("export function Image"));
-    assert!(
-        fs::read_to_string(out.join("types/@nlayer/runtime.d.ts"))
-            .unwrap()
-            .contains("export function signal")
-    );
-    assert!(
-        fs::read_to_string(out.join("types/@nlayer/test.d.ts"))
-            .unwrap()
-            .contains("export function open")
-    );
-    let globals = fs::read_to_string(out.join("types/globals.d.ts")).unwrap();
-    assert!(globals.contains("declare function fetch"));
-    assert!(!globals.contains("subtle"));
     let _ = fs::remove_dir_all(&dir);
 }

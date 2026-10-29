@@ -1,5 +1,5 @@
 //! `nlayer init` creates a TSX app. `nlayer build` writes its bundle, source
-//! map, imported images and TypeScript declarations. `nlayer test` runs its
+//! map and imported images. `nlayer test` runs its
 //! test files, or, given an app entry, opens it and runs the steps from
 //! standard input. The default is headless; `--target web` runs the opened app
 //! in a headless browser, `--target ios` in the simulator, and `--target
@@ -33,7 +33,7 @@ pub use run::{BuildOutcome, DevServer, RunError, RunOptions, serve, web_module};
 pub struct BuildOptions {
     /// An entry module, or a directory whose `App.tsx` is the entry.
     pub entry: PathBuf,
-    /// Output directory (`bundle.js`, `bundle.js.map`, assets, `types`).
+    /// Output directory (`bundle.js`, `bundle.js.map`, assets).
     pub out: PathBuf,
     /// Minify the bundle.
     pub release: bool,
@@ -94,14 +94,6 @@ pub fn build(options: &BuildOptions) -> Result<(), BuildError> {
             fs::create_dir_all(parent)?;
         }
         fs::copy(root.join(rel), &to)?;
-    }
-    let types = options.out.join("types");
-    for (path, text) in nlayer_bundler::type_files() {
-        let to = types.join(path);
-        if let Some(parent) = to.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(to, text)?;
     }
     Ok(())
 }

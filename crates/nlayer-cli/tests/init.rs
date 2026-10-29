@@ -32,11 +32,7 @@ fn init_writes_an_app_that_builds_and_tests() {
         tsconfig.contains("\"./.nlayer/types/@nlayer/runtime.d.ts\""),
         "paths must be relative: TS rejects non-relative paths without baseUrl"
     );
-    assert!(
-        fs::read_to_string(dir.join(".nlayer/types/@nlayer/ui.d.ts"))
-            .unwrap()
-            .contains("export function View")
-    );
+    assert!(!dir.join(".nlayer/types").exists());
 
     let tested = test(&TestOptions {
         path: dir.clone(),

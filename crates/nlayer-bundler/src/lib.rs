@@ -14,7 +14,7 @@ mod test_api;
 mod types;
 
 pub use bundle::{Bundle, BundleError, BundleOptions, bundle, bundle_async};
-pub use types::type_files;
+pub use types::package_files;
 
 /// Compiles one module (TSX, JSX, TS or JS, as `name`'s extension says) to
 /// the ES module the runtime runs: TypeScript removed, JSX compiled, imports

@@ -6,8 +6,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use nlayer_bundler::type_files;
-
 /// Where to create the app.
 #[derive(Debug, Clone)]
 pub struct InitOptions {
@@ -126,10 +124,6 @@ pub fn init(options: &InitOptions) -> Result<InitReport, InitError> {
     write_new(&options.dir, "App.test.tsx", APP_TEST, &mut report)?;
     write_new(&options.dir, "tsconfig.json", TSCONFIG, &mut report)?;
     write_new(&options.dir, ".gitignore", GITIGNORE, &mut report)?;
-    for (path, text) in type_files() {
-        let rel = format!(".nlayer/types/{path}");
-        write_generated(&options.dir, &rel, &text, &mut report)?;
-    }
     Ok(report)
 }
 
@@ -143,26 +137,6 @@ fn write_new(dir: &Path, rel: &str, text: &str, report: &mut InitReport) -> Resu
         fs::create_dir_all(parent)?;
     }
     fs::write(path, text)?;
-    report.wrote.push(rel.to_owned());
-    Ok(())
-}
-
-/// Writes a generated file, or leaves it when the bytes already match.
-fn write_generated(
-    dir: &Path,
-    rel: &str,
-    text: &str,
-    report: &mut InitReport,
-) -> Result<(), InitError> {
-    let path = dir.join(rel);
-    if path.is_file() && fs::read_to_string(&path).ok().as_deref() == Some(text) {
-        report.kept.push(rel.to_owned());
-        return Ok(());
-    }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&path, text)?;
     report.wrote.push(rel.to_owned());
     Ok(())
 }

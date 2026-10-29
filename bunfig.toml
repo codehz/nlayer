@@ -4,4 +4,4 @@
 [fmt]
 # Same width as rustfmt and google-java-format.
 printWidth = 100
-ignorePatterns = ["**/*.md"]
+ignorePatterns = ["**/*.md", "packages/**/*.d.ts"]
