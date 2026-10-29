@@ -11,8 +11,8 @@
 
 v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bundle、五个宿主组件、三端平台 API、CLI 和类型包都有真实代码，没有 `todo!()` / 空实现。当前剩余工作集中在四类：
 
-1. 明确的契约缺口（键盘策略、API 边界、绘制）
-2. 宿主语义偏差（Android inset、focusStyle、onScroll 节流）
+1. 明确的契约缺口（绘制）
+2. 宿主语义偏差（focusStyle、onScroll 节流）
 3. 验收与回归覆盖（三端 target 测试、gallery 断言、If/Each/ErrorBoundary）
 4. 需要定稿的文档歧义（单实例双轴 Scroll、web 上的浏览器全局）
 
@@ -35,14 +35,12 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 
 | ID | 缺口 | 证据 | 影响 |
 |---|---|---|---|
-| P0-3 | Android API 28–29 的 `env(keyboard-inset-height)` 恒为 0 | `crates/nlayer-platform-android/java/dev/nlayer/android/HostActivity.java:46-53` | 最低支持 API 28 上键盘 inset、键盘弹出检测、tap/drag 收键盘全部失效 |
 | P0-4 | Image 的 `borderRadius` 在 web/Android 不裁剪 | web `crates/nlayer-platform-web/web/base.css:47-57`、`web/nlayer.js:180-185`；Android `crates/nlayer-platform-android/java/dev/nlayer/android/ImageBox.java:123-141`；iOS 已裁剪 `crates/nlayer-platform-ios/src/mount.rs:1911-1912` | v1 要求宿主绘制 radius；同一张圆角图片在三端表现不一致 |
 | P0-10 | Android `focusStyle` 不绘制聚焦输入的祖先 | `crates/nlayer-platform-android/java/dev/nlayer/android/Mounter.java:474`；语义定义 `crates/nlayer-core/src/ops.rs:459`；iOS 会标记焦点链 `crates/nlayer-platform-ios/src/mount.rs:975-1019` | “view 或其中的 field 有焦点”只在 iOS 成立；Android 上祖先 focusStyle 永远不亮 |
 
 ### P0 验收方式
 
 
-- P0-3：API 28 或 29 模拟器上断言 `env(keyboard-inset-height) > 0`，且 `keyboardDismissMode` / `keyboardShouldPersistTaps` 能收键盘。
 - P0-4：web/Android 的 Image 加圆角后，四角被裁剪；iOS 保持现状。若宿主测试只能读树，需要补一项像素/绘制层断言或明确人工验收步骤。
 - P0-10：Android 上给包含 Input 的 View 加 `focusStyle`，聚焦后断言祖先样式生效；同时确认 touch mode 下普通 Box 的 focusStyle 是否可达。
 
@@ -134,7 +132,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 ## 建议切片顺序
 
 1. **CLI/API 契约**：P0-1、P0-5、P0-8、P0-9 已关闭。
-2. **键盘/选择器**：P0-3。P0-2、P0-6、P0-7 已关闭。
+2. **键盘/选择器**：P0-2、P0-3、P0-6、P0-7 已关闭。
 3. **绘制与宿主语义**：P0-4、P0-10、P1-2、P1-3；补 web/Android 绘制断言。
 4. **Scroll 定稿**：P1-1；先改文档或改实现，不要两份契约并存。
 5. **验收自动化**：P2-1 到 P2-3；把 gallery 和三端 target 测试接入 `cargo test` / CI。

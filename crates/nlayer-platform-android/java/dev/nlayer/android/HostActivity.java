@@ -1,15 +1,19 @@
 package dev.nlayer.android;
 
 import android.app.Activity;
+import android.graphics.Rect;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
+import android.view.ViewTreeObserver;
 import android.view.Window;
+import android.view.WindowInsets;
 import java.io.File;
 import java.nio.file.Files;
 
 public class HostActivity extends Activity {
   private HostView host;
+  private int safeTop, safeRight, safeBottom, safeLeft, keyboard = -1;
 
   @Override
   protected void onCreate(Bundle state) {
@@ -29,31 +33,23 @@ public class HostActivity extends Activity {
     host.setOnApplyWindowInsetsListener(
         new View.OnApplyWindowInsetsListener() {
           @Override
-          public android.view.WindowInsets onApplyWindowInsets(
-              View v, android.view.WindowInsets insets) {
-            int top = 0, right = 0, bottom = 0, left = 0, kb = 0;
-            if (Build.VERSION.SDK_INT >= 30) {
-              android.graphics.Insets
-                  s = insets.getInsets(android.view.WindowInsets.Type.systemBars()),
-                  ime = insets.getInsets(android.view.WindowInsets.Type.ime());
-              top = s.top;
-              right = s.right;
-              bottom = s.bottom;
-              left = s.left;
-              // How far the IME reaches into this edge-to-edge surface. The
-              // navigation bar under the keyboard is part of that overlap, as
-              // on iOS. Subtracting systemBars leaves that strip under the keys.
-              kb = Math.max(0, ime.bottom);
-            } else {
-              top = insets.getSystemWindowInsetTop();
-              right = insets.getSystemWindowInsetRight();
-              bottom = insets.getSystemWindowInsetBottom();
-              left = insets.getSystemWindowInsetLeft();
-            }
-            host.setInsets(top, right, bottom, left, kb);
+          public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
+            publish(v, insets);
             return insets;
           }
         });
+    // API 28–29 have no WindowInsets.Type.ime(), and adjustNothing does not
+    // redispatch insets when the keyboard opens. The visible frame does move.
+    if (Build.VERSION.SDK_INT < 30) {
+      host.getViewTreeObserver()
+          .addOnGlobalLayoutListener(
+              new ViewTreeObserver.OnGlobalLayoutListener() {
+                @Override
+                public void onGlobalLayout() {
+                  publish(host, host.getRootWindowInsets());
+                }
+              });
+    }
     host.post(
         new Runnable() {
           public void run() {
@@ -70,6 +66,63 @@ public class HostActivity extends Activity {
               }
           }
         });
+  }
+
+  private void publish(View v, WindowInsets insets) {
+    int top = safeTop, right = safeRight, bottom = safeBottom, left = safeLeft, kb = 0;
+    if (insets != null && Build.VERSION.SDK_INT >= 30) {
+      android.graphics.Insets s = insets.getInsets(WindowInsets.Type.systemBars()),
+          ime = insets.getInsets(WindowInsets.Type.ime());
+      top = s.top;
+      right = s.right;
+      bottom = s.bottom;
+      left = s.left;
+      // How far the IME reaches into this edge-to-edge surface. The
+      // navigation bar under the keyboard is part of that overlap, as
+      // on iOS. Subtracting systemBars leaves that strip under the keys.
+      kb = Math.max(0, ime.bottom);
+    } else if (insets != null) {
+      top = insets.getSystemWindowInsetTop();
+      right = insets.getSystemWindowInsetRight();
+      bottom = insets.getSystemWindowInsetBottom();
+      left = insets.getSystemWindowInsetLeft();
+      kb = keyboardOverlap(v, insets);
+    } else if (Build.VERSION.SDK_INT < 30) {
+      // No navigation-bar size yet: a closed keyboard can look like one.
+      return;
+    }
+    if (top == safeTop
+        && right == safeRight
+        && bottom == safeBottom
+        && left == safeLeft
+        && kb == keyboard) return;
+    safeTop = top;
+    safeRight = right;
+    safeBottom = bottom;
+    safeLeft = left;
+    keyboard = kb;
+    host.setInsets(top, right, bottom, left, kb);
+  }
+
+  /**
+   * API 28–29: {@code Type.ime()} does not exist. The visible frame stops at the keys. An overlap
+   * no larger than the navigation bar is not the keyboard. A larger overlap is the full IME height,
+   * including the strip over the navigation bar, matching {@code Type.ime()} on API 30.
+   */
+  static int keyboardOverlap(View v, WindowInsets insets) {
+    View root = v.getRootView();
+    int height = root.getHeight();
+    if (height <= 0) return 0;
+    Rect visible = new Rect();
+    root.getWindowVisibleDisplayFrame(visible);
+    int nav = insets == null ? 0 : insets.getStableInsetBottom();
+    return keyboardHeight(height, visible.bottom, nav);
+  }
+
+  static int keyboardHeight(int rootHeight, int visibleBottom, int navBottom) {
+    int overlap = rootHeight - visibleBottom;
+    if (overlap <= navBottom) return 0;
+    return overlap;
   }
 
   @Override
