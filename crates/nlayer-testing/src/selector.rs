@@ -608,6 +608,61 @@ mod tests {
     }
 
     #[test]
+    fn text_names_a_span_only_when_it_has_a_test_id() {
+        let mut events = EventMask::default();
+        events.set(EventKind::Press, true);
+        let screen = screen(vec![
+            MountItem::Create {
+                id: 2,
+                kind: ViewKind::Text,
+            },
+            MountItem::Insert {
+                parent: ROOT_ID,
+                child: 2,
+                before: None,
+            },
+            MountItem::Frame {
+                id: 2,
+                frame: rect(0.0, 0.0, 80.0, 16.0),
+            },
+            text_item(
+                2,
+                "see docs link",
+                vec![span_id(4, 8, "docs")],
+                vec![
+                    TextLink {
+                        start: 4,
+                        end: 8,
+                        node: 4,
+                        events,
+                    },
+                    TextLink {
+                        start: 9,
+                        end: 13,
+                        node: 5,
+                        events,
+                    },
+                ],
+            ),
+        ]);
+        assert_eq!(
+            resolve(&screen, "text:docs").unwrap(),
+            Target::Span {
+                view: 2,
+                start: 4,
+                end: 8,
+                node: Some(4),
+            }
+        );
+        assert!(
+            resolve(&screen, "text:link")
+                .unwrap_err()
+                .contains("nothing")
+        );
+        assert!(resolve(&screen, "link").unwrap_err().contains("nothing"));
+    }
+
+    #[test]
     fn scrolling_keeps_the_offset_inside_the_content() {
         let mut screen = screen(vec![
             MountItem::Create {

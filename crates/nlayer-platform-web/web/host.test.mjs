@@ -181,6 +181,37 @@ test("selectors name one view, and the steps use the page's events", () => {
   assert.equal(host.query("text:Save").state, "fail");
 });
 
+test("text: names a span only when that span has a testID", () => {
+  const { player, host } = harness();
+  player.apply([
+    ["c", 2, "text"],
+    ["f", 2, 0, 0, 80, 16],
+    ["i", 1, 2, null],
+    [
+      "t",
+      2,
+      0,
+      0,
+      80,
+      16,
+      null,
+      false,
+      [
+        ["see ", null],
+        ["docs", null],
+        [" ", null],
+        ["link", null],
+      ],
+      [["docs", 4, 8]],
+      [[9, 13, 5]],
+    ],
+  ]);
+  assert.equal(host.query("text:docs").state, "ready");
+  assert.equal(host.query("id:docs").state, "ready");
+  assert.equal(host.query("text:link").state, "wait");
+  assert.equal(host.query("link").state, "wait");
+});
+
 test("a span color is #rrggbb, not the browser's rgb()", () => {
   const { player, host, root } = harness();
   root.ownerDocument.defaultView = {

@@ -715,7 +715,13 @@ fn push_span_ids(node: &Node, id: u32, want: &str, out: &mut Vec<Match>) {
 }
 
 fn push_span_text(node: &Node, id: u32, want: &str, out: &mut Vec<Match>) {
+    // A nested span is named by its `testID`. `text:` matches that span's
+    // text only when it has one. A pressable span without a `testID` is
+    // not a match (headless and web do the same).
     for (index, span) in node.spans.iter().enumerate() {
+        if span.test_id.is_none() {
+            continue;
+        }
         if text_eq(Some(&span.text), want) {
             out.push(Match::Span { view: id, index });
         }
@@ -884,5 +890,43 @@ mod tests {
         assert_eq!(scene.type_target("Name").unwrap(), 2);
         assert!(scene.type_target("lock").unwrap_err().contains("disabled"));
         assert_eq!(scene.inputs(), ["", ""]);
+    }
+
+    #[test]
+    fn text_names_a_span_only_when_it_has_a_test_id() {
+        let mut block = view(2, Some(1), rect(0.0, 0.0, 80.0, 20.0));
+        block.kind = Kind::Text;
+        block.text = Some("see docs link".into());
+        block.spans.push(Span {
+            start: 4,
+            end: 8,
+            test_id: Some("docs".into()),
+            node: Some(4),
+            text: "docs".into(),
+            frame: rect(20.0, 0.0, 24.0, 12.0),
+        });
+        block.spans.push(Span {
+            start: 9,
+            end: 13,
+            test_id: None,
+            node: Some(5),
+            text: "link".into(),
+            frame: rect(48.0, 0.0, 24.0, 12.0),
+        });
+        let scene = Scene::from_nodes(
+            vec![view(1, None, rect(0.0, 0.0, 100.0, 100.0)), block],
+            100.0,
+            100.0,
+        );
+        assert_eq!(
+            scene.press("text:docs").unwrap(),
+            Press::Span {
+                view: 2,
+                start: 4,
+                end: 8
+            }
+        );
+        assert!(scene.press("text:link").unwrap_err().contains("nothing"));
+        assert!(scene.press("link").unwrap_err().contains("nothing"));
     }
 }
