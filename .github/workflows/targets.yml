@@ -1,0 +1,23 @@
+name: targets
+
+# Gallery and the small press/type/scroll app on web, iOS, and Android.
+# The runner needs Xcode, a bootable iPhone simulator, an Android emulator
+# or device on `adb`, and a Chromium (`NLAYER_BROWSER` if it is not Brave,
+# Chrome, or Edge).
+on:
+  push:
+  pull_request:
+
+jobs:
+  targets:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Boot an iPhone simulator
+        run: |
+          udid="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"];
+          print(next(d["udid"] for runtimes in devices.values() for d in runtimes if "iPhone" in d["name"] and d["isAvailable"]))')"
+          xcrun simctl boot "$udid" || true
+          xcrun simctl bootstatus "$udid" -b
+      - name: Host targets
+        run: scripts/test-targets

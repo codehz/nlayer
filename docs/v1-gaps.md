@@ -13,7 +13,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 
 1. 明确的契约缺口（绘制）：P0-4 已关闭。
 2. 宿主语义偏差：本切片的 focusStyle、onScroll、transformOrigin 已关闭。
-3. 验收与回归覆盖（三端 target 测试；gallery 断言与 If/Each/ErrorBoundary 已关闭）
+3. 验收与回归覆盖：P2-1 到 P2-3 已关闭。其余见 P2-4 起
 4. 需要定稿的文档歧义（web 上的浏览器全局）
 
 ## 验证基线
@@ -29,7 +29,7 @@ v1 的主功能面已经实现：reactive 图、JSX lowering、引擎线程、bu
 | `nlayer init /tmp/nlayer-init-check` | 写出 `App.tsx`、`App.test.tsx`、`tsconfig.json`、`package.json`、`.gitignore` |
 | `scripts/test-types` | 五个类型包打包并在临时工程中 `tsc` 通过 |
 
-gallery 12/12 的水平滚动、六个滚动回调、四边 safe area 和 `platform.os` 已有断言。三端 target 仍是手工结果（见 P2-1）。
+`scripts/test-targets`（`cargo test -p nlayer-cli --test targets`）跑 gallery 四端和三端 press/type/scroll/safe-area。CI 是 `.github/workflows/targets.yml`。
 
 ## P0：明确的契约缺口
 
@@ -70,7 +70,7 @@ gallery 12/12 的水平滚动、六个滚动回调、四边 safe area 和 `platf
 
 | ID | 缺口 | 证据 | 影响 |
 |---|---|---|---|
-| P2-1 | 没有自动化 iOS/Android target 测试 | `crates/nlayer-cli/src/ios_test.rs`、`android_test.rs` 无集成测试；`crates/nlayer-cli/tests/` 只有 `web_target.rs` | 三端 12/12 只是手工结果，回归无保护 |
+| P2-1 | 已关闭。`tests/targets.rs` 覆盖 web/iOS/Android 的 press、type、scroll、树和 safe area，并跑 gallery 四端。`scripts/test-targets` 与 `.github/workflows/targets.yml` 是入口 | `crates/nlayer-cli/tests/targets.rs` | 回归进 `cargo test` |
 | P2-2 | 已关闭。水平 Scroll 滚到 `{x:40}`；六个滚动回调都等到同一 metric；safe area 断言 top/right/bottom/left 和 `max(env, keyboard)`；`platform.os` 等于当前 target | `examples/gallery/App.test.tsx` | 回归有测试。active/hover/focus 绘制仍见验收矩阵 |
 | P2-3 | 已关闭。`<If>` 覆盖 when/else、函数 child 和分支切换；`<Each>` 覆盖 `key={fn}`、`key="index"` 和乱序重排；`ErrorBoundary` 覆盖 effect、listener、`reset` 和 fallback 再抛 | `crates/nlayer-js/tests/renderer.rs` | lowering 或运行时回归有测试 |
 | P2-4 | CLI 路径未测 | `crates/nlayer-cli/tests/` | `--filter`、真实 stdin 步骤、`run --target ios|android` 的 watch/rebuild/失败回退、类型版本警告退出码都未覆盖 |
@@ -80,7 +80,7 @@ gallery 12/12 的水平滚动、六个滚动回调、四边 safe area 和 `platf
 
 ### P2 建议的最小验收集
 
-1. 增加 `ios_target.rs`、`android_target.rs`，用与 `web_target.rs` 相同的最小应用覆盖 press/type/scroll/tree/safe-area。
+1. 已关闭。`ios`/`android`/`web` target 测试与 gallery 四端在 `cargo test -p nlayer-cli --test targets`。
 2. 已关闭。gallery 覆盖水平 Scroll 实际滚动、六个滚动回调、`max(env(a),env(b))`、四边 safe area、target 对应的 `platform.os`。
 3. 已关闭。`<If>` when/else/函数 child/分支切换；`<Each key={fn}>`、`key="index"`、乱序重排。
 4. 已关闭。`ErrorBoundary` 覆盖 effect/listener 抛错、`reset`、fallback 再抛。
@@ -135,4 +135,4 @@ gallery 12/12 的水平滚动、六个滚动回调、四边 safe area 和 `platf
 2. **键盘/选择器**：P0-2、P0-3、P0-6、P0-7 已关闭。
 3. **绘制与宿主语义**：P0-4、P0-10、P1-2、P1-3 已关闭。
 4. **Scroll 定稿**：P1-1 已关闭。
-5. **验收自动化**：P2-2、P2-3 已关闭。P2-1：把三端 target 测试接入 `cargo test` / CI。
+5. **验收自动化**：P2-1 到 P2-3 已关闭。

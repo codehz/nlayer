@@ -1,0 +1,8 @@
+#!/bin/sh
+# Gallery and the three host targets, as one `cargo test` binary.
+# Needs a Chromium (`NLAYER_BROWSER` or Brave/Chrome/Edge), a booted iOS
+# simulator, and an Android emulator or device. `cargo test --workspace`
+# runs this too.
+set -eu
+cd "$(dirname "$0")/.."
+exec cargo test -p nlayer-cli --test targets -- --test-threads=1
