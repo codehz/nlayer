@@ -2688,6 +2688,20 @@ impl<M: TextEngine> Core<M> {
                 scrolls.push((offset, animated));
             }
 
+            // Content can shrink below the offset (the last page cleared):
+            // follow the platform's clamp before placing the window.
+            let content_len = self.nodes[key as usize]
+                .list
+                .as_ref()
+                .expect("list")
+                .content_len();
+            let max_offset = (content_len - viewport).max(0.0);
+            if self.nodes[key as usize].list.as_ref().expect("list").offset > max_offset {
+                let list = self.nodes[key as usize].list.as_mut().expect("list");
+                list.jump(max_offset);
+                scrolls.push((max_offset, false));
+            }
+
             let mut binds = Vec::new();
             let load_more = {
                 let list = self.nodes[key as usize].list.as_mut().expect("list");
@@ -2824,11 +2838,6 @@ impl<M: TextEngine> Core<M> {
                 .expect("list")
                 .items_changed = false;
 
-            let content_len = self.nodes[key as usize]
-                .list
-                .as_ref()
-                .expect("list")
-                .content_len();
             let content = Size {
                 width: Points(cross),
                 height: Points(content_len),
