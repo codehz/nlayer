@@ -8,6 +8,15 @@ Install the CLI with `npm install -g @nlayer/cli`, which covers macOS on Apple
 Silicon, Linux x64 and Windows x64; elsewhere use `cargo install --path
 crates/nlayer-cli`. The npm packages are described in `npm/README.md`.
 
+The CLI also installs the runtimes an app is packaged with, so `run` and
+`package` never need Rust: `@nlayer/runtime-android` carries the engine for
+every packaged Android ABI and the Java host, and `@nlayer/runtime-ios` the
+simulator host and the device runner (macOS only). The web runtime ships with
+the CLI itself, as `nlayer.wasm`. A cargo checkout has neither package and
+builds the runtime from the workspace, so a run never uses a stale host;
+`NLAYER_RUNTIME_ANDROID` and `NLAYER_RUNTIME_IOS` name another runtime
+directory, and `NLAYER_WASM` another web runtime.
+
 v1 is the `nlayer` CLI (`init` / `build` / `run --target web|ios|android`)
 plus a TSX test runner: headless by default, and the same steps on a real web, iOS or Android host (`nlayer test --target`). An app entry instead of a test file is opened and the steps from standard input run, on that host too. The public surface is `View`, `Text`,
 `Image`, `Scroll` and single-line `Input`, with the nsh reactive graph and

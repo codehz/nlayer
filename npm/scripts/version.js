@@ -4,7 +4,14 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const npmPackages = ["cli", "cli-darwin-arm64", "cli-linux-x64", "cli-win32-x64"];
+const npmPackages = [
+  "cli",
+  "cli-darwin-arm64",
+  "cli-linux-x64",
+  "cli-win32-x64",
+  "runtime-android",
+  "runtime-ios",
+];
 const typePackages = ["runtime", "ui", "jsx-runtime", "test", "globals"];
 
 /// Package directories, relative to the repository root.

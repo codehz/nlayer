@@ -33,9 +33,16 @@ nlayer package --target web # static site in .nlayer/package/web
 
 `nlayer run --target web` and `nlayer package --target web` need the web
 runtime. This package ships it as `nlayer.wasm` and the `nlayer` wrapper points
-`NLAYER_WASM` at it, so no separate download is involved. Android packaging
-needs the Android SDK; iOS packaging needs Xcode and the
-`aarch64-apple-ios` Rust target.
+`NLAYER_WASM` at it, so no separate download is involved.
+
+`nlayer run` and `nlayer package` for Android and iOS use prebuilt runtimes
+instead of building Rust:
+`@nlayer/runtime-android` carries the engine for every packaged Android ABI
+and the Java host, and `@nlayer/runtime-ios` the simulator host and the device
+runner. They install as optional dependencies; the wrapper points
+`NLAYER_RUNTIME_ANDROID` and `NLAYER_RUNTIME_IOS` at them. Android packaging
+needs the Android SDK; iOS packaging needs Xcode. From a cargo checkout there
+are no such packages and the runtime is built from the workspace instead.
 
 ## License
 

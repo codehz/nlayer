@@ -71,8 +71,8 @@ pub fn package_android(options: &AndroidPackageOptions) -> Result<(), Box<dyn Er
         minify: true,
         test: false,
     })?;
-    let workspace = workspace_root().ok_or("no Android runtime: run nlayer from a checkout")?;
     let sdk = Sdk::find()?;
+    let (dex, libraries) = host(&sdk)?;
 
     let work = options.out.with_extension("work");
     if work.exists() {
@@ -93,12 +93,6 @@ pub fn package_android(options: &AndroidPackageOptions) -> Result<(), Box<dyn Er
             fs::create_dir_all(parent)?;
         }
         fs::copy(root.join(rel), &dest)?;
-    }
-
-    let dex = dex_host(&sdk, &workspace)?;
-    let mut libraries = Vec::new();
-    for abi in Abi::all() {
-        libraries.push((abi.name(), cargo_lib(&sdk, &workspace, &abi, true)?));
     }
 
     let manifest = work.join("AndroidManifest.xml");
@@ -208,6 +202,27 @@ fn sign(sdk: &Sdk, options: &AndroidPackageOptions, apk: &Path) -> Result<(), Bo
     command.arg(apk);
     run(&mut command)?;
     Ok(())
+}
+
+/// The Java host and the engine of every ABI: built from a cargo checkout's
+/// workspace, or read from the installed runtime.
+fn host(sdk: &Sdk) -> Result<(PathBuf, Vec<(&'static str, PathBuf)>), Box<dyn Error>> {
+    if let Some(workspace) = workspace_root() {
+        let dex = dex_host(sdk, &workspace)?;
+        let mut libraries = Vec::new();
+        for abi in Abi::all() {
+            libraries.push((abi.name(), cargo_lib(sdk, &workspace, &abi, true)?));
+        }
+        return Ok((dex, libraries));
+    }
+    let runtime = crate::runtime::android()?.ok_or(
+        "no Android runtime: install @nlayer/runtime-android, or run nlayer from a checkout",
+    )?;
+    let mut libraries = Vec::new();
+    for abi in Abi::all() {
+        libraries.push((abi.name(), runtime.library(abi.name())?));
+    }
+    Ok((runtime.dex, libraries))
 }
 
 fn manifest_xml(config: &Config, icon: bool) -> String {

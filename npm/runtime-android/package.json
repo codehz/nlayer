@@ -1,0 +1,20 @@
+{
+  "name": "@nlayer/runtime-android",
+  "version": "0.2.0",
+  "description": "Pre-built Android runtime for nlayer CLI (native libraries and DEX)",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codehz/nlayer.git",
+    "directory": "npm/runtime-android"
+  },
+  "files": [
+    "runtime/",
+    "README.md"
+  ],
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ]
+}

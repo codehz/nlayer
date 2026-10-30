@@ -17,7 +17,9 @@
   "optionalDependencies": {
     "@nlayer/cli-darwin-arm64": "0.2.0",
     "@nlayer/cli-linux-x64": "0.2.0",
-    "@nlayer/cli-win32-x64": "0.2.0"
+    "@nlayer/cli-win32-x64": "0.2.0",
+    "@nlayer/runtime-android": "0.2.0",
+    "@nlayer/runtime-ios": "0.2.0"
   },
   "engines": {
     "node": ">=18.0.0"

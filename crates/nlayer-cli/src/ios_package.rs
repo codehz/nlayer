@@ -80,9 +80,19 @@ pub fn package_ios(entry: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Builds the device runner and returns its executable.
+/// The device runner: built from a cargo checkout's workspace, or the
+/// installed runtime's `iphoneos/nlayer-ios-app`.
 fn build_runner() -> Result<PathBuf, Box<dyn Error>> {
-    let workspace = workspace_root().ok_or("no iOS runtime: run nlayer from a checkout")?;
+    let Some(workspace) = workspace_root() else {
+        let runtime = crate::runtime::ios()?
+            .ok_or("no iOS runtime: install @nlayer/runtime-ios, or run nlayer from a checkout")?;
+        return match runtime.device {
+            Some(runner) => Ok(runner),
+            None => Err(
+                "the iOS runtime has no device runner: runtime/ios/iphoneos/nlayer-ios-app".into(),
+            ),
+        };
+    };
     let target = workspace.join("target/nlayer-ios-device");
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let status = Command::new(cargo)

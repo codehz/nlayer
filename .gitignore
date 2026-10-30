@@ -11,3 +11,6 @@ npm/*/LICENSE
 npm/*/node_modules/
 npm/*/*.tgz
 packages/*/*.tgz
+
+# npm runtime packages: built in CI from the workspace (release.yml)
+npm/runtime-*/runtime/

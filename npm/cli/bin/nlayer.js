@@ -37,6 +37,21 @@ if (existsSync(webRuntime)) {
   env.NLAYER_WASM ??= webRuntime;
 }
 
+// The Android and iOS runtimes are separate packages: what they carry is the
+// same on every host, so neither is repeated per platform package. The binary
+// reads them from the variables; an override the caller already set wins.
+function runtimeDir(pkgName, platform) {
+  try {
+    return join(require.resolve(`${pkgName}/package.json`), "..", "runtime", platform);
+  } catch {
+    return undefined;
+  }
+}
+const androidRuntime = runtimeDir("@nlayer/runtime-android", "android");
+if (androidRuntime) env.NLAYER_RUNTIME_ANDROID ??= androidRuntime;
+const iosRuntime = runtimeDir("@nlayer/runtime-ios", "ios");
+if (iosRuntime) env.NLAYER_RUNTIME_IOS ??= iosRuntime;
+
 const child = spawn(binaryPath(), process.argv.slice(2), { stdio: "inherit", env });
 
 child.on("error", (error) => {

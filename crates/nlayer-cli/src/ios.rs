@@ -260,9 +260,16 @@ pub(crate) fn ios_host() -> Result<PathBuf, RunError> {
         )));
     }
     let Some(workspace) = workspace_root() else {
-        return Err(RunError::message(
-            "no iOS runtime. Set NLAYER_IOS_APP, or run nlayer from a checkout",
-        ));
+        let runtime = crate::runtime::ios()?.ok_or_else(|| {
+            RunError::message(
+                "no iOS runtime: set NLAYER_IOS_APP, install @nlayer/runtime-ios, or run nlayer from a checkout",
+            )
+        })?;
+        return runtime.simulator.ok_or_else(|| {
+            RunError::message(
+                "the iOS runtime has no simulator host: runtime/ios/iphonesimulator/nlayer-ios-app",
+            )
+        });
     };
     let sources = newest_source(&workspace);
     if let Some(path) = fresh_host(&workspace, sources) {

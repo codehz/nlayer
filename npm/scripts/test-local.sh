@@ -35,6 +35,14 @@ done
 # installed CLI does. `npm link` is offline, so it works before publishing.
 (cd npm/cli && npm link "../cli-$platform" >/dev/null)
 
+# The release workflow fills `npm/runtime-*/runtime`; when it is here the
+# wrapper links it too and the CLI runs the prebuilt runtime instead of
+# building one from this checkout.
+for runtime in runtime-android runtime-ios; do
+  [ -d "npm/$runtime/runtime" ] || continue
+  (cd npm/cli && npm link "../$runtime" >/dev/null)
+done
+
 echo
 echo "wrapper reports:"
 node npm/cli/bin/nlayer.js --version

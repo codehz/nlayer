@@ -306,14 +306,46 @@ impl Abi {
 }
 
 pub(crate) fn host_apk(sdk: &Sdk, abi: &Abi, release: bool) -> Result<PathBuf, RunError> {
-    let workspace = workspace_root()
-        .ok_or_else(|| RunError::message("no Android runtime. Run nlayer from a checkout"))?;
+    if let Some(workspace) = workspace_root() {
+        return checkout_apk(sdk, &workspace, abi, release);
+    }
+    let runtime = crate::runtime::android()?.ok_or_else(|| {
+        RunError::message(
+            "no Android runtime: install @nlayer/runtime-android, or run nlayer from a checkout",
+        )
+    })?;
+    // The installed runtime does not change under this CLI, so an APK built
+    // from it once is reused; a new CLI version writes a new directory.
+    let apk = std::env::temp_dir()
+        .join("nlayer-android")
+        .join(env!("CARGO_PKG_VERSION"))
+        .join(format!("nlayer-{}.apk", abi.name));
+    if apk.is_file() {
+        return Ok(apk);
+    }
+    let library = runtime.library(abi.name())?;
+    if let Some(parent) = apk.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    eprintln!("assembling the Android host ({})", abi.name);
+    package(sdk, &library, &runtime.dex, abi, &apk)?;
+    Ok(apk)
+}
+
+/// The host APK of a cargo checkout: built from its workspace, and rebuilt
+/// when the workspace sources are newer.
+fn checkout_apk(
+    sdk: &Sdk,
+    workspace: &Path,
+    abi: &Abi,
+    release: bool,
+) -> Result<PathBuf, RunError> {
     let profile = if release { "release" } else { "debug" };
     let apk = workspace
         .join("target/nlayer-android")
         .join(profile)
         .join(format!("nlayer-{}.apk", abi.name));
-    let sources = newest_source(&workspace);
+    let sources = newest_source(workspace);
     if apk
         .metadata()
         .and_then(|meta| meta.modified())
@@ -322,8 +354,8 @@ pub(crate) fn host_apk(sdk: &Sdk, abi: &Abi, release: bool) -> Result<PathBuf, R
         return Ok(apk);
     }
     eprintln!("building the Android runtime ({})", abi.name);
-    let library = cargo_lib(sdk, &workspace, abi, release)?;
-    let dex = dex_host(sdk, &workspace)?;
+    let library = cargo_lib(sdk, workspace, abi, release)?;
+    let dex = dex_host(sdk, workspace)?;
     if let Some(parent) = apk.parent() {
         fs::create_dir_all(parent)?;
     }

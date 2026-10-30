@@ -77,9 +77,118 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  android-runtime:
+    name: Android runtime
+    runs-on: ubuntu-latest
+    env:
+      NDK_VERSION: 27.0.12077973
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - name: NDK and platform
+        run: |
+          sdkmanager --install "ndk;$NDK_VERSION" "platforms;android-35"
+          echo "NDK=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-android
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+      # The environment `android.rs` sets for its own build: the NDK's clang
+      # per ABI at the minimum API level.
+      - name: Build the engine for every ABI
+        run: |
+          toolchain="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
+          for entry in \
+            "aarch64-linux-android aarch64-linux-android" \
+            "armv7-linux-androideabi armv7a-linux-androideabi" \
+            "x86_64-linux-android x86_64-linux-android"; do
+            set -- $entry
+            triple=$1
+            compiler="$toolchain/bin/$2"28-clang
+            env_key=$(echo "$triple" | tr '-' '_')
+            upper=$(echo "$env_key" | tr 'a-z' 'A-Z')
+            env \
+              "CC_$env_key=$compiler" \
+              "AR_$env_key=$toolchain/bin/llvm-ar" \
+              "CARGO_TARGET_${upper}_LINKER=$compiler" \
+              "BINDGEN_EXTRA_CLANG_ARGS_$env_key=--sysroot=$toolchain/sysroot" \
+              cargo build -p nlayer-platform-android --lib --release \
+                --target "$triple" --target-dir target/nlayer-android
+          done
+      - name: Build the Java host
+        run: |
+          jar="$ANDROID_HOME/platforms/android-35/android.jar"
+          d8=$(ls "$ANDROID_HOME"/build-tools/*/d8 | sort -V | tail -1)
+          work=target/nlayer-android/java
+          mkdir -p "$work/classes"
+          javac -source 8 -target 8 -classpath "$jar" -d "$work/classes" \
+            $(find crates/nlayer-platform-android/java -name '*.java')
+          "$d8" --min-api 28 --lib "$jar" --output "$work" \
+            $(find "$work/classes" -name '*.class')
+      - name: Organize the runtime
+        run: |
+          mkdir -p npm/runtime-android/runtime/android/lib/{arm64-v8a,armeabi-v7a,x86_64}
+          cp target/nlayer-android/aarch64-linux-android/release/libnlayer.so \
+             npm/runtime-android/runtime/android/lib/arm64-v8a/
+          cp target/nlayer-android/armv7-linux-androideabi/release/libnlayer.so \
+             npm/runtime-android/runtime/android/lib/armeabi-v7a/
+          cp target/nlayer-android/x86_64-linux-android/release/libnlayer.so \
+             npm/runtime-android/runtime/android/lib/x86_64/
+          cp target/nlayer-android/java/classes.dex \
+             npm/runtime-android/runtime/android/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-android
+          path: npm/runtime-android/runtime/
+          if-no-files-found: error
+          retention-days: 1
+
+  ios-runtime:
+    name: iOS runtime
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-ios
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios-sim,aarch64-apple-ios
+      - name: Build the simulator host
+        run: |
+          cargo build -p nlayer-platform-ios --bin nlayer-ios-app \
+            --target aarch64-apple-ios-sim --release \
+            --target-dir target/nlayer-ios
+      - name: Build the device runner
+        env:
+          IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+        run: |
+          cargo build -p nlayer-platform-ios --bin nlayer-ios-app \
+            --target aarch64-apple-ios --release \
+            --target-dir target/nlayer-ios
+      - name: Organize the runtime
+        run: |
+          mkdir -p npm/runtime-ios/runtime/ios/iphonesimulator npm/runtime-ios/runtime/ios/iphoneos
+          cp target/nlayer-ios/aarch64-apple-ios-sim/release/nlayer-ios-app \
+             npm/runtime-ios/runtime/ios/iphonesimulator/
+          cp target/nlayer-ios/aarch64-apple-ios/release/nlayer-ios-app \
+             npm/runtime-ios/runtime/ios/iphoneos/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-ios
+          path: npm/runtime-ios/runtime/
+          if-no-files-found: error
+          retention-days: 1
+
   publish:
     name: Publish
-    needs: [wasm, binary]
+    needs: [wasm, binary, android-runtime, ios-runtime]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -88,6 +197,7 @@ jobs:
       # Staged at the same version, one `npm stage publish` per directory.
       TYPE_PACKAGES: packages/runtime packages/ui packages/jsx-runtime packages/test packages/globals
       CLI_PACKAGES: npm/cli-darwin-arm64 npm/cli-linux-x64 npm/cli-win32-x64 npm/cli
+      RUNTIME_PACKAGES: npm/runtime-android npm/runtime-ios
     steps:
       - uses: actions/checkout@v4
       # Staged publishing needs npm 11.15.0+ and Node 22.14+, and it exchanges
@@ -109,7 +219,12 @@ jobs:
             chmod +x "npm/cli-$platform/bin/"*
           done
           cp artifacts/wasm/nlayer_platform_web.wasm npm/cli/nlayer.wasm
-          for dir in cli cli-darwin-arm64 cli-linux-x64 cli-win32-x64; do
+
+          # Runtime packages
+          cp -r artifacts/runtime-android/ npm/runtime-android/runtime/
+          cp -r artifacts/runtime-ios/ npm/runtime-ios/runtime/
+
+          for dir in cli cli-darwin-arm64 cli-linux-x64 cli-win32-x64 runtime-android runtime-ios; do
             cp LICENSE-APACHE "npm/$dir/LICENSE"
           done
           node npm/scripts/sync-version.js
@@ -119,6 +234,12 @@ jobs:
           test -x npm/cli-linux-x64/bin/nlayer
           test -f npm/cli-win32-x64/bin/nlayer.exe
           test -f npm/cli/nlayer.wasm
+          test -f npm/runtime-android/runtime/android/classes.dex
+          test -f npm/runtime-android/runtime/android/lib/arm64-v8a/libnlayer.so
+          test -f npm/runtime-android/runtime/android/lib/armeabi-v7a/libnlayer.so
+          test -f npm/runtime-android/runtime/android/lib/x86_64/libnlayer.so
+          test -f npm/runtime-ios/runtime/ios/iphonesimulator/nlayer-ios-app
+          test -f npm/runtime-ios/runtime/ios/iphoneos/nlayer-ios-app
           node -e '
             const fs = require("fs");
             const cli = JSON.parse(fs.readFileSync("npm/cli/package.json", "utf8"));
@@ -138,7 +259,7 @@ jobs:
         run: |
           # `npm pack` runs the same file selection as publish and leaves the
           # tarball behind, so the dry run has something to inspect.
-          for dir in $TYPE_PACKAGES $CLI_PACKAGES; do
+          for dir in $TYPE_PACKAGES $RUNTIME_PACKAGES $CLI_PACKAGES; do
             echo "== $dir"
             (cd "$dir" && npm pack)
           done
@@ -146,9 +267,10 @@ jobs:
         if: ${{ !inputs.dry_run }}
         run: |
           # Types first: they are what `nlayer init` installs, and they carry
-          # no dependency on the CLI. The platform packages come next because
-          # `@nlayer/cli` names them in optionalDependencies at this version,
-          # and the main package goes last; approve them in the same order.
+          # no dependency on the CLI. The runtime and platform packages come
+          # next because `@nlayer/cli` names them in optionalDependencies at
+          # this version, and the main package goes last; approve them in the
+          # same order.
           #
           # Nothing goes live here. Each package lands in the staging area and
           # a maintainer approves or rejects it with 2FA, which is the point:
@@ -160,7 +282,7 @@ jobs:
           # release. A version that is still staged is not skipped: reject it
           # (`npm stage list`, `npm stage reject <id>`) before staging again.
           set -e
-          for dir in $TYPE_PACKAGES $CLI_PACKAGES; do
+          for dir in $TYPE_PACKAGES $RUNTIME_PACKAGES $CLI_PACKAGES; do
             name=$(node -p "require('./$dir/package.json').name")
             version=$(node -p "require('./$dir/package.json').version")
             if npm view "$name@$version" version >/dev/null 2>&1; then
@@ -184,6 +306,8 @@ jobs:
             npm/cli-darwin-arm64/*.tgz
             npm/cli-linux-x64/*.tgz
             npm/cli-win32-x64/*.tgz
+            npm/runtime-android/*.tgz
+            npm/runtime-ios/*.tgz
             npm/cli/*.tgz
           if-no-files-found: error
           retention-days: 7

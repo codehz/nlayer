@@ -1,0 +1,18 @@
+{
+  "name": "@nlayer/runtime-ios",
+  "version": "0.2.0",
+  "description": "Pre-built iOS runtime for nlayer CLI (simulator and device runners)",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codehz/nlayer.git",
+    "directory": "npm/runtime-ios"
+  },
+  "files": [
+    "runtime/",
+    "README.md"
+  ],
+  "os": [
+    "darwin"
+  ]
+}

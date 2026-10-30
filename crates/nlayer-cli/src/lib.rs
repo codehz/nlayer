@@ -17,6 +17,7 @@ mod ios;
 mod ios_package;
 mod ios_test;
 mod run;
+mod runtime;
 mod types_version;
 mod web_package;
 mod web_test;
