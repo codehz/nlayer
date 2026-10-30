@@ -9,51 +9,39 @@ on:
   pull_request:
 
 jobs:
-  test:
-    strategy:
-      matrix:
-        include:
-          # Android tests on Linux with KVM
-          - target: android
-            os: ubuntu-latest
-            rust-targets: aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
-          # iOS tests on macOS
-          - target: ios
-            os: macos-latest
-            rust-targets: aarch64-apple-ios x86_64-apple-ios
-          # Web tests on Linux with Chromium
-          - target: web
-            os: ubuntu-latest
-            rust-targets: ""
-    runs-on: ${{ matrix.os }}
-    name: test-${{ matrix.target }}
+  test-android:
+    name: Android tests
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       
       - name: Install Rust targets
-        if: matrix.rust-targets != ''
-        run: rustup target add ${{ matrix.rust-targets }}
+        run: rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
       
-      # Android emulator setup
       - name: Enable KVM
-        if: matrix.target == 'android'
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       
       - name: Run Android tests
-        if: matrix.target == 'android'
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 33
           arch: x86_64
           target: google_apis
           script: cargo test -p nlayer-cli --test targets -- --test-threads=1 emulator
+  
+  test-ios:
+    name: iOS tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
       
-      # iOS simulator setup and tests
+      - name: Install Rust targets
+        run: rustup target add aarch64-apple-ios x86_64-apple-ios
+      
       - name: Boot iPhone simulator
-        if: matrix.target == 'ios'
         run: |
           udid="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"];
           print(next(d["udid"] for runtimes in devices.values() for d in runtimes if "iPhone" in d["name"] and d["isAvailable"]))')"
@@ -61,10 +49,19 @@ jobs:
           xcrun simctl bootstatus "$udid" -b
       
       - name: Run iOS tests
-        if: matrix.target == 'ios'
         run: cargo test -p nlayer-cli --test targets -- --test-threads=1 simulator
+  
+  test-web:
+    name: Web tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       
-      # Web tests
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+      
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@latest
+      
       - name: Run Web tests
-        if: matrix.target == 'web'
         run: cargo test -p nlayer-cli --test targets -- --test-threads=1 browser
