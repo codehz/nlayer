@@ -110,6 +110,7 @@ fn replay(offset: f32, pending: &[PendingScroll]) -> f32 {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum PinTarget {
     Index(u32),
+    #[allow(dead_code)]
     End,
 }
 

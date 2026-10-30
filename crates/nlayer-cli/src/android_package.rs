@@ -204,9 +204,12 @@ fn sign(sdk: &Sdk, options: &AndroidPackageOptions, apk: &Path) -> Result<(), Bo
     Ok(())
 }
 
+/// Result type for host function: (dex path, list of (abi, library path)).
+type HostResult = Result<(PathBuf, Vec<(&'static str, PathBuf)>), Box<dyn Error>>;
+
 /// The Java host and the engine of every ABI: built from a cargo checkout's
 /// workspace, or read from the installed runtime.
-fn host(sdk: &Sdk) -> Result<(PathBuf, Vec<(&'static str, PathBuf)>), Box<dyn Error>> {
+fn host(sdk: &Sdk) -> HostResult {
     if let Some(workspace) = workspace_root() {
         let dex = dex_host(sdk, &workspace)?;
         let mut libraries = Vec::new();
