@@ -216,6 +216,29 @@ impl EngineControl {
         let _ = self.tx.send(Message::Event { id, event, payload });
     }
 
+    /// The selection or caret of input `id` moved (UTF-16 units): the
+    /// app's `onSelectionChange` gets it.
+    pub fn selection_changed(&self, id: NodeId, start: u32, end: u32) {
+        self.dispatch_event(
+            id,
+            EventKind::SelectionChange,
+            EventPayload::Selection { start, end },
+        );
+    }
+
+    /// The composition of input `id` changed: the app's
+    /// `onCompositionChange` gets it (`text` is empty once it ended).
+    pub fn composition_changed(&self, id: NodeId, composing: bool, text: impl Into<String>) {
+        self.dispatch_event(
+            id,
+            EventKind::CompositionChange,
+            EventPayload::Composition {
+                composing,
+                text: text.into(),
+            },
+        );
+    }
+
     /// The user typed `text` into input `id` (the whole new text): the
     /// app's `onChange` gets it and the input shows it.
     pub fn input_changed(&self, id: NodeId, text: impl Into<String>) {

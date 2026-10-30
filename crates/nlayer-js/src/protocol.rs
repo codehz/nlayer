@@ -149,6 +149,8 @@ pub(crate) fn decode_prop<'js>(
                 }
             }
         }
+        (Some(Tag::Input), "multiline") => Prop::Multiline(value.as_bool().unwrap_or(false)),
+        (Some(Tag::Input), "selectedRange") => selected_range(&value)?,
         _ => {
             warnings.warn(format!("unsupported prop `{name}`"));
             return Ok(None);
@@ -287,6 +289,17 @@ fn keyboard_taps(value: &Value<'_>) -> Option<KeyboardTaps> {
     }
     let name = value.as_string()?.to_string().ok()?;
     KeyboardTaps::from_name(&name)
+}
+
+/// `selectedRange`: `{ start, end? }` in UTF-16 units. A missing or
+/// negative end is the start (a caret).
+fn selected_range(value: &Value<'_>) -> rquickjs::Result<Prop> {
+    let Some(object) = value.as_object() else {
+        return Ok(Prop::Selection { start: 0, end: 0 });
+    };
+    let start = field_f32(object, "start")?.unwrap_or(0.0).max(0.0) as u32;
+    let end = field_f32(object, "end")?.unwrap_or(start as f32).max(0.0) as u32;
+    Ok(Prop::Selection { start, end })
 }
 
 fn truthy(value: &Value<'_>) -> rquickjs::Result<bool> {

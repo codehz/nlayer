@@ -40,6 +40,21 @@ pub enum EventPayload {
     None,
     /// The input's text (`onChange`).
     Text(String),
+    /// The selection or caret of an input, in UTF-16 units
+    /// (`onSelectionChange`).
+    Selection {
+        /// Start of the range.
+        start: u32,
+        /// End of the range (the caret when equal to `start`).
+        end: u32,
+    },
+    /// An input method's composition (`onCompositionChange`).
+    Composition {
+        /// A composition is in progress; `text` is what is being composed.
+        composing: bool,
+        /// The composed text, empty once the composition ended.
+        text: String,
+    },
     /// Where a scroll view is, in points. `x` and `y` are the content
     /// offset (negative while iOS bounces). `content_w` and `content_h` are
     /// the content size. `width` and `height` are the visible size.

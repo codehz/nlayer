@@ -76,6 +76,11 @@ pub enum EventKind {
     MomentumEnd,
     /// The user edited an input (`onChange`).
     Change,
+    /// The selection or caret of an input moved (`onSelectionChange`).
+    SelectionChange,
+    /// An input method's composition started, changed or ended
+    /// (`onCompositionChange`).
+    CompositionChange,
 }
 
 impl EventKind {
@@ -91,6 +96,8 @@ impl EventKind {
             "onMomentumStart" => Some(EventKind::MomentumStart),
             "onMomentumEnd" => Some(EventKind::MomentumEnd),
             "onChange" => Some(EventKind::Change),
+            "onSelectionChange" => Some(EventKind::SelectionChange),
+            "onCompositionChange" => Some(EventKind::CompositionChange),
             _ => None,
         }
     }
@@ -108,6 +115,8 @@ impl EventKind {
             5 => Some(EventKind::MomentumStart),
             6 => Some(EventKind::MomentumEnd),
             7 => Some(EventKind::Change),
+            8 => Some(EventKind::SelectionChange),
+            9 => Some(EventKind::CompositionChange),
             _ => None,
         }
     }
@@ -124,6 +133,8 @@ impl EventKind {
             EventKind::MomentumStart => "onMomentumStart",
             EventKind::MomentumEnd => "onMomentumEnd",
             EventKind::Change => "onChange",
+            EventKind::SelectionChange => "onSelectionChange",
+            EventKind::CompositionChange => "onCompositionChange",
         }
     }
 }
@@ -796,6 +807,16 @@ pub enum Prop {
     Keyboard(KeyboardType),
     /// `disabled`: the view takes no presses, and an input ignores edits.
     Disabled(bool),
+    /// `multiline`: Return inserts a line break, and the text wraps.
+    Multiline(bool),
+    /// `selectedRange`: the controlled selection of an input, in UTF-16
+    /// units. `end` is the caret when it equals `start`.
+    Selection {
+        /// Start of the range.
+        start: u32,
+        /// End of the range.
+        end: u32,
+    },
     /// An accessibility property (`role`, label, hint, state, value, hidden).
     Accessibility(AccessibilityProp),
     /// `testID`: a name tests use to find the view. The platform draws
@@ -907,4 +928,11 @@ pub enum Command {
     },
     /// Resign the focused field and hide the software keyboard.
     Blur,
+    /// Select a range of an input (UTF-16 units; equal for a caret).
+    SetSelection {
+        /// Start.
+        start: u32,
+        /// End.
+        end: u32,
+    },
 }

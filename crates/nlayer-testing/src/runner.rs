@@ -208,6 +208,14 @@ pub trait HostedApp {
     fn press(&mut self, selector: &str) -> Result<(), String>;
     /// Types `text` into the input `selector` names.
     fn type_text(&mut self, selector: &str, text: &str) -> Result<(), String>;
+    /// Reports a selection of the input `selector` names.
+    fn select(&mut self, _selector: &str, _start: u32, _end: u32) -> Result<(), String> {
+        Err("this host cannot report a selection".to_owned())
+    }
+    /// Reports a composition of the input `selector` names.
+    fn compose(&mut self, _selector: &str, _text: &str, _composing: bool) -> Result<(), String> {
+        Err("this host cannot report a composition".to_owned())
+    }
     /// Scrolls toward the end of the content by `distance` points.
     fn scroll(&mut self, selector: &str, distance: f32) -> Result<(), String>;
     /// Waits until `selector` names one view that is on screen.
@@ -606,6 +614,22 @@ struct TypeRequest {
 }
 
 #[derive(Deserialize)]
+struct SelectRequest {
+    id: usize,
+    selector: String,
+    start: u32,
+    end: u32,
+}
+
+#[derive(Deserialize)]
+struct ComposeRequest {
+    id: usize,
+    selector: String,
+    text: String,
+    composing: bool,
+}
+
+#[derive(Deserialize)]
 struct ScrollRequest {
     id: usize,
     selector: String,
@@ -641,6 +665,23 @@ impl Session {
                     serde_json::from_str(payload).map_err(|e| e.to_string())?;
                 self.app_mut(request.id)?
                     .type_text(&request.selector, &request.text)?;
+                Ok("null".to_owned())
+            }
+            "select" => {
+                let request: SelectRequest =
+                    serde_json::from_str(payload).map_err(|e| e.to_string())?;
+                self.app_mut(request.id)?
+                    .select(&request.selector, request.start, request.end)?;
+                Ok("null".to_owned())
+            }
+            "compose" => {
+                let request: ComposeRequest =
+                    serde_json::from_str(payload).map_err(|e| e.to_string())?;
+                self.app_mut(request.id)?.compose(
+                    &request.selector,
+                    &request.text,
+                    request.composing,
+                )?;
                 Ok("null".to_owned())
             }
             "scroll" => {
@@ -816,6 +857,14 @@ impl HostedApp for HeadlessApp {
         self.app()?.type_selector(selector, text)
     }
 
+    fn select(&mut self, selector: &str, start: u32, end: u32) -> Result<(), String> {
+        self.app()?.select_selector(selector, start, end)
+    }
+
+    fn compose(&mut self, selector: &str, text: &str, composing: bool) -> Result<(), String> {
+        self.app()?.compose_selector(selector, text, composing)
+    }
+
     fn scroll(&mut self, selector: &str, distance: f32) -> Result<(), String> {
         self.app()?.scroll_selector(selector, distance)
     }
@@ -979,6 +1028,13 @@ fn node_json(node: &TreeNode, screen: &Screen) -> serde_json::Value {
             );
             map.insert("disabled".into(), input.config.disabled.into());
             map.insert("focused".into(), input.focused.into());
+            map.insert("multiline".into(), input.config.multiline.into());
+            if let Some((start, end)) = input.selection {
+                map.insert(
+                    "selection".into(),
+                    serde_json::json!({ "start": start, "end": end }),
+                );
+            }
         }
         if let Some(source) = &view.source {
             map.insert("src".into(), source.uri.as_ref().into());

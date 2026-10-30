@@ -91,3 +91,23 @@ fn the_scheme_and_accessibility_run_on_the_headless_engine() {
     assert!(report.ok(), "{report}");
     let _ = fs::remove_dir_all(&dir);
 }
+
+const INPUT_APP: &str = include_str!("fixtures/input/App.tsx");
+
+const INPUT_TESTS: &str = include_str!("fixtures/input/App.test.tsx");
+
+#[test]
+fn a_multiline_input_reports_selection_and_composition() {
+    let _fixture = FIXTURE.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = scratch("input");
+    fs::write(dir.join("App.tsx"), INPUT_APP).unwrap();
+    fs::write(dir.join("App.test.tsx"), INPUT_TESTS).unwrap();
+    let report = test(&TestOptions {
+        path: dir.clone(),
+        filter: None,
+        target: None,
+    })
+    .expect("the test runs");
+    assert!(report.ok(), "{report}");
+    let _ = fs::remove_dir_all(&dir);
+}

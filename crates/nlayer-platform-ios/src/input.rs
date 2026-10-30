@@ -95,6 +95,36 @@ pub(crate) fn text_alignment(align: TextAlign) -> isize {
     }
 }
 
+/// Selects `start..end` (UTF-16 units, clamped to the text) of `view`.
+/// `UITextField` and `UITextView` both adopt `UITextInput`.
+#[cfg(target_os = "ios")]
+pub(crate) fn set_selection(view: &objc2_ui_kit::UIView, start: u32, end: u32) {
+    use objc2::msg_send;
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+    // SAFETY: UITextInput's documented object methods; the positions and
+    // range are UIKit's.
+    unsafe {
+        let begin: Retained<AnyObject> = msg_send![view, beginningOfDocument];
+        let last: Retained<AnyObject> = msg_send![view, endOfDocument];
+        let length: isize = msg_send![view, offsetFromPosition: &*begin, toPosition: &*last];
+        let (a, b) = (
+            (start as isize).min(length),
+            (end.max(start) as isize).min(length),
+        );
+        let from: Option<Retained<AnyObject>> =
+            msg_send![view, positionFromPosition: &*begin, offset: a];
+        let to: Option<Retained<AnyObject>> =
+            msg_send![view, positionFromPosition: &*begin, offset: b];
+        let (Some(from), Some(to)) = (from, to) else {
+            return;
+        };
+        let range: Option<Retained<AnyObject>> =
+            msg_send![view, textRangeFromPosition: &*from, toPosition: &*to];
+        let _: () = msg_send![view, setSelectedTextRange: range.as_deref()];
+    }
+}
+
 /// Insets that put the text in `content` inside a field of `width` by `height`.
 /// Top, left, bottom, right. A content box past the field clamps to zero.
 pub(crate) fn content_insets(width: f32, height: f32, content: Bounds<Points>) -> [f32; 4] {

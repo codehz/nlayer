@@ -2030,6 +2030,42 @@ pub(crate) fn dispatch(
         crate::EventPayload::Text(text) => unsafe {
             qjs::JS_NewStringLen(cx, text.as_ptr().cast(), text.len() as _)
         },
+        crate::EventPayload::Selection { start, end } => unsafe {
+            let object = qjs::JS_NewObject(cx);
+            qjs::JS_SetPropertyStr(
+                cx,
+                object,
+                c"start".as_ptr(),
+                qjs::JS_NewFloat64(f64::from(*start)),
+            );
+            qjs::JS_SetPropertyStr(
+                cx,
+                object,
+                c"end".as_ptr(),
+                qjs::JS_NewFloat64(f64::from(*end)),
+            );
+            object
+        },
+        crate::EventPayload::Composition { composing, text } => unsafe {
+            let object = qjs::JS_NewObject(cx);
+            qjs::JS_SetPropertyStr(
+                cx,
+                object,
+                c"composing".as_ptr(),
+                if *composing {
+                    qjs::JS_TRUE
+                } else {
+                    qjs::JS_FALSE
+                },
+            );
+            qjs::JS_SetPropertyStr(
+                cx,
+                object,
+                c"text".as_ptr(),
+                qjs::JS_NewStringLen(cx, text.as_ptr().cast(), text.len() as _),
+            );
+            object
+        },
         crate::EventPayload::Scroll {
             x,
             y,

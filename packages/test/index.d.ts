@@ -43,6 +43,10 @@ export interface Node {
     color: string;
   }>;
   value?: string;
+  /** The field takes several lines (Return inserts a line break). */
+  multiline?: boolean;
+  /** The controlled selection, in UTF-16 units. */
+  selection?: { start: number; end: number };
   placeholder?: string;
   secure?: boolean;
   keyboard?: "text" | "email" | "number" | "phone";
@@ -89,6 +93,10 @@ export interface App {
   press(selector: string): void;
   /** Types `text` into the input `selector` names, one change per character. */
   type(selector: string, text: string): void;
+  /** Reports a selection of the input `selector` names (`onSelectionChange`). */
+  select(selector: string, start: number, end?: number): void;
+  /** Reports a composition of the input `selector` names (`onCompositionChange`). */
+  compose(selector: string, text: string, composing: boolean): void;
   /** Scrolls the scroll view `selector` names by `distance` points toward its content's end. */
   scroll(selector: string, distance: number): void;
   /** Waits until `selector` names one view that is on screen. */

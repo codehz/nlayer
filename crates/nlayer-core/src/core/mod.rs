@@ -36,6 +36,10 @@ type Key = u32;
 
 const NO_KEY: Key = Key::MAX;
 
+/// The longest run without a line-break opportunity a multiline input's
+/// value is measured with unbroken (see [`broken_runs`]).
+const MEASURED_RUN: usize = 1024;
+
 type LayoutId = taffy::NodeId;
 
 mod dirty {
@@ -61,6 +65,8 @@ mod dirty {
     pub(super) const TEST_ID: u32 = 1 << 9;
     /// Emit [`crate::MountItem::Accessibility`].
     pub(super) const ACCESSIBILITY: u32 = 1 << 10;
+    /// Emit [`crate::MountItem::Command`] `SetSelection`.
+    pub(super) const SELECTION: u32 = 1 << 11;
 }
 
 /// Host kind.
@@ -74,7 +80,7 @@ enum Kind {
     Image,
     /// Scrolls on one axis ([`ScrollState::horizontal`]).
     Scroll,
-    /// A single-line text field.
+    /// A text field, one line or several.
     Input,
 }
 
@@ -165,6 +171,8 @@ struct InputState {
     content: Option<Bounds<Points>>,
     /// The input is measured with its placeholder (its value is empty).
     placeholder_measured: bool,
+    /// `selectedRange` to send after this batch's value.
+    selection: Option<(u32, u32)>,
 }
 
 /// Paint for one pointer state. Not the node's layout style.
@@ -794,6 +802,23 @@ impl<M: TextEngine> Core<M> {
                 input.config.keyboard = keyboard;
                 self.mark(key, dirty::INPUT);
             }
+            Prop::Multiline(multiline) => {
+                let Some(input) = self.nodes[key as usize].input.as_mut() else {
+                    return Ok(());
+                };
+                if input.config.multiline != multiline {
+                    input.config.multiline = multiline;
+                    self.mark(key, dirty::INPUT);
+                    self.measure_input(key);
+                }
+            }
+            Prop::Selection { start, end } => {
+                let Some(input) = self.nodes[key as usize].input.as_mut() else {
+                    return Ok(());
+                };
+                input.selection = Some((start, end));
+                self.mark(key, dirty::SELECTION);
+            }
             Prop::Disabled(disabled) => {
                 if let Some(input) = self.nodes[key as usize].input.as_mut() {
                     input.config.disabled = disabled;
@@ -1261,6 +1286,18 @@ impl<M: TextEngine> Core<M> {
             if flags & (dirty::INPUT | dirty::INPUT_VALUE) != 0 {
                 self.emit_input(key, id, flags);
             }
+            if flags & dirty::SELECTION != 0 {
+                let selection = self.nodes[key as usize]
+                    .input
+                    .as_mut()
+                    .and_then(|input| input.selection.take());
+                if let Some((start, end)) = selection {
+                    self.mount.push(MountItem::Command {
+                        id,
+                        command: Command::SetSelection { start, end },
+                    });
+                }
+            }
             if flags & dirty::STATE != 0 {
                 let slots = mem::take(&mut self.nodes[key as usize].state_dirty);
                 for slot in 0..3 {
@@ -1676,18 +1713,23 @@ impl<M: TextEngine> Core<M> {
         self.needs_layout = true;
     }
 
-    /// `content` in the text style of input `key`, as it is measured.
-    /// A single line: `max_lines` is 1, and an empty string still takes a
-    /// line.
+    /// `content` in the text style of input `key`, as it is measured. A
+    /// single line has `max_lines` 1; several wrap at the width, and an
+    /// empty string or a trailing line break still takes a line.
     fn input_text(&self, key: Key, content: &str) -> AttributedText {
         let node = &self.nodes[key as usize];
+        let multiline = node.input.as_ref().is_some_and(|i| i.config.multiline);
         let mut text = AttributedText {
-            max_lines: 1,
+            max_lines: if multiline { 0 } else { 1 },
             ..AttributedText::default()
         };
         let style = self.inherited_text_style(key).inherit(&node.text_style);
-        text.push(content, style);
-        if content.is_empty() {
+        if multiline {
+            text.push(&broken_runs(content), style);
+        } else {
+            text.push(content, style);
+        }
+        if content.is_empty() || (multiline && content.ends_with('\n')) {
             text.push("\u{200b}", style);
         }
         text
@@ -3762,6 +3804,90 @@ mod tests {
     }
 
     #[test]
+    fn a_multiline_input_wraps_instead_of_clamping_to_one_line() {
+        let mut c = Core::new(ClampedEngine, size(px(100.0), px(200.0)));
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Input,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Multiline(true),
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Value("x".repeat(50)),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        assert_eq!(frame(&c.commit().unwrap(), 2).size.height, px(64.0));
+    }
+
+    #[test]
+    fn selected_range_is_sent_after_the_value() {
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Input,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Value("hello".into()),
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Selection { start: 1, end: 3 },
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        let value = batch
+            .items
+            .iter()
+            .position(|item| matches!(item, MountItem::InputValue { id: 2, .. }))
+            .expect("the value");
+        let selection = batch
+            .items
+            .iter()
+            .position(|item| {
+                matches!(
+                    item,
+                    MountItem::Command {
+                        id: 2,
+                        command: Command::SetSelection { start: 1, end: 3 },
+                    }
+                )
+            })
+            .expect("the selection");
+        assert!(value < selection, "the value is applied first");
+    }
+
+    #[test]
+    fn broken_runs_break_a_long_unbroken_run() {
+        let content = "x".repeat(MEASURED_RUN * 2 + 10);
+        let broken = super::broken_runs(&content);
+        assert_eq!(broken.matches('\n').count(), 2);
+        assert_eq!(broken.chars().filter(|c| *c != '\n').count(), content.len());
+        // Runs a browser would break are left alone.
+        let text = "word ".repeat(600);
+        assert_eq!(super::broken_runs(&text), text);
+    }
+
+    #[test]
     fn input_values_from_js_and_native_edits() {
         let mut c = core();
         c.apply(Op::Create {
@@ -4574,5 +4700,40 @@ mod tests {
         assert_eq!(text.links[0].node, 4);
         assert_eq!(text.links[0].start, 4);
         assert_eq!(text.links[0].end, 8);
+    }
+}
+
+/// Shortens a long run without a line-break opportunity so that measuring a
+/// multiline value stays linear in its length. A 474 KB minified JSON takes
+/// seconds to measure at every edit; broken into runs of 1024 it is fast.
+/// The input shows and reports its own text; the measured height can only
+/// grow by a line per break, and text without such runs is measured as is.
+fn broken_runs(content: &str) -> std::borrow::Cow<'_, str> {
+    let mut broken: Option<String> = None;
+    let (mut start, mut from) = (0, 0);
+    for (end, _) in unicode_linebreak::linebreaks(content) {
+        let mut run = 0;
+        for (offset, c) in content[start..end].char_indices() {
+            let i = start + offset;
+            // The final character may itself provide the break (space or
+            // newline). Do not introduce another line immediately before it.
+            if run == MEASURED_RUN && i + c.len_utf8() < end {
+                let broken = broken.get_or_insert_with(|| {
+                    String::with_capacity(content.len() + content.len() / MEASURED_RUN)
+                });
+                broken.push_str(&content[from..i]);
+                broken.push('\n');
+                (run, from) = (0, i);
+            }
+            run += 1;
+        }
+        start = end;
+    }
+    match broken {
+        Some(mut broken) => {
+            broken.push_str(&content[from..]);
+            broken.into()
+        }
+        None => content.into(),
     }
 }

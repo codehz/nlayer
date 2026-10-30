@@ -102,6 +102,12 @@ export function open(entry, options) {
     type(selector, text) {
       call("type", { id, selector, text });
     },
+    select(selector, start, end = start) {
+      call("select", { id, selector, start, end });
+    },
+    compose(selector, text, composing) {
+      call("compose", { id, selector, text, composing });
+    },
     scroll(selector, distance) {
       call("scroll", { id, selector, distance });
     },

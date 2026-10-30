@@ -702,7 +702,16 @@ export class Player {
       return;
     }
     const el = this.view(id);
-    if (!el || name !== "scrollTo") return;
+    if (!el) return;
+    if (name === "setSelection") {
+      const field = el._field;
+      if (field) {
+        const length = field.value.length;
+        field.setSelectionRange(Math.min(x, length), Math.min(Math.max(y, x), length));
+      }
+      return;
+    }
+    if (name !== "scrollTo") return;
     if (!animated) this.noteInstant(el);
     el.scrollTo?.({ left: x, top: y, behavior: animated ? "smooth" : "instant" });
     if (!el.scrollTo) {

@@ -177,6 +177,12 @@ final class InputBox extends FrameLayout {
     edit.setLayoutDirection(rtl ? LAYOUT_DIRECTION_RTL : LAYOUT_DIRECTION_LTR);
   }
 
+  /** `selectedRange`: clamps to the text and applies without reporting back a stale value. */
+  void setSelection(int start, int end) {
+    int length = edit.getText().length();
+    edit.setSelection(Math.min(start, length), Math.min(Math.max(end, start), length));
+  }
+
   void setValue(int n, String value) {
     if (n < count) return;
     count = n;

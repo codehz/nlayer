@@ -187,9 +187,17 @@ export interface InputProps extends AccessibilityProps {
   classList?: Record<string, boolean | null | undefined>;
   value?: string;
   onChange?: (value: string) => void;
+  /** Several lines: Return inserts a line break and the text wraps. */
+  multiline?: boolean;
+  /** The controlled selection, in UTF-16 units. `end` defaults to `start`. */
+  selectedRange?: { start: number; end?: number };
   placeholder?: string;
   secureTextEntry?: boolean;
   keyboardType?: "text" | "email" | "number" | "phone";
+  /** The selection or caret moved. */
+  onSelectionChange?: (e: { start: number; end: number }) => void;
+  /** An input method's composition started, changed or ended. */
+  onCompositionChange?: (e: { composing: boolean; text: string }) => void;
   /** A name tests use to find this field. The platform does not draw it. */
   testID?: string;
   onPress?: () => void;

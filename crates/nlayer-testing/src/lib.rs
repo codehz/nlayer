@@ -92,6 +92,8 @@ pub struct InputView {
     pub value: String,
     /// The field is the one editing. `Keyboard.dismiss` clears it.
     pub focused: bool,
+    /// The controlled selection (`selectedRange`), in UTF-16 units.
+    pub selection: Option<(u32, u32)>,
 }
 
 /// One style run of a text view.
@@ -383,6 +385,7 @@ impl Screen {
                             .as_ref()
                             .map_or_else(String::new, |i| i.value.clone()),
                         focused: view.input.as_ref().is_some_and(|i| i.focused),
+                        selection: view.input.as_ref().and_then(|i| i.selection),
                     });
                 }
             }
@@ -397,6 +400,13 @@ impl Screen {
             MountItem::Command { id, command } => match command {
                 Command::ScrollTo { x, y, .. } => self.set_scroll(*id, x.0, y.0),
                 Command::Blur => self.blur(),
+                Command::SetSelection { start, end } => {
+                    if let Some(view) = self.views.get_mut(id)
+                        && let Some(input) = &mut view.input
+                    {
+                        input.selection = Some((*start, *end));
+                    }
+                }
             },
             MountItem::TestId { id, test_id } => {
                 if let Some(view) = self.views.get_mut(id) {
@@ -655,6 +665,39 @@ impl Headless {
                 value = now;
             }
         }
+        Ok(())
+    }
+
+    /// Moves the selection of the input `selector` names, as the platform
+    /// reports it (`onSelectionChange`).
+    pub fn select_selector(&mut self, selector: &str, start: u32, end: u32) -> Result<(), String> {
+        self.refresh();
+        let target = selector::resolve(&self.screen, selector)?;
+        self.require_visible(selector, target)?;
+        let id = selector::input_of(&self.screen, target)
+            .ok_or_else(|| format!("`{selector}` is not an input"))?;
+        self.engine.control().selection_changed(id, start, end);
+        let _ = self.next_frame(Duration::from_millis(200));
+        Ok(())
+    }
+
+    /// Reports a change of the input `selector` names' composition, as an
+    /// input method does (`onCompositionChange`).
+    pub fn compose_selector(
+        &mut self,
+        selector: &str,
+        text: &str,
+        composing: bool,
+    ) -> Result<(), String> {
+        self.refresh();
+        let target = selector::resolve(&self.screen, selector)?;
+        self.require_visible(selector, target)?;
+        let id = selector::input_of(&self.screen, target)
+            .ok_or_else(|| format!("`{selector}` is not an input"))?;
+        self.engine
+            .control()
+            .composition_changed(id, composing, text);
+        let _ = self.next_frame(Duration::from_millis(200));
         Ok(())
     }
 

@@ -287,6 +287,11 @@ pub fn encode(batch: MountBatch) -> Encoded {
                         e.bool(animated);
                     }
                     Command::Blur => e.int(1),
+                    Command::SetSelection { start, end } => {
+                        e.int(2);
+                        e.int(start as i32);
+                        e.int(end as i32);
+                    }
                 }
             }
         }

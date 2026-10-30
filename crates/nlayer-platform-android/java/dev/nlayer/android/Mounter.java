@@ -688,6 +688,12 @@ final class Mounter {
       Native.dismissKeyboard(host);
       return;
     }
+    if (cmd == 2) {
+      int start = b.getInt(), end = b.getInt();
+      View v = views.get(id);
+      if (v instanceof InputBox) ((InputBox) v).setSelection(start, end);
+      return;
+    }
     float x = b.getFloat(), y = b.getFloat();
     b.getInt();
     View v = views.get(id);

@@ -1,7 +1,7 @@
 //! Instructions a platform applies to native views.
 //!
 //! Extracted from `nsh_core::mount`, cut to views, text, images, scroll
-//! views and single-line inputs.
+//! views, text, images, scroll views and inputs (one line or several).
 
 use std::sync::Arc;
 
@@ -26,7 +26,7 @@ pub enum ViewKind {
     Image,
     /// A scroll view. It scrolls on one axis ([`MountItem::ScrollConfig`]).
     Scroll,
-    /// A single-line text field ([`MountItem::Input`]).
+    /// A text field, one line or several ([`MountItem::Input`]).
     Input,
 }
 
@@ -148,7 +148,7 @@ pub enum MountItem {
         /// Vertical shift.
         dy: Points,
     },
-    /// Configure a single-line text field. The text itself is
+    /// Configure a text field. The text itself is
     /// [`MountItem::InputValue`].
     Input {
         /// Input view.
@@ -200,10 +200,10 @@ pub enum MountItem {
     },
 }
 
-/// Everything about a single-line input except its text.
+/// Everything about an input except its text.
 ///
-/// Copied from `nsh_core::mount::InputConfig` and cut to the v1 fields:
-/// one line, no accessory, no submit behavior.
+/// Copied from `nsh_core::mount::InputConfig` and cut to these fields: no
+/// accessory, placeholder color or submit behavior.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InputConfig {
     /// Font and color of the text.
@@ -220,6 +220,8 @@ pub struct InputConfig {
     pub disabled: bool,
     /// The text runs right to left.
     pub rtl: bool,
+    /// Several lines: Return inserts a line break and the text wraps.
+    pub multiline: bool,
 }
 
 impl Default for InputConfig {
@@ -232,6 +234,7 @@ impl Default for InputConfig {
             keyboard: KeyboardType::Text,
             disabled: false,
             rtl: false,
+            multiline: false,
         }
     }
 }

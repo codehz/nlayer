@@ -78,6 +78,38 @@ impl Bridge for Runtime {
         let payload = match payload {
             EventPayload::None => Value::null(),
             EventPayload::Text(text) => Value::string(text).unwrap_or_else(|_| Value::null()),
+            EventPayload::Selection { start, end } => {
+                let object = match Value::object() {
+                    Ok(object) => object,
+                    Err(_) => return,
+                };
+                let (Ok(start), Ok(end)) = (
+                    Value::number(f64::from(*start)),
+                    Value::number(f64::from(*end)),
+                ) else {
+                    return;
+                };
+                if object.set("start", start).is_err() || object.set("end", end).is_err() {
+                    return;
+                }
+                object
+            }
+            EventPayload::Composition { composing, text } => {
+                let object = match Value::object() {
+                    Ok(object) => object,
+                    Err(_) => return,
+                };
+                // Slots 2 and 3 are the page's `false` and `true`.
+                let composing = Value(if *composing { 3 } else { 2 });
+                let Ok(text) = Value::string(text) else {
+                    return;
+                };
+                if object.set("composing", composing).is_err() || object.set("text", text).is_err()
+                {
+                    return;
+                }
+                object
+            }
             EventPayload::Scroll {
                 x,
                 y,

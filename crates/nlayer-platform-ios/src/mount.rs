@@ -988,6 +988,11 @@ impl Mounter {
                     );
                 }
                 nlayer_core::Command::Blur => self.end_editing(),
+                nlayer_core::Command::SetSelection { start, end } => {
+                    if let Some(Native::Input(field)) = self.native(id) {
+                        crate::input::set_selection(field, start, end);
+                    }
+                }
             },
             MountItem::Image {
                 id,

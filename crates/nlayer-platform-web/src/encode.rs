@@ -254,6 +254,14 @@ impl Encoder {
                 Command::Blur => {
                     out.item("cmd").num(*id).str("blur").end();
                 }
+                Command::SetSelection { start, end } => {
+                    out.item("cmd")
+                        .num(*id)
+                        .str("setSelection")
+                        .num(*start)
+                        .num(*end)
+                        .end();
+                }
             },
             MountItem::TestId { id, test_id } => {
                 out.item("tid").num(*id).opt_str(test_id.as_deref()).end();
