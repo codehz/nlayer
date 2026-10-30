@@ -7,7 +7,7 @@
 //!
 //! Extracted from `nsh-platform-ios` (`app.rs`, `surface.rs`, `mount.rs`,
 //! `text.rs`, `text_view.rs`, `decor.rs`, `image.rs`, `input.rs`) and cut to
-//! views, text, images, one-axis scroll views and single-line inputs: frames,
+//! views, text, images, one-axis scroll views and inputs (one line or several): frames,
 //! fill, radius, opacity, overflow, a static transform, solid or dashed
 //! uniform borders, per-side solid borders, `onPress`, the scroll events
 //! (`onScroll` at most once per frame, drag and momentum; payload is the

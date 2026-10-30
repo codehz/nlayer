@@ -198,7 +198,7 @@ fn type_text(selector: String, text: String) -> Result<Value, String> {
                 let mounter = mounter.borrow();
                 let id = mounter.scene().type_target(&selector)?;
                 mounter
-                    .field(id)
+                    .input_view(id)
                     .ok_or_else(|| format!("`{selector}` is not an input"))?
             };
             let _: bool = unsafe { msg_send![&*field, becomeFirstResponder] };

@@ -41,10 +41,10 @@ use objc2_ui_kit::{
     UIGestureRecognizerDelegate, UIGestureRecognizerState, UIHoverGestureRecognizer,
     UILongPressGestureRecognizer, UIScreen, UIScrollView,
     UIScrollViewContentInsetAdjustmentBehavior, UIScrollViewDelegate, UITapGestureRecognizer,
-    UITouch, UIView,
+    UITextField, UITextFieldDelegate, UITextView, UITextViewDelegate, UITouch, UIView,
 };
 
-use crate::input::Field;
+use crate::input::{AreaInput, Field};
 use crate::text_view::TextView;
 
 /// One native view and the paint the engine last set on it.
@@ -80,6 +80,8 @@ struct Slot {
     taps: KeyboardTaps,
     /// `keyboardDismissMode`.
     dismiss: KeyboardDismiss,
+    /// The input's content box, to reapply when the editor is replaced.
+    input_content: Option<Bounds<Points>>,
     /// Tap that resigns the keyboard. Only a scroll has one.
     keyboard_tap: Option<Retained<UITapGestureRecognizer>>,
     /// `role`, label, hint, state, value and whether the subtree is hidden
@@ -98,6 +100,7 @@ enum Native {
     Image(Retained<UIView>),
     Scroll(Retained<UIScrollView>),
     Input(Retained<Field>),
+    Area(AreaInput),
 }
 
 impl Native {
@@ -107,6 +110,7 @@ impl Native {
             Native::Text(view) => view,
             Native::Scroll(view) => view,
             Native::Input(view) => view,
+            Native::Area(area) => area.view(),
         }
     }
 }
@@ -145,23 +149,22 @@ define_class!(
                 return;
             };
             let id = field.tag() as u32;
-            let Some(crate::input::TextUpdate::Report(text)) = field.edited() else {
-                return;
-            };
-            let Some(mounter) = self.ivars().mounter.borrow().upgrade() else {
-                return;
-            };
-            mounter.borrow().report_input(id, text);
+            let marked = field.composed();
+            with_mounter(move |mounter| mounter.input_edited(id, marked));
         }
 
         #[unsafe(method(editingBegan:))]
         fn editing_began(&self, sender: &AnyObject) {
-            self.focus_edit(sender, true);
+            if let Some(view) = sender.downcast_ref::<UIView>() {
+                self.focus_edit(view, true);
+            }
         }
 
         #[unsafe(method(editingEnded:))]
         fn editing_ended(&self, sender: &AnyObject) {
-            self.focus_edit(sender, false);
+            if let Some(view) = sender.downcast_ref::<UIView>() {
+                self.focus_edit(view, false);
+            }
         }
 
         #[unsafe(method(dismissKeyboard:))]
@@ -183,6 +186,46 @@ define_class!(
             // SAFETY: UITextField resigns first responder. The editing-ended
             // callback defers if a borrow is still live.
             let _: bool = unsafe { msg_send![field, resignFirstResponder] };
+        }
+    }
+
+    unsafe impl UITextFieldDelegate for Relay {
+        #[unsafe(method(textFieldDidChangeSelection:))]
+        fn text_field_selection(&self, field: &UITextField) {
+            self.input_selection(field.as_ref());
+        }
+    }
+
+    unsafe impl UITextViewDelegate for Relay {
+        #[unsafe(method(textViewDidChange:))]
+        fn text_view_changed(&self, view: &UITextView) {
+            let id = view.tag() as u32;
+            let view: &UIView = view;
+            let marked = crate::input::marked_text(view);
+            with_mounter(move |mounter| mounter.input_edited(id, marked));
+        }
+
+        #[unsafe(method(textViewDidChangeSelection:))]
+        fn text_view_selection(&self, view: &UITextView) {
+            self.input_selection(view.as_ref());
+        }
+
+        #[unsafe(method(textViewDidBeginEditing:))]
+        fn text_view_began(&self, view: &UITextView) {
+            self.focus_edit(view.as_ref(), true);
+        }
+
+        #[unsafe(method(textViewDidEndEditing:))]
+        fn text_view_ended(&self, view: &UITextView) {
+            // A composition does not outlive focus: what was composed stays.
+            let _: () = unsafe { msg_send![view, unmarkText] };
+            let id = view.tag() as u32;
+            with_mounter(move |mounter| {
+                if let Some(change) = mounter.compose(id, None) {
+                    mounter.report_composition(id, change);
+                }
+            });
+            self.focus_edit(view.as_ref(), false);
         }
     }
 
@@ -320,10 +363,16 @@ impl Relay {
         mounter.borrow_mut().hovered(id, state);
     }
 
-    fn focus_edit(&self, sender: &AnyObject, on: bool) {
-        let Some(view) = sender.downcast_ref::<UIView>() else {
-            return;
-        };
+    /// A selection callback of an input: reports the range and any
+    /// composition change (an input method unmarks by moving the caret).
+    fn input_selection(&self, view: &UIView) {
+        let id = view.tag() as u32;
+        let selection = crate::input::selection(view);
+        let marked = crate::input::marked_text(view);
+        with_mounter(move |mounter| mounter.input_selection(id, selection, marked));
+    }
+
+    fn focus_edit(&self, view: &UIView, on: bool) {
         let id = view.tag() as u32;
         // `endEditing:` calls this while a dismiss still holds the mounter.
         with_mounter(move |mounter| {
@@ -595,9 +644,9 @@ impl Mounter {
             return;
         }
         if let Some(id) = self.focused
-            && let Some(Native::Input(field)) = self.native(id)
+            && let Some(view) = self.input_view(id)
         {
-            let _: bool = unsafe { msg_send![field, resignFirstResponder] };
+            let _: bool = unsafe { msg_send![&*view, resignFirstResponder] };
         }
     }
 
@@ -632,7 +681,7 @@ impl Mounter {
                 .slot(id)
                 .filter(|slot| std::ptr::eq(slot.native.view(), &*v))
             {
-                if matches!(slot.native, Native::Input(_)) {
+                if matches!(slot.native, Native::Input(_) | Native::Area(_)) {
                     on_input = true;
                 }
                 if matches!(slot.native, Native::Scroll(_)) {
@@ -660,7 +709,10 @@ impl Mounter {
                 } else {
                     false
                 };
-                if matches!(slot.native, Native::Input(_)) || slot.own_press || on_link {
+                if matches!(slot.native, Native::Input(_) | Native::Area(_))
+                    || slot.own_press
+                    || on_link
+                {
                     return true;
                 }
                 if matches!(slot.native, Native::Scroll(_)) {
@@ -1000,19 +1052,27 @@ impl Mounter {
                 resize_mode,
             } => self.set_image(id, source, resize_mode),
             MountItem::Input { id, config } => {
-                if let Some(Native::Input(field)) = self.native(id) {
-                    field.configure(&config);
+                self.set_input_multiline(id, config.multiline);
+                match self.native(id) {
+                    Some(Native::Input(field)) => field.configure(&config),
+                    Some(Native::Area(area)) => area.configure(&config),
+                    _ => {}
                 }
                 self.repaint(id);
             }
-            MountItem::InputValue { id, text, count } => {
-                if let Some(Native::Input(field)) = self.native(id) {
-                    field.set_value(&text, count);
-                }
-            }
+            MountItem::InputValue { id, text, count } => match self.native(id) {
+                Some(Native::Input(field)) => field.set_value(&text, count),
+                Some(Native::Area(area)) => area.set_value(&text, count),
+                _ => {}
+            },
             MountItem::InputContent { id, content } => {
-                if let Some(Native::Input(field)) = self.native(id) {
-                    field.set_content(content);
+                if let Some(slot) = self.slot_mut(id) {
+                    slot.input_content = Some(content);
+                }
+                match self.native(id) {
+                    Some(Native::Input(field)) => field.set_content(content),
+                    Some(Native::Area(area)) => area.set_content(content),
+                    _ => {}
                 }
             }
             MountItem::TestId { id, test_id } => {
@@ -1029,6 +1089,69 @@ impl Mounter {
                 let view = slot.native.view().retain();
                 apply_accessibility(&view, &slot.accessibility, mtm);
             }
+        }
+    }
+
+    /// Replaces the editor when `multiline` changes. The new view takes the
+    /// old one's place in its superview, text, focus and content box.
+    fn set_input_multiline(&mut self, id: NodeId, multiline: bool) {
+        let area = matches!(self.native(id), Some(Native::Area(_)));
+        if area == multiline {
+            return;
+        }
+        let Some(old) = self.input_view(id) else {
+            return;
+        };
+        let content = self.slot(id).and_then(|slot| slot.input_content);
+        let text = match self.native(id) {
+            Some(Native::Input(field)) => field.shown(),
+            Some(Native::Area(area)) => area.shown(),
+            _ => return,
+        };
+        let focused = old.isFirstResponder();
+        let relay = ProtocolObject::from_ref(&*self.relay);
+        let native = if multiline {
+            Native::Area(AreaInput::new(self.mtm, relay))
+        } else {
+            Native::Input(Field::new(self.mtm, ProtocolObject::from_ref(&*self.relay)))
+        };
+        let new = native.view().retain();
+        new.setTag(id as isize);
+        new.setOpaque(false);
+        new.setBackgroundColor(Some(&objc2_ui_kit::UIColor::clearColor()));
+        new.setFrame(old.frame());
+        if let Some(parent) = old.superview() {
+            let subs = parent.subviews();
+            let index = (0..subs.count()).find(|&index| {
+                Retained::as_ptr(&subs.objectAtIndex(index)) == Retained::as_ptr(&old)
+            });
+            if let Some(index) = index {
+                parent.insertSubview_atIndex(&new, index as isize);
+            }
+        }
+        old.removeFromSuperview();
+        match &native {
+            Native::Input(field) => field.set_value(&text, 0),
+            Native::Area(area) => area.set_value(&text, 0),
+            _ => {}
+        }
+        let accessibility = self.slot(id).map(|slot| slot.accessibility.clone());
+        if let Some(accessibility) = &accessibility {
+            apply_accessibility(&new, accessibility, self.mtm);
+        }
+        if let Some(slot) = self.slot_mut(id) {
+            slot.native = native;
+        }
+        if let Some(content) = content {
+            match self.native(id) {
+                Some(Native::Input(field)) => field.set_content(content),
+                Some(Native::Area(area)) => area.set_content(content),
+                _ => {}
+            }
+        }
+        self.repaint(id);
+        if focused {
+            new.becomeFirstResponder();
         }
     }
 
@@ -1054,7 +1177,10 @@ impl Mounter {
                 let (view, picture) = image_layers(self.mtm);
                 (Native::Image(view), Some(picture))
             }
-            ViewKind::Input => (Native::Input(Field::new(self.mtm, &self.relay)), None),
+            ViewKind::Input => (
+                Native::Input(Field::new(self.mtm, ProtocolObject::from_ref(&*self.relay))),
+                None,
+            ),
         };
         let view = native.view().retain();
         view.setTag(id as isize);
@@ -1140,7 +1266,7 @@ impl Mounter {
         };
         let want = slot.own_press || slot.link_press;
         let view = slot.native.view().retain();
-        let input = matches!(slot.native, Native::Input(_));
+        let input = matches!(slot.native, Native::Input(_) | Native::Area(_));
         match (&slot.press, want) {
             (None, true) => {
                 // SAFETY: the relay implements `pressed:`.
@@ -1294,8 +1420,10 @@ impl Mounter {
             if let Some(Native::Text(text)) = self.native(id) {
                 text.set_color(text_color);
             }
-            if let Some(Native::Input(field)) = self.native(id) {
-                field.set_override_color(text_color);
+            match self.native(id) {
+                Some(Native::Input(field)) => field.set_override_color(text_color),
+                Some(Native::Area(area)) => area.set_override_color(text_color),
+                _ => {}
             }
         });
     }
@@ -1303,6 +1431,79 @@ impl Mounter {
     fn report_input(&self, id: NodeId, text: String) {
         if let Some(control) = &self.control {
             control.input_changed(id, text);
+        }
+    }
+
+    /// The editor reported an edit with `marked` (its composition, if any).
+    /// A composition that starts or changes is reported before the text
+    /// holding it, and one that ends after the text it committed, as
+    /// browsers order them.
+    fn input_edited(&mut self, id: NodeId, marked: Option<String>) {
+        let update = match self.native(id) {
+            Some(Native::Input(field)) => field.edited(),
+            Some(Native::Area(area)) => area.edited(),
+            _ => return,
+        };
+        let change = if marked.is_some() {
+            self.compose(id, marked.clone())
+        } else {
+            None
+        };
+        if let Some(change) = change {
+            self.report_composition(id, change);
+        }
+        if let Some(crate::input::TextUpdate::Report(text)) = update {
+            self.report_input(id, text);
+        }
+        if marked.is_none()
+            && let Some(change) = self.compose(id, None)
+        {
+            self.report_composition(id, change);
+        }
+    }
+
+    /// The input's selection moved (and its composition may have ended).
+    fn input_selection(
+        &mut self,
+        id: NodeId,
+        selection: Option<(u32, u32)>,
+        marked: Option<String>,
+    ) {
+        let selected = match self.native(id) {
+            Some(Native::Input(field)) => {
+                selection.and_then(|(start, end)| field.selected(start, end))
+            }
+            Some(Native::Area(area)) => {
+                selection.and_then(|(start, end)| area.selected(start, end))
+            }
+            _ => None,
+        };
+        if let Some((start, end)) = selected
+            && let Some(control) = &self.control
+        {
+            control.selection_changed(id, start, end);
+        }
+        let change = match self.native(id) {
+            Some(Native::Input(field)) => field.compose_if_known(marked),
+            Some(Native::Area(area)) => area.compose_if_known(marked),
+            _ => None,
+        };
+        if let Some(change) = change {
+            self.report_composition(id, change);
+        }
+    }
+
+    fn compose(&mut self, id: NodeId, marked: Option<String>) -> Option<(bool, String)> {
+        match self.native(id) {
+            Some(Native::Input(field)) => field.compose(marked),
+            Some(Native::Area(area)) => area.compose(marked),
+            _ => None,
+        }
+    }
+
+    fn report_composition(&self, id: NodeId, (composing, text): (bool, String)) {
+        if let Some(control) = &self.control {
+            control.composition_changed(id, composing, text);
         }
     }
 
@@ -1380,9 +1581,25 @@ impl Mounter {
         }
     }
 
+    #[allow(dead_code)] // the host tests read the field; a surface does not.
     pub(crate) fn field(&self, id: NodeId) -> Option<Retained<Field>> {
         match self.native(id)? {
             Native::Input(field) => Some(field.retain()),
+            _ => None,
+        }
+    }
+
+    /// The input's native view, one line or several.
+    pub(crate) fn input_view(&self, id: NodeId) -> Option<Retained<UIView>> {
+        match self.native(id)? {
+            Native::Input(field) => {
+                let view: &UIView = &field;
+                Some(view.retain())
+            }
+            Native::Area(area) => {
+                let view: &UIView = area.view();
+                Some(view.retain())
+            }
             _ => None,
         }
     }
@@ -1418,7 +1635,7 @@ impl Mounter {
                     Native::Text(_) => Kind::Text,
                     Native::Image(_) => Kind::Image,
                     Native::Scroll(_) => Kind::Scroll,
-                    Native::Input(_) => Kind::Input,
+                    Native::Input(_) | Native::Area(_) => Kind::Input,
                 },
                 test_id: slot.test_id.as_ref().map(|id| id.to_string()),
                 accessibility: slot.accessibility.clone(),
@@ -1446,15 +1663,30 @@ impl Mounter {
                 node.runs = style_runs(&attributed);
                 node.spans = selector_spans(text, &attributed);
             }
-            if let Native::Input(field) = &slot.native {
-                node.input = Some(InputSnap {
-                    value: field.shown(),
-                    placeholder: field.placeholder_text(),
-                    secure: field.secure(),
-                    keyboard: field.keyboard_name().to_owned(),
-                    disabled: field.disabled(),
-                    focused: field.isFirstResponder(),
-                });
+            match &slot.native {
+                Native::Input(field) => {
+                    node.input = Some(InputSnap {
+                        value: field.shown(),
+                        placeholder: field.placeholder_text(),
+                        secure: field.secure(),
+                        keyboard: field.keyboard_name().to_owned(),
+                        disabled: field.disabled(),
+                        focused: field.isFirstResponder(),
+                        multiline: false,
+                    });
+                }
+                Native::Area(area) => {
+                    node.input = Some(InputSnap {
+                        value: area.shown(),
+                        placeholder: area.placeholder_text(),
+                        secure: area.secure(),
+                        keyboard: area.keyboard_name().to_owned(),
+                        disabled: area.disabled(),
+                        focused: area.view().isFirstResponder(),
+                        multiline: true,
+                    });
+                }
+                _ => {}
             }
             if let Native::Scroll(scroll) = &slot.native {
                 let offset = scroll.contentOffset();
@@ -1616,6 +1848,7 @@ impl Slot {
             test_id: None,
             taps: KeyboardTaps::Never,
             dismiss: KeyboardDismiss::None,
+            input_content: None,
             keyboard_tap: None,
             accessibility: nlayer_core::Accessibility::default(),
         }
@@ -2199,10 +2432,7 @@ fn resign_keyboard(shared: &Rc<std::cell::RefCell<Mounter>>) {
     }
     let field = {
         let mounter = shared.borrow();
-        mounter.focused.and_then(|id| match mounter.native(id) {
-            Some(Native::Input(field)) => Some(field.retain()),
-            _ => None,
-        })
+        mounter.focused.and_then(|id| mounter.input_view(id))
     };
     if let Some(field) = field {
         let _: bool = unsafe { msg_send![&*field, resignFirstResponder] };
