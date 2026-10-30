@@ -62,6 +62,9 @@ jobs:
       
       - name: Install Chrome
         uses: browser-actions/setup-chrome@latest
+        id: setup-chrome
       
       - name: Run Web tests
+        env:
+          NLAYER_BROWSER: ${{ steps.setup-chrome.outputs.chrome-path }}
         run: cargo test -p nlayer-cli --test targets -- --test-threads=1 browser
