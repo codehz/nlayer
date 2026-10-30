@@ -94,10 +94,10 @@ pub(crate) fn frame(now: f64) -> MountBatch {
             match prop {
                 AnimationProp::Opacity => style.opacity = value.number(),
                 AnimationProp::BackgroundColor => {
-                    style.background_color = nlayer_core::style::Color(value.number() as u32)
+                    style.background_color = nlayer_core::style::Color(value.color())
                 }
                 AnimationProp::BorderColor => {
-                    style.borders.colors = [nlayer_core::style::Color(value.number() as u32); 4]
+                    style.borders.colors = [nlayer_core::style::Color(value.color()); 4]
                 }
                 AnimationProp::Transform(i) => {
                     if style.transform.ops().get(i as usize).is_some() {

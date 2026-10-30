@@ -157,6 +157,8 @@ export interface App {
   inputs(): string[];
   /** Presses what `selector` names and waits for the frame. */
   press(selector: string): void;
+  /** Sends `onLongPress` to what `selector` names. */
+  longPress(selector: string): void;
   /** Types `text` into the input `selector` names, one change per character. */
   type(selector: string, text: string): void;
   /** Reports a selection of the input `selector` names (`onSelectionChange`). */

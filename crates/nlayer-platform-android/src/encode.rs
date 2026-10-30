@@ -39,6 +39,7 @@ const INPUT_CONTENT: i32 = 15;
 const TEST_ID: i32 = 16;
 const COMMAND: i32 = 17;
 const ACCESSIBILITY: i32 = 18;
+const LONG_PRESS_DELAY: i32 = 19;
 
 /// A `StaticLayout` measured on the engine thread and drawn on the UI thread.
 #[cfg(target_os = "android")]
@@ -108,6 +109,11 @@ pub fn encode(batch: MountBatch) -> Encoded {
             }
             MountItem::Animation(_) | MountItem::AnimationBindings { .. } => {
                 // The UI-thread animation graph consumes these.
+            }
+            MountItem::LongPressDelay { id, delay } => {
+                e.int(LONG_PRESS_DELAY);
+                e.id(id);
+                e.float(delay.unwrap_or(-1.0));
             }
             MountItem::ViewStyle { id, style } => {
                 e.int(VIEW_STYLE);

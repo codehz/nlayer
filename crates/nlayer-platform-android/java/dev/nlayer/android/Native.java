@@ -32,6 +32,9 @@ final class Native {
 
   static native void press(long handle, int id);
 
+  /** A press stayed down long enough (`onLongPress`). */
+  static native void longPress(long handle, int id);
+
   /** `kind` is an `EventKind` discriminant (`onScroll` is 1). Lengths are points. */
   static native void scroll(
       long handle,
@@ -54,7 +57,10 @@ final class Native {
 
   static void sendPress(android.view.View view, int id) {
     HostView host = host(view);
-    if (host != null) press(host.handle(), id);
+    if (host != null) {
+      if (host.mounter.longPressSuppresses(id)) return;
+      press(host.handle(), id);
+    }
   }
 
   static void sendInput(android.view.View view, int id, String text) {

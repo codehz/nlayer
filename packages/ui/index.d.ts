@@ -107,6 +107,12 @@ export interface ViewProps extends AccessibilityProps {
   /** A name tests use to find this view. The platform does not draw it. */
   testID?: string;
   onPress?: () => void;
+  /** The pointer stayed down (`delayLongPress`); releasing then does not
+   * also fire `onPress`. */
+  onLongPress?: () => void;
+  /** How long the pointer stays down before `onLongPress`, in milliseconds
+   * (default 500). */
+  delayLongPress?: number;
 }
 
 export interface TextProps extends AccessibilityProps {
@@ -125,6 +131,12 @@ export interface TextProps extends AccessibilityProps {
   /** A name tests use to find this span. The platform does not draw it. */
   testID?: string;
   onPress?: () => void;
+  /** The pointer stayed down (`delayLongPress`); releasing then does not
+   * also fire `onPress`. */
+  onLongPress?: () => void;
+  /** How long the pointer stays down before `onLongPress`, in milliseconds
+   * (default 500). */
+  delayLongPress?: number;
 }
 
 export interface ImageProps extends AccessibilityProps {
@@ -144,6 +156,12 @@ export interface ImageProps extends AccessibilityProps {
   /** A name tests use to find this image. The platform does not draw it. */
   testID?: string;
   onPress?: () => void;
+  /** The pointer stayed down (`delayLongPress`); releasing then does not
+   * also fire `onPress`. */
+  onLongPress?: () => void;
+  /** How long the pointer stays down before `onLongPress`, in milliseconds
+   * (default 500). */
+  delayLongPress?: number;
 }
 
 export interface ScrollEvent {
@@ -201,6 +219,12 @@ export interface InputProps extends AccessibilityProps {
   /** A name tests use to find this field. The platform does not draw it. */
   testID?: string;
   onPress?: () => void;
+  /** The pointer stayed down (`delayLongPress`); releasing then does not
+   * also fire `onPress`. */
+  onLongPress?: () => void;
+  /** How long the pointer stays down before `onLongPress`, in milliseconds
+   * (default 500). */
+  delayLongPress?: number;
 }
 
 /** A list's imperative handle, passed to `ref`. */

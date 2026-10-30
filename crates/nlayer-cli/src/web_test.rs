@@ -254,6 +254,14 @@ impl HostedApp for WebApp {
         self.click(x, y)
     }
 
+    fn long_press(&mut self, selector: &str) -> Result<(), String> {
+        let (x, y) = self.point("press", selector)?;
+        self.mouse("mouseMoved", x, y, 0)?;
+        self.mouse("mousePressed", x, y, 1)?;
+        thread::sleep(Duration::from_millis(600));
+        self.mouse("mouseReleased", x, y, 0)
+    }
+
     fn type_text(&mut self, selector: &str, text: &str) -> Result<(), String> {
         let (x, y) = self.point("field", selector)?;
         self.click(x, y)?;

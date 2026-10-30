@@ -151,6 +151,7 @@ fn dispatch(line: &str) -> Result<Value, String> {
             })
         })?,
         "press" => press(request.selector),
+        "longPress" => long_press(request.selector),
         "type" => type_text(request.selector, request.text),
         "scroll" => scroll(request.selector, request.distance),
         other => Err(format!("unknown test op `{other}`")),
@@ -175,6 +176,32 @@ fn press(selector: String) -> Result<Value, String> {
         Ok(point)
     })??;
     thread::sleep(TAP);
+    on_ui(move || -> Result<Value, String> {
+        let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
+        let mounter = mounter.borrow();
+        let window = window_of(&mounter)?;
+        if !synth::touch(&window, point.x, point.y, Phase::Up) {
+            return Err("the simulator did not take the touch".into());
+        }
+        Ok(json!(null))
+    })??;
+    thread::sleep(SETTLE);
+    Ok(Value::Null)
+}
+
+fn long_press(selector: String) -> Result<Value, String> {
+    let point = on_ui(move || -> Result<Point, String> {
+        let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
+        let mounter = mounter.borrow();
+        let scene = mounter.scene();
+        let press = scene.press(&selector)?;
+        let (window, point) = point_of(&mounter, press)?;
+        if !synth::touch(&window, point.x, point.y, Phase::Down) {
+            return Err("the simulator did not take the touch".into());
+        }
+        Ok(point)
+    })??;
+    thread::sleep(std::time::Duration::from_millis(600));
     on_ui(move || -> Result<Value, String> {
         let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
         let mounter = mounter.borrow();

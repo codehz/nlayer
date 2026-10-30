@@ -221,6 +221,14 @@ impl AnimationValue {
             AnimationValue::Color(_) => 0.0,
         }
     }
+
+    /// The packed color, or a number read as one (a raw color value).
+    pub fn color(self) -> u32 {
+        match self {
+            AnimationValue::Color(c) => c,
+            AnimationValue::Number(n) => n as u32,
+        }
+    }
 }
 
 /// A finished (or interrupted) animation, to report back to JS; also the

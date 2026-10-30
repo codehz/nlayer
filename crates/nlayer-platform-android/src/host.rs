@@ -418,6 +418,19 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_press(
 
 /// # Safety
 ///
+/// `handle` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_longPress(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    id: jint,
+) {
+    dispatch(handle, id, EventKind::LongPress, EventPayload::None);
+}
+
+/// # Safety
+///
 /// `handle` is live. `kind` is an [`EventKind`] discriminant. Lengths are
 /// points: content offset, content size, then the view's visible size.
 #[unsafe(no_mangle)]

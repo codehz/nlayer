@@ -91,6 +91,8 @@ pub enum EventKind {
     CompositionChange,
     /// The list's end came near (`onLoadMore`).
     LoadMore,
+    /// The pointer stayed down for `delayLongPress` (`onLongPress`).
+    LongPress,
 }
 
 impl EventKind {
@@ -109,6 +111,7 @@ impl EventKind {
             "onSelectionChange" => Some(EventKind::SelectionChange),
             "onCompositionChange" => Some(EventKind::CompositionChange),
             "onLoadMore" => Some(EventKind::LoadMore),
+            "onLongPress" => Some(EventKind::LongPress),
             _ => None,
         }
     }
@@ -129,6 +132,7 @@ impl EventKind {
             8 => Some(EventKind::SelectionChange),
             9 => Some(EventKind::CompositionChange),
             10 => Some(EventKind::LoadMore),
+            11 => Some(EventKind::LongPress),
             _ => None,
         }
     }
@@ -148,6 +152,7 @@ impl EventKind {
             EventKind::SelectionChange => "onSelectionChange",
             EventKind::CompositionChange => "onCompositionChange",
             EventKind::LoadMore => "onLoadMore",
+            EventKind::LongPress => "onLongPress",
         }
     }
 }
@@ -867,6 +872,9 @@ pub enum Prop {
     },
     /// An accessibility property (`role`, label, hint, state, value, hidden).
     Accessibility(AccessibilityProp),
+    /// `delayLongPress`: how long the pointer stays down before
+    /// `onLongPress`, in milliseconds. `None` is the platform default (500).
+    LongPressDelay(Option<f32>),
     /// `testID`: a name tests use to find the view. The platform draws
     /// nothing from it. `None` clears it.
     TestId(Option<Arc<str>>),

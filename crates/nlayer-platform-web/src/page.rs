@@ -95,6 +95,14 @@ impl PageSession {
             .dispatch_event(id, EventKind::Press, EventPayload::None);
     }
 
+    /// A long press on view `id` (`onLongPress`). Applied at the next
+    /// [`pump`](Self::pump).
+    pub fn long_press(&self, id: NodeId) {
+        self.engine
+            .control()
+            .dispatch_event(id, EventKind::LongPress, EventPayload::None);
+    }
+
     /// The user typed `text` into input `id` (the whole new value).
     pub fn input(&self, id: NodeId, text: impl Into<String>) {
         self.engine.control().input_changed(id, text);

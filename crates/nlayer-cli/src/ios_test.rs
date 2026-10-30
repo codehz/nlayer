@@ -159,6 +159,11 @@ impl HostedApp for IosApp {
         Ok(())
     }
 
+    fn long_press(&mut self, selector: &str) -> Result<(), String> {
+        self.call("longPress", selector, "", 0.0)?;
+        Ok(())
+    }
+
     fn type_text(&mut self, selector: &str, text: &str) -> Result<(), String> {
         self.call("type", selector, text, 0.0)?;
         Ok(())

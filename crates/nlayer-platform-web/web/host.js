@@ -35,6 +35,12 @@ export function installHost(player, root) {
       if (!canPress(target)) throw new Error(`\`${selector}\` does not take a press`);
       return pointOf(target);
     },
+    longPress(selector) {
+      const target = one(player, root, selector);
+      visible(root, target, selector);
+      const id = target.el._id;
+      player.host.longPress?.(id);
+    },
     field(selector) {
       const target = one(player, root, selector);
       visible(root, target, selector);

@@ -248,6 +248,12 @@ export async function startPage(root, options = {}) {
           return wasm.nlayer_pump();
         });
       },
+      longPress(id) {
+        enter(() => {
+          wasm.nlayer_long_press(id);
+          return wasm.nlayer_pump();
+        });
+      },
       change(id, value) {
         enter(() =>
           withBytes([encoder.encode(value)], (p, l) => {

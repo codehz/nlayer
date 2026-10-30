@@ -207,6 +207,9 @@ export class Player {
       el.append(img);
       el._img = img;
     }
+    el.addEventListener("pointerdown", (event) => this.pressStart(el, event));
+    el.addEventListener("pointerup", () => this.cancelLong(el));
+    el.addEventListener("pointercancel", () => this.cancelLong(el));
     if (kind === "scroll") this.wireScroll(el);
     el.addEventListener("click", (event) => {
       for (let node = el; node; node = node.parentNode) {
@@ -215,6 +218,11 @@ export class Player {
           event.preventDefault?.();
           return;
         }
+      }
+      if (el._longPressed) {
+        el._longPressed = false;
+        event.stopPropagation?.();
+        return;
       }
       if (this.swallowTarget) {
         const swallow = this.swallowTarget;
@@ -342,6 +350,11 @@ export class Player {
     }
     el._spanIds = spanIds || [];
     el._links = links || [];
+  }
+
+  op_lp([, id, delay]) {
+    const el = this.view(id);
+    if (el) el._longPressDelay = delay == null ? 500 : delay;
   }
 
   op_e([, id, events]) {
@@ -536,6 +549,28 @@ export class Player {
     el._released = this.now();
     this.scrollEvent(el, "onScrollDragEnd");
     this.armRest(el);
+  }
+
+  pressStart(el, event) {
+    this.cancelLong(el);
+    el._longPressed = false;
+    if (event.button != null && event.button !== 0) return;
+    if (!el._events.has("onLongPress")) return;
+    el._pressDown = true;
+    el._longTimer = setTimeout(() => {
+      el._longTimer = 0;
+      if (!el._pressDown || this.views.get(el._id) !== el) return;
+      el._longPressed = true;
+      this.host.longPress?.(el._id);
+    }, el._longPressDelay ?? 500);
+  }
+
+  cancelLong(el) {
+    el._pressDown = false;
+    if (el._longTimer) {
+      clearTimeout(el._longTimer);
+      el._longTimer = 0;
+    }
   }
 
   scrolled(el) {

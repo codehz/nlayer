@@ -169,6 +169,15 @@ pub extern "C" fn nlayer_press(id: u32) {
     });
 }
 
+/// A long press on view `id`. Applied at the next [`nlayer_pump`].
+#[unsafe(no_mangle)]
+pub extern "C" fn nlayer_long_press(id: u32) {
+    with_session(|session| {
+        session.long_press(NodeId::from(id));
+        -1.0
+    });
+}
+
 /// The whole new text of input `id`. Applied at the next [`nlayer_pump`].
 ///
 /// # Safety

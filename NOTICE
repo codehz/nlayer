@@ -253,3 +253,7 @@ Copied files:
   slots are not copied)
 - `crates/nlayer-testing`'s animation clock from
   `crates/nsh-testing/src/headless/animation.rs` (60 Hz deterministic clock)
+- `EventKind::LongPress`, `delayLongPress` and the iOS / Android / web
+  press state machines from `nsh_core::ops`, `nsh-platform-ios/src/press.rs`,
+  `nsh-platform-android/java/.../Box.java` and the web pointer state
+  (the v2 long-press rule only: no press-in/out callbacks or scroll delay)

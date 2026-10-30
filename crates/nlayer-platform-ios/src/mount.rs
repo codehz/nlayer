@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use dispatch2::DispatchQueue;
+use dispatch2::{DispatchQueue, DispatchTime};
 use nlayer_core::geometry::{Bounds, Point, Points, Size};
 use nlayer_core::style::{BorderStyle, Color, TextStyle, TransformOrigin, ViewStyle};
 use nlayer_core::{
@@ -64,6 +64,13 @@ struct Slot {
     press: Option<Retained<UILongPressGestureRecognizer>>,
     /// The view itself listens to `onPress` (not only a span inside it).
     own_press: bool,
+    /// The view itself listens to `onLongPress`.
+    own_long: bool,
+    /// `delayLongPress` in milliseconds; `None` is 500.
+    delay_long: Option<f32>,
+    /// The press generation and whether this press already became long.
+    long_generation: u64,
+    long_fired: bool,
     /// Listeners, including the scroll events. A scroll callback fires only
     /// a kind this contains.
     events: EventMask,
@@ -925,10 +932,10 @@ impl Mounter {
                         style.opacity = value.number()
                     }
                     nlayer_core::animation::AnimationProp::BackgroundColor => {
-                        style.background_color = nlayer_core::style::Color(value.number() as u32)
+                        style.background_color = nlayer_core::style::Color(value.color())
                     }
                     nlayer_core::animation::AnimationProp::BorderColor => {
-                        style.borders.colors = [nlayer_core::style::Color(value.number() as u32); 4]
+                        style.borders.colors = [nlayer_core::style::Color(value.color()); 4]
                     }
                     nlayer_core::animation::AnimationProp::Transform(i) => {
                         if style.transform.ops().get(i as usize).is_some() {
@@ -1086,6 +1093,11 @@ impl Mounter {
                     slot.link_press = links;
                 }
                 self.sync_press(id);
+            }
+            MountItem::LongPressDelay { id, delay } => {
+                if let Some(slot) = self.slot_mut(id) {
+                    slot.delay_long = delay;
+                }
             }
             MountItem::Events { id, events } => self.set_events(id, events),
             MountItem::ScrollConfig {
@@ -1340,6 +1352,7 @@ impl Mounter {
         if let Some(slot) = self.slot_mut(id) {
             slot.events = events;
             slot.own_press = events.contains(EventKind::Press);
+            slot.own_long = events.contains(EventKind::LongPress);
         }
         self.sync_press(id);
         self.sync_hover(id);
@@ -1392,7 +1405,7 @@ impl Mounter {
         let Some(slot) = self.slot_mut(id) else {
             return;
         };
-        let want = slot.own_press || slot.link_press;
+        let want = slot.own_press || slot.link_press || slot.own_long;
         let view = slot.native.view().retain();
         let input = matches!(slot.native, Native::Input(_) | Native::Area(_));
         match (&slot.press, want) {
@@ -1456,16 +1469,48 @@ impl Mounter {
         if state == UIGestureRecognizerState::Began && self.press_blocked(id, point) {
             return;
         }
+        let began = state == UIGestureRecognizerState::Began;
         let on = matches!(
             state,
             UIGestureRecognizerState::Began | UIGestureRecognizerState::Changed
         );
         let ended = state == UIGestureRecognizerState::Ended;
+        let cancelled = state == UIGestureRecognizerState::Cancelled
+            || state == UIGestureRecognizerState::Failed;
+        let mut long = None;
+        let mut fired = false;
         if let Some(slot) = self.slot_mut(id) {
+            if began {
+                slot.long_generation = slot.long_generation.wrapping_add(1);
+                slot.long_fired = false;
+                if slot.own_long {
+                    long = Some((slot.long_generation, slot.delay_long));
+                }
+            }
+            fired = slot.long_fired;
             slot.pressed = on;
+            if ended || cancelled {
+                slot.long_generation = slot.long_generation.wrapping_add(1);
+            }
+        }
+        if let Some((generation, delay)) = long {
+            let delay = delay.unwrap_or(500.0).max(0.0);
+            let after = DispatchTime::try_from(std::time::Duration::from_secs_f64(
+                f64::from(delay) / 1000.0,
+            ))
+            .unwrap_or(DispatchTime::NOW);
+            let _ = DispatchQueue::main().after(after, move || {
+                let Some(mounter) = current() else {
+                    return;
+                };
+                mounter.borrow_mut().long_press(id, generation);
+            });
         }
         self.repaint(id);
         if !ended {
+            return;
+        }
+        if fired {
             return;
         }
         let target = self.link_target(id, point);
@@ -1477,6 +1522,23 @@ impl Mounter {
             control.dispatch_event(link, EventKind::Press, nlayer_engine::EventPayload::None);
         } else if own {
             control.dispatch_event(id, EventKind::Press, nlayer_engine::EventPayload::None);
+        }
+    }
+
+    fn long_press(&mut self, id: NodeId, generation: u64) {
+        let fire = self.slot_mut(id).is_some_and(|slot| {
+            if slot.pressed && slot.long_generation == generation && !slot.long_fired {
+                slot.long_fired = true;
+                true
+            } else {
+                false
+            }
+        });
+        if !fire {
+            return;
+        }
+        if let Some(control) = &self.control {
+            control.dispatch_event(id, EventKind::LongPress, nlayer_engine::EventPayload::None);
         }
     }
 
@@ -1966,6 +2028,10 @@ impl Slot {
             focused: false,
             press: None,
             own_press: false,
+            own_long: false,
+            delay_long: None,
+            long_generation: 0,
+            long_fired: false,
             events: EventMask::default(),
             link_press: false,
             hover: None,

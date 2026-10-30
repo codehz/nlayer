@@ -206,6 +206,10 @@ pub trait HostedApp {
     fn inputs(&mut self) -> Result<Vec<String>, String>;
     /// Presses what `selector` names, through this host's input.
     fn press(&mut self, selector: &str) -> Result<(), String>;
+    /// Long-presses what `selector` names.
+    fn long_press(&mut self, _selector: &str) -> Result<(), String> {
+        Err("this host cannot long-press".to_owned())
+    }
     /// Types `text` into the input `selector` names.
     fn type_text(&mut self, selector: &str, text: &str) -> Result<(), String>;
     /// Reports a selection of the input `selector` names.
@@ -670,6 +674,12 @@ impl Session {
                 self.app_mut(request.id)?.press(&request.selector)?;
                 Ok("null".to_owned())
             }
+            "longPress" => {
+                let request: PressRequest =
+                    serde_json::from_str(payload).map_err(|e| e.to_string())?;
+                self.app_mut(request.id)?.long_press(&request.selector)?;
+                Ok("null".to_owned())
+            }
             "type" => {
                 let request: TypeRequest =
                     serde_json::from_str(payload).map_err(|e| e.to_string())?;
@@ -867,6 +877,10 @@ impl HostedApp for HeadlessApp {
         app.press_selector(selector)?;
         let _ = app.next_frame(Duration::from_secs(2));
         Ok(())
+    }
+
+    fn long_press(&mut self, selector: &str) -> Result<(), String> {
+        self.app()?.long_press_selector(selector)
     }
 
     fn type_text(&mut self, selector: &str, text: &str) -> Result<(), String> {

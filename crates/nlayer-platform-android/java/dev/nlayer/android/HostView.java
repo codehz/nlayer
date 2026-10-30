@@ -77,6 +77,11 @@ public final class HostView extends FrameLayout {
     return density == 0 ? 0 : keyboard / density;
   }
 
+  /** The animation graph's `onLongPress` reached the app. */
+  void longPress(int id) {
+    if (handle != 0) Native.longPress(handle, id);
+  }
+
   void dismissKeyboard() {
     android.view.View focused = findFocus();
     android.view.View token = focused != null && focused != this ? focused : this;

@@ -99,6 +99,9 @@ export function open(entry, options) {
     press(selector) {
       call("press", { id, selector });
     },
+    longPress(selector) {
+      call("longPress", { id, selector });
+    },
     type(selector, text) {
       call("type", { id, selector, text });
     },

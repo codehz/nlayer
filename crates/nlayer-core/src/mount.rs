@@ -110,6 +110,14 @@ pub enum MountItem {
         /// Event set.
         events: EventMask,
     },
+    /// How long a press must stay down before `onLongPress`, in
+    /// milliseconds. `None` is the platform default.
+    LongPressDelay {
+        /// View.
+        id: NodeId,
+        /// The delay; `None` clears it.
+        delay: Option<f32>,
+    },
     /// Set the source of an image view.
     Image {
         /// Image view.

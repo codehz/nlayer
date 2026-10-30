@@ -83,6 +83,17 @@ pub(super) fn decode_prop(
             prop: Prop::Disabled(value.bool()),
         }));
     }
+    if name == "delayLongPress" {
+        let delay = if value.kind() == 0 || value.kind() == 1 {
+            None
+        } else {
+            Some(value.number_value().unwrap_or(500.0).max(0.0) as f32)
+        };
+        return Ok(Some(Op::SetProp {
+            id,
+            prop: Prop::LongPressDelay(delay),
+        }));
+    }
     if let Some(prop) = accessibility_prop(name, value, warnings)? {
         return Ok(Some(Op::SetProp { id, prop }));
     }

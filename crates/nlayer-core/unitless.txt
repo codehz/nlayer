@@ -80,3 +80,5 @@ animation::ops::Finished.value                                    # an animated 
 animation::ops::Output::Numbers.0                                 # interpolation outputs (value units)
 animation::graph::Graph::set(value)                                 # an animated value (a number the graph interpolates)
 transform::Transform::set(value)                                # a transform operand (any of its kinds' units)
+ops::Prop::LongPressDelay.0                                    # time in milliseconds
+mount::MountItem::LongPressDelay.delay                         # time in milliseconds

@@ -133,6 +133,7 @@ fn dispatch(host: &Host, line: &str) -> Result<Value, String> {
             })
         }
         "press" => press(host, request.selector),
+        "longPress" => long_press(host, request.selector),
         "type" => type_text(host, request.selector, request.text),
         "scroll" => scroll(host, request.selector, request.distance),
         other => Err(format!("unknown test op `{other}`")),
@@ -145,6 +146,17 @@ fn press(host: &Host, selector: String) -> Result<Value, String> {
     let (x, y) = scene.point(hit)?;
     tap(host, x, y, false);
     thread::sleep(TAP);
+    tap(host, x, y, true);
+    thread::sleep(SETTLE);
+    Ok(Value::Null)
+}
+
+fn long_press(host: &Host, selector: String) -> Result<Value, String> {
+    let scene = scene_of(&snapshot(host)?)?;
+    let hit = scene.press(&selector)?;
+    let (x, y) = scene.point(hit)?;
+    tap(host, x, y, false);
+    thread::sleep(std::time::Duration::from_millis(600));
     tap(host, x, y, true);
     thread::sleep(SETTLE);
     Ok(Value::Null)

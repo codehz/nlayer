@@ -188,6 +188,14 @@ impl Encoder {
                 out.s.push(']');
                 out.end();
             }
+            MountItem::LongPressDelay { id, delay } => {
+                out.item("lp").num(*id);
+                match delay {
+                    Some(delay) => out.num(*delay),
+                    None => out.raw("null"),
+                };
+                out.end();
+            }
             MountItem::Events { id, events } => {
                 out.item("e").num(*id);
                 out.s.push(',');
@@ -562,7 +570,7 @@ fn push_str(out: &mut String, v: &str) {
 
 /// `events` as the names of their props.
 fn push_events(s: &mut String, events: EventMask) {
-    const KINDS: [EventKind; 8] = [
+    const KINDS: [EventKind; 9] = [
         EventKind::Press,
         EventKind::Scroll,
         EventKind::ScrollEnd,
@@ -571,6 +579,7 @@ fn push_events(s: &mut String, events: EventMask) {
         EventKind::MomentumStart,
         EventKind::MomentumEnd,
         EventKind::Change,
+        EventKind::LongPress,
     ];
     s.push('[');
     let mut first = true;

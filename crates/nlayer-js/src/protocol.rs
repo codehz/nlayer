@@ -111,6 +111,17 @@ pub(crate) fn decode_prop<'js>(
             prop: Prop::Disabled(value.as_bool().unwrap_or(false)),
         }));
     }
+    if name == "delayLongPress" {
+        let delay = if value.is_null() || value.is_undefined() {
+            None
+        } else {
+            Some(number(&value).unwrap_or(500.0).max(0.0))
+        };
+        return Ok(Some(Op::SetProp {
+            id,
+            prop: Prop::LongPressDelay(delay),
+        }));
+    }
     if let Some(prop) = accessibility_prop(name, &value, warnings)? {
         return Ok(Some(Op::SetProp { id, prop }));
     }
@@ -708,12 +719,7 @@ pub(crate) fn decode_animation<'js>(value: Value<'js>) -> rquickjs::Result<Optio
             let range = numbers(&array.get::<Array>(3)?)?;
             let colors = array.get::<bool>(5).unwrap_or(false);
             let output = if colors {
-                nlayer_core::animation::Output::Colors(
-                    numbers(&array.get::<Array>(4)?)?
-                        .into_iter()
-                        .map(|n| n as u32)
-                        .collect(),
-                )
+                nlayer_core::animation::Output::Colors(color_values(&array.get::<Array>(4)?)?)
             } else {
                 nlayer_core::animation::Output::Numbers(numbers(&array.get::<Array>(4)?)?)
             };
@@ -751,6 +757,14 @@ fn numbers(array: &Array<'_>) -> rquickjs::Result<Vec<f32>> {
     let mut out = Vec::with_capacity(array.len());
     for value in array.iter::<f64>() {
         out.push(value? as f32);
+    }
+    Ok(out)
+}
+
+fn color_values(array: &Array<'_>) -> rquickjs::Result<Vec<u32>> {
+    let mut out = Vec::with_capacity(array.len());
+    for value in array.iter::<f64>() {
+        out.push(value? as u32);
     }
     Ok(out)
 }

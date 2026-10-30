@@ -26,7 +26,8 @@ final class Mounter {
       INPUT_CONTENT = 15,
       TEST_ID = 16,
       COMMAND = 17,
-      ACCESSIBILITY = 18;
+      ACCESSIBILITY = 18,
+      LONG_PRESS_DELAY = 19;
   final HostView host;
   final float density;
   final SparseArray<View> views = new SparseArray<>();
@@ -40,6 +41,10 @@ final class Mounter {
   final SparseArray<Integer> activeColor = new SparseArray<>();
   final SparseArray<Integer> hoverColor = new SparseArray<>();
   final SparseArray<Integer> focusColor = new SparseArray<>();
+  final SparseArray<Float> longDelays = new SparseArray<>();
+  final SparseArray<Boolean> longDown = new SparseArray<>();
+  final SparseArray<Boolean> longFired = new SparseArray<>();
+  final SparseArray<Runnable> longRuns = new SparseArray<>();
 
   Mounter(HostView h) {
     host = h;
@@ -111,6 +116,9 @@ final class Mounter {
         case ACCESSIBILITY:
           accessibility(b, objects);
           break;
+        case LONG_PRESS_DELAY:
+          longDelay(b.getInt(), b.getFloat());
+          break;
         default:
           throw new IllegalArgumentException("Unknown nlayer opcode");
       }
@@ -135,6 +143,67 @@ final class Mounter {
     if (v instanceof ScrollBox) ((ScrollBox) v).pressMask = mask;
     if (v instanceof InputBox) ((InputBox) v).pressMask = mask;
     v.setClickable(press);
+    if ((mask & (1 << 11)) != 0) {
+      v.setOnTouchListener(
+          (view, event) -> {
+            longTouch(id, event);
+            return false;
+          });
+    } else {
+      v.setOnTouchListener(null);
+      cancelLong(id);
+    }
+  }
+
+  private void longDelay(int id, float delay) {
+    if (delay < 0) longDelays.remove(id);
+    else longDelays.put(id, delay);
+  }
+
+  private void longTouch(int id, android.view.MotionEvent event) {
+    int action = event.getActionMasked();
+    if (action == android.view.MotionEvent.ACTION_DOWN) {
+      longDown.put(id, true);
+      longFired.put(id, false);
+      cancelRun(id);
+      Runnable run =
+          () -> {
+            longRuns.remove(id);
+            if (!Boolean.TRUE.equals(longDown.get(id))) return;
+            View view = views.get(id);
+            if (view == null || Mounter.blocked(view.getParent())) return;
+            longFired.put(id, true);
+            host.longPress(id);
+          };
+      longRuns.put(id, run);
+      float delay = longDelays.get(id, 500f);
+      host.postDelayed(run, Math.max(0, (long) delay));
+    } else if (action == android.view.MotionEvent.ACTION_UP
+        || action == android.view.MotionEvent.ACTION_CANCEL) {
+      longDown.put(id, false);
+      cancelRun(id);
+      if (action == android.view.MotionEvent.ACTION_CANCEL) longFired.put(id, false);
+    }
+  }
+
+  private void cancelRun(int id) {
+    Runnable run = longRuns.get(id);
+    if (run != null) {
+      host.removeCallbacks(run);
+      longRuns.remove(id);
+    }
+  }
+
+  private void cancelLong(int id) {
+    longDown.put(id, false);
+    cancelRun(id);
+  }
+
+  /** A release after a long press does not also fire `onPress`. */
+  boolean longPressSuppresses(int id) {
+    boolean fired = Boolean.TRUE.equals(longFired.get(id));
+    if (fired) longFired.put(id, false);
+    return fired;
   }
 
   private void accessibility(ByteBuffer b, Object[] objects) {
@@ -271,6 +340,10 @@ final class Mounter {
     activeColor.remove(id);
     hoverColor.remove(id);
     focusColor.remove(id);
+    longDelays.remove(id);
+    longDown.remove(id);
+    longFired.remove(id);
+    cancelRun(id);
   }
 
   private void frame(int id, float x, float y, float w, float h) {

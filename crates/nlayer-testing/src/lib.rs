@@ -239,6 +239,21 @@ impl Screen {
         }
     }
 
+    /// The view a long press on `id` acts on: the nearest listener, unless a
+    /// disabled view comes first (the press is blocked, not passed on).
+    pub fn long_press_listener(&self, mut id: NodeId) -> Option<NodeId> {
+        loop {
+            let view = self.views.get(&id)?;
+            if view.accessibility.blocks_press() {
+                return None;
+            }
+            if view.events.contains(EventKind::LongPress) {
+                return Some(id);
+            }
+            id = view.parent?;
+        }
+    }
+
     /// The view a press on `id` acts on: the nearest listener, unless a
     /// disabled view comes first (the press is blocked, not passed on).
     pub fn press_listener(&self, mut id: NodeId) -> Option<NodeId> {
@@ -424,6 +439,7 @@ impl Screen {
                 }
                 Command::ScrollToIndex { .. } | Command::ScrollToEnd { .. } => {}
             },
+            MountItem::LongPressDelay { .. } => {}
             MountItem::Animation(op) => {
                 self.graph.apply(op.clone(), &mut self.finished);
                 self.apply_animated();
@@ -481,12 +497,8 @@ impl Screen {
                 let value = self.graph.eval(node);
                 match prop {
                     AnimationProp::Opacity => style.opacity = value.number(),
-                    AnimationProp::BackgroundColor => {
-                        style.background_color = Color(value.number() as u32)
-                    }
-                    AnimationProp::BorderColor => {
-                        style.borders.colors = [Color(value.number() as u32); 4]
-                    }
+                    AnimationProp::BackgroundColor => style.background_color = Color(value.color()),
+                    AnimationProp::BorderColor => style.borders.colors = [Color(value.color()); 4],
                     AnimationProp::Transform(i) => {
                         if style.transform.ops().get(i as usize).is_some() {
                             style.transform.set(i, value.number());
@@ -767,6 +779,27 @@ impl Headless {
                 .ok_or_else(|| format!("`{selector}` does not take a press"))?,
         };
         self.press(id);
+        Ok(())
+    }
+
+    /// Calls node `id`'s long-press handler.
+    pub fn long_press(&mut self, id: NodeId) {
+        self.engine
+            .control()
+            .dispatch_event(id, EventKind::LongPress, EventPayload::None);
+    }
+
+    /// Long-presses what `selector` names (its nearest ancestor listening
+    /// for `onLongPress`). The match has to be on screen.
+    pub fn long_press_selector(&mut self, selector: &str) -> Result<(), String> {
+        self.refresh();
+        let target = selector::resolve(&self.screen, selector)?;
+        self.require_visible(selector, target)?;
+        let id = self
+            .screen
+            .long_press_listener(target.view())
+            .ok_or_else(|| format!("`{selector}` does not take a long press"))?;
+        self.long_press(id);
         Ok(())
     }
 

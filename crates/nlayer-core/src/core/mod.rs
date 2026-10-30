@@ -234,6 +234,8 @@ struct Node {
     /// again.
     logical: Option<Box<style::Logical>>,
     events: EventMask,
+    /// `delayLongPress` in milliseconds; `None` uses the platform default.
+    long_press_delay: Option<f32>,
     /// `objectFit`. `None` is the image default (cover).
     object_fit: Option<ResizeMode>,
     /// Present exactly for [`Kind::Image`]: `None` until `src` is set.
@@ -293,6 +295,7 @@ impl Node {
             text: String::new(),
             logical: None,
             events: EventMask::default(),
+            long_press_delay: None,
             object_fit: None,
             image: matches!(kind, Kind::Image).then_some(None),
             scroll: matches!(kind, Kind::Scroll | Kind::List).then(Box::default),
@@ -983,6 +986,12 @@ impl<M: TextEngine> Core<M> {
                 input.selection = Some((start, end));
                 self.mark(key, dirty::SELECTION);
             }
+            Prop::LongPressDelay(delay) => {
+                if self.nodes[key as usize].long_press_delay != delay {
+                    self.nodes[key as usize].long_press_delay = delay;
+                    self.mark(key, dirty::EVENTS);
+                }
+            }
             Prop::Disabled(disabled) => {
                 if let Some(input) = self.nodes[key as usize].input.as_mut() {
                     input.config.disabled = disabled;
@@ -1349,7 +1358,7 @@ impl<M: TextEngine> Core<M> {
         if !node.animated.is_empty() {
             flags |= dirty::ANIMATION;
         }
-        if !node.events.is_empty() {
+        if !node.events.is_empty() || node.long_press_delay.is_some() {
             flags |= dirty::EVENTS;
         }
         if kind == Kind::Text {
@@ -1465,6 +1474,8 @@ impl<M: TextEngine> Core<M> {
             if flags & dirty::EVENTS != 0 {
                 let events = self.nodes[key as usize].events;
                 self.mount.push(MountItem::Events { id, events });
+                let delay = self.nodes[key as usize].long_press_delay;
+                self.mount.push(MountItem::LongPressDelay { id, delay });
             }
             if flags & dirty::IMAGE != 0
                 && let Some(image) = &self.nodes[key as usize].image

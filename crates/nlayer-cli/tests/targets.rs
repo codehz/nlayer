@@ -131,12 +131,48 @@ fn the_browser_opens_a_list_at_initial_scroll_index() {
 }
 
 #[test]
+fn the_simulator_long_presses_a_view() {
+    let _guard = lock();
+    let dir = app_fixture("longpress");
+    let report = run(&dir.join("App.test.tsx"), Some(TestTarget::Ios));
+    let _ = fs::remove_dir_all(&dir);
+    assert!(report.ok(), "ios: {report}");
+}
+
+#[test]
+fn the_browser_long_presses_a_view() {
+    let _guard = lock();
+    let dir = app_fixture("longpress");
+    let report = run(&dir.join("App.test.tsx"), Some(TestTarget::Web));
+    let _ = fs::remove_dir_all(&dir);
+    assert!(report.ok(), "web: {report}");
+}
+
+#[test]
+fn the_emulator_animates_a_view() {
+    let _guard = lock();
+    let dir = app_fixture("animation");
+    let report = run(&dir.join("Web.test.tsx"), Some(TestTarget::Android));
+    let _ = fs::remove_dir_all(&dir);
+    assert!(report.ok(), "android: {report}");
+}
+
+#[test]
 fn the_browser_animates_a_view() {
     let _guard = lock();
     let dir = app_fixture("animation");
     let report = run(&dir.join("Web.test.tsx"), Some(TestTarget::Web));
     let _ = fs::remove_dir_all(&dir);
     assert!(report.ok(), "web: {report}");
+}
+
+#[test]
+fn the_emulator_long_presses_a_view() {
+    let _guard = lock();
+    let dir = app_fixture("longpress");
+    let report = run(&dir.join("App.test.tsx"), Some(TestTarget::Android));
+    let _ = fs::remove_dir_all(&dir);
+    assert!(report.ok(), "android: {report}");
 }
 
 #[test]
