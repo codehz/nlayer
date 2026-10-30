@@ -10,3 +10,4 @@ npm/cli-*/bin/
 npm/*/LICENSE
 npm/*/node_modules/
 npm/*/*.tgz
+packages/*/*.tgz

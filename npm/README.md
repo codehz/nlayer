@@ -47,9 +47,14 @@ package, syncs versions, copies the license, and runs the wrapper's
 packages, runs the version and layout check, and uploads the `.tgz` files as
 the `npm-tarballs` artifact. Nothing reaches the registry.
 
-`dry_run: false` publishes the platform packages first and `@nlayer/cli` last,
-with `--provenance`, using `NPM_TOKEN`. The type packages are separate:
-`scripts/publish-types` publishes those at the same version.
+`dry_run: false` publishes all nine packages at that version, with
+`--provenance`, using `NPM_TOKEN`: the five type packages in `packages/` first,
+then the three platform packages, then `@nlayer/cli` last (it names the
+platform packages in `optionalDependencies`). The dry run packs the same nine,
+so `npm-tarballs` shows exactly what would be uploaded.
+
+There is no separate type-package release: the versions are one number, and a
+run that skipped them would leave editor types behind the CLI.
 
 Tag triggers are commented out in the workflow until a release is routine.
 

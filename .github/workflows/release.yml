@@ -84,6 +84,10 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      # Published at the same version; `npm publish` runs from each directory.
+      TYPE_PACKAGES: packages/runtime packages/ui packages/jsx-runtime packages/test packages/globals
+      CLI_PACKAGES: npm/cli-darwin-arm64 npm/cli-linux-x64 npm/cli-win32-x64 npm/cli
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -130,19 +134,22 @@ jobs:
         run: |
           # `npm pack` runs the same file selection as publish and leaves the
           # tarball behind, so the dry run has something to inspect.
-          for dir in cli-darwin-arm64 cli-linux-x64 cli-win32-x64 cli; do
-            echo "== @nlayer/$dir"
-            (cd "npm/$dir" && npm pack)
+          for dir in $TYPE_PACKAGES $CLI_PACKAGES; do
+            echo "== $dir"
+            (cd "$dir" && npm pack)
           done
       - name: Publish
         if: ${{ !inputs.dry_run }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          # The platform packages first: `@nlayer/cli` names them in
-          # optionalDependencies at the version being published.
-          for dir in cli-darwin-arm64 cli-linux-x64 cli-win32-x64 cli; do
-            (cd "npm/$dir" && npm publish --provenance --access public)
+          # Types first: they are what `nlayer init` installs, and they carry
+          # no dependency on the CLI. The platform packages come next because
+          # `@nlayer/cli` names them in optionalDependencies at this version,
+          # and the main package is published last.
+          for dir in $TYPE_PACKAGES $CLI_PACKAGES; do
+            echo "== $dir"
+            (cd "$dir" && npm publish --provenance --access public)
           done
       - name: Keep the packed tarballs
         if: inputs.dry_run
@@ -150,6 +157,11 @@ jobs:
         with:
           name: npm-tarballs
           path: |
+            packages/runtime/*.tgz
+            packages/ui/*.tgz
+            packages/jsx-runtime/*.tgz
+            packages/test/*.tgz
+            packages/globals/*.tgz
             npm/cli-darwin-arm64/*.tgz
             npm/cli-linux-x64/*.tgz
             npm/cli-win32-x64/*.tgz
