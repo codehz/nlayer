@@ -171,3 +171,43 @@ fn a_list_opens_at_initial_scroll_index() {
     assert!(report.ok(), "{report}");
     let _ = fs::remove_dir_all(&dir);
 }
+
+const ANIMATION_APP: &str = include_str!("fixtures/animation/App.tsx");
+
+const ANIMATION_TESTS: &str = include_str!("fixtures/animation/App.test.tsx");
+
+#[test]
+fn animations_move_values_on_a_deterministic_clock() {
+    let _fixture = FIXTURE.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = scratch("animation");
+    fs::write(dir.join("App.tsx"), ANIMATION_APP).unwrap();
+    fs::write(dir.join("App.test.tsx"), ANIMATION_TESTS).unwrap();
+    let report = test(&TestOptions {
+        path: dir.clone(),
+        filter: None,
+        target: None,
+    })
+    .expect("the test runs");
+    assert!(report.ok(), "{report}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+const LONG_PRESS_APP: &str = include_str!("fixtures/longpress/App.tsx");
+
+const LONG_PRESS_TESTS: &str = include_str!("fixtures/longpress/App.test.tsx");
+
+#[test]
+fn a_long_press_runs_on_the_headless_engine() {
+    let _fixture = FIXTURE.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = scratch("longpress");
+    fs::write(dir.join("App.tsx"), LONG_PRESS_APP).unwrap();
+    fs::write(dir.join("App.test.tsx"), LONG_PRESS_TESTS).unwrap();
+    let report = test(&TestOptions {
+        path: dir.clone(),
+        filter: None,
+        target: None,
+    })
+    .expect("the test runs");
+    assert!(report.ok(), "{report}");
+    let _ = fs::remove_dir_all(&dir);
+}

@@ -210,6 +210,12 @@ export class Player {
     el.addEventListener("pointerdown", (event) => this.pressStart(el, event));
     el.addEventListener("pointerup", () => this.cancelLong(el));
     el.addEventListener("pointercancel", () => this.cancelLong(el));
+    el.addEventListener("pointermove", (event) => {
+      if (!el._pressDown) return;
+      if (Math.hypot(event.clientX - el._pressX, event.clientY - el._pressY) > 10) {
+        this.cancelLong(el);
+      }
+    });
     if (kind === "scroll") this.wireScroll(el);
     el.addEventListener("click", (event) => {
       for (let node = el; node; node = node.parentNode) {
@@ -556,7 +562,12 @@ export class Player {
     el._longPressed = false;
     if (event.button != null && event.button !== 0) return;
     if (!el._events.has("onLongPress")) return;
+    for (let node = el; node; node = node.parentNode) {
+      if (node._disabled) return;
+    }
     el._pressDown = true;
+    el._pressX = event.clientX;
+    el._pressY = event.clientY;
     el._longTimer = setTimeout(() => {
       el._longTimer = 0;
       if (!el._pressDown || this.views.get(el._id) !== el) return;

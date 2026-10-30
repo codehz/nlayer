@@ -162,7 +162,6 @@ impl Graph {
         driver: Driver,
         finished: &mut Vec<Finished>,
     ) {
-        self.stop(node, finished);
         let Some(Some(Node::Value {
             value,
             velocity,
@@ -171,7 +170,12 @@ impl Graph {
         else {
             return;
         };
-        *running = Some(Running::new(animation, driver, *value, *velocity));
+        // The value keeps its velocity through an interruption, so a spring
+        // replacing another starts smoothly.
+        let new = Running::new(animation, driver, *value, *velocity);
+        if let Some(old) = running.replace(new) {
+            finished.push(Finished::new(old.id, false));
+        }
         if !self.animating.contains(&node) {
             self.animating.push(node);
         }

@@ -33,18 +33,19 @@ stopping.then((result) => stopped.set(result.finished ? "finished" : "stopped"))
 
 function App() {
   return (
-    <View
-      testID="box"
-      style={{
-        width: 100,
-        height: 100,
-        opacity,
-        backgroundColor: color,
-        borderColor,
-        borderWidth: 1,
-        transform: [{ translateX: value }, { rotate: spin }, { scale: grow }],
-      }}
-    >
+    <View>
+      <View
+        testID="box"
+        style={{
+          width: 100,
+          height: 100,
+          opacity,
+          backgroundColor: color,
+          borderColor,
+          borderWidth: 1,
+          transform: [{ translateX: value }, { rotate: spin }, { scale: grow }],
+        }}
+      />
       <Text>{`${done()} ${stopped()}`}</Text>
     </View>
   );

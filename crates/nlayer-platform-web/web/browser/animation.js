@@ -38,11 +38,6 @@ export function createAnimation() {
     return node;
   }
 
-  function finish(id, finished) {
-    const node = nodes.get(id === undefined ? -1 : id);
-    void node;
-  }
-
   function resolveAnimation(animation, finished, value) {
     const end = animations.get(animation);
     if (!end) return;
