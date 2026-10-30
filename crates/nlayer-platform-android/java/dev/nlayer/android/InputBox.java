@@ -280,7 +280,7 @@ final class InputBox extends FrameLayout {
     }
   }
 
-  private void applyPending() {
+  void applyPending() {
     if (inComposition || pendingText == null) return;
     String text = pendingText;
     int n = pendingCount;

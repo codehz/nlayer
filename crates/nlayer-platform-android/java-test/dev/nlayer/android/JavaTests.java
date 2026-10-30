@@ -44,6 +44,7 @@ public final class JavaTests extends Instrumentation {
     "testScrollContentSizing",
     "testInputConfigure",
     "testInputMultiline",
+    "testInputCompositionHoldsValue",
     "testInputValueRevisions",
     "testInputTypingCounts",
     "testInputReturnDismisses",
@@ -536,6 +537,28 @@ public final class JavaTests extends Instrumentation {
     equal("a\nb", box.edit.getText().toString(), "the text keeps its break");
     equal(1, box.edit.getSelectionStart(), "the selection start");
     equal(3, box.edit.getSelectionEnd(), "a selection clamps its end to the text");
+  }
+
+  void testInputCompositionHoldsValue() {
+    HostView host = host();
+    InputBox box = main(() -> new InputBox(context(), 5));
+    main(
+        () -> {
+          box.configure(
+              16, 400, false, 0xff000000, 0, 0, 0, "", false, 0, false, false, true, host.density);
+          box.setValue(0, "a");
+          box.inComposition = true;
+          box.setValue(1, "held");
+          return null;
+        });
+    equal("a", box.edit.getText().toString(), "a value from JS waits for the composition");
+    main(
+        () -> {
+          box.inComposition = false;
+          box.applyPending();
+          return null;
+        });
+    equal("held", box.edit.getText().toString(), "the held value applies once it ends");
   }
 
   void testInputValueRevisions() {
