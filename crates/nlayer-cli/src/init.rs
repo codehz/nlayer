@@ -90,7 +90,8 @@ const NLAYER_JSON: &str = r#"{
   "name": "Example",
   "id": "com.example.app",
   "version": "1.0.0",
-  "build": 1
+  "build": 1,
+  "icon": null
 }
 "#;
 
