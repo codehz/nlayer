@@ -10,6 +10,7 @@
 //! on an emulator or a connected device.
 
 mod android;
+mod android_package;
 mod android_test;
 mod init;
 mod ios;
@@ -28,6 +29,7 @@ use std::{
 pub use android::{
     AndroidJavaTests, AndroidOptions, AndroidSession, android_java_tests, run_android,
 };
+pub use android_package::{AndroidPackageOptions, package_android};
 pub use init::{InitError, InitOptions, InitReport, init};
 pub use ios::{IosHostTests, IosOptions, IosSession, ios_host_tests, run_ios};
 pub use ios_package::package_ios;

@@ -528,8 +528,7 @@ final class Mounter {
   private void image(ByteBuffer b, Object[] o) {
     int id = b.getInt(), ix = b.getInt(), mode = b.getInt();
     View v = views.get(id);
-    if (v instanceof ImageBox)
-      ((ImageBox) v).load(ix < 0 ? null : (String) o[ix], mode, host.assetsPath());
+    if (v instanceof ImageBox) ((ImageBox) v).load(ix < 0 ? null : (String) o[ix], mode, host);
   }
 
   private void scrollConfig(ByteBuffer b) {

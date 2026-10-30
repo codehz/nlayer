@@ -259,3 +259,7 @@ Copied files:
   (the v2 long-press rule only: no press-in/out callbacks or scroll delay)
 - `crates/nlayer-cli/src/ios_package.rs` uses the iOS asset catalog and
   Info.plist packaging approach from `crates/nsh-cli/src/package.rs`.
+- `crates/nlayer-cli/src/android_package.rs` uses the APK metadata and
+  signing boundary from `crates/nsh-cli/src/package.rs` and
+  `crates/nsh-cli/src/android.rs`; the Java host's APK `assets/` reading keeps
+  the `run` push path.

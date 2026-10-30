@@ -4,8 +4,8 @@ use std::{path::PathBuf, process::ExitCode, sync::Arc};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use nlayer_cli::{
-    BuildOptions, BuildOutcome, InitOptions, IosOptions, RunOptions, TestOptions, TestTarget,
-    build, init, run_android, run_ios, serve, test, web_module,
+    AndroidPackageOptions, BuildOptions, BuildOutcome, InitOptions, IosOptions, RunOptions,
+    TestOptions, TestTarget, build, init, run_android, run_ios, serve, test, web_module,
 };
 
 #[derive(Parser)]
@@ -38,12 +38,21 @@ enum Command {
         /// The app directory or entry module.
         #[arg(default_value = ".")]
         entry: PathBuf,
-        /// Output directory.
+        /// Output path: a directory (web), a `.app` (iOS) or a `.apk` (Android).
         #[arg(short, long)]
         out: Option<PathBuf>,
         /// Target to package.
         #[arg(long, value_enum, default_value = "web")]
         target: PackageTarget,
+        /// Sign the APK with this keystore instead of the debug key. Android only.
+        #[arg(long)]
+        keystore: Option<PathBuf>,
+        /// The key alias in `keystore`.
+        #[arg(long)]
+        ks_alias: Option<String>,
+        /// The keystore and key password. `pass:` and `file:` prefixes pass through.
+        #[arg(long)]
+        ks_pass: Option<String>,
     },
     /// Run `*.test.tsx` files (`@nlayer/test`).
     /// An app entry instead of a test file is opened, then the steps from
@@ -119,6 +128,7 @@ enum Target {
 enum PackageTarget {
     Web,
     Ios,
+    Android,
 }
 
 fn main() -> ExitCode {
@@ -143,14 +153,29 @@ fn main() -> ExitCode {
                 }
             }
         }
-        Command::Package { entry, out, target } => {
+        Command::Package {
+            entry,
+            out,
+            target,
+            keystore,
+            ks_alias,
+            ks_pass,
+        } => {
             let out = out.unwrap_or_else(|| match target {
                 PackageTarget::Web => PathBuf::from(".nlayer/package/web"),
                 PackageTarget::Ios => PathBuf::from(".nlayer/package/Nlayer.app"),
+                PackageTarget::Android => PathBuf::from(".nlayer/package/app.apk"),
             });
             let result = match target {
                 PackageTarget::Web => nlayer_cli::package_web(&entry, &out),
                 PackageTarget::Ios => nlayer_cli::package_ios(&entry, &out),
+                PackageTarget::Android => nlayer_cli::package_android(&AndroidPackageOptions {
+                    entry,
+                    out: out.clone(),
+                    keystore,
+                    alias: ks_alias,
+                    store_pass: ks_pass,
+                }),
             };
             match result {
                 Ok(()) => {

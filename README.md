@@ -26,6 +26,13 @@ runtime is loaded from `NLAYER_WASM`, next to the CLI, or built from this worksp
 `aarch64-apple-ios` target. Use `--out` for a new output path; signing and
 installation are performed separately.
 
+`nlayer package --target android` writes an APK at `.nlayer/package/app.apk`
+with the manifest's name, id, version and icon from `nlayer.json`, the bundle
+and images under `assets/`, and arm64-v8a, armeabi-v7a and x86_64 runtimes. It
+is signed with the Android debug key unless `--keystore` (with `--ks-alias`
+and `--ks-pass`) names the app's own. Installing it needs the Android SDK; a
+pushed `app.js` still wins at launch, as with `nlayer run`.
+
 Licensed under the [Apache License, Version 2.0](LICENSE-APACHE).
 
 v2 is planned in [`docs/v2.md`](docs/v2.md): a virtualized `List`, animated

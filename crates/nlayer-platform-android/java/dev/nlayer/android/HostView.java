@@ -22,6 +22,7 @@ public final class HostView extends FrameLayout {
   long downTime;
   private long handle;
   private String code, assetsDir;
+  private boolean apkAssets;
   private int safeTop, safeRight, safeBottom, safeLeft, keyboard;
   private boolean served;
   private boolean framePosted;
@@ -135,6 +136,15 @@ public final class HostView extends FrameLayout {
     if (getWidth() > 0 && getHeight() > 0) finishLoad();
   }
 
+  /**
+   * Loads a packaged app: the bundle and its images are in the APK's `assets/`. A pushed `app.js`
+   * still takes the plain {@link #load} path.
+   */
+  public void load(String code, String assetsDir, boolean apkAssets) {
+    this.apkAssets = apkAssets;
+    load(code, assetsDir);
+  }
+
   private void finishLoad() {
     if (pin != null) {
       Native.resize(handle, pin.width, pin.height);
@@ -165,6 +175,12 @@ public final class HostView extends FrameLayout {
 
   String assetsPath() {
     return assetsDir == null ? getContext().getFilesDir().getAbsolutePath() + "/assets" : assetsDir;
+  }
+
+  /** A bundled image: the APK's `assets/` when packaged, else the pushed files. */
+  java.io.InputStream openAsset(String path) throws java.io.IOException {
+    if (apkAssets) return getContext().getAssets().open(path);
+    return new java.io.FileInputStream(new java.io.File(assetsPath(), path));
   }
 
   @Override

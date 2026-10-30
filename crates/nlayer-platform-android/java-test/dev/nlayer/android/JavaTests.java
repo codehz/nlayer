@@ -762,7 +762,9 @@ public final class JavaTests extends Instrumentation {
 
   void testImageAssetLoads() throws Exception {
     Bitmap source = image(Color.RED);
-    File file = new File(context().getFilesDir(), "java-tests.png");
+    File assets = new File(context().getFilesDir(), "assets");
+    check(assets.isDirectory() || assets.mkdirs(), "made the assets directory");
+    File file = new File(assets, "java-tests.png");
     try (FileOutputStream out = new FileOutputStream(file)) {
       check(source.compress(Bitmap.CompressFormat.PNG, 100, out), "wrote the image");
     }
@@ -778,7 +780,7 @@ public final class JavaTests extends Instrumentation {
                 (HostView)
                     ((FrameLayout) activity.findViewById(android.R.id.content)).getChildAt(0);
             host.addView(box, new FrameLayout.LayoutParams(20, 20));
-            box.load("asset:/java-tests.png", 0, context().getFilesDir().getAbsolutePath());
+            box.load("asset:/java-tests.png", 0, host);
             return null;
           });
       long deadline = System.currentTimeMillis() + 5000;

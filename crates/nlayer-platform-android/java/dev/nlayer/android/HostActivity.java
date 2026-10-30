@@ -59,15 +59,31 @@ public class HostActivity extends Activity {
           public void run() {
             File root = getFilesDir();
             File f = new File(root, "app.js");
-            if (f.isFile())
-              try {
+            try {
+              if (f.isFile()) {
                 host.load(
                     new String(
                         Files.readAllBytes(f.toPath()), java.nio.charset.StandardCharsets.UTF_8),
                     new File(root, "assets").getAbsolutePath());
-              } catch (Exception e) {
-                host.reportError(e.toString());
+              } else {
+                // A packaged app: the bundle and images are in the APK.
+                java.io.InputStream in = getAssets().open("app.js");
+                java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+                try {
+                  byte[] buffer = new byte[8192];
+                  int n;
+                  while ((n = in.read(buffer)) > 0) out.write(buffer, 0, n);
+                } finally {
+                  in.close();
+                }
+                host.load(
+                    new String(out.toByteArray(), java.nio.charset.StandardCharsets.UTF_8),
+                    null,
+                    true);
               }
+            } catch (Exception e) {
+              host.reportError(e.toString());
+            }
           }
         });
   }

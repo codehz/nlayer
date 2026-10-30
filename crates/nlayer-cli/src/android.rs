@@ -34,8 +34,8 @@ use crate::{
 /// Application id. The activity is [`ACTIVITY`].
 pub(crate) const PACKAGE: &str = "dev.nlayer.android";
 const ACTIVITY: &str = "dev.nlayer.android.HostActivity";
-const MIN_SDK: u32 = 28;
-const TARGET_SDK: u32 = 35;
+pub(crate) const MIN_SDK: u32 = 28;
+pub(crate) const TARGET_SDK: u32 = 35;
 /// The test APK's id and its instrumentation runner (`java-test/`).
 const TEST_PACKAGE: &str = "dev.nlayer.android.test";
 const TEST_RUNNER: &str = "dev.nlayer.android.JavaTests";
@@ -178,7 +178,7 @@ impl Sdk {
         Ok(Self { root, build_tools })
     }
 
-    fn tool(&self, name: &str) -> PathBuf {
+    pub(crate) fn tool(&self, name: &str) -> PathBuf {
         self.build_tools.join(name)
     }
 
@@ -186,7 +186,7 @@ impl Sdk {
         self.root.join("platform-tools/adb")
     }
 
-    fn android_jar(&self) -> Result<PathBuf, RunError> {
+    pub(crate) fn android_jar(&self) -> Result<PathBuf, RunError> {
         let jar = self
             .root
             .join(format!("platforms/android-{TARGET_SDK}/android.jar"));
@@ -267,6 +267,22 @@ pub(crate) struct Abi {
 }
 
 impl Abi {
+    /// Every ABI a packaged APK carries.
+    pub(crate) fn all() -> [Abi; 3] {
+        [
+            Self::parse("arm64-v8a").expect("arm64-v8a"),
+            Self::parse("armeabi-v7a").expect("armeabi-v7a"),
+            Self::parse("x86_64").expect("x86_64"),
+        ]
+    }
+
+    /// The APK's directory name for this ABI (`lib/<name>/libnlayer.so`).
+    pub(crate) fn name(&self) -> &'static str {
+        self.name
+    }
+}
+
+impl Abi {
     fn parse(name: &str) -> Option<Self> {
         match name {
             "arm64-v8a" => Some(Self {
@@ -331,7 +347,12 @@ fn newest_source(workspace: &Path) -> SystemTime {
     newest
 }
 
-fn cargo_lib(sdk: &Sdk, workspace: &Path, abi: &Abi, release: bool) -> Result<PathBuf, RunError> {
+pub(crate) fn cargo_lib(
+    sdk: &Sdk,
+    workspace: &Path,
+    abi: &Abi,
+    release: bool,
+) -> Result<PathBuf, RunError> {
     let toolchain = ndk_toolchain(sdk)?;
     let bin = toolchain.join("bin");
     let clang = bin.join(format!("{}{MIN_SDK}-clang", abi.clang));
@@ -399,7 +420,7 @@ fn ndk_toolchain(sdk: &Sdk) -> Result<PathBuf, RunError> {
     }
 }
 
-fn dex_host(sdk: &Sdk, workspace: &Path) -> Result<PathBuf, RunError> {
+pub(crate) fn dex_host(sdk: &Sdk, workspace: &Path) -> Result<PathBuf, RunError> {
     let java = workspace.join("crates/nlayer-platform-android/java");
     let work = workspace.join("target/nlayer-android/java");
     let classes = work.join("classes");
@@ -558,7 +579,7 @@ fn add_payload(
     )
 }
 
-fn add_files(
+pub(crate) fn add_files(
     base: &Path,
     out: &Path,
     files: &[(&str, &Path, CompressionMethod)],
@@ -589,7 +610,7 @@ fn sign(sdk: &Sdk, apk: &Path) -> Result<(), RunError> {
         .arg(apk))
 }
 
-fn debug_keystore() -> Result<PathBuf, RunError> {
+pub(crate) fn debug_keystore() -> Result<PathBuf, RunError> {
     let home = env::var_os("HOME").ok_or_else(|| RunError::message("HOME is not set"))?;
     let dir = PathBuf::from(home).join(".android");
     let path = dir.join("debug.keystore");
@@ -1060,7 +1081,7 @@ fn zip_err(error: zip::result::ZipError) -> RunError {
     RunError::message(error.to_string())
 }
 
-fn run(command: &mut Command) -> Result<(), RunError> {
+pub(crate) fn run(command: &mut Command) -> Result<(), RunError> {
     let status = command
         .status()
         .map_err(|error| RunError::message(format!("{error}")))?;

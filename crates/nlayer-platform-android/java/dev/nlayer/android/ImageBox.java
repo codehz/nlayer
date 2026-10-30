@@ -9,7 +9,6 @@ import android.graphics.Path;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.view.View;
-import java.io.File;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -59,7 +58,7 @@ final class ImageBox extends View {
     return true;
   }
 
-  void load(final String source, int mode, final String assets) {
+  void load(final String source, int mode, final HostView host) {
     this.uri = source;
     this.mode = mode;
     if (source == null) {
@@ -75,8 +74,7 @@ final class ImageBox extends View {
                   if (source.startsWith("asset:/")) {
                     String rest = source.substring(7);
                     if (rest.contains("..")) return;
-                    File f = new File(assets, rest);
-                    InputStream in = new java.io.FileInputStream(f);
+                    InputStream in = host.openAsset(rest);
                     try {
                       result = BitmapFactory.decodeStream(in);
                     } finally {
