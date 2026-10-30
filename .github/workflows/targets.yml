@@ -15,6 +15,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: android
+      
       - name: Install Rust targets
         run: rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
       
@@ -38,6 +43,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ios
+      
       - name: Install Rust targets
         run: rustup target add aarch64-apple-ios-sim x86_64-apple-ios aarch64-apple-ios
       
@@ -56,6 +66,11 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: web
       
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
