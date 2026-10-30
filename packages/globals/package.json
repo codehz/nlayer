@@ -1,6 +1,6 @@
 {
   "name": "@nlayer/globals",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Ambient TypeScript types for nlayer apps (fetch, console, timers, image imports). Apps do not import this package.",
   "license": "Apache-2.0",
   "type": "module",

@@ -1,6 +1,6 @@
 {
   "name": "@nlayer/cli",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Create, build, test and run a TSX app on web, iOS and Android.",
   "license": "Apache-2.0",
   "repository": {
@@ -15,11 +15,11 @@
     "postinstall": "node scripts/postinstall.js"
   },
   "optionalDependencies": {
-    "@nlayer/cli-darwin-arm64": "0.2.0",
-    "@nlayer/cli-linux-x64": "0.2.0",
-    "@nlayer/cli-win32-x64": "0.2.0",
-    "@nlayer/runtime-android": "0.2.0",
-    "@nlayer/runtime-ios": "0.2.0"
+    "@nlayer/cli-darwin-arm64": "0.2.1",
+    "@nlayer/cli-linux-x64": "0.2.1",
+    "@nlayer/cli-win32-x64": "0.2.1",
+    "@nlayer/runtime-android": "0.2.1",
+    "@nlayer/runtime-ios": "0.2.1"
   },
   "engines": {
     "node": ">=18.0.0"

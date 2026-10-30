@@ -1,6 +1,6 @@
 {
   "name": "@nlayer/runtime",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "TypeScript types for nlayer's reactive graph, mount, context and ErrorBoundary. No JavaScript; the host provides the values.",
   "license": "Apache-2.0",
   "type": "module",

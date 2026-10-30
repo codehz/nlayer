@@ -1,6 +1,6 @@
 {
   "name": "@nlayer/runtime-android",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Pre-built Android runtime for nlayer CLI (native libraries and DEX)",
   "license": "Apache-2.0",
   "repository": {
