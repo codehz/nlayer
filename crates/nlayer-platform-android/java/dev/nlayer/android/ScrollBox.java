@@ -60,7 +60,7 @@ final class ScrollBox extends FrameLayout {
         @Override
         public void doFrame(long nanos) {
           scrollQueued = false;
-          emit(SCROLL);
+          send(SCROLL);
         }
       };
 
@@ -185,7 +185,7 @@ final class ScrollBox extends FrameLayout {
 
   /** The latest offset, once on the next frame. */
   private void queueScroll() {
-    if ((pressMask & (1 << SCROLL)) == 0 || scrollQueued) return;
+    if (scrollQueued) return;
     scrollQueued = true;
     Choreographer.getInstance().postFrameCallback(scrollFrame);
   }
@@ -195,7 +195,27 @@ final class ScrollBox extends FrameLayout {
     if (!scrollQueued) return;
     Choreographer.getInstance().removeFrameCallback(scrollFrame);
     scrollQueued = false;
-    emit(SCROLL);
+    send(SCROLL);
+  }
+
+  /** Sends this offset to the core whatever listens: lists follow it. */
+  private void send(int kind) {
+    float x = 0;
+    float y = 0;
+    if (scroller != null) {
+      x = scroller.getScrollX() / density;
+      y = scroller.getScrollY() / density;
+    }
+    Native.sendScroll(
+        this,
+        id,
+        kind,
+        x,
+        y,
+        contentPointsW,
+        contentPointsH,
+        getWidth() / density,
+        getHeight() / density);
   }
 
   private void dropScrollFrame() {

@@ -407,6 +407,7 @@ impl Screen {
                         input.selection = Some((*start, *end));
                     }
                 }
+                Command::ScrollToIndex { .. } | Command::ScrollToEnd { .. } => {}
             },
             MountItem::TestId { id, test_id } => {
                 if let Some(view) = self.views.get_mut(id) {

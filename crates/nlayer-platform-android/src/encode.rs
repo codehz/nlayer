@@ -292,6 +292,9 @@ pub fn encode(batch: MountBatch) -> Encoded {
                         e.int(start as i32);
                         e.int(end as i32);
                     }
+                    Command::ScrollToIndex { .. } | Command::ScrollToEnd { .. } => {
+                        // The core resolves list commands to a `ScrollTo`.
+                    }
                 }
             }
         }

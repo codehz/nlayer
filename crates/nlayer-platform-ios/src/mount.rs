@@ -1045,6 +1045,10 @@ impl Mounter {
                         crate::input::set_selection(field, start, end);
                     }
                 }
+                nlayer_core::Command::ScrollToIndex { .. }
+                | nlayer_core::Command::ScrollToEnd { .. } => {
+                    // The core resolves list commands to a `ScrollTo`.
+                }
             },
             MountItem::Image {
                 id,
@@ -1249,7 +1253,9 @@ impl Mounter {
         let listens = self
             .slot(id)
             .is_some_and(|slot| slot.events.contains(event));
-        if !listens {
+        // The core follows a list's offset even without `onScroll`: only
+        // the other callbacks wait for a listener.
+        if event != EventKind::Scroll && !listens {
             return;
         }
         let Some(control) = &self.control else {
