@@ -2709,18 +2709,22 @@ impl<M: TextEngine> Core<M> {
             }
             self.commands.retain(|c| c.0 != id);
             for command in commands {
-                let (target, animated) = match command {
+                match command {
                     Command::ScrollToIndex { index, animated } => {
-                        (list::PinTarget::Index(index), animated)
+                        let target = list::PinTarget::Index(index);
+                        let list = self.nodes[key as usize].list.as_mut().expect("list");
+                        let offset = list.target_offset(target);
+                        list.pin(Some(target), offset);
+                        list.jump(offset);
+                        scrolls.push((offset, animated));
                     }
-                    Command::ScrollToEnd { animated } => (list::PinTarget::End, animated),
-                    _ => continue,
-                };
-                let list = self.nodes[key as usize].list.as_mut().expect("list");
-                let offset = list.target_offset(target);
-                list.pin(Some(target), offset);
-                list.jump(offset);
-                scrolls.push((offset, animated));
+                    Command::ScrollToEnd { animated } => {
+                        // Don't calculate offset - let the platform use actual scrollHeight
+                        // Store as a special marker to emit the command directly
+                        scrolls.push((f32::INFINITY, animated));
+                    }
+                    _ => {}
+                }
             }
 
             // Content can shrink below the offset (the last page cleared):
@@ -2909,19 +2913,27 @@ impl<M: TextEngine> Core<M> {
             // The content is final before a scroll command: platforms
             // clamp an offset to the content they know.
             for (offset, animated) in scrolls {
-                self.nodes[key as usize]
-                    .list
-                    .as_mut()
-                    .expect("list")
-                    .issue_scroll_to(offset);
-                self.mount.push(MountItem::Command {
-                    id,
-                    command: Command::ScrollTo {
-                        x: Points::ZERO,
-                        y: Points(offset),
-                        animated,
-                    },
-                });
+                if offset.is_infinite() {
+                    // This is a ScrollToEnd command - send it directly to platform
+                    self.mount.push(MountItem::Command {
+                        id,
+                        command: Command::ScrollToEnd { animated },
+                    });
+                } else {
+                    self.nodes[key as usize]
+                        .list
+                        .as_mut()
+                        .expect("list")
+                        .issue_scroll_to(offset);
+                    self.mount.push(MountItem::Command {
+                        id,
+                        command: Command::ScrollTo {
+                            x: Points::ZERO,
+                            y: Points(offset),
+                            animated,
+                        },
+                    });
+                }
             }
         }
     }

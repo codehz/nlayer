@@ -873,6 +873,16 @@ export class Player {
       }
       return;
     }
+    if (name === "scrollToEnd") {
+      if (!animated) this.noteInstant(el);
+      const [x, y] = el._horizontal ? [el.scrollWidth, 0] : [0, el.scrollHeight];
+      el.scrollTo?.({ left: x, top: y, behavior: animated ? "smooth" : "instant" });
+      if (!el.scrollTo) {
+        el.scrollLeft = x;
+        el.scrollTop = y;
+      }
+      return;
+    }
     if (name !== "scrollTo") return;
     if (!animated) this.noteInstant(el);
     el.scrollTo?.({ left: x, top: y, behavior: animated ? "smooth" : "instant" });

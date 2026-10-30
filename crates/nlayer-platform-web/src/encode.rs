@@ -292,8 +292,20 @@ impl Encoder {
                         .num(*end)
                         .end();
                 }
-                Command::ScrollToIndex { .. } | Command::ScrollToEnd { .. } => {
-                    // The core resolves list commands to a `ScrollTo`.
+                Command::ScrollToIndex { index, animated } => {
+                    out.item("cmd")
+                        .num(*id)
+                        .str("scrollToIndex")
+                        .num(*index)
+                        .bool(*animated)
+                        .end();
+                }
+                Command::ScrollToEnd { animated } => {
+                    out.item("cmd")
+                        .num(*id)
+                        .str("scrollToEnd")
+                        .bool(*animated)
+                        .end();
                 }
             },
             MountItem::TestId { id, test_id } => {
