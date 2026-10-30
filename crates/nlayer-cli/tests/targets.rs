@@ -86,6 +86,33 @@ fn the_emulator_presses_types_and_scrolls() {
 }
 
 #[test]
+fn the_browser_takes_a_line_break_in_a_multiline_input() {
+    let _guard = lock();
+    let dir = app_fixture("linebreak");
+    let report = run(&dir.join("App.test.tsx"), Some(TestTarget::Web));
+    let _ = fs::remove_dir_all(&dir);
+    assert!(report.ok(), "web: {report}");
+}
+
+#[test]
+fn the_simulator_takes_a_line_break_in_a_multiline_input() {
+    let _guard = lock();
+    let dir = app_fixture("linebreak");
+    let report = run(&dir.join("App.test.tsx"), Some(TestTarget::Ios));
+    let _ = fs::remove_dir_all(&dir);
+    assert!(report.ok(), "ios: {report}");
+}
+
+#[test]
+fn the_emulator_takes_a_line_break_in_a_multiline_input() {
+    let _guard = lock();
+    let dir = app_fixture("linebreak");
+    let report = run(&dir.join("App.test.tsx"), Some(TestTarget::Android));
+    let _ = fs::remove_dir_all(&dir);
+    assert!(report.ok(), "android: {report}");
+}
+
+#[test]
 fn the_java_host_tests_pass_on_the_emulator() {
     let _guard = lock();
     let report = nlayer_cli::android_java_tests()
