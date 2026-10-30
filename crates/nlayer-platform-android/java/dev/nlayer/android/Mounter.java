@@ -133,7 +133,7 @@ final class Mounter {
     events.put(id, mask);
     View v = views.get(id);
     if (v == null) return;
-    boolean press = (mask & 1) != 0;
+    boolean press = (mask & 1) != 0 || (mask & (1 << 11)) != 0;
     if (v instanceof Box) ((Box) v).pressMask = mask;
     if (v instanceof ImageBox) ((ImageBox) v).pressMask = mask;
     if (v instanceof TextBox) {
