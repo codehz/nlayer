@@ -436,6 +436,62 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_input(
     }
 }
 
+/// # Safety
+///
+/// `handle` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_selection(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    id: jint,
+    start: jint,
+    end: jint,
+) {
+    if handle == 0 {
+        return;
+    }
+    let host = unsafe { host(handle) };
+    if let Some(control) = host
+        .control
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .as_ref()
+    {
+        control.selection_changed(id as NodeId, start.max(0) as u32, end.max(0) as u32);
+    }
+}
+
+/// # Safety
+///
+/// `handle` is live. `text` is a Java string.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_composition(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    id: jint,
+    composing: jboolean,
+    text: JString<'_>,
+) {
+    if handle == 0 {
+        return;
+    }
+    let text: String = env
+        .get_string(&text)
+        .map(|value| value.into())
+        .unwrap_or_default();
+    let host = unsafe { host(handle) };
+    if let Some(control) = host
+        .control
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .as_ref()
+    {
+        control.composition_changed(id as NodeId, composing != 0, text);
+    }
+}
+
 fn dispatch(handle: jlong, id: jint, event: EventKind, payload: EventPayload) {
     if handle == 0 {
         return;

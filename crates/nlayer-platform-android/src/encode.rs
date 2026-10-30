@@ -458,6 +458,7 @@ fn input(e: &mut Encoded, config: &InputConfig) {
     });
     e.bool(config.disabled);
     e.bool(config.rtl);
+    e.bool(config.multiline);
 }
 
 fn align_code(align: TextAlign) -> i32 {
@@ -879,8 +880,14 @@ mod tests {
         assert_eq!(words.int(), 0);
         assert_eq!(object(&encoded, words.int()), "mail");
         assert_eq!(
-            (words.int(), words.int(), words.int(), words.int()),
-            (1, 1, 1, 1)
+            (
+                words.int(),
+                words.int(),
+                words.int(),
+                words.int(),
+                words.int()
+            ),
+            (1, 1, 1, 1, 0)
         );
         assert_eq!(words.int(), super::INPUT_VALUE);
         assert_eq!((words.int(), words.int()), (7, 2));

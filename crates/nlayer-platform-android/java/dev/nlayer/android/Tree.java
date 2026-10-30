@@ -211,6 +211,7 @@ final class Tree {
     input.put("keyboard", box.keyboardName);
     input.put("disabled", box.disabled);
     input.put("focused", box.edit.isFocused());
+    input.put("multiline", box.multiline);
     o.put("input", input);
   }
 

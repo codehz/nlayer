@@ -642,7 +642,7 @@ final class Mounter {
     int align = b.getInt(), ph = b.getInt();
     boolean secure = b.getInt() != 0;
     int keyboard = b.getInt();
-    boolean disabled = b.getInt() != 0, rtl = b.getInt() != 0;
+    boolean disabled = b.getInt() != 0, rtl = b.getInt() != 0, multiline = b.getInt() != 0;
     View v = views.get(id);
     if (v instanceof InputBox)
       ((InputBox) v)
@@ -659,6 +659,7 @@ final class Mounter {
               keyboard,
               disabled,
               rtl,
+              multiline,
               density);
   }
 

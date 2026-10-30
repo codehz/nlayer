@@ -8,6 +8,7 @@ import android.graphics.drawable.ColorDrawable;
 import android.os.Build;
 import android.text.InputType;
 import android.util.TypedValue;
+import android.view.inputmethod.BaseInputConnection;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 
@@ -19,7 +20,17 @@ final class InputBox extends FrameLayout {
   int count;
   boolean setting;
   String placeholder = "", keyboardName = "text";
-  boolean secure, disabled;
+  boolean secure, disabled, multiline;
+
+  /** The text as last reported or set (a newer JS value waits for a composition's end). */
+  String known = "";
+
+  /** The composition last seen and the value JS set during it. */
+  boolean inComposition;
+
+  String composed = "", pendingText;
+  int pendingCount;
+  boolean watching;
   int pressMask;
   boolean clip;
   int textColor;
@@ -32,7 +43,14 @@ final class InputBox extends FrameLayout {
     // Borders over the field, as a view's border sits over its children.
     decor.bordersAbove = true;
     setBackground(decor);
-    edit = new EditText(c);
+    edit =
+        new EditText(c) {
+          @Override
+          protected void onSelectionChanged(int start, int end) {
+            super.onSelectionChanged(start, end);
+            if (!setting) Native.sendSelection(InputBox.this, id, start, end);
+          }
+        };
     edit.setSingleLine(true);
     edit.setPadding(0, 0, 0, 0);
     edit.setBackground(new ColorDrawable(0));
@@ -53,10 +71,31 @@ final class InputBox extends FrameLayout {
           public void onTextChanged(CharSequence s, int st, int before, int n) {}
 
           public void afterTextChanged(android.text.Editable e) {
-            if (!setting) {
-              count++;
-              Native.sendInput(InputBox.this, id, e.toString());
+            if (setting) return;
+            String text = e.toString();
+            // A composition that starts or changes is reported before the
+            // text holding it, one that ends after the text it committed,
+            // as browsers order them.
+            boolean composingNow = composingStart(e) >= 0;
+            watching = true;
+            try {
+              if (composingNow) syncComposition();
+              if (!text.equals(known)) {
+                known = text;
+                count++;
+                Native.sendInput(InputBox.this, id, text);
+              }
+              if (!composingNow) syncComposition();
+            } finally {
+              watching = false;
             }
+          }
+        });
+    edit.setOnFocusChangeListener(
+        (v, focused) -> {
+          if (!focused) {
+            edit.clearComposingText();
+            syncComposition();
           }
         });
   }
@@ -123,10 +162,12 @@ final class InputBox extends FrameLayout {
       int keyboard,
       boolean disabled,
       boolean rtl,
+      boolean multiline,
       float density) {
     this.placeholder = placeholder == null ? "" : placeholder;
     this.secure = secure;
     this.disabled = disabled;
+    this.multiline = multiline;
     this.textColor = color;
     this.keyboardName =
         keyboard == 1 ? "email" : keyboard == 2 ? "number" : keyboard == 3 ? "phone" : "text";
@@ -139,15 +180,18 @@ final class InputBox extends FrameLayout {
     edit.setHint(placeholder);
     edit.setEnabled(!disabled);
     int type =
-        secure
+        secure && !multiline
             ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD
             : keyboard == 1
                 ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
                 : keyboard == 2
                     ? InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL
                     : keyboard == 3 ? InputType.TYPE_CLASS_PHONE : InputType.TYPE_CLASS_TEXT;
+    if (multiline) type |= InputType.TYPE_TEXT_FLAG_MULTI_LINE;
+    edit.setSingleLine(!multiline);
+    if (multiline) edit.setMaxLines(Integer.MAX_VALUE);
     edit.setInputType(type);
-    final boolean resign = keyboard == 0 || keyboard == 1;
+    final boolean resign = !multiline && (keyboard == 0 || keyboard == 1);
     edit.setImeOptions(
         resign
             ? android.view.inputmethod.EditorInfo.IME_ACTION_DONE
@@ -173,25 +217,75 @@ final class InputBox extends FrameLayout {
         (align == 2
                 ? android.view.Gravity.CENTER_HORIZONTAL
                 : align == 3 ? android.view.Gravity.RIGHT : android.view.Gravity.LEFT)
-            | android.view.Gravity.CENTER_VERTICAL);
+            | (multiline ? android.view.Gravity.TOP : android.view.Gravity.CENTER_VERTICAL));
     edit.setLayoutDirection(rtl ? LAYOUT_DIRECTION_RTL : LAYOUT_DIRECTION_LTR);
   }
 
   /** `selectedRange`: clamps to the text and applies without reporting back a stale value. */
   void setSelection(int start, int end) {
     int length = edit.getText().length();
-    edit.setSelection(Math.min(start, length), Math.min(Math.max(end, start), length));
-  }
-
-  void setValue(int n, String value) {
-    if (n < count) return;
-    count = n;
+    boolean was = setting;
     setting = true;
     try {
-      if (!value.contentEquals(edit.getText())) edit.setText(value);
+      edit.setSelection(Math.min(start, length), Math.min(Math.max(end, start), length));
+    } finally {
+      setting = was;
+    }
+  }
+
+  /** The value JS set. During a composition it waits for the end. */
+  void setValue(int n, String value) {
+    if (inComposition) {
+      pendingText = value;
+      pendingCount = n;
+      return;
+    }
+    pendingText = null;
+    if (n < count) return;
+    count = n;
+    if (value.contentEquals(edit.getText())) {
+      known = value;
+      return;
+    }
+    setting = true;
+    known = value;
+    int selection = edit.getSelectionEnd();
+    try {
+      edit.setText(value);
+      edit.setSelection(Math.min(Math.max(selection, 0), value.length()));
     } finally {
       setting = false;
     }
+  }
+
+  private static int composingStart(android.text.Editable text) {
+    return BaseInputConnection.getComposingSpanStart(text);
+  }
+
+  /** Reports a change of the composition and applies a value JS set meanwhile. */
+  private void syncComposition() {
+    android.text.Editable text = edit.getText();
+    int start = text == null ? -1 : BaseInputConnection.getComposingSpanStart(text);
+    int end = text == null ? -1 : BaseInputConnection.getComposingSpanEnd(text);
+    boolean now = start >= 0 && end >= 0 && start != end;
+    String composedNow =
+        now ? text.subSequence(Math.min(start, end), Math.max(start, end)).toString() : "";
+    if (now == inComposition && composedNow.equals(composed)) return;
+    inComposition = now;
+    composed = composedNow;
+    Native.sendComposition(this, id, now, composedNow);
+    if (!now && pendingText != null) {
+      if (watching) post(this::applyPending);
+      else applyPending();
+    }
+  }
+
+  private void applyPending() {
+    if (inComposition || pendingText == null) return;
+    String text = pendingText;
+    int n = pendingCount;
+    pendingText = null;
+    setValue(n, text);
   }
 
   /**

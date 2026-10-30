@@ -43,6 +43,7 @@ public final class JavaTests extends Instrumentation {
     "testScrollAxisAndOffsets",
     "testScrollContentSizing",
     "testInputConfigure",
+    "testInputMultiline",
     "testInputValueRevisions",
     "testInputTypingCounts",
     "testInputReturnDismisses",
@@ -473,7 +474,20 @@ public final class JavaTests extends Instrumentation {
     main(
         () -> {
           box.configure(
-              16, 700, true, 0xff112233, 1, 20, 3, "Name", true, 1, true, true, host.density);
+              16,
+              700,
+              true,
+              0xff112233,
+              1,
+              20,
+              3,
+              "Name",
+              true,
+              1,
+              true,
+              true,
+              false,
+              host.density);
           return null;
         });
     equal("Name", box.placeholder, "placeholder");
@@ -489,6 +503,39 @@ public final class JavaTests extends Instrumentation {
         "password variation");
     equal(16 * host.density, box.edit.getTextSize(), "text size in pixels");
     equal(View.LAYOUT_DIRECTION_RTL, box.edit.getLayoutDirection(), "rtl");
+  }
+
+  void testInputMultiline() {
+    HostView host = host();
+    InputBox box = main(() -> new InputBox(context(), 5));
+    main(
+        () -> {
+          box.configure(
+              16,
+              400,
+              false,
+              0xff000000,
+              0,
+              0,
+              0,
+              "Body",
+              false,
+              0,
+              false,
+              false,
+              true,
+              host.density);
+          box.setValue(0, "a\nb");
+          box.setSelection(1, 9);
+          return null;
+        });
+    check(
+        (box.edit.getInputType() & android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE) != 0,
+        "multiline input type");
+    check(!box.edit.isSingleLine(), "not single line");
+    equal("a\nb", box.edit.getText().toString(), "the text keeps its break");
+    equal(1, box.edit.getSelectionStart(), "the selection start");
+    equal(3, box.edit.getSelectionEnd(), "a selection clamps its end to the text");
   }
 
   void testInputValueRevisions() {
@@ -556,6 +603,7 @@ public final class JavaTests extends Instrumentation {
                       "",
                       false,
                       keyboards[i],
+                      false,
                       false,
                       false,
                       view.density);

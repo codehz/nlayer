@@ -40,6 +40,10 @@ final class Native {
 
   static native void input(long handle, int id, String text);
 
+  static native void selection(long handle, int id, int start, int end);
+
+  static native void composition(long handle, int id, boolean composing, String text);
+
   private Native() {}
 
   static void sendPress(android.view.View view, int id) {
@@ -50,6 +54,16 @@ final class Native {
   static void sendInput(android.view.View view, int id, String text) {
     HostView host = host(view);
     if (host != null) input(host.handle(), id, text);
+  }
+
+  static void sendSelection(android.view.View view, int id, int start, int end) {
+    HostView host = host(view);
+    if (host != null) selection(host.handle(), id, start, end);
+  }
+
+  static void sendComposition(android.view.View view, int id, boolean composing, String text) {
+    HostView host = host(view);
+    if (host != null) composition(host.handle(), id, composing, text);
   }
 
   static void sendScroll(

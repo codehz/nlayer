@@ -135,6 +135,8 @@ struct WireInput {
     disabled: bool,
     #[serde(default)]
     focused: bool,
+    #[serde(default)]
+    multiline: bool,
 }
 
 #[derive(Deserialize)]
@@ -258,6 +260,7 @@ pub(crate) fn scene_of(text: &str) -> Result<Scene, String> {
                     keyboard: input.keyboard,
                     disabled: input.disabled,
                     focused: input.focused,
+                    multiline: input.multiline,
                 }),
                 runs: wire
                     .runs
