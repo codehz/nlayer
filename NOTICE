@@ -230,3 +230,7 @@ Copied files:
 - app-entry steps in `crates/nlayer-testing/src/runner.rs` follow
   `crates/nsh-cli/src/test.rs` (`steps_file`): open the entry, then run
   standard input. The idle wait, live network and trace are not copied.
+- `crates/nlayer-core/src/animation/{mod,ops,graph,driver}.rs` from
+  `crates/nsh-core/src/animation/{mod,ops,graph,driver}.rs` (values,
+  interpolation and the timing and spring drivers; composites, decay,
+  diffClamp, math nodes, offsets, canvas and component slots are not copied)
