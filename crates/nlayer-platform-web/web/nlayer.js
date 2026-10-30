@@ -123,6 +123,7 @@ export class Player {
     this.host = host;
     this.animation = null;
     this.assetBase = options.assetBase ?? "";
+    this.assetMap = options.assetMap ?? {};
     this.doc = root.ownerDocument ?? globalThis.document;
     this.views = new Map();
     this.pointers = new Map();
@@ -174,7 +175,7 @@ export class Player {
     if (!uri) return uri;
     if (uri.startsWith("asset:/")) {
       const path = uri.slice("asset:/".length).replace(/^\/+/, "");
-      return this.assetBase + path;
+      return this.assetBase + (this.assetMap[path] ?? path);
     }
     return uri;
   }

@@ -135,6 +135,14 @@ function page() {
   return { doc, root, host, player };
 }
 
+test("packaged assets use mapped names while unmapped URLs retain their paths", () => {
+  const { player } = page();
+  player.assetMap = { "img/icon.png": "hashed/icon.png" };
+  assert.equal(player.asset("asset:/img/icon.png"), "assets/hashed/icon.png");
+  assert.equal(player.asset("asset:/img/other.png"), "assets/img/other.png");
+  assert.equal(player.asset("https://example.com/icon.png"), "https://example.com/icon.png");
+});
+
 test("a batch becomes views, text, an image, a scroll and an input", () => {
   const { root, host, player } = page();
   player.apply([

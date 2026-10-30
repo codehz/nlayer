@@ -285,7 +285,7 @@ export async function startPage(root, options = {}) {
         });
       },
     },
-    { assetBase: options.assetBase ?? "", baseCSS: options.baseCSS },
+    { assetBase: options.assetBase ?? "", assetMap: options.assetMap, baseCSS: options.baseCSS },
   );
   const [width, height] = surfaceSize(root);
   const [top, right, bottom, left] = readInsets(root);

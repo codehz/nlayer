@@ -16,6 +16,7 @@ mod ios;
 mod ios_test;
 mod run;
 mod types_version;
+mod web_package;
 mod web_test;
 
 use std::{
@@ -31,6 +32,7 @@ pub use ios::{IosHostTests, IosOptions, IosSession, ios_host_tests, run_ios};
 use nlayer_bundler::{BundleError, BundleOptions, bundle};
 pub use run::{BuildOutcome, DevServer, RunError, RunOptions, serve, web_module};
 pub use types_version::type_package_warning;
+pub use web_package::package_web;
 
 /// What to build and where to write it.
 #[derive(Debug, Clone)]

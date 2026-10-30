@@ -33,6 +33,18 @@ enum Command {
         #[arg(long)]
         release: bool,
     },
+    /// Package the app as a static web site.
+    Package {
+        /// The app directory or entry module.
+        #[arg(default_value = ".")]
+        entry: PathBuf,
+        /// Output directory.
+        #[arg(short, long, default_value = ".nlayer/package/web")]
+        out: PathBuf,
+        /// Target to package.
+        #[arg(long, value_enum, default_value = "web")]
+        target: PackageTarget,
+    },
     /// Run `*.test.tsx` files (`@nlayer/test`).
     /// An app entry instead of a test file is opened, then the steps from
     /// standard input run (`app.press("Go")`). A terminal supplies no steps.
@@ -103,6 +115,11 @@ enum Target {
     Android,
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum PackageTarget {
+    Web,
+}
+
 fn main() -> ExitCode {
     init_log();
     let cli = Cli::parse();
@@ -125,6 +142,20 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Command::Package {
+            entry,
+            out,
+            target: PackageTarget::Web,
+        } => match nlayer_cli::package_web(&entry, &out) {
+            Ok(()) => {
+                println!("wrote {}", out.display());
+                ExitCode::SUCCESS
+            }
+            Err(err) => {
+                eprintln!("{err}");
+                ExitCode::FAILURE
+            }
+        },
         Command::Test {
             path,
             filter,
