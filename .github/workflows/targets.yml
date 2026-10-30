@@ -9,33 +9,62 @@ on:
   pull_request:
 
 jobs:
-  targets:
-    runs-on: macos-latest
+  test:
+    strategy:
+      matrix:
+        include:
+          # Android tests on Linux with KVM
+          - target: android
+            os: ubuntu-latest
+            rust-targets: aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+          # iOS tests on macOS
+          - target: ios
+            os: macos-latest
+            rust-targets: aarch64-apple-ios x86_64-apple-ios
+          # Web tests on Linux with Chromium
+          - target: web
+            os: ubuntu-latest
+            rust-targets: ""
+    runs-on: ${{ matrix.os }}
+    name: test-${{ matrix.target }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install Android Rust targets
-        run: rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
-      - name: Setup Android SDK
+      
+      - name: Install Rust targets
+        if: matrix.rust-targets != ''
+        run: rustup target add ${{ matrix.rust-targets }}
+      
+      # Android emulator setup
+      - name: Enable KVM
+        if: matrix.target == 'android'
         run: |
-          echo "y" | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --install "system-images;android-33;google_apis;arm64-v8a"
-          echo "no" | ${ANDROID_HOME}/cmdline-tools/latest/bin/avdmanager create avd -n test_avd -k "system-images;android-33;google_apis;arm64-v8a" --force
-      - name: Start Android emulator
-        id: android-emulator
-        background: true
-        run: |
-          ${ANDROID_HOME}/emulator/emulator -avd test_avd -no-window -no-audio -no-boot-anim -accel off -gpu swiftshader_indirect &
-          ${ANDROID_HOME}/platform-tools/adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done'
-          echo "Android emulator is ready"
-          # Keep emulator running
-          tail -f /dev/null
-      - name: Boot an iPhone simulator
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      
+      - name: Run Android tests
+        if: matrix.target == 'android'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          arch: x86_64
+          target: google_apis
+          script: cargo test -p nlayer-cli --test targets -- --test-threads=1 emulator
+      
+      # iOS simulator setup and tests
+      - name: Boot iPhone simulator
+        if: matrix.target == 'ios'
         run: |
           udid="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"];
           print(next(d["udid"] for runtimes in devices.values() for d in runtimes if "iPhone" in d["name"] and d["isAvailable"]))')"
           xcrun simctl boot "$udid" || true
           xcrun simctl bootstatus "$udid" -b
-      - name: Run tests
-        run: scripts/test-targets
-      - name: Stop Android emulator
-        if: always()
-        run: cancel android-emulator
+      
+      - name: Run iOS tests
+        if: matrix.target == 'ios'
+        run: cargo test -p nlayer-cli --test targets -- --test-threads=1 simulator
+      
+      # Web tests
+      - name: Run Web tests
+        if: matrix.target == 'web'
+        run: cargo test -p nlayer-cli --test targets -- --test-threads=1 browser
