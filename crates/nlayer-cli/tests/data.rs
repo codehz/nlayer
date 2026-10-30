@@ -131,3 +131,23 @@ fn a_long_list_renders_windows_and_scrolls_on_the_headless_engine() {
     assert!(report.ok(), "{report}");
     let _ = fs::remove_dir_all(&dir);
 }
+
+const COLUMNS_APP: &str = include_str!("fixtures/columns/App.tsx");
+
+const COLUMNS_TESTS: &str = include_str!("fixtures/columns/App.test.tsx");
+
+#[test]
+fn a_list_lays_items_out_in_columns() {
+    let _fixture = FIXTURE.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = scratch("columns");
+    fs::write(dir.join("App.tsx"), COLUMNS_APP).unwrap();
+    fs::write(dir.join("App.test.tsx"), COLUMNS_TESTS).unwrap();
+    let report = test(&TestOptions {
+        path: dir.clone(),
+        filter: None,
+        target: None,
+    })
+    .expect("the test runs");
+    assert!(report.ok(), "{report}");
+    let _ = fs::remove_dir_all(&dir);
+}

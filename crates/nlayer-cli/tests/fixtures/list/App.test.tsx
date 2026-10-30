@@ -29,5 +29,7 @@ test("a long list renders a window, recycles cells and scrolls to an item", () =
   app.waitFor("id:row-4000");
   expect(find(app.tree(), "row-4000").frame.height).toBe(50);
   expect(app.texts()).toContain("more:1");
+  app.press("id:clear");
+  app.waitFor("id:empty");
   app.close();
 });
