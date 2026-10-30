@@ -111,3 +111,23 @@ fn a_multiline_input_reports_selection_and_composition() {
     assert!(report.ok(), "{report}");
     let _ = fs::remove_dir_all(&dir);
 }
+
+const LIST_APP: &str = include_str!("fixtures/list/App.tsx");
+
+const LIST_TESTS: &str = include_str!("fixtures/list/App.test.tsx");
+
+#[test]
+fn a_long_list_renders_windows_and_scrolls_on_the_headless_engine() {
+    let _fixture = FIXTURE.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = scratch("list");
+    fs::write(dir.join("App.tsx"), LIST_APP).unwrap();
+    fs::write(dir.join("App.test.tsx"), LIST_TESTS).unwrap();
+    let report = test(&TestOptions {
+        path: dir.clone(),
+        filter: None,
+        target: None,
+    })
+    .expect("the test runs");
+    assert!(report.ok(), "{report}");
+    let _ = fs::remove_dir_all(&dir);
+}
