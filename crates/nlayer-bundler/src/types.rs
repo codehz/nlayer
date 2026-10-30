@@ -637,6 +637,82 @@ export function Image(props: ImageProps): unknown;
 export function Scroll(props: ScrollProps): unknown;
 export function Input(props: InputProps): unknown;
 
+/** An easing curve for `timing`: a name, cubic-Bézier control points, or
+ * CSS `steps()` (a count and where it jumps). */
+export type Easing =
+  | "linear"
+  | "ease"
+  | "ease-in"
+  | "ease-out"
+  | "ease-in-out"
+  | [number, number, number, number]
+  | { steps: number; position?: "start" | "end" | "jump-start" | "jump-end" | "jump-none" | "jump-both" }
+  | `cubic-bezier(${string})`
+  | `steps(${string})`;
+
+/** One of an animated value's derived ranges. Colors are strings; numbers
+ * stay numbers. A segment is linear unless `easing` changes it. */
+export interface InterpolateConfig {
+  inputRange: readonly number[];
+  outputRange: readonly (number | string)[];
+  /** Both sides; default `"clamp"`. */
+  extrapolate?: "clamp" | "extend";
+  extrapolateLeft?: "clamp" | "extend";
+  extrapolateRight?: "clamp" | "extend";
+  easing?: Easing;
+}
+
+/** The end of an animation: `false` when it was stopped or replaced. */
+export interface AnimationResult {
+  finished: boolean;
+}
+
+export interface TimingConfig {
+  toValue: number;
+  /** Milliseconds; default 300. */
+  duration?: number;
+  /** Milliseconds before it starts; default 0. */
+  delay?: number;
+  /** Default `"ease-in-out"`. */
+  easing?: Easing;
+}
+
+export interface SpringConfig {
+  toValue: number;
+  /** Default 170. */
+  stiffness?: number;
+  /** Default 26. */
+  damping?: number;
+  /** Default 1. */
+  mass?: number;
+  /** Initial units per second; default the value's current velocity. */
+  velocity?: number;
+}
+
+/** A value the animation graph drives. Put it in `opacity`,
+ * `backgroundColor`, `borderColor` or a transform step; JS never runs a
+ * frame. */
+export interface AnimatedValue {
+  readonly __av: number;
+  interpolate(config: InterpolateConfig): AnimatedValue;
+  set(value: number): void;
+  timing(config: TimingConfig): Promise<AnimationResult>;
+  spring(config: SpringConfig): Promise<AnimationResult>;
+  /** Holds the current value; resolves with it. */
+  stop(): Promise<{ value: number }>;
+  getValue(): Promise<number>;
+  get(): Promise<number>;
+}
+
+/** A value the animation graph drives. */
+export function createAnimatedValue(value?: number): AnimatedValue;
+
+/** The same drivers, as functions. */
+export const Animated: {
+  timing(value: AnimatedValue, config: TimingConfig): Promise<AnimationResult>;
+  spring(value: AnimatedValue, config: SpringConfig): Promise<AnimationResult>;
+};
+
 /** The host this app runs on. It does not change. Safe area and the keyboard
  * inset are not here: padding and margin read them with `env(safe-area-inset-*)`
  * and `env(keyboard-inset-height)`. */
@@ -789,7 +865,11 @@ export interface Node {
   offset?: { x: number; y: number };
   /** A scroll view's content size. */
   content?: { width: number; height: number };
-  /** A view's static transform steps. Angles are degrees. */
+  /** A view's paint, as animated values last moved it. */
+  opacity?: number;
+  backgroundColor?: string;
+  borderColor?: string;
+  /** A view's transform steps. Angles are degrees. */
   transform?: Array<Record<string, number>>;
   children: Node[];
 }
@@ -824,6 +904,9 @@ export interface App {
   compose(selector: string, text: string, composing: boolean): void;
   /** Scrolls the scroll view `selector` names by `distance` points toward its content's end. */
   scroll(selector: string, distance: number): void;
+  /** Advances the headless test clock by `ms` milliseconds in 60 Hz frames
+   * (animated values move; promises settle). */
+  advance(ms: number): void;
   /** Waits until `selector` names one view that is on screen. */
   waitFor(selector: string): void;
   /** The mount tree from the surface root, with each view's frame. */
@@ -884,7 +967,11 @@ mod tests {
             );
         }
         for name in nlayer_js::native_module_exports("@nlayer/ui").unwrap() {
-            if name == "platform" || name == "Keyboard" || name == "BackHandler" {
+            if name == "platform"
+                || name == "Keyboard"
+                || name == "BackHandler"
+                || name == "Animated"
+            {
                 assert!(ui.contains(&format!("export const {name}")));
                 continue;
             }

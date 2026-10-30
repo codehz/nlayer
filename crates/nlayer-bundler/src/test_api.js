@@ -111,6 +111,9 @@ export function open(entry, options) {
     scroll(selector, distance) {
       call("scroll", { id, selector, distance });
     },
+    advance(ms) {
+      call("advance", { id, ms });
+    },
     waitFor(selector) {
       call("waitFor", { id, selector });
     },

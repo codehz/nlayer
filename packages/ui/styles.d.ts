@@ -17,17 +17,24 @@ export type LengthValue = number | `${number}%`;
  * known variables (`max(env(a), env(b))`, also inside that calc). */
 export type EnvValue = `env(${string})` | `calc(${string})` | `max(${string})`;
 
-/** One static transform step. Angles are degrees (`"45deg"`, `"0.5rad"` or a number). */
+/** A value an animation drives (`createAnimatedValue`), usable where a
+ * transform step, `opacity`, `backgroundColor` or `borderColor` takes one. */
+export interface AnimatedNode {
+  readonly __av: number;
+}
+
+/** One transform step. Angles are degrees (`"45deg"`, `"0.5rad"` or a number);
+ * an animated value drives the amount natively. */
 export type TransformStep =
-  | { translateX: number }
-  | { translateY: number }
-  | { scale: number }
-  | { scaleX: number }
-  | { scaleY: number }
-  | { rotate: number | string }
-  | { rotateZ: number | string }
-  | { rotateX: number | string }
-  | { rotateY: number | string }
+  | { translateX: number | AnimatedNode }
+  | { translateY: number | AnimatedNode }
+  | { scale: number | AnimatedNode }
+  | { scaleX: number | AnimatedNode }
+  | { scaleY: number | AnimatedNode }
+  | { rotate: number | string | AnimatedNode }
+  | { rotateZ: number | string | AnimatedNode }
+  | { rotateX: number | string | AnimatedNode }
+  | { rotateY: number | string | AnimatedNode }
   | { perspective: number };
 
 /** `start` / `end` follow the writing direction; `flex-start` / `flex-end` follow the flex direction. */
@@ -81,11 +88,9 @@ export interface LayoutStyle {
   maxHeight?: LengthValue;
   /** Width over height: a number (`1.5`) or CSS's ratio (`"16 / 9"`); `"auto"` is none. */
   aspectRatio?: number | "auto" | `${number}/${number}` | `${number} / ${number}`;
-  /** An animated value only for a `position: "sticky"` view: how far from the top of the scroll view's viewport it sticks, following the value (below a header that moves). */
   top?: DimensionValue;
   right?: DimensionValue;
   bottom?: DimensionValue;
-  /** An animated value only for a `position: "sticky"` view in a horizontal scroll view, as `top`. */
   left?: DimensionValue;
   margin?: DimensionValue | EnvValue;
   marginHorizontal?: DimensionValue | EnvValue;
@@ -185,13 +190,13 @@ export interface ViewStyle extends LayoutStyle {
   borderTopEndRadius?: number;
   borderBottomEndRadius?: number;
   borderBottomStartRadius?: number;
-  backgroundColor?: ColorValue;
+  backgroundColor?: ColorValue | AnimatedNode;
   borderRadius?: number;
   borderTopLeftRadius?: number;
   borderTopRightRadius?: number;
   borderBottomRightRadius?: number;
   borderBottomLeftRadius?: number;
-  borderColor?: ColorValue;
+  borderColor?: ColorValue | AnimatedNode;
   borderTopColor?: ColorValue;
   borderRightColor?: ColorValue;
   borderBottomColor?: ColorValue;
@@ -205,16 +210,16 @@ export interface ViewStyle extends LayoutStyle {
   /** `"hidden"`: invisible while turned away (3D rotations). */
   backfaceVisibility?: "visible" | "hidden";
   /** CSS's `translate`: x, then y (`"10px 20px"`; percentages of the view's size, `"-50% 0"`); a number is points. An animated value moves it natively, along x (along both, each its own, in the `[x, y]` form). */
-  translate?: string | number | [x: number | string, y?: number | string];
+  translate?: string | number | AnimatedNode | [x: number | string | AnimatedNode, y?: number | string | AnimatedNode];
   /** CSS's `rotate`: `"45deg"`, or about an axis, `"x 90deg"`; a number, and an animated value, is degrees about z. */
-  rotate?: string | number;
+  rotate?: string | number | AnimatedNode;
   /** CSS's `scale`: `1.5`, `"150%"`, x and y (`"1 2"`, `[x, y]`). */
-  scale?: string | number | [x: number, y: number];
+  scale?: string | number | AnimatedNode | [x: number | AnimatedNode, y: number | AnimatedNode];
   /** CSS's `transform`: `"translateX(10px) rotate(45deg) scale(1.5)"` (`translate()`, `scale()`, `rotate()` on any axis and `perspective()` functions), or `"none"`; or a list of steps whose amounts may be animated values (`[{ perspective: 800 }, { rotateY: angle }]`, a motion's `transform`). Applies after `translate`, `rotate` and `scale`, as in CSS. */
   transform?: string | TransformStep[];
   /** The point `transform` acts around: keywords, percentages and lengths ("top left", "50% 0", `[10, 20]`). Default the center. */
   transformOrigin?: string | (number | string)[];
-  opacity?: number;
+  opacity?: number | AnimatedNode;
   overflow?: "visible" | "hidden";
   /** What the shapes a component draws are filled with (CSS's and SVG's `fill`, inherited; `fill-*`): a chart's areas. */
   fill?: "none" | "currentColor" | ColorValue;

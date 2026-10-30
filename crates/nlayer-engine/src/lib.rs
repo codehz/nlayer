@@ -54,6 +54,7 @@ use browser::Script as Vm;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use nlayer_core::{
     ColorScheme, Core, EventKind, ListBind, MountBatch, NodeId,
+    animation::Finished,
     geometry::{Edges, Point, Points, Size},
     text::TextEngine,
 };
@@ -199,6 +200,8 @@ enum Message {
     Back,
     /// A request finished (its result is in the engine's slot).
     NetworkDone,
+    /// Native animations finished or were interrupted.
+    AnimationFinished(Vec<Finished>),
     /// The engine thread was asked to exit.
     #[cfg(not(target_arch = "wasm32"))]
     Stop,
@@ -275,6 +278,12 @@ impl EngineControl {
     /// none handles it, [`MountSink::back_unhandled`] runs.
     pub fn back(&self) {
         let _ = self.tx.send(Message::Back);
+    }
+
+    /// Reports native animations that finished or were interrupted, so
+    /// the promises JS made settle. Call it on the platform's UI thread.
+    pub fn animations_finished(&self, finished: Vec<Finished>) {
+        let _ = self.tx.send(Message::AnimationFinished(finished));
     }
 }
 
@@ -667,6 +676,9 @@ impl<M: TextEngine> Session<M> {
                 if !handled {
                     self.sink.back_unhandled();
                 }
+            }
+            Message::AnimationFinished(finished) => {
+                self.host.animations_finished(&finished);
             }
             Message::NetworkDone => {}
             #[cfg(not(target_arch = "wasm32"))]

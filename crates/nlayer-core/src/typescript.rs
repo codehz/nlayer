@@ -23,17 +23,24 @@ export type LengthValue = number | `${number}%`;
  * known variables (`max(env(a), env(b))`, also inside that calc). */
 export type EnvValue = `env(${string})` | `calc(${string})` | `max(${string})`;
 
-/** One static transform step. Angles are degrees (`"45deg"`, `"0.5rad"` or a number). */
+/** A value an animation drives (`createAnimatedValue`), usable where a
+ * transform step, `opacity`, `backgroundColor` or `borderColor` takes one. */
+export interface AnimatedNode {
+  readonly __av: number;
+}
+
+/** One transform step. Angles are degrees (`"45deg"`, `"0.5rad"` or a number);
+ * an animated value drives the amount natively. */
 export type TransformStep =
-  | { translateX: number }
-  | { translateY: number }
-  | { scale: number }
-  | { scaleX: number }
-  | { scaleY: number }
-  | { rotate: number | string }
-  | { rotateZ: number | string }
-  | { rotateX: number | string }
-  | { rotateY: number | string }
+  | { translateX: number | AnimatedNode }
+  | { translateY: number | AnimatedNode }
+  | { scale: number | AnimatedNode }
+  | { scaleX: number | AnimatedNode }
+  | { scaleY: number | AnimatedNode }
+  | { rotate: number | string | AnimatedNode }
+  | { rotateZ: number | string | AnimatedNode }
+  | { rotateX: number | string | AnimatedNode }
+  | { rotateY: number | string | AnimatedNode }
   | { perspective: number };
 
 /** `start` / `end` follow the writing direction; `flex-start` / `flex-end` follow the flex direction. */
@@ -111,10 +118,10 @@ pub fn style_declarations() -> String {
     out
 }
 
-/// Drops animated-node unions. v1 does not expose them.
+/// The declared type: the style table's, with the animated-node unions the
+/// graph supports.
 fn public_ts(ts: &str) -> String {
-    ts.replace(" | AnimatedNode", "")
-        .replace("AnimatedNode | ", "")
+    ts.to_owned()
 }
 
 #[cfg(test)]
@@ -133,7 +140,7 @@ mod tests {
         assert!(out.contains("export type FontVariantName"));
         assert!(out.contains("export interface ImageStyle extends ViewStyle"));
         assert!(out.contains("export interface InputStyle extends TextStyle"));
-        assert!(!out.contains("AnimatedNode"), "{out}");
+        assert!(out.contains("export interface AnimatedNode"), "{out}");
         assert!(out.contains("export interface TextStyle extends ViewStyle"));
         assert!(out.contains("EnvValue"));
     }

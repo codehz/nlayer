@@ -35,6 +35,7 @@ const RUNTIME_JS: &str = include_str!("../../nlayer-platform-web/web/browser/run
 const LIST_JS: &str = include_str!("../../nlayer-platform-web/web/browser/list.js");
 const VALUES_JS: &str = include_str!("../../nlayer-platform-web/web/browser/values.js");
 const STORAGE_JS: &str = include_str!("../../nlayer-platform-web/web/browser/storage.js");
+const ANIMATION_JS: &str = include_str!("../../nlayer-platform-web/web/browser/animation.js");
 const HOST_JS: &str = include_str!("../../nlayer-platform-web/web/host.js");
 
 /// How often the app's sources are checked. A save lands on the next poll.
@@ -527,6 +528,7 @@ fn reserved(path: &str) -> bool {
         || path == "browser/list.js"
         || path == "browser/values.js"
         || path == "browser/storage.js"
+        || path == "browser/animation.js"
         || path.starts_with("__nlayer/")
 }
 
@@ -806,6 +808,7 @@ fn host(path: &str) -> Option<(&'static str, &'static str)> {
         "browser/list.js" => ("text/javascript; charset=utf-8", LIST_JS),
         "browser/values.js" => ("text/javascript; charset=utf-8", VALUES_JS),
         "browser/storage.js" => ("text/javascript; charset=utf-8", STORAGE_JS),
+        "browser/animation.js" => ("text/javascript; charset=utf-8", ANIMATION_JS),
         _ => return None,
     };
     Some((mime, text))

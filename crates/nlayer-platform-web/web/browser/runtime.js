@@ -4,6 +4,7 @@
 import { Values } from "./values.js";
 import { createStorage, storagePrefix } from "./storage.js";
 import { createLists } from "./list.js";
+import { createAnimation } from "./animation.js";
 
 /**
  * `options.appId` names the app's `localStorage` prefix (`nlayer.json`'s
@@ -406,6 +407,7 @@ export function createFacade(wasm, requestPump, options = {}) {
     return read;
   }
 
+  const animation = createAnimation();
   const lists = createLists({
     invoke: call,
     values,
@@ -442,6 +444,8 @@ export function createFacade(wasm, requestPump, options = {}) {
     Scroll: (props) => host("scroll", props),
     Input: (props) => host("input", props),
     List: (props) => lists.render(props),
+    createAnimatedValue: animation.api.createAnimatedValue,
+    Animated: animation.api.Animated,
     platform: {
       os: "web",
       colorScheme: () => {
@@ -494,6 +498,7 @@ export function createFacade(wasm, requestPump, options = {}) {
     runtime,
     ui,
     rt,
+    animation,
     event,
     installBoundary,
     dispose() {
@@ -501,6 +506,7 @@ export function createFacade(wasm, requestPump, options = {}) {
       values.closed = true;
       media?.removeEventListener?.("change", onScheme);
       globalThis.removeEventListener?.("popstate", onPopState);
+      animation.dispose();
     },
   };
 }

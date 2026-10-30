@@ -118,6 +118,32 @@ fn storage(cx: *mut JsContext) -> JsValue {
     }
 }
 
+/// `createAnimatedValue`: the animated-value prelude's constructor.
+fn animated_value(cx: *mut JsContext) -> JsValue {
+    // SAFETY: the prelude's object on the global; the property is new.
+    unsafe {
+        let global = qjs::JS_GetGlobalObject(cx);
+        let animated = qjs::JS_GetPropertyStr(cx, global, c"__nlayerAnimated".as_ptr());
+        let value = qjs::JS_GetPropertyStr(cx, animated, c"createAnimatedValue".as_ptr());
+        qjs::JS_FreeValue(cx, animated);
+        qjs::JS_FreeValue(cx, global);
+        value
+    }
+}
+
+/// `Animated`: `{ timing, spring }`.
+fn animated(cx: *mut JsContext) -> JsValue {
+    // SAFETY: the prelude's object on the global; the property is new.
+    unsafe {
+        let global = qjs::JS_GetGlobalObject(cx);
+        let animated = qjs::JS_GetPropertyStr(cx, global, c"__nlayerAnimated".as_ptr());
+        let value = qjs::JS_GetPropertyStr(cx, animated, c"Animated".as_ptr());
+        qjs::JS_FreeValue(cx, animated);
+        qjs::JS_FreeValue(cx, global);
+        value
+    }
+}
+
 /// `Keyboard`: `{ dismiss() }`. The call is `Command::Blur` on the root.
 fn keyboard(cx: *mut JsContext) -> JsValue {
     // SAFETY: a new object; the module takes the function.
@@ -152,6 +178,8 @@ const UI: &[Item] = &[
     ("Scroll", Export::Value(scroll)),
     ("Input", Export::Value(input)),
     ("List", Export::Value(list)),
+    ("createAnimatedValue", Export::Value(animated_value)),
+    ("Animated", Export::Value(animated)),
     ("platform", Export::Value(platform)),
     ("BackHandler", Export::Value(back_handler)),
     ("Keyboard", Export::Value(keyboard)),

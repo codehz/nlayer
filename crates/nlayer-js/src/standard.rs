@@ -9,6 +9,7 @@
 
 use std::ffi::CStr;
 
+use nlayer_core::Op;
 use rquickjs::{Ctx, qjs};
 
 type JsContext = qjs::JSContext;
@@ -454,6 +455,171 @@ const PRELUDE: &str = r#"
 })();
 "#;
 
+const ANIMATION: &str = r##"(function () {
+    var send = globalThis.__nlayerAnimation;
+    if (typeof send !== "function") return;
+    var nextNode = 2, nextAnimation = 2;
+    var ends = new Map();
+    var finalizer = new FinalizationRegistry(function (id) { send([5, id]); });
+    function allocate(kind) {
+        var id = kind === "node" ? nextNode : nextAnimation;
+        if (kind === "node") nextNode += 2; else nextAnimation += 2;
+        if (id >= 0xfffffffe) throw new RangeError("animation IDs exhausted");
+        return id;
+    }
+    function nodeId(value) {
+        if (!value || value.__av === undefined) throw new TypeError("not an animated node");
+        return value.__av;
+    }
+    function valueId(value) {
+        if (!value || !(value instanceof AnimatedValue)) throw new TypeError("not an animated value");
+        return value.__av;
+    }
+    function makeNode(proto, id, inputs) {
+        var node = Object.create(proto);
+        Object.defineProperty(node, "__av", { value: id });
+        if (inputs && inputs.length) Object.defineProperty(node, "__inputs", { value: inputs });
+        finalizer.register(node, id);
+        return node;
+    }
+    function parseColor(input) {
+        if (typeof input === "number") return input >>> 0;
+        var text = String(input).trim().toLowerCase();
+        if (text === "transparent") return 0;
+        var named = { black: 0x000000ff, white: 0xffffffff, red: 0xff0000ff, green: 0x008000ff, blue: 0x0000ffff };
+        if (Object.prototype.hasOwnProperty.call(named, text)) return named[text];
+        if (text[0] === "#") {
+            var hex = text.slice(1);
+            if (hex.length === 3 || hex.length === 4) {
+                hex = hex.split("").map(function (c) { return c + c; }).join("");
+            }
+            if (hex.length === 6) hex += "ff";
+            if (hex.length !== 8 || /[^0-9a-f]/.test(hex)) throw new TypeError("interpolate: invalid color " + input);
+            return parseInt(hex, 16) >>> 0;
+        }
+        var m = /^rgba?\(([^)]+)\)$/.exec(text);
+        if (!m) throw new TypeError("interpolate: invalid color " + input);
+        var parts = m[1].split(/[ ,\/]+/).filter(Boolean).map(Number);
+        if (parts.length < 3 || parts.length > 4 || parts.some(function (n) { return !isFinite(n); })) {
+            throw new TypeError("interpolate: invalid color " + input);
+        }
+        var alpha = parts.length === 4 ? Math.round(parts[3] * 255) : 255;
+        var c = parts.slice(0, 3).map(function (n) { return Math.max(0, Math.min(255, Math.round(n))); });
+        return ((c[0] << 24) | (c[1] << 16) | (c[2] << 8) | (alpha & 255)) >>> 0;
+    }
+    function easing(value) {
+        if (value === undefined || value === "linear") return [0];
+        if (value === "ease") return [1];
+        if (value === "ease-in") return [2];
+        if (value === "ease-out") return [3];
+        if (value === "ease-in-out") return [4];
+        if (Array.isArray(value)) {
+            if (value.length !== 4) throw new TypeError("easing: cubic-bezier takes four numbers");
+            return [5].concat(value.map(Number));
+        }
+        if (typeof value === "object" && value) {
+            if (value.steps !== undefined) return [6, Math.max(1, Number(value.steps) | 0), String(value.position || "end")];
+        }
+        if (typeof value === "string") {
+            var bezier = /^cubic-bezier\(([^)]+)\)$/.exec(value);
+            if (bezier) return [5].concat(bezier[1].split(",").map(Number));
+            var steps = /^steps\(([^)]+)\)$/.exec(value);
+            if (steps) {
+                var parts = steps[1].split(",").map(function (s) { return s.trim(); });
+                return [6, Math.max(1, Number(parts[0]) | 0), parts[1] || "end"];
+            }
+        }
+        throw new TypeError("easing: unsupported value");
+    }
+    function driver(node, config, spring) {
+        config = config || {};
+        var to = Number(config.toValue);
+        if (!isFinite(to)) throw new TypeError("animation: toValue must be a number");
+        if (spring) {
+            return [1, to,
+                config.stiffness === undefined ? 170 : Number(config.stiffness),
+                config.damping === undefined ? 26 : Number(config.damping),
+                config.mass === undefined ? 1 : Number(config.mass),
+                config.velocity === undefined ? null : Number(config.velocity)];
+        }
+        return [0, to,
+            config.duration === undefined ? 300 : Math.max(0, Number(config.duration)),
+            easing(config.easing === undefined ? "ease-in-out" : config.easing),
+            config.delay === undefined ? 0 : Math.max(0, Number(config.delay))];
+    }
+    function start(id, driverData) {
+        var animation = allocate("animation");
+        var promise = new Promise(function (resolve) { ends.set(animation, { resolve: resolve, read: false }); });
+        send([3, id, animation, driverData]);
+        return promise;
+    }
+    function AnimatedNode() {}
+    function AnimatedValue(value) {
+        var id = allocate("node");
+        send([0, id, Number(value === undefined ? 0 : value)]);
+        return makeNode(AnimatedValue.prototype, id, []);
+    }
+    Object.setPrototypeOf(AnimatedValue.prototype, AnimatedNode.prototype);
+    Object.assign(AnimatedNode.prototype, {
+        interpolate: function (config) {
+            config = config || {};
+            if (!Array.isArray(config.inputRange) || !Array.isArray(config.outputRange)) {
+                throw new TypeError("interpolate: inputRange and outputRange must be arrays");
+            }
+            var colors = config.outputRange.length > 0 && typeof config.outputRange[0] !== "number";
+            var output = colors ? config.outputRange.map(parseColor) : config.outputRange.map(Number);
+            var id = allocate("node");
+            var side = config.extrapolate === "extend" ? 1 : 0;
+            send([1, id, nodeId(this), config.inputRange.map(Number), output, colors,
+                config.extrapolateLeft === "extend" ? 1 : side,
+                config.extrapolateRight === "extend" ? 1 : side,
+                easing(config.easing)]);
+            return makeNode(Object.getPrototypeOf(this), id, [this]);
+        }
+    });
+    Object.assign(AnimatedValue.prototype, {
+        set: function (value) { send([2, valueId(this), Number(value)]); },
+        timing: function (config) { return start(valueId(this), driver(valueId(this), config, false)); },
+        spring: function (config) { return start(valueId(this), driver(valueId(this), config, true)); },
+        stop: function () {
+            var id = valueId(this);
+            send([4, id]);
+            var request = allocate("animation");
+            var promise = new Promise(function (resolve) { ends.set(request, { resolve: resolve, read: true }); });
+            send([6, id, request]);
+            return promise;
+        },
+        getValue: function () {
+            var request = allocate("animation");
+            var promise = new Promise(function (resolve) { ends.set(request, { resolve: resolve, read: true }); });
+            send([6, valueId(this), request]);
+            return promise;
+        }
+    });
+    AnimatedValue.prototype.get = AnimatedValue.prototype.getValue;
+    var Animated = {
+        timing: function (value, config) { return value.timing(config); },
+        spring: function (value, config) { return value.spring(config); }
+    };
+    function __nlayerAnimationFinished(rows) {
+        for (var i = 0; i < rows.length; i++) {
+            var row = rows[i];
+            var end = ends.get(row[0]);
+            if (!end) continue;
+            ends.delete(row[0]);
+            if (end.read) end.resolve(row[2] === null ? 0 : row[2]);
+            else end.resolve({ finished: !!row[1] });
+        }
+    }
+    Object.defineProperty(globalThis, "__nlayerAnimationFinished", { value: __nlayerAnimationFinished });
+    Object.defineProperty(globalThis, "__nlayerAnimated", {
+        value: { createAnimatedValue: AnimatedValue, Animated: Animated },
+        writable: false
+    });
+})();
+
+"##;
+
 type Native = unsafe extern "C" fn(*mut JsContext, JsValue, i32, *mut JsValue) -> JsValue;
 
 pub(crate) fn new_function(cx: *mut JsContext, name: &CStr, f: Native, length: i32) -> JsValue {
@@ -547,6 +713,44 @@ pub(crate) fn set_global(cx: *mut JsContext, name: &CStr, value: JsValue) {
     }
 }
 
+/// `__nlayerAnimation(op)`: the animated-value prelude queues one graph
+/// operation for the renderer.
+fn animation(cx: *mut JsContext) {
+    // SAFETY: a new C function; the global object takes it.
+    unsafe {
+        let f = qjs::JS_NewCFunction2(
+            cx,
+            Some(animation_op),
+            c"__nlayerAnimation".as_ptr(),
+            1,
+            qjs::JSCFunctionEnum_JS_CFUNC_generic,
+            0,
+        );
+        set_global(cx, c"__nlayerAnimation", f);
+    }
+}
+
+unsafe extern "C" fn animation_op(
+    cx: *mut JsContext,
+    _this: JsValue,
+    argc: i32,
+    argv: *mut JsValue,
+) -> JsValue {
+    if argc < 1 {
+        return qjs::JS_UNDEFINED;
+    }
+    // SAFETY: QuickJS passes `argc` values; decoding reads a dup.
+    let value = unsafe { *argv };
+    let js_cx = unsafe { rquickjs::Ctx::from_raw(std::ptr::NonNull::new_unchecked(cx)) };
+    let value = unsafe { rquickjs::Value::from_raw(js_cx, qjs::JS_DupValue(cx, value)) };
+    match crate::protocol::decode_animation(value) {
+        Ok(Some(op)) => crate::dom::push_op(cx, Op::Animation(op)),
+        Ok(None) => log::warn!("animation: malformed operation"),
+        Err(error) => log::warn!("animation: {error}"),
+    }
+    qjs::JS_UNDEFINED
+}
+
 /// Installs the platform API into a fresh context.
 pub(crate) fn install(cx: &Ctx<'_>) {
     let raw = cx.as_raw().as_ptr();
@@ -559,6 +763,7 @@ pub(crate) fn install(cx: &Ctx<'_>) {
     url(cx);
     network(raw);
     crate::storage::install(raw);
+    animation(raw);
     // SAFETY: a classic script's completion value is freed.
     unsafe {
         // QuickJS reads up to the NUL it requires after the source.
@@ -578,6 +783,29 @@ pub(crate) fn install(cx: &Ctx<'_>) {
             if !text.is_null() {
                 log::error!(
                     "nlayer:standard: {}",
+                    CStr::from_ptr(text).to_string_lossy()
+                );
+                qjs::JS_FreeCString(raw, text);
+            }
+            qjs::JS_FreeValue(raw, exception);
+        }
+        qjs::JS_FreeValue(raw, value);
+        let mut source = ANIMATION.to_owned();
+        let len = source.len();
+        source.push('\0');
+        let value = qjs::JS_Eval(
+            raw,
+            source.as_ptr().cast::<std::ffi::c_char>(),
+            len as _,
+            c"nlayer:animation".as_ptr(),
+            (qjs::JS_EVAL_TYPE_GLOBAL) as i32,
+        );
+        if qjs::JS_IsException(value) {
+            let exception = qjs::JS_GetException(raw);
+            let text = qjs::JS_ToCStringLen(raw, std::ptr::null_mut(), exception);
+            if !text.is_null() {
+                log::error!(
+                    "nlayer:animation: {}",
                     CStr::from_ptr(text).to_string_lossy()
                 );
                 qjs::JS_FreeCString(raw, text);

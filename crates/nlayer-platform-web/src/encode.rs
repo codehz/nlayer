@@ -23,6 +23,7 @@ use std::fmt::Write as _;
 use nlayer_core::{
     Color, Command, EventKind, EventMask, InputConfig, Interaction, KeyboardType, MountBatch,
     MountItem, NodeId, ResizeMode, ViewKind,
+    animation::AnimationProp,
     geometry::{DefiniteLength, Points, REM_SIZE, relative},
     style::{BorderStyle, TextAlign, TextStyle, TransformOrigin, ViewStyle},
     text::{AttributedText, ResolvedTextStyle},
@@ -114,6 +115,26 @@ impl Encoder {
                     .class_arg(border)
                     .end();
                 push_transform(out, *id, &style.transform);
+            }
+            MountItem::Animation(_) => {
+                // The page's animation graph takes the ops directly.
+            }
+            MountItem::AnimationBindings { id, bindings } => {
+                let mut json = String::from("[");
+                for (i, (prop, node)) in bindings.iter().enumerate() {
+                    if i > 0 {
+                        json.push(',');
+                    }
+                    json.push('[');
+                    json.push('"');
+                    json.push_str(&animation_prop_name(*prop));
+                    json.push('"');
+                    json.push(',');
+                    json.push_str(&node.to_string());
+                    json.push(']');
+                }
+                json.push(']');
+                out.item("ab").num(*id).raw(&json).end();
             }
             MountItem::Text {
                 id, text, content, ..
@@ -753,6 +774,15 @@ fn push_transform(out: &mut Out, id: NodeId, transform: &Transform) {
     }
     steps.push(']');
     out.raw(&steps).end();
+}
+
+fn animation_prop_name(prop: AnimationProp) -> String {
+    match prop {
+        AnimationProp::Opacity => "opacity".to_owned(),
+        AnimationProp::BackgroundColor => "backgroundColor".to_owned(),
+        AnimationProp::BorderColor => "borderColor".to_owned(),
+        AnimationProp::Transform(i) => format!("transform:{i}"),
+    }
 }
 
 fn transform_name(kind: TransformKind) -> &'static str {

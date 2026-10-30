@@ -234,3 +234,22 @@ Copied files:
   `crates/nsh-core/src/animation/{mod,ops,graph,driver}.rs` (values,
   interpolation and the timing and spring drivers; composites, decay,
   diffClamp, math nodes, offsets, canvas and component slots are not copied)
+- `Style::animated`, `StyleDecl::Animated`, the transform node slots and
+  `MountItem::{Animation, AnimationBindings}` from `nsh_core::style` /
+  `nsh_core::mount` / `nsh_core::core` (the v2 view properties only)
+- `crates/nlayer-js/src/animated` behavior in the prelude's
+  `__nlayerAnimated` from `crates/nsh-js/src/animated.rs` (values,
+  interpolation, timing, spring, stop and finalizers; composites, decay,
+  offsets, math nodes, motions and layout animation are not copied)
+- `crates/nlayer-platform-ios/src/animation.rs` from
+  `crates/nsh-platform-ios/src/animation.rs` (CADisplayLink, the graph and
+  finished reports)
+- `crates/nlayer-platform-android/src/animation.rs` and the Java
+  `Choreographer` loop from `crates/nsh-platform-android/src/animation.rs`
+  and `Mounter.java` (graph on the UI thread, encoded style frames)
+- `crates/nlayer-platform-web/web/browser/animation.js` from
+  `crates/nsh-platform-web/src/animation.rs` / web `animation.js` (the page
+  graph and DOM writes; composites, decay, diffClamp, canvas and component
+  slots are not copied)
+- `crates/nlayer-testing`'s animation clock from
+  `crates/nsh-testing/src/headless/animation.rs` (60 Hz deterministic clock)

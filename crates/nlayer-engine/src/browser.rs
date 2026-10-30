@@ -18,6 +18,9 @@ pub trait Bridge {
     fn bind_list(&self, list: NodeId, binds: &[(u32, u32)]);
     /// `platform.os` for this surface. The web runtime reports `"web"` itself.
     fn set_os(&self, os: Os);
+    /// Native animations finished or were interrupted. The page resolves
+    /// its own animation promises, so it usually has nothing to do.
+    fn animations_finished(&self, _finished: &[nlayer_core::animation::Finished]) {}
 }
 
 thread_local! {
@@ -64,6 +67,10 @@ impl Script {
 
     pub(crate) fn bind_list(&self, list: NodeId, binds: &[(u32, u32)]) {
         self.0.bind_list(list, binds);
+    }
+
+    pub(crate) fn animations_finished(&self, finished: &[nlayer_core::animation::Finished]) {
+        self.0.animations_finished(finished);
     }
 
     pub(crate) fn next_timer(&self) -> Option<std::time::Duration> {

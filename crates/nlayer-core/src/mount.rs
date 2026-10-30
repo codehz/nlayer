@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use crate::{
+    animation::{AnimationOp, AnimationProp, NodeId as AnimationNode},
     geometry::{Bounds, Points, Size},
     ops::{
         Command, EventMask, ImageSource, Interaction, KeyboardDismiss, KeyboardTaps, KeyboardType,
@@ -190,6 +191,17 @@ pub enum MountItem {
         id: NodeId,
         /// The name, or `None` when it was cleared.
         test_id: Option<Arc<str>>,
+    },
+    /// A change to the animation graph. It precedes the bindings that use
+    /// the nodes it makes.
+    Animation(AnimationOp),
+    /// Bind visual properties to animation nodes. Replaces the previous
+    /// set; an empty set clears it.
+    AnimationBindings {
+        /// View.
+        id: NodeId,
+        /// Property bindings.
+        bindings: Vec<(AnimationProp, AnimationNode)>,
     },
     /// An imperative call (`scrollTo`).
     Command {

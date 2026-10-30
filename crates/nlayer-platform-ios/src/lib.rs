@@ -24,6 +24,8 @@
 use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "ios")]
+mod animation;
+#[cfg(target_os = "ios")]
 mod app;
 #[cfg(target_os = "ios")]
 mod driver;

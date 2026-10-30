@@ -7,6 +7,7 @@ use nlayer_core::{
     AccessibilityProp, AccessibilityRole, AccessibilityState, AccessibilityValue, CellSlot,
     Checked, ImageScales, ImageSource, Interaction, KeyboardDismiss, KeyboardTaps, KeyboardType,
     NodeId, Op, Prop, Tag,
+    animation::{AnimationOp, AnimationProp, Driver, Easing, Extrapolate, StepPosition},
     geometry::{Points, Size},
     style::{
         Style, StyleDecl, StyleError, StylePatch, StyleValue, TextStyle, TransformProperty,
@@ -435,6 +436,22 @@ fn style_entries<'js>(
     Ok(())
 }
 
+/// The animation node an animated value carries (`createAnimatedValue`).
+/// An object without a number `__av` is an ordinary style object.
+fn animated_node(value: &Value<'_>) -> Option<u32> {
+    let object = value.as_object()?;
+    let node = object.get::<_, Option<f64>>("__av").ok()??;
+    (node.is_finite() && node >= 0.0 && node <= f64::from(u32::MAX)).then_some(node as u32)
+}
+
+/// The amount a transform step keeps while an animation node drives it.
+fn identity_amount(kind: TransformKind) -> f32 {
+    match kind {
+        TransformKind::Scale | TransformKind::ScaleX | TransformKind::ScaleY => 1.0,
+        _ => 0.0,
+    }
+}
+
 fn decode_style<'js>(
     entries: Vec<(String, Value<'js>)>,
     warnings: &mut Warnings,
@@ -481,6 +498,23 @@ fn decode_style<'js>(
             }
             continue;
         }
+        if let Some((property, kind)) = match key.as_str() {
+            "translate" => Some((TransformProperty::Translate, TransformKind::TranslateX)),
+            "rotate" => Some((TransformProperty::Rotate, TransformKind::Rotate)),
+            "scale" => Some((TransformProperty::Scale, TransformKind::Scale)),
+            _ => None,
+        } && let Some(node) = animated_node(&value)
+        {
+            let steps = vec![(kind, identity_amount(kind), Some(node))];
+            let decl = StyleDecl::SetTransform(property, steps.into());
+            if patch.push(&mut style, decl).is_err() {
+                warnings.warn(format!(
+                    "too many transforms (at most {})",
+                    nlayer_core::MAX_TRANSFORMS
+                ));
+            }
+            continue;
+        }
         if let Some(property) = axis_property(&key)
             && let Some(items) = value.as_array()
         {
@@ -493,6 +527,14 @@ fn decode_style<'js>(
                         nlayer_core::MAX_TRANSFORMS
                     ));
                 }
+            }
+            continue;
+        }
+        if let Some(prop) = AnimationProp::from_name(&key)
+            && let Some(node) = animated_node(&value)
+        {
+            if let Err(error) = patch.push(&mut style, StyleDecl::Animated(prop, node)) {
+                warnings.warn(format!("style `{key}`: {error:?}"));
             }
             continue;
         }
@@ -542,7 +584,9 @@ fn transform_list(
             let Some(kind) = TransformKind::parse(&key) else {
                 continue;
             };
-            if let Some(amount) = transform_amount(kind, &value) {
+            if let Some(node) = animated_node(&value) {
+                steps.push((kind, identity_amount(kind), Some(node)));
+            } else if let Some(amount) = transform_amount(kind, &value) {
                 steps.push((kind, amount, None));
             }
         }
@@ -602,20 +646,23 @@ fn transform_axes(
             (false, 0, _) => TransformKind::ScaleX,
             (false, _, _) => TransformKind::ScaleY,
         };
-        let step = if let Some(n) = item.as_number() {
-            Some((kind, n as f32))
+        let step = if let Some(node) = animated_node(&item) {
+            Some((kind, identity_amount(kind), Some(node)))
+        } else if let Some(n) = item.as_number() {
+            Some((kind, n as f32, None))
         } else if let Some(text) = item.as_string() {
             let text = text.to_string()?;
             if translate {
-                nlayer_core::transform::translation(i == 1, &text).map(|op| (op.kind, op.value))
+                nlayer_core::transform::translation(i == 1, &text)
+                    .map(|op| (op.kind, op.value, None))
             } else {
-                scale_amount(&text).map(|value| (kind, value))
+                scale_amount(&text).map(|value| (kind, value, None))
             }
         } else {
             None
         };
         match step {
-            Some((kind, value)) => steps.push((kind, value, None)),
+            Some((kind, value, node)) => steps.push((kind, value, node)),
             None => {
                 warnings.warn(format!("invalid value in style `{key}`"));
                 return Ok(None);
@@ -632,4 +679,127 @@ fn scale_amount(text: &str) -> Option<f32> {
         Some(percent) => percent.trim().parse::<f32>().ok().map(|n| n / 100.0),
         None => text.parse().ok(),
     }
+}
+
+/// Decodes one animation op from the array the animated-value prelude makes.
+///
+/// ```text
+/// [0, node, value]                         // create value
+/// [1, node, input, range, output, colors, left, right, easing]
+/// [2, node, value]                         // set
+/// [3, node, animation, driver]
+/// [4, node]                                // stop
+/// [5, node]                                // release
+/// [6, node, request]                       // read
+/// ```
+pub(crate) fn decode_animation<'js>(value: Value<'js>) -> rquickjs::Result<Option<AnimationOp>> {
+    let Some(array) = value.as_array() else {
+        return Ok(None);
+    };
+    let code = array.get::<u32>(0).unwrap_or(u32::MAX);
+    let node = array.get::<u32>(1).unwrap_or(0);
+    let op = match code {
+        0 => AnimationOp::CreateValue {
+            node,
+            value: array.get::<f64>(2).unwrap_or(0.0) as f32,
+        },
+        1 => {
+            let input = array.get::<u32>(2)?;
+            let range = numbers(&array.get::<Array>(3)?)?;
+            let colors = array.get::<bool>(5).unwrap_or(false);
+            let output = if colors {
+                nlayer_core::animation::Output::Colors(
+                    numbers(&array.get::<Array>(4)?)?
+                        .into_iter()
+                        .map(|n| n as u32)
+                        .collect(),
+                )
+            } else {
+                nlayer_core::animation::Output::Numbers(numbers(&array.get::<Array>(4)?)?)
+            };
+            AnimationOp::CreateInterpolate {
+                node,
+                input,
+                input_range: range,
+                output,
+                extrapolate_left: extrapolate(array.get::<u32>(6).unwrap_or(0)),
+                extrapolate_right: extrapolate(array.get::<u32>(7).unwrap_or(0)),
+                easing: easing(&array.get::<Array>(8)?)?,
+            }
+        }
+        2 => AnimationOp::Set {
+            node,
+            value: array.get::<f64>(2).unwrap_or(0.0) as f32,
+        },
+        3 => AnimationOp::Start {
+            node,
+            animation: array.get::<u32>(2)?,
+            driver: driver(&array.get::<Array>(3)?)?,
+        },
+        4 => AnimationOp::Stop { node },
+        5 => AnimationOp::Release { node },
+        6 => AnimationOp::Read {
+            node,
+            request: array.get::<u32>(2)?,
+        },
+        _ => return Ok(None),
+    };
+    Ok(Some(op))
+}
+
+fn numbers(array: &Array<'_>) -> rquickjs::Result<Vec<f32>> {
+    let mut out = Vec::with_capacity(array.len());
+    for value in array.iter::<f64>() {
+        out.push(value? as f32);
+    }
+    Ok(out)
+}
+
+fn extrapolate(code: u32) -> Extrapolate {
+    if code == 1 {
+        Extrapolate::Extend
+    } else {
+        Extrapolate::Clamp
+    }
+}
+
+fn easing(array: &Array<'_>) -> rquickjs::Result<Easing> {
+    let code = array.get::<u32>(0).unwrap_or(0);
+    Ok(match code {
+        1 => Easing::Ease,
+        2 => Easing::EaseIn,
+        3 => Easing::EaseOut,
+        4 => Easing::EaseInOut,
+        5 => Easing::Bezier(
+            array.get::<f64>(1).unwrap_or(0.0) as f32,
+            array.get::<f64>(2).unwrap_or(0.0) as f32,
+            array.get::<f64>(3).unwrap_or(1.0) as f32,
+            array.get::<f64>(4).unwrap_or(1.0) as f32,
+        ),
+        6 => Easing::Steps(
+            array.get::<u32>(1).unwrap_or(1),
+            StepPosition::parse(&array.get::<String>(2).unwrap_or_default()).unwrap_or_default(),
+        ),
+        _ => Easing::Linear,
+    })
+}
+
+fn driver(array: &Array<'_>) -> rquickjs::Result<Driver> {
+    let code = array.get::<u32>(0).unwrap_or(0);
+    Ok(if code == 1 {
+        Driver::Spring {
+            to: array.get::<f64>(1).unwrap_or(0.0) as f32,
+            stiffness: array.get::<f64>(2).unwrap_or(170.0) as f32,
+            damping: array.get::<f64>(3).unwrap_or(26.0) as f32,
+            mass: array.get::<f64>(4).unwrap_or(1.0) as f32,
+            velocity: array.get::<Option<f64>>(5)?.map(|v| v as f32),
+        }
+    } else {
+        Driver::Timing {
+            to: array.get::<f64>(1).unwrap_or(0.0) as f32,
+            duration_ms: array.get::<f64>(2).unwrap_or(300.0) as f32,
+            easing: easing(&array.get::<Array>(3)?)?,
+            delay_ms: array.get::<f64>(4).unwrap_or(0.0) as f32,
+        }
+    })
 }

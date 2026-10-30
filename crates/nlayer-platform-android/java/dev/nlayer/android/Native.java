@@ -13,6 +13,12 @@ final class Native {
 
   static native void resize(long handle, float widthDp, float heightDp);
 
+  /** Whether the animation graph runs, or a binding still needs its first paint. */
+  static native boolean animating(long handle);
+
+  /** One animation frame at `nanos`; the encoded styles to apply (may be empty). */
+  static native byte[] tick(long handle, long nanos);
+
   static native void insets(
       long handle, float top, float right, float bottom, float left, float keyboard);
 

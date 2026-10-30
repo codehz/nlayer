@@ -44,6 +44,7 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
   "NSDictionary",
   "NSError",
   "NSString",
+  "NSRunLoop",
   "block2",
   "NSOperation",
   "NSURL",
@@ -130,6 +131,8 @@ objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
   "CALayer",
   "CATransaction",
   "CATransform3D",
+  "CADisplayLink",
+  "CAFrameRateRange",
   "CAShapeLayer",
 ] }
 objc2-image-io = { version = "0.3.2", default-features = false, features = [

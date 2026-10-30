@@ -71,6 +71,8 @@ mod dirty {
     pub(super) const SELECTION: u32 = 1 << 11;
     /// The list needs its window recomputed.
     pub(super) const LIST: u32 = 1 << 12;
+    /// Emit [`crate::MountItem::AnimationBindings`].
+    pub(super) const ANIMATION: u32 = 1 << 13;
 }
 
 /// Host kind.
@@ -218,6 +220,9 @@ struct Node {
     /// Layout style kept while a text block is a span (no layout node).
     base_layout: Option<Box<TaffyStyle>>,
     view_style: ViewStyle,
+    /// Visual properties driven by animation nodes; they override the
+    /// static values while bound.
+    animated: Vec<(crate::animation::AnimationProp, crate::animation::NodeId)>,
     text_style: TextStyle,
     /// `numberOfLines` (`Some(0)`: no clamp).
     number_of_lines: Option<u32>,
@@ -281,6 +286,7 @@ impl Node {
             layout: None,
             base_layout: None,
             view_style: ViewStyle::default(),
+            animated: Vec::new(),
             text_style: TextStyle::default(),
             number_of_lines: None,
             ellipsize: None,
@@ -539,6 +545,10 @@ impl<M: TextEngine> Core<M> {
                 }
                 Ok(())
             }
+            Op::Animation(op) => {
+                self.mount.push(MountItem::Animation(op));
+                Ok(())
+            }
             Op::SetStyle { id, style, .. } => self.set_style(id, *style),
             Op::SetProp { id, prop } => self.set_prop(id, prop),
             Op::Listen { id, event, enabled } => {
@@ -700,6 +710,7 @@ impl<M: TextEngine> Core<M> {
             logical,
             z_index,
             direction,
+            animated,
             pending,
             ..
         } = style;
@@ -723,8 +734,10 @@ impl<M: TextEngine> Core<M> {
         let text_changed = node.text_style != text || span_background_changed || lines_changed;
         node.rtl = rtl;
         let view_changed = node.view_style != view;
+        let animation_changed = node.animated != animated;
         let z_changed = node.z_index != z_index;
         node.view_style = view;
+        node.animated = animated;
         node.text_style = text;
         node.number_of_lines = pending.number_of_lines;
         node.ellipsize = pending.text_overflow;
@@ -777,6 +790,9 @@ impl<M: TextEngine> Core<M> {
         }
         if view_changed {
             self.mark(key, dirty::VIEW);
+        }
+        if animation_changed {
+            self.mark(key, dirty::ANIMATION);
         }
         if fit_changed {
             self.mark(key, dirty::IMAGE);
@@ -1330,6 +1346,9 @@ impl<M: TextEngine> Core<M> {
         if node.view_style != ViewStyle::default() {
             flags |= dirty::VIEW;
         }
+        if !node.animated.is_empty() {
+            flags |= dirty::ANIMATION;
+        }
         if !node.events.is_empty() {
             flags |= dirty::EVENTS;
         }
@@ -1437,6 +1456,11 @@ impl<M: TextEngine> Core<M> {
             if flags & dirty::VIEW != 0 {
                 let style = self.mounted_view_style(key);
                 self.mount.push(MountItem::ViewStyle { id, style });
+            }
+            if flags & dirty::ANIMATION != 0 {
+                let bindings = self.nodes[key as usize].animated.clone();
+                self.mount
+                    .push(MountItem::AnimationBindings { id, bindings });
             }
             if flags & dirty::EVENTS != 0 {
                 let events = self.nodes[key as usize].events;
@@ -3711,6 +3735,68 @@ mod tests {
         assert_eq!(uri.as_deref(), Some("asset:/logo.png"));
         c.set_pixel_ratio(1.0);
         assert!(c.commit().is_none());
+    }
+
+    #[test]
+    fn animated_style_binds_properties_to_nodes() {
+        use crate::animation::{AnimationOp, AnimationProp};
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::View,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: crate::ops::ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let mut style = sized(10.0, 10.0);
+        style.animated = vec![
+            (AnimationProp::Opacity, 7),
+            (AnimationProp::BackgroundColor, 9),
+            (AnimationProp::Transform(0), 11),
+        ];
+        apply_style(&mut c, 2, style);
+        c.apply(Op::Animation(AnimationOp::CreateValue {
+            node: 7,
+            value: 0.5,
+        }))
+        .unwrap();
+        let batch = c.commit().expect("a frame");
+        let animation = batch
+            .items
+            .iter()
+            .position(|item| matches!(item, MountItem::Animation(_)))
+            .expect("the graph op");
+        let bindings = batch
+            .items
+            .iter()
+            .position(|item| matches!(item, MountItem::AnimationBindings { id: 2, .. }))
+            .expect("the bindings");
+        assert!(animation < bindings, "graph ops precede bindings");
+        let MountItem::AnimationBindings { bindings, .. } = &batch.items[bindings] else {
+            unreachable!()
+        };
+        assert_eq!(
+            bindings,
+            &[
+                (AnimationProp::Opacity, 7),
+                (AnimationProp::BackgroundColor, 9),
+                (AnimationProp::Transform(0), 11),
+            ]
+        );
+
+        let mut style = sized(10.0, 10.0);
+        style.animated = vec![(AnimationProp::BorderColor, 13)];
+        apply_style(&mut c, 2, style);
+        let batch = c.commit().expect("a frame");
+        assert!(batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::AnimationBindings { id: 2, bindings }
+                if bindings == &[(AnimationProp::BorderColor, 13)]
+        )));
     }
 
     fn mounted_text(batch: &MountBatch, id: NodeId) -> Arc<AttributedText> {

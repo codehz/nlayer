@@ -57,3 +57,26 @@ ops::AccessibilityValue.min                                     # a screen-reade
 ops::AccessibilityValue.max                                     # a screen-reader range value (unitless)
 ops::AccessibilityValue.now                                     # a screen-reader range value (unitless)
 ops::Prop::LoadMoreThreshold.0                                   # a distance to the end in viewports
+animation::graph::Graph::tick(now)                               # seconds since the graph's epoch
+animation::graph::Graph::value ->                                # an animated value (a number the graph interpolates)
+animation::ops::AnimationOp::CreateInterpolate.input_range        # interpolation breakpoints (value units)
+animation::ops::AnimationOp::CreateValue.value                    # an animated value (a number the graph interpolates)
+animation::ops::AnimationOp::Set.value                            # an animated value (a number the graph interpolates)
+animation::ops::AnimationValue::Number.0                          # an animated value (a number or color)
+animation::ops::AnimationValue::number ->                         # an animated value (a number or color)
+animation::ops::Driver::Spring.damping                            # spring damping coefficient
+animation::ops::Driver::Spring.mass                               # spring mass
+animation::ops::Driver::Spring.stiffness                          # spring stiffness coefficient
+animation::ops::Driver::Spring.to                                 # an animated value (a number the graph interpolates)
+animation::ops::Driver::Spring.velocity                           # an animated value per second
+animation::ops::Driver::Timing.delay_ms                           # time in milliseconds
+animation::ops::Driver::Timing.duration_ms                        # time in milliseconds
+animation::ops::Driver::Timing.to                                 # an animated value (a number the graph interpolates)
+animation::ops::Easing::Bezier.0                                  # easing curve coordinates (unit square)
+animation::ops::Easing::Bezier.1                                  # easing curve coordinates (unit square)
+animation::ops::Easing::Bezier.2                                  # easing curve coordinates (unit square)
+animation::ops::Easing::Bezier.3                                  # easing curve coordinates (unit square)
+animation::ops::Finished.value                                    # an animated value (a number the graph interpolates)
+animation::ops::Output::Numbers.0                                 # interpolation outputs (value units)
+animation::graph::Graph::set(value)                                 # an animated value (a number the graph interpolates)
+transform::Transform::set(value)                                # a transform operand (any of its kinds' units)

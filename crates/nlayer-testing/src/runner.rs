@@ -218,6 +218,10 @@ pub trait HostedApp {
     }
     /// Scrolls toward the end of the content by `distance` points.
     fn scroll(&mut self, selector: &str, distance: f32) -> Result<(), String>;
+    /// Advances the deterministic test clock by `ms` milliseconds.
+    fn advance(&mut self, _ms: f64) -> Result<(), String> {
+        Err("this host has no test clock".to_owned())
+    }
     /// Waits until `selector` names one view that is on screen.
     fn wait_for(&mut self, selector: &str) -> Result<(), String>;
     /// The mounted tree: kind, text, input, frame.
@@ -642,6 +646,12 @@ struct WaitRequest {
     selector: String,
 }
 
+#[derive(Deserialize)]
+struct AdvanceRequest {
+    id: usize,
+    ms: f64,
+}
+
 impl Session {
     fn call(&mut self, op: &str, payload: &str) -> Result<String, String> {
         match op {
@@ -689,6 +699,12 @@ impl Session {
                     serde_json::from_str(payload).map_err(|e| e.to_string())?;
                 self.app_mut(request.id)?
                     .scroll(&request.selector, request.distance as f32)?;
+                Ok("null".to_owned())
+            }
+            "advance" => {
+                let request: AdvanceRequest =
+                    serde_json::from_str(payload).map_err(|e| e.to_string())?;
+                self.app_mut(request.id)?.advance(request.ms)?;
                 Ok("null".to_owned())
             }
             "waitFor" => {
@@ -869,6 +885,11 @@ impl HostedApp for HeadlessApp {
         self.app()?.scroll_selector(selector, distance)
     }
 
+    fn advance(&mut self, ms: f64) -> Result<(), String> {
+        self.app()?.advance(ms);
+        Ok(())
+    }
+
     fn wait_for(&mut self, selector: &str) -> Result<(), String> {
         self.app()?.wait_selector(selector, Duration::from_secs(5))
     }
@@ -947,6 +968,11 @@ fn settle(app: &mut Headless, nudges: u32) {
         }
         left -= 1;
     }
+}
+
+/// `#rrggbbaa` for a packed color.
+fn style_color_hex(color: nlayer_core::style::Color) -> String {
+    format!("#{:08x}", color.0)
 }
 
 fn node_json(node: &TreeNode, screen: &Screen) -> serde_json::Value {
@@ -1057,6 +1083,20 @@ fn node_json(node: &TreeNode, screen: &Screen) -> serde_json::Value {
                         "height": size.height.0,
                     }),
                 );
+            }
+        }
+        if let Some(style) = &view.style {
+            map.insert("opacity".into(), style.opacity.into());
+            if !style.background_color.is_transparent() {
+                map.insert(
+                    "backgroundColor".into(),
+                    style_color_hex(style.background_color).into(),
+                );
+            }
+            if style.borders.is_visible()
+                && let Some((_, color)) = style.borders.uniform()
+            {
+                map.insert("borderColor".into(), style_color_hex(color).into());
             }
         }
         if let Some(style) = &view.style

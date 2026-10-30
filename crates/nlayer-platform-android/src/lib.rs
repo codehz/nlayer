@@ -14,6 +14,9 @@
 //! size and visible size. `nlayer test` drives the mounted tree through the
 //! view system's own touch, input connection and scroll view.
 
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+mod animation;
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
 mod encode;
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 mod scene;

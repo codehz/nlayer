@@ -125,6 +125,13 @@ impl Transform {
         Some(i as u8)
     }
 
+    /// Replaces the amount of entry `index`, if the list has one.
+    pub fn set(&mut self, index: u8, value: f32) {
+        if let Some(op) = self.ops.get_mut(index as usize) {
+            op.value = value;
+        }
+    }
+
     /// Whether some entry is a fraction of the view's size.
     pub fn has_fractions(&self) -> bool {
         self.ops().iter().any(|op| {

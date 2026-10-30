@@ -294,6 +294,67 @@ impl Host {
         self.run_jobs();
     }
 
+    /// Reports animations that finished or were interrupted to JS: each
+    /// entry settles the promise its start made.
+    pub fn animations_finished(&self, finished: &[nlayer_core::animation::Finished]) {
+        if finished.is_empty() {
+            return;
+        }
+        self.cx.with(|cx| {
+            let raw = cx.as_raw().as_ptr();
+            // SAFETY: the global the animation prelude made; the array is
+            // new and taken by the call.
+            unsafe {
+                let global = qjs::JS_GetGlobalObject(raw);
+                let done =
+                    qjs::JS_GetPropertyStr(raw, global, c"__nlayerAnimationFinished".as_ptr());
+                if !qjs::JS_IsFunction(raw, done) {
+                    qjs::JS_FreeValue(raw, done);
+                    qjs::JS_FreeValue(raw, global);
+                    return;
+                }
+                let array = qjs::JS_NewArray(raw);
+                for (i, item) in finished.iter().enumerate() {
+                    let value = match item.value {
+                        Some(value) => qjs::JS_NewFloat64(f64::from(value)),
+                        None => qjs::JS_NULL,
+                    };
+                    let mut entry = [
+                        qjs::JS_NewFloat64(f64::from(item.animation)),
+                        if item.finished {
+                            qjs::JS_TRUE
+                        } else {
+                            qjs::JS_FALSE
+                        },
+                        value,
+                    ];
+                    let row = qjs::JS_NewArrayFrom(raw, 3, entry.as_mut_ptr());
+                    qjs::JS_SetPropertyUint32(raw, array, i as u32, row);
+                }
+                let mut args = [array];
+                let r = qjs::JS_Call(raw, done, qjs::JS_UNDEFINED, 1, args.as_mut_ptr());
+                if qjs::JS_IsException(r) {
+                    let e = qjs::JS_GetException(raw);
+                    let text = qjs::JS_ToCStringLen(raw, std::ptr::null_mut(), e);
+                    if !text.is_null() {
+                        log::error!(
+                            "animation: {}",
+                            std::ffi::CStr::from_ptr(text).to_string_lossy()
+                        );
+                        qjs::JS_FreeCString(raw, text);
+                    }
+                    qjs::JS_FreeValue(raw, e);
+                } else {
+                    qjs::JS_FreeValue(raw, r);
+                }
+                qjs::JS_FreeValue(raw, array);
+                qjs::JS_FreeValue(raw, done);
+                qjs::JS_FreeValue(raw, global);
+            }
+        });
+        self.run_jobs();
+    }
+
     /// How long until the first timer is due (`None`: none waits).
     pub fn next_timer(&self) -> Option<Duration> {
         self.cx.with(|cx| {

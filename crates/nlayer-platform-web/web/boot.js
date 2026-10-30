@@ -295,6 +295,7 @@ export async function startPage(root, options = {}) {
     appId: options.appId,
     colorScheme: options.colorScheme,
   });
+  player.setAnimation(facade.animation);
   enter(() => {
     wasm.nlayer_browser_initialize();
     facade.installBoundary();

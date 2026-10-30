@@ -6,6 +6,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.AttributeSet;
+import android.view.Choreographer;
 import android.view.Gravity;
 import android.widget.FrameLayout;
 import java.io.File;
@@ -23,6 +24,9 @@ public final class HostView extends FrameLayout {
   private String code, assetsDir;
   private int safeTop, safeRight, safeBottom, safeLeft, keyboard;
   private boolean served;
+  private boolean framePosted;
+  private boolean inFrame;
+  private static final Object[] NO_OBJECTS = new Object[0];
 
   /** The engine is running: a back button can reach it. */
   private boolean started;
@@ -45,6 +49,26 @@ public final class HostView extends FrameLayout {
     if (Build.VERSION.SDK_INT >= 26) setDefaultFocusHighlightEnabled(false);
     setDescendantFocusability(FOCUS_BEFORE_DESCENDANTS);
     mounter = new Mounter(this);
+  }
+
+  private final Choreographer.FrameCallback animationFrame =
+      new Choreographer.FrameCallback() {
+        public void doFrame(long frameTimeNanos) {
+          framePosted = false;
+          inFrame = true;
+          byte[] bytes = Native.tick(handle, frameTimeNanos);
+          if (bytes != null && bytes.length > 0) mounter.apply(bytes, NO_OBJECTS);
+          inFrame = false;
+          animationChanged();
+        }
+      };
+
+  /** Schedules the animation clock while the graph runs. */
+  void animationChanged() {
+    if (handle == 0 || inFrame || framePosted) return;
+    if (!Native.animating(handle)) return;
+    framePosted = true;
+    Choreographer.getInstance().postFrameCallback(animationFrame);
   }
 
   /** `env(keyboard-inset-height)`, in points. A test pin replaces the live IME. */
@@ -72,6 +96,7 @@ public final class HostView extends FrameLayout {
         new Runnable() {
           public void run() {
             mounter.apply(bytes, objects == null ? new Object[0] : objects);
+            animationChanged();
           }
         });
   }

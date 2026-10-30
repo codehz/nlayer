@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use crate::{
+    animation::AnimationOp,
     geometry::{Bounds, Point, Points, Size},
     style::{ObjectPosition, Style, StylePatch},
 };
@@ -952,6 +953,9 @@ pub enum Op {
         /// Node id.
         id: NodeId,
     },
+    /// A change to the animation graph. A platform applies it before the
+    /// bindings in the same batch.
+    Animation(AnimationOp),
     /// An imperative call. `Keyboard.dismiss` is [`Command::Blur`] on the root.
     Command {
         /// View the call names. Blur ignores it and resigns the focused field.

@@ -7,6 +7,7 @@ use nlayer_core::{
     AccessibilityProp, AccessibilityRole, AccessibilityState, AccessibilityValue, CellSlot,
     Checked, ImageScales, ImageSource, Interaction, KeyboardDismiss, KeyboardTaps, KeyboardType,
     NodeId, Op, Prop, Tag,
+    animation::AnimationProp,
     geometry::{Points, Size},
     style::{
         Style, StyleDecl, StyleError, StylePatch, StyleValue, TextStyle, TransformProperty,
@@ -411,6 +412,23 @@ fn flatten_style(value: &Value, out: &mut Vec<(String, Value)>) -> Result<(), Pr
     Ok(())
 }
 
+/// The animation node an animated value carries (`createAnimatedValue`).
+/// An object without a number `__av` is an ordinary style object.
+fn animated_node(value: &Value) -> Option<u32> {
+    if value.kind() != 7 {
+        return None;
+    }
+    let node = value.get("__av").ok()?.number_value()?;
+    (node.is_finite() && node >= 0.0 && node <= f64::from(u32::MAX)).then_some(node as u32)
+}
+
+fn identity_amount(kind: TransformKind) -> f32 {
+    match kind {
+        TransformKind::Scale | TransformKind::ScaleX | TransformKind::ScaleY => 1.0,
+        _ => 0.0,
+    }
+}
+
 fn decode_style(
     entries: Vec<(String, Value)>,
     warnings: &Warnings,
@@ -450,6 +468,23 @@ fn decode_style(
             }
             continue;
         }
+        if let Some((property, kind)) = match key.as_str() {
+            "translate" => Some((TransformProperty::Translate, TransformKind::TranslateX)),
+            "rotate" => Some((TransformProperty::Rotate, TransformKind::Rotate)),
+            "scale" => Some((TransformProperty::Scale, TransformKind::Scale)),
+            _ => None,
+        } && let Some(node) = animated_node(&value)
+        {
+            let steps = vec![(kind, identity_amount(kind), Some(node))];
+            let decl = StyleDecl::SetTransform(property, steps.into());
+            if patch.push(&mut style, decl).is_err() {
+                warnings.warn(format!(
+                    "too many transforms (at most {})",
+                    nlayer_core::MAX_TRANSFORMS
+                ));
+            }
+            continue;
+        }
         if let Some(property) = axis_property(&key)
             && value.kind() == 5
         {
@@ -461,6 +496,14 @@ fn decode_style(
                         nlayer_core::MAX_TRANSFORMS
                     ));
                 }
+            }
+            continue;
+        }
+        if let Some(prop) = AnimationProp::from_name(&key)
+            && let Some(node) = animated_node(&value)
+        {
+            if let Err(error) = patch.push(&mut style, StyleDecl::Animated(prop, node)) {
+                warnings.warn(format!("style `{key}`: {error:?}"));
             }
             continue;
         }
@@ -508,7 +551,9 @@ fn transform_list(
                 continue;
             };
             let amount = item.get(&key)?;
-            if let Some(amount) = transform_amount(&amount) {
+            if let Some(node) = animated_node(&amount) {
+                steps.push((kind, identity_amount(kind), Some(node)));
+            } else if let Some(amount) = transform_amount(&amount) {
                 steps.push((kind, amount, None));
             }
         }
@@ -565,19 +610,22 @@ fn transform_axes(
             (false, 0, _) => TransformKind::ScaleX,
             (false, _, _) => TransformKind::ScaleY,
         };
-        let step = if let Some(n) = item.number_value() {
-            Some((kind, n as f32))
+        let step = if let Some(node) = animated_node(&item) {
+            Some((kind, identity_amount(kind), Some(node)))
+        } else if let Some(n) = item.number_value() {
+            Some((kind, n as f32, None))
         } else if let Some(text) = item.as_string() {
             if translate {
-                nlayer_core::transform::translation(i == 1, &text).map(|op| (op.kind, op.value))
+                nlayer_core::transform::translation(i == 1, &text)
+                    .map(|op| (op.kind, op.value, None))
             } else {
-                scale_amount(&text).map(|value| (kind, value))
+                scale_amount(&text).map(|value| (kind, value, None))
             }
         } else {
             None
         };
         match step {
-            Some((kind, value)) => steps.push((kind, value, None)),
+            Some((kind, value, node)) => steps.push((kind, value, node)),
             None => {
                 warnings.warn(format!("invalid value in style `{key}`"));
                 return Ok(None);

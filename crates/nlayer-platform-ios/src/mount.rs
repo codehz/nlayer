@@ -31,7 +31,11 @@ use objc2::{
 use objc2_core_foundation::{CGFloat, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::CGImage;
 use objc2_foundation::NSString;
-use objc2_quartz_core::{CALayer, CAShapeLayer, CATransaction, CATransform3D, kCAGravityResize};
+use objc2_foundation::{NSRunLoop, NSRunLoopCommonModes};
+use objc2_quartz_core::{
+    CADisplayLink, CAFrameRateRange, CALayer, CAShapeLayer, CATransaction, CATransform3D,
+    kCAGravityResize,
+};
 use objc2_ui_kit::{
     NSObjectUIAccessibility, UIAccessibilityTraitAdjustable, UIAccessibilityTraitButton,
     UIAccessibilityTraitHeader, UIAccessibilityTraitImage, UIAccessibilityTraitKeyboardKey,
@@ -87,6 +91,8 @@ struct Slot {
     /// `role`, label, hint, state, value and whether the subtree is hidden
     /// from assistive technologies.
     accessibility: nlayer_core::Accessibility,
+    /// Visual properties driven by animation nodes.
+    bindings: Vec<(nlayer_core::animation::AnimationProp, u32)>,
 }
 
 struct Paint {
@@ -121,6 +127,8 @@ struct RelayIvars {
     mounter: std::cell::RefCell<std::rc::Weak<std::cell::RefCell<Mounter>>>,
     /// Engine content size by node id. Not the narrowed native `contentSize`.
     content: RefCell<HashMap<NodeId, (f32, f32)>>,
+    /// The display link driving animations; paused while none run.
+    link: RefCell<Option<Retained<CADisplayLink>>>,
 }
 
 define_class!(
@@ -136,6 +144,14 @@ define_class!(
             // SAFETY: the touch, in the view's coordinates.
             let point: CGPoint = unsafe { msg_send![gesture, locationInView: &*view] };
             self.forward_press(&view, gesture.state(), point);
+        }
+
+        #[unsafe(method(tick:))]
+        fn tick(&self, link: &CADisplayLink) {
+            let Some(shared) = self.ivars().mounter.borrow().upgrade() else {
+                return;
+            };
+            shared.borrow_mut().tick_animation(link.targetTimestamp());
         }
 
         #[unsafe(method(hovered:))]
@@ -337,6 +353,7 @@ impl Relay {
         let this = Self::alloc(mtm).set_ivars(RelayIvars {
             mounter: std::cell::RefCell::new(std::rc::Weak::new()),
             content: RefCell::new(HashMap::new()),
+            link: RefCell::new(None),
         });
         // SAFETY: NSObject's designated initializer.
         unsafe { msg_send![super(this), init] }
@@ -568,6 +585,8 @@ pub(crate) struct Mounter {
     /// Whether this batch moved any frame. Nothing under a narrowed scroll can
     /// have grown otherwise, so that judgement is skipped.
     frames_applied: bool,
+    /// The animation graph, moved by the display link.
+    animator: crate::animation::Animator,
 }
 
 impl Mounter {
@@ -596,9 +615,25 @@ impl Mounter {
             content_sizes: Vec::new(),
             narrowed: Vec::new(),
             frames_applied: false,
+            animator: crate::animation::Animator::default(),
         }));
         CURRENT.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&mounter)));
         relay.bind(Rc::downgrade(&mounter));
+        // SAFETY: `tick:` is implemented by `Relay`, which outlives the
+        // link (the link stays in the relay and is invalidated with it).
+        unsafe {
+            let link = CADisplayLink::displayLinkWithTarget_selector(&relay, sel!(tick:));
+            link.setPaused(true);
+            #[allow(deprecated)]
+            let max = UIScreen::mainScreen(mtm).maximumFramesPerSecond().max(1) as f32;
+            link.setPreferredFrameRateRange(CAFrameRateRange {
+                minimum: max.min(80.0),
+                maximum: max,
+                preferred: max,
+            });
+            link.addToRunLoop_forMode(&NSRunLoop::mainRunLoop(), NSRunLoopCommonModes);
+            *relay.ivars().link.borrow_mut() = Some(link);
+        }
         mounter
     }
 
@@ -830,6 +865,82 @@ impl Mounter {
             scroll.setContentOffset_animated(CGPoint::new(x.0 as CGFloat, y.0 as CGFloat), true);
         }
         self.settle_content_sizes();
+        self.apply_animations();
+        self.report_finished();
+    }
+
+    /// Runs one display frame: the graph moves, bound values are painted,
+    /// and finished animations go back to the engine.
+    fn tick_animation(&mut self, now: f64) {
+        if self.animator.tick(now) {
+            self.apply_animations();
+        }
+        self.report_finished();
+        self.update_link();
+    }
+
+    fn update_link(&mut self) {
+        let animating = self.animator.animating();
+        if let Some(link) = self.relay.ivars().link.borrow().as_ref() {
+            link.setPaused(!animating);
+        }
+    }
+
+    fn report_finished(&mut self) {
+        let finished = self.animator.take_finished();
+        if !finished.is_empty()
+            && let Some(control) = &self.control
+        {
+            control.animations_finished(finished);
+        }
+    }
+
+    /// Paints every bound property over the slot's static style.
+    fn apply_animations(&mut self) {
+        let ids: Vec<NodeId> = self
+            .slots
+            .iter()
+            .enumerate()
+            .filter_map(|(i, slot)| {
+                slot.as_ref()
+                    .is_some_and(|slot| !slot.bindings.is_empty())
+                    .then_some(i as NodeId)
+            })
+            .collect();
+        for id in ids {
+            let Some((view, mut style, bindings, scroll)) = self.slot(id).map(|slot| {
+                (
+                    slot.native.view().retain(),
+                    slot.style.clone(),
+                    slot.bindings.clone(),
+                    matches!(slot.native, Native::Scroll(_)),
+                )
+            }) else {
+                continue;
+            };
+            for (prop, node) in bindings {
+                let value = self.animator.eval(node);
+                match prop {
+                    nlayer_core::animation::AnimationProp::Opacity => {
+                        style.opacity = value.number()
+                    }
+                    nlayer_core::animation::AnimationProp::BackgroundColor => {
+                        style.background_color = nlayer_core::style::Color(value.number() as u32)
+                    }
+                    nlayer_core::animation::AnimationProp::BorderColor => {
+                        style.borders.colors = [nlayer_core::style::Color(value.number() as u32); 4]
+                    }
+                    nlayer_core::animation::AnimationProp::Transform(i) => {
+                        if style.transform.ops().get(i as usize).is_some() {
+                            style.transform.set(i, value.number());
+                        }
+                    }
+                }
+            }
+            if let Some(slot) = self.slot_mut(id) {
+                paint_view(&view, &style, slot, scroll);
+            }
+        }
     }
 
     /// Drops a deleted scroll's engine size and any width still being judged.
@@ -1078,6 +1189,17 @@ impl Mounter {
                     Some(Native::Area(area)) => area.set_content(content),
                     _ => {}
                 }
+            }
+            MountItem::Animation(op) => {
+                self.animator.apply(op.clone());
+                self.update_link();
+            }
+            MountItem::AnimationBindings { id, bindings } => {
+                if let Some(slot) = self.slot_mut(id) {
+                    slot.bindings = bindings.clone();
+                }
+                self.apply_animations();
+                self.update_link();
             }
             MountItem::TestId { id, test_id } => {
                 if let Some(slot) = self.slot_mut(id) {
@@ -1857,6 +1979,7 @@ impl Slot {
             input_content: None,
             keyboard_tap: None,
             accessibility: nlayer_core::Accessibility::default(),
+            bindings: Vec::new(),
         }
     }
 }

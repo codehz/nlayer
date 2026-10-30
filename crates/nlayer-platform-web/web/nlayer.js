@@ -121,6 +121,7 @@ export class Player {
   constructor(root, host = {}, options = {}) {
     this.root = root;
     this.host = host;
+    this.animation = null;
     this.assetBase = options.assetBase ?? "";
     this.doc = root.ownerDocument ?? globalThis.document;
     this.views = new Map();
@@ -148,6 +149,14 @@ export class Player {
   /** `env(keyboard-inset-height)`. A pin of 0 leaves taps alone. */
   setKeyboard(height) {
     this.keyboard = height > 0 ? height : 0;
+  }
+
+  /** The page's animation graph: it writes bound values after the class. */
+  setAnimation(animation) {
+    this.animation = animation;
+    for (const [id, el] of this.views) {
+      if (el._bindings) animation?.bind(id, el, el._bindings);
+    }
   }
 
   apply(batch) {
@@ -272,6 +281,7 @@ export class Player {
   op_d([, id]) {
     const el = this.view(id);
     if (!el) return;
+    this.animation?.unbind(id);
     this.views.delete(id);
     el.remove();
   }
@@ -402,6 +412,14 @@ export class Player {
     };
   }
 
+  /** Animated properties: `[id, [[property, node], …]]`. */
+  op_ab([, id, bindings]) {
+    const el = this.view(id);
+    if (!el) return;
+    el._bindings = bindings;
+    this.animation?.bind(id, el, bindings);
+  }
+
   op_img([, id, uri, mode]) {
     const img = this.view(id)?._img;
     if (!img) return;
@@ -417,6 +435,7 @@ export class Player {
     const el = this.view(id);
     if (!el) return;
     el._transform = Array.isArray(steps) && steps.length ? steps : null;
+    if (el._bindings) this.animation?.bind(id, el, el._bindings);
   }
 
   /**

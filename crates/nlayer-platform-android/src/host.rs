@@ -35,6 +35,7 @@ struct Sink {
 
 impl MountSink for Sink {
     fn submit(&self, batch: nlayer_core::MountBatch) {
+        crate::animation::note(&batch.items);
         let encoded = encode::encode(batch);
         with_env(|env| {
             let bytes = env.byte_array_from_slice(&encoded.bytes)?;
@@ -189,6 +190,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_load(
     } else {
         Size::new(px(1.0), px(1.0))
     };
+    crate::animation::reset();
     let density = host.density.clone();
     let sink = Arc::new(Sink {
         view: host.view.clone(),
@@ -206,6 +208,52 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_load(
             apply_insets(host);
         }
         Err(err) => report(&host.view, &err.message),
+    }
+}
+
+/// # Safety
+///
+/// `handle` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_animating(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+) -> jboolean {
+    if handle == 0 {
+        return 0;
+    }
+    crate::animation::animating() as jboolean
+}
+
+/// # Safety
+///
+/// `handle` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_tick<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    nanos: jlong,
+) -> jni::sys::jbyteArray {
+    if handle == 0 {
+        return std::ptr::null_mut();
+    }
+    let batch = crate::animation::frame(nanos as f64 / 1_000_000_000.0);
+    let finished = crate::animation::take_finished();
+    if !finished.is_empty()
+        && let Some(control) = unsafe { host(handle) }
+            .control
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .as_ref()
+    {
+        control.animations_finished(finished);
+    }
+    let encoded = encode::encode(batch);
+    match env.byte_array_from_slice(&encoded.bytes) {
+        Ok(array) => array.into_raw(),
+        Err(_) => std::ptr::null_mut(),
     }
 }
 

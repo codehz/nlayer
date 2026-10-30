@@ -29,8 +29,9 @@ use crossbeam_channel::{Receiver, unbounded};
 use nlayer_core::{
     Accessibility, Command, EventKind, EventMask, ImageSource, InputConfig, MountBatch, MountItem,
     NodeId, ResizeMode, ViewKind,
+    animation::{AnimationProp, Finished, Graph, NodeId as AnimationNode},
     geometry::{Bounds, Points, Size},
-    style::ViewStyle,
+    style::{Color, ViewStyle},
     text::{ApproxTextEngine, SpanTestId, TextLayout, TextLink},
 };
 use nlayer_engine::{Engine, EngineConfig, EngineError, EventPayload, MountSink};
@@ -50,8 +51,10 @@ pub struct View {
     pub text: Option<String>,
     /// The events it listens to.
     pub events: EventMask,
-    /// Its style, as last mounted.
+    /// Its style, with animated properties applied.
     pub style: Option<Box<ViewStyle>>,
+    /// Its style as last mounted, without animated properties.
+    pub base_style: Option<Box<ViewStyle>>,
     /// An image's source.
     pub source: Option<ImageSource>,
     /// How an image fits its box.
@@ -117,6 +120,12 @@ pub struct Screen {
     views: HashMap<NodeId, View>,
     /// The viewport `open` pinned. Visibility is judged against it.
     viewport: Size<Points>,
+    /// View properties bound to animation nodes.
+    animated: HashMap<NodeId, Vec<(AnimationProp, AnimationNode)>>,
+    /// The animation graph, run by the test clock.
+    graph: Graph,
+    /// Animations that ended since the last report.
+    finished: Vec<Finished>,
 }
 
 /// A node of [`Screen::tree`].
@@ -280,6 +289,7 @@ impl Screen {
                     text: None,
                     events: EventMask::default(),
                     style: None,
+                    base_style: None,
                     source: None,
                     resize_mode: ResizeMode::default(),
                     input: None,
@@ -317,7 +327,10 @@ impl Screen {
                 self.views.get_mut(child).expect("a view").parent = Some(*parent);
             }
             MountItem::Remove { id } => self.detach(*id),
-            MountItem::Delete { id } => self.delete(*id),
+            MountItem::Delete { id } => {
+                self.animated.remove(id);
+                self.delete(*id);
+            }
             MountItem::Frame { id, frame } => {
                 if let Some(view) = self.views.get_mut(id) {
                     view.frame = *frame;
@@ -326,7 +339,9 @@ impl Screen {
             MountItem::ViewStyle { id, style } => {
                 if let Some(view) = self.views.get_mut(id) {
                     view.style = Some(style.clone());
+                    view.base_style = Some(style.clone());
                 }
+                self.apply_animated();
             }
             MountItem::Text {
                 id,
@@ -409,6 +424,23 @@ impl Screen {
                 }
                 Command::ScrollToIndex { .. } | Command::ScrollToEnd { .. } => {}
             },
+            MountItem::Animation(op) => {
+                self.graph.apply(op.clone(), &mut self.finished);
+                self.apply_animated();
+            }
+            MountItem::AnimationBindings { id, bindings } => {
+                if bindings.is_empty() {
+                    self.animated.remove(id);
+                    if let Some(view) = self.views.get_mut(id)
+                        && let Some(base) = &view.base_style
+                    {
+                        view.style = Some(base.clone());
+                    }
+                } else {
+                    self.animated.insert(*id, bindings.clone());
+                }
+                self.apply_animated();
+            }
             MountItem::TestId { id, test_id } => {
                 if let Some(view) = self.views.get_mut(id) {
                     view.test_id = test_id.clone();
@@ -422,6 +454,68 @@ impl Screen {
         }
     }
 
+    /// Applies every bound animation value to its view, over the static
+    /// style. Runs after a frame and after the graph moves.
+    pub fn apply_animated(&mut self) {
+        let ids: Vec<NodeId> = self.animated.keys().copied().collect();
+        for id in ids {
+            let Some(bindings) = self.animated.get(&id).cloned() else {
+                continue;
+            };
+            let Some(view) = self.views.get_mut(&id) else {
+                continue;
+            };
+            if view.base_style.is_none() {
+                view.base_style = Some(Box::default());
+            }
+            if view.style.is_none() {
+                view.style = Some(Box::default());
+            }
+            let Some(style) = view.style.as_mut() else {
+                continue;
+            };
+            if let Some(base) = &view.base_style {
+                **style = (**base).clone();
+            }
+            for (prop, node) in bindings {
+                let value = self.graph.eval(node);
+                match prop {
+                    AnimationProp::Opacity => style.opacity = value.number(),
+                    AnimationProp::BackgroundColor => {
+                        style.background_color = Color(value.number() as u32)
+                    }
+                    AnimationProp::BorderColor => {
+                        style.borders.colors = [Color(value.number() as u32); 4]
+                    }
+                    AnimationProp::Transform(i) => {
+                        if style.transform.ops().get(i as usize).is_some() {
+                            style.transform.set(i, value.number());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Advances the graph to `now` seconds. Returns true if a value moved.
+    pub fn tick_animation(&mut self, now: f64) -> bool {
+        let changed = self.graph.tick(now, &mut self.finished);
+        if changed {
+            self.apply_animated();
+        }
+        changed
+    }
+
+    /// Animations that ended since the last call, for the engine.
+    pub fn take_finished(&mut self) -> Vec<Finished> {
+        std::mem::take(&mut self.finished)
+    }
+
+    /// Whether an animation still runs.
+    pub fn is_animating(&self) -> bool {
+        self.graph.is_animating()
+    }
+
     fn ensure(&mut self, id: NodeId, kind: ViewKind) {
         self.views.entry(id).or_insert_with(|| View {
             kind,
@@ -431,6 +525,7 @@ impl Screen {
             text: None,
             events: EventMask::default(),
             style: None,
+            base_style: None,
             source: None,
             resize_mode: ResizeMode::default(),
             input: None,
@@ -484,7 +579,12 @@ pub struct Headless {
     engine: Engine,
     rx: Receiver<MountBatch>,
     screen: Screen,
+    /// The test clock, in seconds since the app opened.
+    now: f64,
 }
+
+/// A display frame at 60 Hz.
+const FRAME: f64 = 1.0 / 60.0;
 
 impl Headless {
     /// Starts `bundle` on a headless engine of `viewport`, with the
@@ -528,6 +628,7 @@ impl Headless {
                 viewport,
                 ..Screen::default()
             },
+            now: 0.0,
         };
         app.refresh();
         Ok(app)
@@ -545,7 +646,47 @@ impl Headless {
             self.screen.apply(&batch);
             applied += 1;
         }
+        if applied > 0 {
+            self.start_animations();
+        }
         applied
+    }
+
+    /// Starts animations that arrived at this turn's time. The first frame
+    /// of a driver is its clock origin; it moves only when [`advance`](Self::advance)
+    /// moves time.
+    fn start_animations(&mut self) {
+        self.screen.tick_animation(self.now);
+        self.report_finished();
+    }
+
+    fn report_finished(&mut self) {
+        let finished = self.screen.take_finished();
+        if !finished.is_empty() {
+            self.engine.control().animations_finished(finished);
+        }
+    }
+
+    /// Advances the deterministic test clock by `ms` milliseconds in 60 Hz
+    /// frames, applying animated values and settling promises.
+    pub fn advance(&mut self, ms: f64) {
+        self.refresh();
+        self.start_animations();
+        let target = self.now + (ms.max(0.0) / 1000.0);
+        let mut reported = false;
+        while self.now < target {
+            self.now = (self.now + FRAME).min(target);
+            self.screen.tick_animation(self.now);
+            let finished = self.screen.take_finished();
+            if !finished.is_empty() {
+                reported = true;
+                self.engine.control().animations_finished(finished);
+            }
+        }
+        if reported {
+            let _ = self.next_frame(Duration::from_secs(2));
+        }
+        self.refresh();
     }
 
     /// Waits up to `timeout` for a frame, applying what arrives.
@@ -554,6 +695,7 @@ impl Headless {
             Ok(batch) => {
                 self.screen.apply(&batch);
                 self.refresh();
+                self.start_animations();
                 true
             }
             Err(_) => false,
@@ -578,6 +720,10 @@ impl Headless {
             self.refresh();
             if self.screen.texts().iter().any(|t| t.contains(text)) {
                 return true;
+            }
+            if self.screen.is_animating() {
+                self.advance(FRAME * 1000.0);
+                continue;
             }
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() || !self.next_frame(left) {
@@ -751,6 +897,10 @@ impl Headless {
                 SelectorState::Ready => return Ok(()),
                 SelectorState::Wait => {}
                 SelectorState::Fail(error) => return Err(error),
+            }
+            if self.screen.is_animating() {
+                self.advance(FRAME * 1000.0);
+                continue;
             }
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() || !self.next_frame(left) {

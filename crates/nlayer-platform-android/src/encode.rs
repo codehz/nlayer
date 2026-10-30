@@ -106,6 +106,9 @@ pub fn encode(batch: MountBatch) -> Encoded {
                 e.float(frame.size.width.0);
                 e.float(frame.size.height.0);
             }
+            MountItem::Animation(_) | MountItem::AnimationBindings { .. } => {
+                // The UI-thread animation graph consumes these.
+            }
             MountItem::ViewStyle { id, style } => {
                 e.int(VIEW_STYLE);
                 e.id(id);

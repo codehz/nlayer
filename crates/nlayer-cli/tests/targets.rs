@@ -61,7 +61,7 @@ fn app_fixture(name: &str) -> PathBuf {
     let from = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(name);
-    for file in ["App.tsx", "App.test.tsx", "quote.json"] {
+    for file in ["App.tsx", "App.test.tsx", "Web.test.tsx", "quote.json"] {
         let source = from.join(file);
         if source.exists() {
             fs::copy(source, dir.join(file)).unwrap();
@@ -128,6 +128,24 @@ fn the_browser_opens_a_list_at_initial_scroll_index() {
     let report = run(&dir.join("App.test.tsx"), Some(TestTarget::Web));
     let _ = fs::remove_dir_all(&dir);
     assert!(report.ok(), "web: {report}");
+}
+
+#[test]
+fn the_browser_animates_a_view() {
+    let _guard = lock();
+    let dir = app_fixture("animation");
+    let report = run(&dir.join("Web.test.tsx"), Some(TestTarget::Web));
+    let _ = fs::remove_dir_all(&dir);
+    assert!(report.ok(), "web: {report}");
+}
+
+#[test]
+fn the_simulator_animates_a_view() {
+    let _guard = lock();
+    let dir = app_fixture("animation");
+    let report = run(&dir.join("Web.test.tsx"), Some(TestTarget::Ios));
+    let _ = fs::remove_dir_all(&dir);
+    assert!(report.ok(), "ios: {report}");
 }
 
 #[test]
