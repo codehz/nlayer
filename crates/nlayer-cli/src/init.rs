@@ -1,4 +1,4 @@
-//! `nlayer init`: a TSX app, its test, `tsconfig.json` and `package.json`.
+//! `nlayer init`: a TSX app, its test, and project configuration.
 //! Existing files are kept. Editor types are npm packages; init does not install them.
 
 use std::{
@@ -86,6 +86,14 @@ test("a press increases the count", () => {
 
 const GITIGNORE: &str = ".nlayer/\nnode_modules/\n";
 
+const NLAYER_JSON: &str = r#"{
+  "name": "Example",
+  "id": "com.example.app",
+  "version": "1.0.0",
+  "build": 1
+}
+"#;
+
 /// `jsxImportSource` is `@nlayer` (types only). `types: ["globals"]` loads
 /// `@nlayer/globals` from `typeRoots`. Init does not write `.nlayer/types`.
 const TSCONFIG: &str = r#"{
@@ -106,8 +114,8 @@ const TSCONFIG: &str = r#"{
 "#;
 
 /// Creates an app in `options.dir`: `App.tsx`, `App.test.tsx`,
-/// `tsconfig.json`, `package.json` and `.gitignore`. A file that already
-/// exists is kept.
+/// `tsconfig.json`, `package.json`, `nlayer.json` and `.gitignore`. A file
+/// that already exists is kept.
 pub fn init(options: &InitOptions) -> Result<InitReport, InitError> {
     if options.dir.is_file() {
         return Err(InitError {
@@ -123,6 +131,7 @@ pub fn init(options: &InitOptions) -> Result<InitReport, InitError> {
     write_new(&options.dir, "App.test.tsx", APP_TEST, &mut report)?;
     write_new(&options.dir, "tsconfig.json", TSCONFIG, &mut report)?;
     write_new(&options.dir, ".gitignore", GITIGNORE, &mut report)?;
+    write_new(&options.dir, "nlayer.json", NLAYER_JSON, &mut report)?;
     write_new(
         &options.dir,
         "package.json",

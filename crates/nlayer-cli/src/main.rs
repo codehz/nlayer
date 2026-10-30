@@ -51,7 +51,7 @@ enum Command {
         #[arg(long, value_enum)]
         target: Option<TestHost>,
     },
-    /// Create a TSX app: `App.tsx`, its test, `tsconfig.json` and `package.json`.
+    /// Create a TSX app and its project configuration.
     Init {
         /// The app directory (default: the current one).
         #[arg(default_value = ".")]

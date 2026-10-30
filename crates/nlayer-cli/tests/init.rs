@@ -18,6 +18,11 @@ fn init_writes_an_app_that_builds_and_tests() {
         report.wrote.iter().any(|path| path == "App.test.tsx"),
         "{report}"
     );
+    let config: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(dir.join("nlayer.json")).unwrap()).unwrap();
+    assert_eq!(config["id"], "com.example.app");
+    assert_eq!(config["version"], "1.0.0");
+    assert_eq!(config["build"], 1);
     let tsconfig = fs::read_to_string(dir.join("tsconfig.json")).unwrap();
     assert!(tsconfig.contains("\"jsxImportSource\": \"@nlayer\""));
     assert!(!tsconfig.contains(".nlayer/types"), "{tsconfig}");
@@ -62,8 +67,17 @@ fn init_writes_an_app_that_builds_and_tests() {
     assert!(!out.join("types").exists());
 
     fs::write(dir.join("App.tsx"), "export const kept = true;\n").unwrap();
+    fs::write(dir.join("nlayer.json"), "{\"id\":\"org.example.kept\"}\n").unwrap();
     let again = init(&InitOptions { dir: dir.clone() }).expect("a second init");
     assert!(again.kept.iter().any(|path| path == "App.tsx"), "{again}");
+    assert!(
+        again.kept.iter().any(|path| path == "nlayer.json"),
+        "{again}"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.join("nlayer.json")).unwrap(),
+        "{\"id\":\"org.example.kept\"}\n"
+    );
     assert!(!again.to_string().contains("bun install"), "{again}");
     assert_eq!(
         fs::read_to_string(dir.join("App.tsx")).unwrap(),
