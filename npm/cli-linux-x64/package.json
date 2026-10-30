@@ -5,7 +5,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/longbridge/native-layer.git",
+    "url": "git+https://github.com/codehz/nlayer.git",
     "directory": "npm/cli-linux-x64"
   },
   "os": [

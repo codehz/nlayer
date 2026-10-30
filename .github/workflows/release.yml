@@ -90,10 +90,13 @@ jobs:
       CLI_PACKAGES: npm/cli-darwin-arm64 npm/cli-linux-x64 npm/cli-win32-x64 npm/cli
     steps:
       - uses: actions/checkout@v4
+      # Trusted publishing needs npm 11.5.1+ and Node 22.14+; it exchanges the
+      # workflow's OIDC token, so no NPM_TOKEN is involved.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          registry-url: https://registry.npmjs.org
+          node-version: 24
+      - name: npm for trusted publishing
+        run: npm install -g npm@latest
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -140,16 +143,26 @@ jobs:
           done
       - name: Publish
         if: ${{ !inputs.dry_run }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           # Types first: they are what `nlayer init` installs, and they carry
           # no dependency on the CLI. The platform packages come next because
           # `@nlayer/cli` names them in optionalDependencies at this version,
           # and the main package is published last.
+          #
+          # Versions already on the registry are skipped, so a run that fails
+          # halfway resumes, and the type packages that were published before
+          # this workflow existed do not fail the first CLI release. Provenance
+          # is automatic under trusted publishing.
+          set -e
           for dir in $TYPE_PACKAGES $CLI_PACKAGES; do
-            echo "== $dir"
-            (cd "$dir" && npm publish --provenance --access public)
+            name=$(node -p "require('./$dir/package.json').name")
+            version=$(node -p "require('./$dir/package.json').version")
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "skip $name@$version: already published"
+              continue
+            fi
+            echo "== $name@$version"
+            (cd "$dir" && npm publish --access public)
           done
       - name: Keep the packed tarballs
         if: inputs.dry_run
