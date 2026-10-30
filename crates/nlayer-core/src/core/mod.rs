@@ -2493,6 +2493,41 @@ impl<M: TextEngine> Core<M> {
     }
 }
 
+/// Shortens a long run without a line-break opportunity so that measuring a
+/// multiline value stays linear in its length. A 474 KB minified JSON takes
+/// seconds to measure at every edit; broken into runs of 1024 it is fast.
+/// The input shows and reports its own text; the measured height can only
+/// grow by a line per break, and text without such runs is measured as is.
+fn broken_runs(content: &str) -> std::borrow::Cow<'_, str> {
+    let mut broken: Option<String> = None;
+    let (mut start, mut from) = (0, 0);
+    for (end, _) in unicode_linebreak::linebreaks(content) {
+        let mut run = 0;
+        for (offset, c) in content[start..end].char_indices() {
+            let i = start + offset;
+            // The final character may itself provide the break (space or
+            // newline). Do not introduce another line immediately before it.
+            if run == MEASURED_RUN && i + c.len_utf8() < end {
+                let broken = broken.get_or_insert_with(|| {
+                    String::with_capacity(content.len() + content.len() / MEASURED_RUN)
+                });
+                broken.push_str(&content[from..i]);
+                broken.push('\n');
+                (run, from) = (0, i);
+            }
+            run += 1;
+        }
+        start = end;
+    }
+    match broken {
+        Some(mut broken) => {
+            broken.push_str(&content[from..]);
+            broken.into()
+        }
+        None => content.into(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -4700,40 +4735,5 @@ mod tests {
         assert_eq!(text.links[0].node, 4);
         assert_eq!(text.links[0].start, 4);
         assert_eq!(text.links[0].end, 8);
-    }
-}
-
-/// Shortens a long run without a line-break opportunity so that measuring a
-/// multiline value stays linear in its length. A 474 KB minified JSON takes
-/// seconds to measure at every edit; broken into runs of 1024 it is fast.
-/// The input shows and reports its own text; the measured height can only
-/// grow by a line per break, and text without such runs is measured as is.
-fn broken_runs(content: &str) -> std::borrow::Cow<'_, str> {
-    let mut broken: Option<String> = None;
-    let (mut start, mut from) = (0, 0);
-    for (end, _) in unicode_linebreak::linebreaks(content) {
-        let mut run = 0;
-        for (offset, c) in content[start..end].char_indices() {
-            let i = start + offset;
-            // The final character may itself provide the break (space or
-            // newline). Do not introduce another line immediately before it.
-            if run == MEASURED_RUN && i + c.len_utf8() < end {
-                let broken = broken.get_or_insert_with(|| {
-                    String::with_capacity(content.len() + content.len() / MEASURED_RUN)
-                });
-                broken.push_str(&content[from..i]);
-                broken.push('\n');
-                (run, from) = (0, i);
-            }
-            run += 1;
-        }
-        start = end;
-    }
-    match broken {
-        Some(mut broken) => {
-            broken.push_str(&content[from..]);
-            broken.into()
-        }
-        None => content.into(),
     }
 }
