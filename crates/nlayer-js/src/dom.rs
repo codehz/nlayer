@@ -2193,6 +2193,8 @@ fn tag_name(tag: Tag) -> &'static str {
         Tag::Text => "text",
         Tag::Image => "image",
         Tag::Scroll => "scroll",
+        Tag::List => "list",
+        Tag::Cell => "cell",
         Tag::Input => "input",
     }
 }
@@ -2535,6 +2537,80 @@ fn install_globals(cx: *mut JsContext) {
         qjs::JS_SetPropertyStr(cx, global, c"Each".as_ptr(), f);
         qjs::JS_FreeValue(cx, global);
     }
+}
+
+// --- For the list runtime ---------------------------------------------------
+
+/// A new host element of `tag` (what `element(tag)` makes).
+pub(crate) fn create_element(cx: *mut JsContext, tag: Tag) -> JsValue {
+    let id = next_id(cx);
+    dom(cx).push(Op::Create { id, tag });
+    new_node(cx, id, false, Some(tag))
+}
+
+/// A node's id, or `None` for anything else.
+pub(crate) fn node_id(cx: *mut JsContext, value: JsValue) -> Option<NodeId> {
+    let p = node_ptr(cx, value);
+    if p.is_null() {
+        return None;
+    }
+    // SAFETY: live node data.
+    Some(unsafe { (*p).id })
+}
+
+/// Whether `value` is a node object (not a function).
+pub(crate) fn is_node_value(cx: *mut JsContext, value: JsValue) -> bool {
+    !node_ptr(cx, value).is_null()
+}
+
+/// Inserts node `child` into `parent` before `before` (or at the end).
+pub(crate) fn insert_node(
+    cx: *mut JsContext,
+    parent: JsValue,
+    child: JsValue,
+    before: Option<JsValue>,
+) -> Result<(), JsValue> {
+    insert_before(cx, parent, child, before)
+}
+
+/// Inserts `value` into `parent` before `marker`, following it over time.
+pub(crate) fn insert_value_at(
+    cx: *mut JsContext,
+    parent: JsValue,
+    value: JsValue,
+    marker: Option<JsValue>,
+) -> Result<(), JsValue> {
+    insert_value(cx, parent, value, marker)
+}
+
+/// Sets prop `name` of `node` to `value` as `prop(node, name, value)`.
+pub(crate) fn set_prop_value(
+    cx: *mut JsContext,
+    node: JsValue,
+    name: &str,
+    value: JsValue,
+) -> Result<(), JsValue> {
+    set_prop(cx, node, name, value, UNDEFINED)
+}
+
+/// Queues one op.
+pub(crate) fn push_op(cx: *mut JsContext, op: Op) {
+    dom(cx).push(op);
+}
+
+/// A string argument as Rust (borrowed value).
+pub(crate) fn string_value(cx: *mut JsContext, value: JsValue) -> Option<String> {
+    to_string(cx, value)
+}
+
+/// [`spread`] of `props` onto `node` without the keys `skip`.
+pub(crate) fn spread_props_except(
+    cx: *mut JsContext,
+    node: JsValue,
+    props: JsValue,
+    skip: &[&str],
+) -> Result<(), JsValue> {
+    spread_except(cx, node, props, skip)
 }
 
 /// The exports of `nlayer:rt`.

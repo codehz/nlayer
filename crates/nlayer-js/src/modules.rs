@@ -60,6 +60,11 @@ fn input(cx: *mut JsContext) -> JsValue {
     dom::host_component(cx, "input", false)
 }
 
+/// `List` as a component: creates the list and its recycling cells.
+fn list(cx: *mut JsContext) -> JsValue {
+    reactive::new_function(cx, c"List", crate::list::list, 1)
+}
+
 /// `platform`: `{ os, colorScheme }`. Safe area and the keyboard inset are
 /// not on it; padding and margin read them through `env()`.
 fn platform(cx: *mut JsContext) -> JsValue {
@@ -146,6 +151,7 @@ const UI: &[Item] = &[
     ("Image", Export::Value(image)),
     ("Scroll", Export::Value(scroll)),
     ("Input", Export::Value(input)),
+    ("List", Export::Value(list)),
     ("platform", Export::Value(platform)),
     ("BackHandler", Export::Value(back_handler)),
     ("Keyboard", Export::Value(keyboard)),

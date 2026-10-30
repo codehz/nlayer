@@ -10,6 +10,7 @@ mod bridge;
 mod clock;
 mod dom;
 mod error;
+mod list;
 mod modules;
 mod net;
 mod protocol;
@@ -201,6 +202,13 @@ impl Host {
             Ok(Persistent::save(&cx, promise))
         })?;
         self.settle(promise)
+    }
+
+    /// Renders the cells list `list` needs, in `(slot, item)` order.
+    /// Returns false when no such list is live.
+    pub fn bind_list(&self, list: NodeId, binds: &[(u32, u32)]) -> bool {
+        self.cx
+            .with(|cx| crate::list::bind(cx.as_raw().as_ptr(), list, binds))
     }
 
     /// Moves the changes JS made since the last call into `out`.

@@ -14,6 +14,8 @@ pub trait Bridge {
     fn take_ops(&self, out: &mut Vec<Op>);
     /// Delivers one view event to the page.
     fn dispatch_event(&self, id: NodeId, event: EventKind, payload: &EventPayload);
+    /// Renders the list cells the core asked for.
+    fn bind_list(&self, list: NodeId, binds: &[(u32, u32)]);
     /// `platform.os` for this surface. The web runtime reports `"web"` itself.
     fn set_os(&self, os: Os);
 }
@@ -58,6 +60,10 @@ impl Script {
 
     pub(crate) fn dispatch_event(&self, id: NodeId, event: EventKind, payload: &EventPayload) {
         self.0.dispatch_event(id, event, payload);
+    }
+
+    pub(crate) fn bind_list(&self, list: NodeId, binds: &[(u32, u32)]) {
+        self.0.bind_list(list, binds);
     }
 
     pub(crate) fn next_timer(&self) -> Option<std::time::Duration> {

@@ -53,8 +53,8 @@ use std::thread::JoinHandle;
 use browser::Script as Vm;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use nlayer_core::{
-    ColorScheme, Core, EventKind, MountBatch, NodeId,
-    geometry::{Edges, Points, Size},
+    ColorScheme, Core, EventKind, ListBind, MountBatch, NodeId,
+    geometry::{Edges, Point, Points, Size},
     text::TextEngine,
 };
 #[cfg(feature = "js")]
@@ -537,6 +537,10 @@ struct Session<M: TextEngine> {
     notify: Wake,
 }
 
+/// Rounds of "list asks for items -> JS renders them -> layout" folded into
+/// one frame. Bounded so a list that never settles cannot stall the engine.
+const MAX_LIST_ROUNDS: usize = 8;
+
 impl<M: TextEngine> Session<M> {
     fn open(
         config: EngineConfig,
@@ -616,6 +620,12 @@ impl<M: TextEngine> Session<M> {
     fn apply(&mut self, message: Message) -> bool {
         match message {
             Message::Event { id, event, payload } => {
+                if event == EventKind::Scroll
+                    && let EventPayload::Scroll { x, y, .. } = &payload
+                {
+                    self.core
+                        .set_scroll_offset(id, Point::new(Points(*x), Points(*y)));
+                }
                 self.host.dispatch_event(id, event, &payload);
             }
             Message::Input { id, text } => {
@@ -657,20 +667,46 @@ impl<M: TextEngine> Session<M> {
     }
 
     /// Applies what JS queued, lays out, and hands the frame to the platform.
+    /// A list's cells are rendered across rounds (up to
+    /// [`MAX_LIST_ROUNDS`]); every round's mount items go into one batch.
     fn commit(&mut self) {
-        let mut ops = Vec::new();
-        self.host.take_ops(&mut ops);
-        for op in ops {
-            if let Err(error) = self.core.apply(op) {
-                if error.is_fatal() {
-                    self.sink.failed(EngineError::new(format!("{error:?}")));
-                    return;
+        let mut merged: Vec<nlayer_core::MountItem> = Vec::new();
+        let mut failed = false;
+        for _ in 0..MAX_LIST_ROUNDS {
+            let mut ops = Vec::new();
+            self.host.take_ops(&mut ops);
+            for op in ops {
+                if let Err(error) = self.core.apply(op) {
+                    if error.is_fatal() {
+                        self.sink.failed(EngineError::new(format!("{error:?}")));
+                        failed = true;
+                        break;
+                    }
+                    log::error!("{error:?}");
                 }
-                log::error!("{error:?}");
+            }
+            if failed {
+                break;
+            }
+            if let Some(batch) = self.core.commit() {
+                merged.extend(batch.items);
+            }
+            let mut events = Vec::new();
+            self.core.take_events(&mut events);
+            for (id, event) in &events {
+                self.host.dispatch_event(*id, *event, &EventPayload::None);
+            }
+            let mut binds: Vec<ListBind> = Vec::new();
+            self.core.take_list_binds(&mut binds);
+            if binds.is_empty() && events.is_empty() {
+                break;
+            }
+            for bind in binds {
+                self.bind_list(bind.list, &bind.binds);
             }
         }
-        if let Some(batch) = self.core.commit() {
-            self.sink.submit(batch);
+        if !merged.is_empty() {
+            self.sink.submit(MountBatch { items: merged });
         }
         #[cfg(all(not(target_arch = "wasm32"), feature = "js"))]
         {
@@ -692,6 +728,17 @@ impl<M: TextEngine> Session<M> {
                     }
                 }
             }
+        }
+    }
+
+    fn bind_list(&mut self, id: NodeId, binds: &[(u32, u32)]) {
+        #[cfg(feature = "js")]
+        {
+            self.host.bind_list(id, binds);
+        }
+        #[cfg(feature = "browser")]
+        {
+            self.host.bind_list(id, binds);
         }
     }
 }

@@ -589,6 +589,48 @@ export interface InputProps extends AccessibilityProps {
   onPress?: () => void;
 }
 
+/** A list's imperative handle, passed to `ref`. */
+export interface ListHandle {
+  /** Scrolls to `index` (the item at the viewport's start). */
+  scrollToIndex(index: number, options?: { animated?: boolean }): void;
+  /** Scrolls to the end of the content. */
+  scrollToEnd(options?: { animated?: boolean }): void;
+}
+
+/** A component (`Header`) or an element (`<Header />`). */
+export type ListSlot = unknown | (() => unknown);
+
+/** A virtualized, recycling list. Only rows near the viewport exist; the
+ * native side decides which, and cell contents are reused. Rows are
+ * recycled: keep per-item state in your data (keyed by id), not in signals
+ * created inside a row. */
+export interface ListProps<T> extends Omit<ScrollProps, "children"> {
+  each: readonly T[];
+  /** Renders one row. `item` and `index` are accessors: they change when
+   * the cell is reused for another item. */
+  children: (item: () => T, index: () => number) => unknown;
+  /** Above the items, scrolling with them. */
+  header?: ListSlot;
+  /** Below the items, scrolling with them. */
+  footer?: ListSlot;
+  /** Shown instead of the items while `each` is empty. */
+  empty?: ListSlot;
+  /** Rendered between items. */
+  separator?: ListSlot;
+  /** Items per row. */
+  numColumns?: number;
+  /** The size of items not measured yet, in points (default 50). */
+  estimatedItemSize?: number;
+  /** Scrolls to this item before the first frame. */
+  initialScrollIndex?: number;
+  /** How close to the end (in viewports) `onLoadMore` fires; default 1. */
+  loadMoreThreshold?: number;
+  /** The end came near; load the next page. Fires once per item count. */
+  onLoadMore?: () => void;
+  ref?: ((handle: ListHandle) => void) | { current?: ListHandle };
+}
+
+export function List<T>(props: ListProps<T>): unknown;
 export function View(props: ViewProps): unknown;
 export function Text(props: TextProps): unknown;
 export function Image(props: ImageProps): unknown;

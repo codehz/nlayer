@@ -32,6 +32,8 @@ pub(crate) struct State {
     /// The app's storage, once the host sets one (`None`: made in memory
     /// on first use).
     pub(crate) storage: Option<nlayer_core::storage::Store>,
+    /// The live lists, by node id.
+    pub(crate) lists: crate::list::Lists,
 }
 /// Timers, by the id JS gave them and the instant they are due.
 #[derive(Default)]
@@ -112,6 +114,7 @@ pub(crate) fn install(cx: &Ctx<'_>) {
             color_scheme: std::cell::Cell::new(qjs::JS_UNDEFINED),
             url_classes: crate::url::Classes::default(),
             storage: None,
+            lists: crate::list::Lists::default(),
         }));
         qjs::JS_SetContextOpaque(raw, state as *mut c_void);
         STATES.with(|m| m.borrow_mut().insert(rt as usize, state as usize));
@@ -150,6 +153,7 @@ pub(crate) fn uninstall(cx: &Ctx<'_>) {
         STATES.with(|m| m.borrow_mut().remove(&(rt as usize)));
         qjs::JS_SetContextOpaque(raw, ptr::null_mut());
         let mut state = Box::from_raw(p);
+        state.lists.free_all(raw);
         state.dom.free_all(raw);
         qjs::JS_FreeValue(raw, state.color_scheme.replace(qjs::JS_UNDEFINED));
         crate::reactive::free_all(&mut state.graph, raw);
