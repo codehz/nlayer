@@ -3,6 +3,7 @@
 // `@nlayer/ui` and `nlayer:rt` share.
 import { Values } from "./values.js";
 import { createStorage, storagePrefix } from "./storage.js";
+import { createLists } from "./list.js";
 
 /**
  * `options.appId` names the app's `localStorage` prefix (`nlayer.json`'s
@@ -114,6 +115,7 @@ export function createFacade(wasm, requestPump, options = {}) {
     installColorScheme();
     boundaryProvide = call(116);
     call(400, event);
+    call(401, lists.bind);
   }
   let boundaryProvide = boundaryKey;
   const provideBoundary = (failed) => call(113, boundaryProvide, failed);
@@ -404,6 +406,22 @@ export function createFacade(wasm, requestPump, options = {}) {
     return read;
   }
 
+  const lists = createLists({
+    invoke: call,
+    values,
+    reactive: {
+      signal: (value) => signal(value),
+      computed,
+      batch,
+      untracked,
+      cleanup,
+      renderEffect,
+    },
+    rt,
+    lists: new Map(),
+    wake: requestPump,
+  });
+
   const runtime = {
     signal,
     computed,
@@ -423,6 +441,7 @@ export function createFacade(wasm, requestPump, options = {}) {
     Image: (props) => host("image", props),
     Scroll: (props) => host("scroll", props),
     Input: (props) => host("input", props),
+    List: (props) => lists.render(props),
     platform: {
       os: "web",
       colorScheme: () => {

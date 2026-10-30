@@ -263,6 +263,9 @@ impl Encoder {
                         .num(*end)
                         .end();
                 }
+                Command::ScrollToIndex { .. } | Command::ScrollToEnd { .. } => {
+                    // The core resolves list commands to a `ScrollTo`.
+                }
             },
             MountItem::TestId { id, test_id } => {
                 out.item("tid").num(*id).opt_str(test_id.as_deref()).end();

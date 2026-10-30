@@ -527,7 +527,8 @@ export class Player {
       el._released = 0;
       this.scrollEvent(el, "onMomentumStart");
     }
-    if (el._events.has("onScroll")) this.queueScroll(el);
+    // Lists follow the offset even without an `onScroll` listener.
+    this.queueScroll(el);
     if (!el._touchDrag && !this.holding && !el._swallowEnd) this.armRest(el);
   }
 
@@ -538,7 +539,7 @@ export class Player {
     const send = () => {
       el._scrollQueued = false;
       if (this.views.get(el._id) !== el) return;
-      this.scrollEvent(el, "onScroll");
+      this.reportScroll(el, "onScroll");
     };
     const raf = this.doc.defaultView?.requestAnimationFrame ?? globalThis.requestAnimationFrame;
     if (typeof raf === "function") raf(send);
@@ -576,6 +577,11 @@ export class Player {
 
   scrollEvent(el, name) {
     if (!el._events?.has(name)) return;
+    this.reportScroll(el, name);
+  }
+
+  /** Sends the offset whatever is listening: the core needs it for lists. */
+  reportScroll(el, name) {
     this.host.scroll?.(
       el._id,
       name,

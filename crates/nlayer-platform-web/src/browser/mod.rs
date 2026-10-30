@@ -42,6 +42,7 @@ pub(super) struct Runtime {
     graph: Graph,
     dom: dom::Dom,
     event: RefCell<Option<Value>>,
+    binder: RefCell<Option<Value>>,
     os: Cell<Os>,
 }
 
@@ -53,6 +54,10 @@ impl Runtime {
     fn dispatch(&self, op: u32, args: &values::Args) -> Result<Value, PropError> {
         if op == 400 {
             *self.event.borrow_mut() = Some(args.index(0)?);
+            return Ok(Value::unit());
+        }
+        if op == 401 {
+            *self.binder.borrow_mut() = Some(args.index(0)?);
             return Ok(Value::unit());
         }
         if op >= 300 {
@@ -131,6 +136,32 @@ impl Bridge for Runtime {
         let _ = callback.call(&Value::unit(), &args);
     }
 
+    fn bind_list(&self, list: NodeId, binds: &[(u32, u32)]) {
+        let Some(callback) = self.binder.borrow().clone() else {
+            return;
+        };
+        let mut pairs = Vec::with_capacity(binds.len());
+        for &(slot, index) in binds {
+            let (Ok(slot), Ok(index)) = (
+                Value::number(f64::from(slot)),
+                Value::number(f64::from(index)),
+            ) else {
+                return;
+            };
+            let Ok(pair) = Value::array([slot, index]) else {
+                return;
+            };
+            pairs.push(pair);
+        }
+        let (Ok(pairs), Ok(id)) = (Value::array(pairs), Value::number(f64::from(list))) else {
+            return;
+        };
+        let Ok(args) = Value::array([id, pairs]) else {
+            return;
+        };
+        let _ = callback.call(&Value::unit(), &args);
+    }
+
     fn set_os(&self, os: Os) {
         self.os.set(os);
     }
@@ -182,6 +213,7 @@ pub extern "C" fn nlayer_browser_initialize() {
         }),
         dom: dom::Dom::new(),
         event: RefCell::new(None),
+        binder: RefCell::new(None),
         os: Cell::new(Os::Web),
     });
     if nlayer_engine::register(Rc::clone(&runtime) as Rc<dyn Bridge>).is_err() {

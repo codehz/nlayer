@@ -5,7 +5,7 @@
 
 use std::cell::{Cell, RefCell};
 
-use nlayer_core::{EventKind, NodeId, Op, ROOT_ID, Tag};
+use nlayer_core::{Command, EventKind, NodeId, Op, ROOT_ID, Tag};
 use rustc_hash::FxHashMap;
 
 use super::{
@@ -588,6 +588,30 @@ impl Dom {
                 self.push(Op::Release { id });
                 drop(removed);
                 drop(node);
+                Ok(Value::unit())
+            }
+            309 => {
+                let target = args.index(0)?;
+                let id = if target.node().is_some() {
+                    Self::id_of(&target)?
+                } else {
+                    target.number_value().unwrap_or(0.0) as NodeId
+                };
+                let name = args.index(1)?.as_string().unwrap_or_default();
+                let command = match name.as_str() {
+                    "scrollToIndex" => {
+                        let index = args.index(2)?.number_value().unwrap_or(0.0).max(0.0) as u32;
+                        let animated = args.index(3)?.truthy();
+                        Command::ScrollToIndex { index, animated }
+                    }
+                    "scrollToEnd" => Command::ScrollToEnd {
+                        animated: args.index(2)?.truthy(),
+                    },
+                    other => {
+                        return Err(PropError(format!("unknown command `{other}`")));
+                    }
+                };
+                self.push(Op::Command { id, command });
                 Ok(Value::unit())
             }
             308 => {

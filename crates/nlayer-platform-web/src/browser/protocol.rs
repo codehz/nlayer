@@ -4,9 +4,9 @@
 use std::cell::RefCell;
 
 use nlayer_core::{
-    AccessibilityProp, AccessibilityRole, AccessibilityState, AccessibilityValue, Checked,
-    ImageScales, ImageSource, Interaction, KeyboardDismiss, KeyboardTaps, KeyboardType, NodeId, Op,
-    Prop, Tag,
+    AccessibilityProp, AccessibilityRole, AccessibilityState, AccessibilityValue, CellSlot,
+    Checked, ImageScales, ImageSource, Interaction, KeyboardDismiss, KeyboardTaps, KeyboardType,
+    NodeId, Op, Prop, Tag,
     geometry::{Points, Size},
     style::{
         Style, StyleDecl, StyleError, StylePatch, StyleValue, TextStyle, TransformProperty,
@@ -111,6 +111,52 @@ pub(super) fn decode_prop(
                     return Ok(None);
                 }
             }
+        }
+        (Some(Tag::List), "count") => {
+            Prop::Count(value.number_value().unwrap_or(0.0).max(0.0) as u32)
+        }
+        (Some(Tag::List), "estimatedItemSize") => {
+            Prop::EstimatedItemSize(Points(value.number_value().unwrap_or(50.0) as f32))
+        }
+        (Some(Tag::List), "numColumns") => {
+            Prop::Columns(value.number_value().unwrap_or(1.0).max(1.0) as u32)
+        }
+        (Some(Tag::List), "loadMoreThreshold") => {
+            Prop::LoadMoreThreshold(value.number_value().unwrap_or(1.0) as f32)
+        }
+        (Some(Tag::List), "splice") => {
+            let n = |i: usize| {
+                value
+                    .index(i)
+                    .ok()
+                    .and_then(|v| v.number_value())
+                    .unwrap_or(0.0)
+                    .max(0.0) as u32
+            };
+            Prop::Splice {
+                at: n(0),
+                removed: n(1),
+                inserted: n(2),
+            }
+        }
+        (Some(Tag::Cell), "slot") => {
+            let slot = if let Some(n) = value.number_value() {
+                CellSlot::Item(n.max(0.0) as u32)
+            } else {
+                match string(value).as_str() {
+                    "header" => CellSlot::Header,
+                    "footer" => CellSlot::Footer,
+                    "empty" => CellSlot::Empty,
+                    other => {
+                        warnings.warn(format!("unknown list slot `{other}`"));
+                        return Ok(None);
+                    }
+                }
+            };
+            Prop::Slot(slot)
+        }
+        (Some(Tag::Cell), "cellIndex") => {
+            Prop::CellIndex(value.number_value().unwrap_or(0.0).max(0.0) as u32)
         }
         (Some(Tag::Input), "value") => Prop::Value(string(value)),
         (Some(Tag::Input), "placeholder") => Prop::Placeholder(string(value)),

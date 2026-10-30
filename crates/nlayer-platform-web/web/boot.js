@@ -15,6 +15,19 @@ import { Player } from "./nlayer.js";
 import { installHost } from "./host.js";
 import { createFacade, loadBundle } from "./browser/runtime.js";
 
+// A failed start would otherwise only time out in `nlayer test`.
+globalThis.addEventListener?.("error", (event) => {
+  if (globalThis.__nlayerReady !== true) {
+    globalThis.__nlayerFailed = String(event.error?.stack ?? event.message ?? event);
+  }
+});
+globalThis.addEventListener?.("unhandledrejection", (event) => {
+  if (globalThis.__nlayerReady !== true) {
+    const reason = event.reason;
+    globalThis.__nlayerFailed = String(reason?.stack ?? reason?.message ?? reason);
+  }
+});
+
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
