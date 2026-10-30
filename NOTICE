@@ -257,3 +257,5 @@ Copied files:
   press state machines from `nsh_core::ops`, `nsh-platform-ios/src/press.rs`,
   `nsh-platform-android/java/.../Box.java` and the web pointer state
   (the v2 long-press rule only: no press-in/out callbacks or scroll delay)
+- `crates/nlayer-cli/src/ios_package.rs` uses the iOS asset catalog and
+  Info.plist packaging approach from `crates/nsh-cli/src/package.rs`.

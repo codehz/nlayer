@@ -22,4 +22,5 @@ libc = "0.2"
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
+plist = "1"
 zip = { version = "8", default-features = false, features = ["deflate"] }

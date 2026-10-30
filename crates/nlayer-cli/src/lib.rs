@@ -13,6 +13,7 @@ mod android;
 mod android_test;
 mod init;
 mod ios;
+mod ios_package;
 mod ios_test;
 mod run;
 mod types_version;
@@ -29,6 +30,7 @@ pub use android::{
 };
 pub use init::{InitError, InitOptions, InitReport, init};
 pub use ios::{IosHostTests, IosOptions, IosSession, ios_host_tests, run_ios};
+pub use ios_package::package_ios;
 use nlayer_bundler::{BundleError, BundleOptions, bundle};
 pub use run::{BuildOutcome, DevServer, RunError, RunOptions, serve, web_module};
 pub use types_version::type_package_warning;

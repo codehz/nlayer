@@ -21,6 +21,11 @@ Editor types are the npm packages `@nlayer/runtime`, `@nlayer/ui`, `@nlayer/jsx-
 hashes. Other files fetched by the app must be deployed separately. The web
 runtime is loaded from `NLAYER_WASM`, next to the CLI, or built from this workspace.
 
+`nlayer package --target ios` writes an unsigned device `.app` at
+`.nlayer/package/Nlayer.app`. It requires Xcode and the Rust
+`aarch64-apple-ios` target. Use `--out` for a new output path; signing and
+installation are performed separately.
+
 Licensed under the [Apache License, Version 2.0](LICENSE-APACHE).
 
 v2 is planned in [`docs/v2.md`](docs/v2.md): a virtualized `List`, animated

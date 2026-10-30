@@ -33,14 +33,14 @@ enum Command {
         #[arg(long)]
         release: bool,
     },
-    /// Package the app as a static web site.
+    /// Package an app for distribution.
     Package {
         /// The app directory or entry module.
         #[arg(default_value = ".")]
         entry: PathBuf,
         /// Output directory.
-        #[arg(short, long, default_value = ".nlayer/package/web")]
-        out: PathBuf,
+        #[arg(short, long)]
+        out: Option<PathBuf>,
         /// Target to package.
         #[arg(long, value_enum, default_value = "web")]
         target: PackageTarget,
@@ -118,6 +118,7 @@ enum Target {
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum PackageTarget {
     Web,
+    Ios,
 }
 
 fn main() -> ExitCode {
@@ -142,20 +143,26 @@ fn main() -> ExitCode {
                 }
             }
         }
-        Command::Package {
-            entry,
-            out,
-            target: PackageTarget::Web,
-        } => match nlayer_cli::package_web(&entry, &out) {
-            Ok(()) => {
-                println!("wrote {}", out.display());
-                ExitCode::SUCCESS
+        Command::Package { entry, out, target } => {
+            let out = out.unwrap_or_else(|| match target {
+                PackageTarget::Web => PathBuf::from(".nlayer/package/web"),
+                PackageTarget::Ios => PathBuf::from(".nlayer/package/Nlayer.app"),
+            });
+            let result = match target {
+                PackageTarget::Web => nlayer_cli::package_web(&entry, &out),
+                PackageTarget::Ios => nlayer_cli::package_ios(&entry, &out),
+            };
+            match result {
+                Ok(()) => {
+                    println!("wrote {}", out.display());
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
             }
-            Err(err) => {
-                eprintln!("{err}");
-                ExitCode::FAILURE
-            }
-        },
+        }
         Command::Test {
             path,
             filter,
