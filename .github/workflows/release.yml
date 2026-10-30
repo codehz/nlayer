@@ -85,18 +85,19 @@ jobs:
       contents: read
       id-token: write
     env:
-      # Published at the same version; `npm publish` runs from each directory.
+      # Staged at the same version, one `npm stage publish` per directory.
       TYPE_PACKAGES: packages/runtime packages/ui packages/jsx-runtime packages/test packages/globals
       CLI_PACKAGES: npm/cli-darwin-arm64 npm/cli-linux-x64 npm/cli-win32-x64 npm/cli
     steps:
       - uses: actions/checkout@v4
-      # Trusted publishing needs npm 11.5.1+ and Node 22.14+; it exchanges the
-      # workflow's OIDC token, so no NPM_TOKEN is involved.
+      # Staged publishing needs npm 11.15.0+ and Node 22.14+, and it exchanges
+      # the workflow's OIDC token, so no NPM_TOKEN is involved. npm 12 wants a
+      # newer Node than the runner has, so stay on 11.
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: npm for trusted publishing
-        run: npm install -g npm@latest
+      - name: npm for staged publishing
+        run: npm install -g npm@11
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -141,18 +142,23 @@ jobs:
             echo "== $dir"
             (cd "$dir" && npm pack)
           done
-      - name: Publish
+      - name: Stage
         if: ${{ !inputs.dry_run }}
         run: |
           # Types first: they are what `nlayer init` installs, and they carry
           # no dependency on the CLI. The platform packages come next because
           # `@nlayer/cli` names them in optionalDependencies at this version,
-          # and the main package is published last.
+          # and the main package goes last; approve them in the same order.
           #
-          # Versions already on the registry are skipped, so a run that fails
-          # halfway resumes, and the type packages that were published before
-          # this workflow existed do not fail the first CLI release. Provenance
-          # is automatic under trusted publishing.
+          # Nothing goes live here. Each package lands in the staging area and
+          # a maintainer approves or rejects it with 2FA, which is the point:
+          # a wrong tarball never reaches an installer. Provenance is generated
+          # by npm on the trusted-publishing path.
+          #
+          # Versions already on the registry are skipped, so the five type
+          # packages published before this workflow do not fail the first CLI
+          # release. A version that is still staged is not skipped: reject it
+          # (`npm stage list`, `npm stage reject <id>`) before staging again.
           set -e
           for dir in $TYPE_PACKAGES $CLI_PACKAGES; do
             name=$(node -p "require('./$dir/package.json').name")
@@ -162,7 +168,7 @@ jobs:
               continue
             fi
             echo "== $name@$version"
-            (cd "$dir" && npm publish --access public)
+            (cd "$dir" && npm stage publish --access public)
           done
       - name: Keep the packed tarballs
         if: inputs.dry_run

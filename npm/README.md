@@ -47,44 +47,66 @@ package, syncs versions, copies the license, and runs the wrapper's
 packages, runs the version and layout check, and uploads the `.tgz` files as
 the `npm-tarballs` artifact. Nothing reaches the registry.
 
-`dry_run: false` publishes the version in `Cargo.toml`, the five type packages
-in `packages/` first, then the three platform packages, then `@nlayer/cli`
-last (it names the platform packages in `optionalDependencies`). The dry run
-packs the same nine, so `npm-tarballs` shows exactly what would be uploaded.
+`dry_run: false` stages the version in `Cargo.toml`: the five type packages in
+`packages/` first, then the three platform packages, then `@nlayer/cli` last
+(it names the platform packages in `optionalDependencies`). The dry run packs
+the same nine, so `npm-tarballs` shows exactly what would be staged.
 
 There is no separate type-package release: the versions are one number, and a
 run that skipped them would leave editor types behind the CLI.
 
 A package whose version is already on the registry is skipped with a message,
-so a run that fails halfway resumes, and the type packages published before
-this workflow existed do not fail the first CLI release.
+so the type packages published before this workflow existed do not fail the
+first CLI release. A version that is staged but not yet approved is not
+skipped: reject it before staging again.
 
 Tag triggers are commented out in the workflow until a release is routine.
 
-### Auth: trusted publishing, no token
+### Auth: trusted publishing, staged
 
-The publish job uses npm's [trusted publishing][tp]: it exchanges the
-workflow's OIDC token (`permissions: id-token: write`) and npm generates
-provenance automatically. There is no `NPM_TOKEN`, and none should be added —
-a token set in the environment takes precedence over OIDC.
+Nothing the workflow does goes live. It runs `npm stage publish`, which puts
+each tarball in npm's staging area; a maintainer then approves or rejects it
+with 2FA. That review is the reason for the step: a wrong binary never reaches
+an installer.
 
+[Staged publishing][sp] and [trusted publishing][tp] both need npm CLI 11.15.0
+or later and Node 22.14 or later. The job installs Node 24 and `npm@11`
+(`npm@latest` is 12, which wants a newer Node than the runner has). npm
+exchanges the workflow's OIDC token (`permissions: id-token: write`), so there
+is no `NPM_TOKEN`; a token in the environment would take precedence over OIDC
+and should not be added. Provenance comes from that path.
+
+[sp]: https://docs.npmjs.com/staged-publishing
 [tp]: https://docs.npmjs.com/trusted-publishers
 
-Requirements, from that page:
+`npm stage publish` itself needs no 2FA. Reviewing does:
 
-- npm CLI 11.5.1 or later and Node 22.14 or later. The job installs Node 24
-  and `npm@latest`, because the Node-bundled npm can be older than 11.5.1.
-- The repository must be public, and it must be the one the workflow runs in:
-  `codehz/nlayer`.
+```sh
+npm stage list                 # pending versions and their ids
+npm stage view <id>            # metadata
+npm stage download <id>        # the tarball, to inspect
+npm stage approve <id>         # 2FA, then it is live
+npm stage reject <id>          # drop it
+```
+
+The same list and the Approve button are under "Staged Packages" on npmjs.com.
+Approve the platform packages before `@nlayer/cli`, the same order the
+workflow stages them in: the main package names them in
+`optionalDependencies`.
+
+The repository must be public, and it must be the one the workflow runs in:
+`codehz/nlayer`.
 
 ### Before the first release
 
 Trusted publishing is configured per package on npmjs.com, and a package that
-does not exist has nowhere to put that configuration. The nine packages
-therefore need to exist first:
+does not exist has nowhere to put that configuration. Staging does create a
+`0.0.0-stage` placeholder for a new package, but the workflow needs the trust
+relationship before it can stage at all, so the nine packages have to exist
+first:
 
-- the five type packages were published at `0.1.0` before this workflow;
-- the four CLI packages were published once as `0.0.0`, with
+- the five type packages were published at `0.1.0`;
+- the four CLI packages were published once as `0.0.0` with
   `--tag placeholder`, so `latest` stays unset and `npm install -g
   @nlayer/cli` does not install an empty package.
 
@@ -95,15 +117,15 @@ Then, per package on npmjs.com → Settings → Trusted publishing:
 | Organization or user | `codehz` |
 | Repository | `nlayer` |
 | Workflow filename | `release.yml` |
-| Allowed actions | must include `npm publish` |
+| Allowed actions | leave `npm publish` off |
 
-A configuration created after 2026-09-03 allows `npm stage publish` only
-unless `npm publish` is ticked; without it the workflow is rejected. A new
-configuration also expires if nothing is published within two days.
+`npm stage publish` is always allowed, so nothing needs ticking; leaving
+`npm publish` and `npm dist-tag` off keeps the workflow to staging only. A new
+configuration expires if nothing is staged or published within two days.
 
-Once a package has published through the workflow, set its Publishing access
-to "Require two-factor authentication and disallow tokens"; trusted publishing
-keeps working, and long-lived tokens stop being an option.
+Once a package has gone through the workflow, set its Publishing access to
+"Require two-factor authentication and disallow tokens". Trusted publishing
+keeps working, and long-lived tokens stop being an option for it.
 
 ### What the workflow checks
 
