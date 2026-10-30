@@ -35,7 +35,12 @@ pub enum Tag {
     /// A scroll view (`<scroll>`). One axis: vertical, or horizontal with
     /// [`Prop::Horizontal`].
     Scroll,
-    /// A single-line text field (`<input>`).
+    /// A virtualized, recycling list (`<list>`). Its cells are `<cell>`
+    /// children, each a layout root of its own.
+    List,
+    /// A recycled list cell (`<cell>`), created by the list's runtime.
+    Cell,
+    /// A text field, one line or several (`<input>`).
     Input,
 }
 impl Tag {
@@ -47,6 +52,8 @@ impl Tag {
             "text" => Some(Tag::Text),
             "image" => Some(Tag::Image),
             "scroll" => Some(Tag::Scroll),
+            "list" => Some(Tag::List),
+            "cell" => Some(Tag::Cell),
             "input" => Some(Tag::Input),
             _ => None,
         }
@@ -81,6 +88,8 @@ pub enum EventKind {
     /// An input method's composition started, changed or ended
     /// (`onCompositionChange`).
     CompositionChange,
+    /// The list's end came near (`onLoadMore`).
+    LoadMore,
 }
 
 impl EventKind {
@@ -98,6 +107,7 @@ impl EventKind {
             "onChange" => Some(EventKind::Change),
             "onSelectionChange" => Some(EventKind::SelectionChange),
             "onCompositionChange" => Some(EventKind::CompositionChange),
+            "onLoadMore" => Some(EventKind::LoadMore),
             _ => None,
         }
     }
@@ -117,6 +127,7 @@ impl EventKind {
             7 => Some(EventKind::Change),
             8 => Some(EventKind::SelectionChange),
             9 => Some(EventKind::CompositionChange),
+            10 => Some(EventKind::LoadMore),
             _ => None,
         }
     }
@@ -135,6 +146,7 @@ impl EventKind {
             EventKind::Change => "onChange",
             EventKind::SelectionChange => "onSelectionChange",
             EventKind::CompositionChange => "onCompositionChange",
+            EventKind::LoadMore => "onLoadMore",
         }
     }
 }
@@ -786,6 +798,19 @@ pub enum AccessibilityProp {
     Hidden(bool),
 }
 
+/// What a list cell holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CellSlot {
+    /// A recycled item cell in this slot.
+    Item(u32),
+    /// `header`.
+    Header,
+    /// `footer`.
+    Footer,
+    /// `empty` (shown while there are no items).
+    Empty,
+}
+
 /// A non-style property of a host node.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Prop {
@@ -793,6 +818,28 @@ pub enum Prop {
     Source(Option<ImageSource>),
     /// `horizontal`: the scroll view scrolls along x instead of y.
     Horizontal(bool),
+    /// Number of items in a list.
+    Count(u32),
+    /// `estimatedItemSize`: the main-axis size of items not measured yet.
+    EstimatedItemSize(Points),
+    /// The recycling slot (or role) of a list cell.
+    Slot(CellSlot),
+    /// The items changed: `removed` at `at` became `inserted` (set before
+    /// the new `Count`).
+    Splice {
+        /// First replaced item.
+        at: u32,
+        /// Items removed.
+        removed: u32,
+        /// Items inserted.
+        inserted: u32,
+    },
+    /// `numColumns`: items per row.
+    Columns(u32),
+    /// The item index a cell now renders, set by the runtime after a bind.
+    CellIndex(u32),
+    /// How close to the end `onLoadMore` fires, in viewports.
+    LoadMoreThreshold(f32),
     /// `keyboardShouldPersistTaps`: `never` (default), `always` or `handled`.
     KeyboardTaps(KeyboardTaps),
     /// `keyboardDismissMode`: `none` (default), `on-drag` or `interactive`.
@@ -923,6 +970,18 @@ pub enum Command {
         x: Points,
         /// Vertical offset.
         y: Points,
+        /// Animate the change.
+        animated: bool,
+    },
+    /// Scroll a list to an item. The core resolves it to a content offset.
+    ScrollToIndex {
+        /// The item.
+        index: u32,
+        /// Animate the change.
+        animated: bool,
+    },
+    /// Scroll a list to the end of its content.
+    ScrollToEnd {
         /// Animate the change.
         animated: bool,
     },

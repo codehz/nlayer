@@ -29,7 +29,7 @@ pub mod text;
 pub mod transform;
 
 pub use color::{Hsla, Rgba};
-pub use core::{ApplyError, Core};
+pub use core::{ApplyError, Core, ListBind};
 pub use keyboard::{drag_dismisses, press_allowed, return_resigns, tap_dismisses};
 pub use mount::{InputConfig, MountBatch, MountItem, ViewKind};
 pub use ops::{

@@ -10,7 +10,9 @@
 //! that block. Inline views inside text and text selection are not part of
 //! this slice.
 
+mod fenwick;
 mod layout_tree;
+mod list;
 
 use std::{mem, sync::Arc};
 
@@ -21,11 +23,11 @@ use layout_tree::LayoutTree;
 use rustc_hash::FxHashSet;
 
 use crate::{
-    geometry::{Bounds, Edges, Percentage, Points, Size, rect},
+    geometry::{Bounds, Edges, Percentage, Point, Points, Size, rect},
     mount::{InputConfig, MountBatch, MountItem, ViewKind},
     ops::{
-        Accessibility, AccessibilityProp, Command, EventKind, EventMask, ImageSource, Interaction,
-        KeyboardDismiss, KeyboardTaps, NodeId, Op, Prop, ROOT_ID, ResizeMode, Tag,
+        Accessibility, AccessibilityProp, CellSlot, Command, EventKind, EventMask, ImageSource,
+        Interaction, KeyboardDismiss, KeyboardTaps, NodeId, Op, Prop, ROOT_ID, ResizeMode, Tag,
     },
     style::{self, EllipsizeMode, EnvEdges, Style, TextAlign, TextStyle, ViewStyle},
     text::{AttributedText, MeasureCache, ResolvedTextStyle, SpanTestId, TextEngine, TextLayout},
@@ -67,6 +69,8 @@ mod dirty {
     pub(super) const ACCESSIBILITY: u32 = 1 << 10;
     /// Emit [`crate::MountItem::Command`] `SetSelection`.
     pub(super) const SELECTION: u32 = 1 << 11;
+    /// The list needs its window recomputed.
+    pub(super) const LIST: u32 = 1 << 12;
 }
 
 /// Host kind.
@@ -80,13 +84,21 @@ enum Kind {
     Image,
     /// Scrolls on one axis ([`ScrollState::horizontal`]).
     Scroll,
+    /// A virtualized list: a scroll view whose cell children are layout
+    /// roots of their own.
+    List,
+    /// A recycled list cell.
+    Cell,
     /// A text field, one line or several.
     Input,
 }
 
 impl Kind {
     fn is_container(self) -> bool {
-        matches!(self, Kind::View | Kind::Image | Kind::Scroll)
+        matches!(
+            self,
+            Kind::View | Kind::Image | Kind::Scroll | Kind::List | Kind::Cell
+        )
     }
 
     fn of(tag: Tag) -> Self {
@@ -95,6 +107,8 @@ impl Kind {
             Tag::Text => Kind::Text,
             Tag::Image => Kind::Image,
             Tag::Scroll => Kind::Scroll,
+            Tag::List => Kind::List,
+            Tag::Cell => Kind::Cell,
             Tag::Input => Kind::Input,
         }
     }
@@ -104,12 +118,22 @@ impl Kind {
             Kind::View => ViewKind::View,
             Kind::Text => ViewKind::Text,
             Kind::Image => ViewKind::Image,
-            Kind::Scroll => ViewKind::Scroll,
+            Kind::Scroll | Kind::List => ViewKind::Scroll,
+            Kind::Cell => ViewKind::View,
             Kind::Input => ViewKind::Input,
             // Raw text is never created as a native view.
             Kind::RawText => ViewKind::View,
         }
     }
+}
+
+/// Cells the runtime must render before the frame shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListBind {
+    /// The list.
+    pub list: NodeId,
+    /// `(slot, item index)` pairs.
+    pub binds: Vec<(u32, u32)>,
 }
 
 /// An op referenced a node in an impossible way. This is a renderer bug;
@@ -209,8 +233,12 @@ struct Node {
     object_fit: Option<ResizeMode>,
     /// Present exactly for [`Kind::Image`]: `None` until `src` is set.
     image: Option<Option<ImageSource>>,
-    /// Present exactly for [`Kind::Scroll`].
+    /// Present for [`Kind::Scroll`] and [`Kind::List`].
     scroll: Option<Box<ScrollState>>,
+    /// Present exactly for [`Kind::List`].
+    list: Option<Box<list::ListState>>,
+    /// Present exactly for a [`Kind::Cell`] in a list.
+    slot: Option<CellSlot>,
     /// Present exactly for [`Kind::Input`].
     input: Option<Box<InputState>>,
     /// `zIndex`: native views are ordered by it (stable) among siblings.
@@ -222,6 +250,9 @@ struct Node {
     /// `env()` terms of the padding and margin, and the insets last added
     /// to the authored lengths (padding, then margin).
     env: Option<Box<(EnvEdges, [Edges<Points>; 2])>>,
+    /// Its layout root was laid out this commit: its subtree's frames are
+    /// new.
+    relaid: bool,
     /// The native view exists.
     created: bool,
     /// Last frame sent to the platform.
@@ -258,12 +289,15 @@ impl Node {
             events: EventMask::default(),
             object_fit: None,
             image: matches!(kind, Kind::Image).then_some(None),
-            scroll: matches!(kind, Kind::Scroll).then(Box::default),
+            scroll: matches!(kind, Kind::Scroll | Kind::List).then(Box::default),
+            list: matches!(kind, Kind::List).then(|| Box::new(list::ListState::new())),
+            slot: None,
             input: matches!(kind, Kind::Input).then(Box::default),
             z_index: 0,
             rtl: false,
             direction: None,
             env: None,
+            relaid: false,
             created: false,
             frame: Bounds::default(),
             dirty: 0,
@@ -352,6 +386,14 @@ pub struct Core<M: TextEngine> {
     keyboard_inset: Points,
     /// Nodes whose padding or margin uses `env()`.
     env_styled: FxHashSet<NodeId>,
+    /// Live lists.
+    lists: Vec<Key>,
+    /// List scroll commands waiting for this commit's list update.
+    commands: Vec<(NodeId, Command)>,
+    /// What the runtime must bind before the frame shows.
+    list_binds: Vec<ListBind>,
+    /// Events the core raises for JS (a list's end came near).
+    events: Vec<(NodeId, EventKind)>,
 }
 
 impl<M: TextEngine> Core<M> {
@@ -386,6 +428,10 @@ impl<M: TextEngine> Core<M> {
             safe_area: Edges::default(),
             keyboard_inset: Points::ZERO,
             env_styled: FxHashSet::default(),
+            lists: Vec::new(),
+            commands: Vec::new(),
+            list_binds: Vec::new(),
+            events: Vec::new(),
         }
     }
 
@@ -435,6 +481,27 @@ impl<M: TextEngine> Core<M> {
             self.keyboard_inset = height;
             self.sync_env();
         }
+    }
+
+    /// The platform scrolled a list to `offset`. A report from before a
+    /// scroll the core issued is replayed onto it.
+    pub fn set_scroll_offset(&mut self, id: NodeId, offset: Point<Points>) {
+        let Ok(key) = self.key(id) else { return };
+        let Some(list) = self.nodes[key as usize].list.as_mut() else {
+            return;
+        };
+        list.reported(offset.y.0);
+        self.mark(key, dirty::LIST);
+    }
+
+    /// Moves the cells the runtime must render before the frame shows.
+    pub fn take_list_binds(&mut self, out: &mut Vec<ListBind>) {
+        out.append(&mut self.list_binds);
+    }
+
+    /// The events the core raised for JS.
+    pub fn take_events(&mut self, out: &mut Vec<(NodeId, EventKind)>) {
+        out.append(&mut self.events);
     }
 
     /// The user edited input `id` (before JS sees the edit): keeps the text
@@ -505,7 +572,22 @@ impl<M: TextEngine> Core<M> {
             }
             Op::Release { id } => self.release(id),
             Op::Command { id, command } => {
-                self.mount.push(MountItem::Command { id, command });
+                let list = self
+                    .key(id)
+                    .is_ok_and(|key| self.nodes[key as usize].kind == Kind::List);
+                if list
+                    && matches!(
+                        command,
+                        Command::ScrollToIndex { .. } | Command::ScrollToEnd { .. }
+                    )
+                {
+                    if let Ok(key) = self.key(id) {
+                        self.mark(key, dirty::LIST);
+                    }
+                    self.commands.push((id, command));
+                } else {
+                    self.mount.push(MountItem::Command { id, command });
+                }
                 Ok(())
             }
         }
@@ -529,6 +611,8 @@ impl<M: TextEngine> Core<M> {
                 self.emit_frames(key);
             }
         }
+        self.layout_cells();
+        self.update_lists();
         self.flush_text();
         if self.mount.is_empty() {
             None
@@ -571,7 +655,7 @@ impl<M: TextEngine> Core<M> {
         style::resolve_normal_alignment(&mut layout_style);
         // The authored style. [`Self::sync_scroll_style`] derives the
         // taffy style (the scroll axis, and a horizontal row).
-        let scroll_base = (kind == Kind::Scroll).then(|| layout_style.clone());
+        let scroll_base = matches!(kind, Kind::Scroll | Kind::List).then(|| layout_style.clone());
         let layout = match kind {
             Kind::Image => self
                 .layout
@@ -580,7 +664,9 @@ impl<M: TextEngine> Core<M> {
                 layout_style,
                 LeafContext::Text(TextContext::new(Arc::default())),
             ),
-            Kind::View | Kind::Scroll => self.layout.new_leaf(layout_style),
+            Kind::View | Kind::Scroll | Kind::List | Kind::Cell => {
+                self.layout.new_leaf(layout_style)
+            }
             Kind::RawText => unreachable!("raw text is CreateText, not a tag"),
         };
         self.layout.set_tag(layout, key);
@@ -592,8 +678,11 @@ impl<M: TextEngine> Core<M> {
         if let Some(base) = scroll_base {
             node.base_layout = Some(Box::new(base));
         }
-        if kind == Kind::Scroll {
+        if matches!(kind, Kind::Scroll | Kind::List) {
             self.sync_scroll_style(key);
+        }
+        if kind == Kind::List {
+            self.lists.push(key);
         }
         if kind == Kind::Input {
             self.measure_input(key);
@@ -668,10 +757,10 @@ impl<M: TextEngine> Core<M> {
         } else {
             self.env_styled.remove(&id);
         }
-        if kind == Kind::Text || kind == Kind::Scroll {
+        if matches!(kind, Kind::Text | Kind::Scroll | Kind::List) {
             self.nodes[key as usize].base_layout = Some(Box::new(layout.clone()));
         }
-        if kind == Kind::Scroll {
+        if matches!(kind, Kind::Scroll | Kind::List) {
             // The scroll axis overrides the authored overflow. `env()` is
             // added there, on the physical edges, before a right-to-left
             // row swaps padding.
@@ -731,6 +820,12 @@ impl<M: TextEngine> Core<M> {
                 }
             }
             Prop::Horizontal(horizontal) => {
+                if self.nodes[key as usize].kind == Kind::List {
+                    if horizontal {
+                        log::warn!("a v2 list scrolls vertically; `horizontal` is ignored");
+                    }
+                    return Ok(());
+                }
                 let changed = self.nodes[key as usize]
                     .scroll
                     .as_mut()
@@ -768,6 +863,59 @@ impl<M: TextEngine> Core<M> {
                     });
                 if changed {
                     self.mark(key, dirty::SCROLL);
+                }
+            }
+            Prop::Count(count) => {
+                if let Some(list) = self.nodes[key as usize].list.as_mut() {
+                    list.set_count(count);
+                    self.mark(key, dirty::LIST);
+                }
+            }
+            Prop::EstimatedItemSize(size) => {
+                if let Some(list) = self.nodes[key as usize].list.as_mut() {
+                    list.set_estimated(size.0);
+                    self.mark(key, dirty::LIST);
+                }
+            }
+            Prop::Columns(columns) => {
+                if let Some(list) = self.nodes[key as usize].list.as_mut() {
+                    list.set_columns(columns);
+                    self.mark(key, dirty::LIST);
+                }
+            }
+            Prop::Splice {
+                at,
+                removed,
+                inserted,
+            } => {
+                if let Some(list) = self.nodes[key as usize].list.as_mut() {
+                    list.splice(at, removed, inserted);
+                    self.mark(key, dirty::LIST);
+                }
+            }
+            Prop::Slot(slot) => {
+                self.nodes[key as usize].slot = Some(slot);
+                let parent = self.nodes[key as usize].parent;
+                if parent != NO_KEY
+                    && let Some(list) = self.nodes[parent as usize].list.as_mut()
+                {
+                    list.add_slot_cell(slot, key);
+                    self.mark(parent, dirty::LIST);
+                }
+            }
+            Prop::CellIndex(index) => {
+                let parent = self.nodes[key as usize].parent;
+                if parent != NO_KEY
+                    && let Some(list) = self.nodes[parent as usize].list.as_mut()
+                {
+                    list.rendered(key, index);
+                    self.mark(parent, dirty::LIST);
+                }
+            }
+            Prop::LoadMoreThreshold(threshold) => {
+                if let Some(list) = self.nodes[key as usize].list.as_mut() {
+                    list.set_end_threshold(threshold);
+                    self.mark(key, dirty::LIST);
                 }
             }
             Prop::Value(value) => {
@@ -972,6 +1120,30 @@ impl<M: TextEngine> Core<M> {
             self.mark_text_block(parent);
             return Ok(());
         }
+        // A cell is its list's child natively but a layout root of its own:
+        // its size is measured and its frame placed by the list.
+        let list_parent = self.nodes[parent as usize].kind == Kind::List;
+        if list_parent {
+            if self.nodes[child as usize].kind != Kind::Cell {
+                log::warn!("a list takes `<cell>` children only");
+            }
+            if let Some(slot) = self.nodes[child as usize].slot
+                && let Some(list) = self.nodes[parent as usize].list.as_mut()
+            {
+                list.add_slot_cell(slot, child);
+                self.mark(parent, dirty::LIST);
+            }
+            if parent_created {
+                self.ensure_created(child);
+                let before = self.native_before(parent, child);
+                self.mount.push(MountItem::Insert {
+                    parent: self.nodes[parent as usize].id,
+                    child: self.nodes[child as usize].id,
+                    before,
+                });
+            }
+            return Ok(());
+        }
         if let Some(child_layout) = self.nodes[child as usize].layout {
             let parent_layout = self.nodes[parent as usize]
                 .layout
@@ -1012,11 +1184,20 @@ impl<M: TextEngine> Core<M> {
             return;
         }
         if let Some(layout) = layout {
-            let parent_layout = self.nodes[parent as usize]
-                .layout
-                .expect("block parent has layout");
-            self.layout.remove_child(parent_layout, layout);
-            self.needs_layout = true;
+            if self.nodes[parent as usize].kind == Kind::List {
+                if self.nodes[key as usize].kind == Kind::Cell {
+                    if let Some(list) = self.nodes[parent as usize].list.as_mut() {
+                        list.remove_cell(key);
+                        self.mark(parent, dirty::LIST);
+                    }
+                }
+            } else {
+                let parent_layout = self.nodes[parent as usize]
+                    .layout
+                    .expect("block parent has layout");
+                self.layout.remove_child(parent_layout, layout);
+                self.needs_layout = true;
+            }
             if emit_remove && created && self.nodes[parent as usize].created {
                 self.mount.push(MountItem::Remove { id });
             }
@@ -1034,6 +1215,8 @@ impl<M: TextEngine> Core<M> {
         let node = self.nodes.remove(key as usize);
         self.slots[id as usize] = 0;
         self.env_styled.remove(&id);
+        self.lists.retain(|&k| k != key);
+        self.list_binds.retain(|b| b.list != id);
         for &c in &node.children {
             if let Some(child) = self.nodes.get_mut(c as usize) {
                 child.parent = NO_KEY;
@@ -1156,7 +1339,7 @@ impl<M: TextEngine> Core<M> {
         if node.image.as_ref().is_some_and(|source| source.is_some()) {
             flags |= dirty::IMAGE;
         }
-        if kind == Kind::Scroll {
+        if matches!(kind, Kind::Scroll | Kind::List) {
             // A new native view has not been told its content size.
             node.scroll.as_mut().expect("scroll").content = None;
             flags |= dirty::SCROLL;
@@ -1624,7 +1807,7 @@ impl<M: TextEngine> Core<M> {
         self.nodes[key as usize].rtl = rtl;
         let kind = self.nodes[key as usize].kind;
         let layout_id = self.nodes[key as usize].layout;
-        if kind == Kind::Scroll {
+        if matches!(kind, Kind::Scroll | Kind::List) {
             if let Some(base) = self.nodes[key as usize].base_layout.as_mut() {
                 base.direction = direction;
             }
@@ -2366,6 +2549,348 @@ impl<M: TextEngine> Core<M> {
         self.needs_layout = true;
     }
 
+    /// Lays out the list cells that changed: items at their column's
+    /// width, the header, footer and empty placeholder at the full width.
+    fn layout_cells(&mut self) {
+        for i in 0..self.lists.len() {
+            let key = self.lists[i];
+            let Some(list_layout) = self.nodes.get(key as usize).and_then(|n| n.layout) else {
+                continue;
+            };
+            if !self.nodes[key as usize].created {
+                continue;
+            }
+            let size = self.rounded_layout(list_layout).size;
+            let cross = size.width;
+            let state = self.nodes[key as usize].list.as_mut().expect("list");
+            let resized = state.cells_cross != cross;
+            state.cells_cross = cross;
+            let item_cross = state.column(cross, 0).1;
+            let extra_cross = state.full_width(cross).1;
+            let cells = std::mem::take(&mut self.nodes[key as usize].children);
+            for &cell in &cells {
+                let node = &self.nodes[cell as usize];
+                let Some(cell_layout) = node.layout else {
+                    continue;
+                };
+                let width = match node.slot {
+                    Some(CellSlot::Item(_)) | None => item_cross,
+                    Some(_) => extra_cross,
+                };
+                if resized || self.layout.dirty(cell_layout) {
+                    let available = taffy::Size {
+                        width: taffy::AvailableSpace::Definite(width),
+                        height: taffy::AvailableSpace::MaxContent,
+                    };
+                    let engine = &self.text_engine;
+                    let cache = &mut self.measure_cache;
+                    self.layout.compute_layout_with_measure(
+                        cell_layout,
+                        available,
+                        |input, _, cx, style| measure_leaf(engine, cache, input, cx, style),
+                    );
+                    self.nodes[cell as usize].relaid = true;
+                }
+            }
+            self.nodes[key as usize].children = cells;
+        }
+    }
+
+    /// Positions the rows of every list: measures the cells that show
+    /// their item, follows a scroll command's target and asks the runtime
+    /// for the rows the window needs.
+    fn update_lists(&mut self) {
+        for i in 0..self.lists.len() {
+            let key = self.lists[i];
+            if !self.nodes[key as usize].created {
+                continue;
+            }
+            let viewport = self.nodes[key as usize]
+                .layout
+                .map(|layout| self.rounded_layout(layout).size.height)
+                .unwrap_or(0.0);
+            let cross = self.nodes[key as usize]
+                .layout
+                .map(|layout| self.rounded_layout(layout).size.width)
+                .unwrap_or(0.0);
+            self.nodes[key as usize]
+                .list
+                .as_mut()
+                .expect("list")
+                .viewport = viewport;
+
+            // Sizes of cells showing their item, and of the extras.
+            let (mut ready, extras) = {
+                let list = self.nodes[key as usize].list.as_ref().expect("list");
+                (
+                    list.slots
+                        .iter()
+                        .filter_map(|s| s.ready().map(|i| (i, s.cell)))
+                        .collect::<Vec<_>>(),
+                    list.extras,
+                )
+            };
+            let mut anchor = 0.0;
+            for &(index, cell) in &ready {
+                if let Some(cell_layout) = self.nodes.get(cell as usize).and_then(|c| c.layout) {
+                    let size = self.rounded_layout(cell_layout).size.height;
+                    let list = self.nodes[key as usize].list.as_mut().expect("list");
+                    anchor += list.measured(index, size);
+                }
+            }
+            for (kind, extra) in [
+                list::ExtraKind::Header,
+                list::ExtraKind::Footer,
+                list::ExtraKind::Empty,
+            ]
+            .into_iter()
+            .zip(extras)
+            {
+                if let Some(cell_layout) =
+                    self.nodes.get(extra.cell as usize).and_then(|c| c.layout)
+                {
+                    let size = self.rounded_layout(cell_layout).size.height;
+                    let list = self.nodes[key as usize].list.as_mut().expect("list");
+                    anchor += list.measured_extra(kind, size);
+                }
+            }
+            {
+                let list = self.nodes[key as usize].list.as_mut().expect("list");
+                list.offset += anchor;
+                anchor += list.take_splice_anchor();
+                if let Some(target) = list.follow_pin() {
+                    self.issue_list_scroll_to(key, target, true);
+                }
+            }
+
+            // Scroll commands for the list, now that sizes are known.
+            let id = self.nodes[key as usize].id;
+            let mut commands = Vec::new();
+            for command in &self.commands {
+                if command.0 == id {
+                    commands.push(command.1.clone());
+                }
+            }
+            self.commands.retain(|c| c.0 != id);
+            for command in commands {
+                let (target, animated) = match command {
+                    Command::ScrollToIndex { index, animated } => {
+                        (list::PinTarget::Index(index), animated)
+                    }
+                    Command::ScrollToEnd { animated } => (list::PinTarget::End, animated),
+                    _ => continue,
+                };
+                let list = self.nodes[key as usize].list.as_mut().expect("list");
+                let offset = list.target_offset(target);
+                list.pin(Some(target), offset);
+                list.jump(offset);
+                list.issue_scroll_to(offset);
+                let y = Points(offset);
+                self.mount.push(MountItem::Command {
+                    id,
+                    command: Command::ScrollTo {
+                        x: Points::ZERO,
+                        y,
+                        animated,
+                    },
+                });
+            }
+
+            let mut binds = Vec::new();
+            let load_more = {
+                let list = self.nodes[key as usize].list.as_mut().expect("list");
+                list.update_window(&mut binds)
+            };
+            if load_more {
+                self.events.push((id, EventKind::LoadMore));
+            }
+            if !binds.is_empty() {
+                self.list_binds.push(ListBind { list: id, binds });
+            }
+
+            ready.clear();
+            ready.extend(
+                self.nodes[key as usize]
+                    .list
+                    .as_ref()
+                    .expect("list")
+                    .slots
+                    .iter()
+                    .filter_map(|s| s.ready().map(|i| (i, s.cell))),
+            );
+            let (window_start, window_end) = self.nodes[key as usize]
+                .list
+                .as_ref()
+                .expect("list")
+                .render_window();
+            let hidden = self.nodes[key as usize]
+                .list
+                .as_ref()
+                .expect("list")
+                .hidden_y();
+            let items_changed = self.nodes[key as usize]
+                .list
+                .as_mut()
+                .expect("list")
+                .items_changed;
+            // Cells without an item can still show their last one: move
+            // those whose old place is in the window out of sight.
+            let unbound: Vec<Key> = self.nodes[key as usize]
+                .list
+                .as_ref()
+                .expect("list")
+                .slots
+                .iter()
+                .filter(|s| s.ready().is_none() && s.cell != u32::MAX)
+                .map(|s| s.cell)
+                .collect();
+            for cell in unbound {
+                let frame = self.nodes[cell as usize].frame;
+                if frame.size.width.is_nan() {
+                    continue;
+                }
+                let (start, size) = (frame.origin.y.0, frame.size.height.0);
+                if items_changed || (start + size > window_start && start < window_end) {
+                    if frame.origin.y.0 != hidden {
+                        let away = Bounds {
+                            origin: Point::new(frame.origin.x, Points(hidden)),
+                            ..frame
+                        };
+                        self.set_frame(cell, away);
+                    }
+                }
+            }
+            // Place the cells that show their item.
+            for &(index, cell) in &ready {
+                let Some(cell_layout) = self.nodes.get(cell as usize).and_then(|c| c.layout) else {
+                    continue;
+                };
+                let size = self.rounded_layout(cell_layout).size;
+                let (column, width) = {
+                    let list = self.nodes[key as usize].list.as_ref().expect("list");
+                    list.column(cross, list.column_of(index))
+                };
+                let at = self.nodes[key as usize]
+                    .list
+                    .as_ref()
+                    .expect("list")
+                    .item_at(index);
+                let frame = rect(column, at, width, size.height);
+                self.set_frame(cell, frame);
+                if std::mem::take(&mut self.nodes[cell as usize].relaid) {
+                    let children = std::mem::take(&mut self.nodes[cell as usize].children);
+                    for &child in &children {
+                        self.emit_frames(child);
+                    }
+                    self.nodes[cell as usize].children = children;
+                }
+            }
+            // Header, footer and the empty placeholder.
+            let (blocks, count) = {
+                let list = self.nodes[key as usize].list.as_ref().expect("list");
+                (list.blocks(), list.count)
+            };
+            let (full_x, full_width) = self.nodes[key as usize]
+                .list
+                .as_ref()
+                .expect("list")
+                .full_width(cross);
+            let ats = [blocks.header, blocks.footer, blocks.body];
+            for (i, extra) in extras.iter().enumerate() {
+                if extra.cell == u32::MAX {
+                    continue;
+                }
+                let cell = extra.cell;
+                if i == 2 && count > 0 {
+                    // The empty placeholder shows only without items.
+                    let frame = self.nodes[cell as usize].frame;
+                    if !frame.size.width.is_nan() && frame.origin.y.0 != hidden {
+                        let away = Bounds {
+                            origin: Point::new(frame.origin.x, Points(hidden)),
+                            ..frame
+                        };
+                        self.set_frame(cell, away);
+                    }
+                    continue;
+                }
+                if let Some(cell_layout) = self.nodes.get(cell as usize).and_then(|c| c.layout) {
+                    let size = self.rounded_layout(cell_layout).size;
+                    let frame = rect(full_x, ats[i], full_width, size.height);
+                    self.set_frame(cell, frame);
+                    if std::mem::take(&mut self.nodes[cell as usize].relaid) {
+                        let children = std::mem::take(&mut self.nodes[cell as usize].children);
+                        for &child in &children {
+                            self.emit_frames(child);
+                        }
+                        self.nodes[cell as usize].children = children;
+                    }
+                }
+            }
+            self.nodes[key as usize]
+                .list
+                .as_mut()
+                .expect("list")
+                .items_changed = false;
+
+            let content_len = self.nodes[key as usize]
+                .list
+                .as_ref()
+                .expect("list")
+                .content_len();
+            let content = Size {
+                width: Points(cross),
+                height: Points(content_len),
+            };
+            let old_len = self.nodes[key as usize]
+                .scroll
+                .as_ref()
+                .and_then(|s| s.content)
+                .map_or(0.0, |c| c.height.0);
+            if anchor != 0.0 {
+                if content_len >= old_len {
+                    self.set_scroll_content(key, content);
+                    self.mount.push(MountItem::ScrollBy {
+                        id,
+                        dx: Points::ZERO,
+                        dy: Points(anchor),
+                    });
+                } else {
+                    self.mount.push(MountItem::ScrollBy {
+                        id,
+                        dx: Points::ZERO,
+                        dy: Points(anchor),
+                    });
+                    self.set_scroll_content(key, content);
+                }
+                self.nodes[key as usize]
+                    .list
+                    .as_mut()
+                    .expect("list")
+                    .issue_scroll_by(anchor);
+            } else {
+                self.set_scroll_content(key, content);
+            }
+        }
+    }
+
+    /// Scrolls list `key` to `offset` (following a measured scroll target).
+    fn issue_list_scroll_to(&mut self, key: Key, offset: f32, animated: bool) {
+        let id = self.nodes[key as usize].id;
+        self.nodes[key as usize]
+            .list
+            .as_mut()
+            .expect("list")
+            .issue_scroll_to(offset);
+        self.mount.push(MountItem::Command {
+            id,
+            command: Command::ScrollTo {
+                x: Points::ZERO,
+                y: Points(offset),
+                animated,
+            },
+        });
+    }
+
     fn set_scroll_content(&mut self, key: Key, size: Size<Points>) {
         let (id, rtl, kind, viewport, horizontal, old, content_item) = {
             let node = &mut self.nodes[key as usize];
@@ -2629,6 +3154,115 @@ mod tests {
                 _ => None,
             })
             .unwrap_or_else(|| panic!("no frame for {id}"))
+    }
+
+    fn list_core() -> Core<FakeEngine> {
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::List,
+        })
+        .unwrap();
+        apply_style(&mut c, 2, sized(100.0, 200.0));
+        c.apply(Op::Insert {
+            parent: 1,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::EstimatedItemSize(Points(50.0)),
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Count(100),
+        })
+        .unwrap();
+        c
+    }
+
+    fn cell_in_list(c: &mut Core<FakeEngine>, slot: u32, index: u32, id: NodeId) {
+        c.apply(Op::Create { id, tag: Tag::Cell }).unwrap();
+        c.apply(Op::SetProp {
+            id,
+            prop: Prop::Slot(CellSlot::Item(slot)),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: id,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: id + 1,
+            tag: Tag::View,
+        })
+        .unwrap();
+        apply_style(c, id + 1, sized(100.0, 20.0));
+        c.apply(Op::Insert {
+            parent: id,
+            child: id + 1,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id,
+            prop: Prop::CellIndex(index),
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn a_list_binds_places_and_recycles_cell_roots() {
+        let mut c = list_core();
+        let _ = c.commit().expect("list");
+        let mut binds = Vec::new();
+        c.take_list_binds(&mut binds);
+        assert_eq!(binds.len(), 1);
+        let (slot, index) = binds[0].binds[0];
+        assert_eq!(index, 0);
+        cell_in_list(&mut c, slot, index, 3);
+        let batch = c.commit().expect("cell");
+        let placed = frame(&batch, 3);
+        assert_eq!(placed.origin.x, Points(0.0));
+        assert_eq!(placed.origin.y, Points(0.0));
+        assert_eq!(placed.size.height, Points(20.0));
+        // Scrolling moves the window; the same cell slot takes item 50.
+        c.set_scroll_offset(2, Point::new(Points(0.0), Points(2500.0)));
+        let _ = c.commit();
+        let mut binds = Vec::new();
+        c.take_list_binds(&mut binds);
+        assert_eq!(binds[0].binds[0].1, 46);
+        assert_eq!(binds[0].list, 2);
+        assert!(binds[0].binds.iter().all(|b| b.1 >= 46));
+    }
+
+    #[test]
+    fn a_scroll_to_index_resolves_to_a_content_offset_and_binds_there() {
+        let mut c = list_core();
+        c.apply(Op::Command {
+            id: 2,
+            command: Command::ScrollToIndex {
+                index: 50,
+                animated: false,
+            },
+        })
+        .unwrap();
+        let batch = c.commit().expect("list");
+        let command = batch.items.iter().find_map(|item| match item {
+            MountItem::Command {
+                id: 2,
+                command: Command::ScrollTo { y, animated, .. },
+            } => Some((y.0, *animated)),
+            _ => None,
+        });
+        assert_eq!(command, Some((2500.0, false)));
+        let mut binds = Vec::new();
+        c.take_list_binds(&mut binds);
+        assert_eq!(binds[0].binds[0].1, 46);
     }
 
     #[test]

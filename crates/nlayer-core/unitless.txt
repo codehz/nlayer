@@ -56,3 +56,4 @@ ops::ImageScales::iter ->                                        # pixel densiti
 ops::AccessibilityValue.min                                     # a screen-reader range value (unitless)
 ops::AccessibilityValue.max                                     # a screen-reader range value (unitless)
 ops::AccessibilityValue.now                                     # a screen-reader range value (unitless)
+ops::Prop::LoadMoreThreshold.0                                   # a distance to the end in viewports
