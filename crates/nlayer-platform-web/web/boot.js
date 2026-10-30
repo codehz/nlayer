@@ -243,6 +243,20 @@ export async function startPage(root, options = {}) {
           }),
         );
       },
+      selection(id, start, end) {
+        enter(() => {
+          wasm.nlayer_selection(id, start, end);
+          return wasm.nlayer_pump();
+        });
+      },
+      composition(id, composing, text) {
+        enter(() =>
+          withBytes([encoder.encode(text)], (p, l) => {
+            wasm.nlayer_composition(id, composing ? 1 : 0, p, l);
+            return wasm.nlayer_pump();
+          }),
+        );
+      },
       scroll(id, kind, x, y, contentW, contentH, width, height) {
         const raw = SCROLL_KIND[kind];
         if (raw == null) return;

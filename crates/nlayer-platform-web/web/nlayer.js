@@ -624,56 +624,143 @@ export class Player {
   op_in([, id, css, config]) {
     const el = this.view(id);
     if (!el) return;
+    const tag = config.multiline ? "TEXTAREA" : "INPUT";
     let field = el._field;
-    if (!field) {
-      field = this.doc.createElement("input");
-      field.className = "nl-field nl-inset";
-      field._count = 0;
-      field.addEventListener("input", () => {
-        if (field.disabled) return;
-        if (field.value === field._known) return;
-        field._known = field.value;
-        field._count++;
-        this.host.change?.(id, field.value);
-      });
-      field.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter") return;
-        const kind = field._keyboard;
-        if (kind && kind !== "text" && kind !== "email") return;
-        event.preventDefault();
-        field.blur();
-      });
-      el._field = field;
+    if (field && field.tagName !== tag) {
+      const old = field;
+      const focused = this.doc.activeElement === old;
+      field = this.makeField(el, id, tag);
+      field.value = old.value;
+      field._known = old._known ?? old.value;
+      field._count = old._count ?? 0;
+      old.parentNode?.insertBefore(field, old);
+      old.remove();
+      if (focused) field.focus();
+    } else if (!field) {
+      field = this.makeField(el, id, tag);
       el.append(field);
       if (el._content) this.placeContent(el);
     }
     swapClass(field, "_class", this.styleClass(css));
     field.placeholder = config.placeholder;
-    field.type = config.secure
-      ? "password"
-      : config.keyboard === "email"
-        ? "email"
-        : config.keyboard === "phone"
-          ? "tel"
-          : "text";
-    field.inputMode =
-      config.keyboard === "number"
-        ? "numeric"
-        : config.keyboard === "phone"
-          ? "tel"
-          : config.keyboard === "email"
-            ? "email"
+    if (config.multiline) {
+      field.removeAttribute("type");
+      field.removeAttribute("inputMode");
+    } else {
+      field.type = config.secure
+        ? "password"
+        : config.keyboard === "email"
+          ? "email"
+          : config.keyboard === "phone"
+            ? "tel"
             : "text";
+      field.inputMode =
+        config.keyboard === "number"
+          ? "numeric"
+          : config.keyboard === "phone"
+            ? "tel"
+            : config.keyboard === "email"
+              ? "email"
+              : "text";
+    }
     field.disabled = !!config.disabled;
     field._keyboard = config.keyboard || "text";
     field._secure = !!config.secure;
+    field._multiline = !!config.multiline;
     el.classList.toggle("nl-disabled", !!config.disabled);
     field.dir = config.rtl ? "rtl" : "ltr";
   }
 
+  /** A field for `el`: a textarea when the input takes several lines. */
+  makeField(el, id, tag) {
+    const field = this.doc.createElement(tag);
+    field.className = "nl-field nl-inset";
+    field._count = 0;
+    field._known = "";
+    field._selection = [0, 0];
+    field.addEventListener("input", () => this.textChanged(el, id, field));
+    field.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      if (field.tagName === "TEXTAREA") {
+        // Return inserts a line break (`submitBehavior` is not part of v2).
+        // An input method's Return commits its composition instead.
+        if (event.isComposing || event.keyCode === 229) return;
+        event.preventDefault();
+        const start = field.selectionStart ?? field.value.length;
+        const end = field.selectionEnd ?? start;
+        field.setRangeText("\n", start, end, "end");
+        this.textChanged(el, id, field);
+        this.selectionChanged(el, id, field);
+        return;
+      }
+      const kind = field._keyboard;
+      if (kind && kind !== "text" && kind !== "email") return;
+      event.preventDefault();
+      field.blur();
+    });
+    // A composition is held from JS while it lasts: setting a field's
+    // value ends it and commits the pre-edit text.
+    field.addEventListener("compositionstart", (event) => {
+      field._composing = true;
+      this.compositionChanged(el, id, field, event.data ?? "");
+    });
+    field.addEventListener("compositionupdate", (event) =>
+      this.compositionChanged(el, id, field, event.data ?? ""),
+    );
+    field.addEventListener("compositionend", () => {
+      field._composing = false;
+      // The committed text is reported before the end (browsers differ in
+      // whether its `input` event comes before or after).
+      this.textChanged(el, id, field);
+      this.compositionChanged(el, id, field, "");
+      const pending = field._pending;
+      field._pending = null;
+      if (pending) this.showValue(field, pending[0], pending[1]);
+    });
+    field.addEventListener("select", () => this.selectionChanged(el, id, field));
+    field.addEventListener("keyup", () => this.selectionChanged(el, id, field));
+    field.addEventListener("pointerup", () => this.selectionChanged(el, id, field));
+    el._field = field;
+    return field;
+  }
+
+  textChanged(el, id, field) {
+    if (field.disabled) return;
+    if (field.value === field._known) return;
+    field._known = field.value;
+    field._count++;
+    this.host.change?.(id, field.value);
+  }
+
+  compositionChanged(el, id, field, text) {
+    const composing = !!field._composing;
+    const last = field._composition;
+    if (last && last[0] === composing && last[1] === text) return;
+    field._composition = [composing, text];
+    this.host.composition?.(id, composing, text);
+  }
+
+  selectionChanged(el, id, field) {
+    const selection = [field.selectionStart ?? 0, field.selectionEnd ?? 0];
+    const last = el._selection;
+    if (last && last[0] === selection[0] && last[1] === selection[1]) return;
+    el._selection = selection;
+    this.host.selection?.(id, selection[0], selection[1]);
+  }
+
   op_iv([, id, text, count]) {
     const field = this.view(id)?._field;
-    if (!field || count < field._count) return;
+    if (!field) return;
+    if (field._composing) {
+      field._pending = [text, count];
+      return;
+    }
+    field._pending = null;
+    this.showValue(field, text, count);
+  }
+
+  showValue(field, text, count) {
+    if (count < field._count) return;
     field._known = text;
     if (field.value !== text) field.value = text;
   }
@@ -707,7 +794,10 @@ export class Player {
       const field = el._field;
       if (field) {
         const length = field.value.length;
-        field.setSelectionRange(Math.min(x, length), Math.min(Math.max(y, x), length));
+        const start = Math.min(x, length),
+          end = Math.min(Math.max(y, x), length);
+        el._selection = [start, end];
+        field.setSelectionRange(start, end);
       }
       return;
     }

@@ -100,6 +100,18 @@ impl PageSession {
         self.engine.control().input_changed(id, text);
     }
 
+    /// The selection of input `id`, in UTF-16 units.
+    pub fn selection(&self, id: NodeId, start: u32, end: u32) {
+        self.engine.control().selection_changed(id, start, end);
+    }
+
+    /// The composition of input `id` (`text` is empty once it ended).
+    pub fn composition(&self, id: NodeId, composing: bool, text: impl Into<String>) {
+        self.engine
+            .control()
+            .composition_changed(id, composing, text);
+    }
+
     /// Scroll view `id` reported `kind`. The page already moved. The payload
     /// is the content offset, content size and visible size, in points.
     /// Kinds other than the six scroll events are ignored.

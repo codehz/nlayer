@@ -125,6 +125,22 @@ pub(super) fn decode_prop(
                 }
             }
         }
+        (Some(Tag::Input), "multiline") => Prop::Multiline(value.bool()),
+        (Some(Tag::Input), "selectedRange") => {
+            let start = value
+                .get("start")
+                .ok()
+                .and_then(|v| v.number_value())
+                .unwrap_or(0.0)
+                .max(0.0) as u32;
+            let end = value
+                .get("end")
+                .ok()
+                .and_then(|v| v.number_value())
+                .unwrap_or(f64::from(start))
+                .max(0.0) as u32;
+            Prop::Selection { start, end }
+        }
         _ => {
             warnings.warn(format!("unsupported prop `{name}`"));
             return Ok(None);

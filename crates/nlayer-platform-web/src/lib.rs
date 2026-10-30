@@ -7,7 +7,7 @@
 //! [`Encoder`] turns a frame into the JSON `web/nlayer.js` applies:
 //! absolutely positioned elements, one generated CSS class per distinct
 //! style, a border drawn over the children, text as the core's attributed
-//! spans, images, one-axis scroll views and single-line inputs.
+//! spans, images, one-axis scroll views and inputs (one line or several, with selection and compositions).
 //! [`PageSession`] is that engine on the caller's thread. On wasm the crate
 //! exports it (`nlayer_browser_start`, `nlayer_pump`) and `web/boot.js`
 //! drives it.

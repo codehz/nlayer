@@ -184,6 +184,28 @@ pub unsafe extern "C" fn nlayer_input(id: u32, ptr: *const u8, len: usize) {
     });
 }
 
+/// The selection of input `id`, in UTF-16 units (CSS pixels). Applied at
+/// the next [`nlayer_pump`].
+#[unsafe(no_mangle)]
+pub extern "C" fn nlayer_selection(id: u32, start: u32, end: u32) {
+    with_session(|session| {
+        session.selection(NodeId::from(id), start, end);
+        -1.0
+    });
+}
+
+/// A change of input `id`'s composition (`text` is pointer and length into
+/// this module's memory, empty once it ended). Applied at the next
+/// [`nlayer_pump`].
+#[unsafe(no_mangle)]
+pub extern "C" fn nlayer_composition(id: u32, composing: u32, ptr: *const u8, len: usize) {
+    let text = unsafe { string(ptr, len) };
+    with_session(|session| {
+        session.composition(NodeId::from(id), composing != 0, text);
+        -1.0
+    });
+}
+
 /// Scroll view `id` reported `kind` ([`EventKind`]: `onScroll` is 1,
 /// `onScrollEnd` 2, drag 3 and 4, momentum 5 and 6). Lengths are CSS
 /// pixels. Applied at the next [`nlayer_pump`].

@@ -88,6 +88,9 @@ img.nl-fill {
   background: transparent;
   outline: none;
 }
+textarea.nl-field {
+  resize: none;
+}
 .nl-field.nl-inset {
   left: 0;
   top: 0;

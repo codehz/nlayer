@@ -124,10 +124,12 @@ class Document {
 function page() {
   const doc = new Document();
   const root = doc.createElement("div");
-  const host = { presses: [], changes: [], scrolls: [] };
+  const host = { presses: [], changes: [], scrolls: [], selections: [], compositions: [] };
   host.press = (id) => host.presses.push(id);
   host.change = (id, text) => host.changes.push([id, text]);
   host.scroll = (...args) => host.scrolls.push(args);
+  host.selection = (id, start, end) => host.selections.push([id, start, end]);
+  host.composition = (id, composing, text) => host.compositions.push([id, composing, text]);
   const player = new Player(root, host, { assetBase: "assets/" });
   player.doc = doc;
   return { doc, root, host, player };
@@ -549,4 +551,100 @@ test("handled dismisses only off a press and an input", () => {
   arm();
   blank.dispatch("pointerdown", { button: 0 });
   assert.equal(field.blurred, true);
+});
+
+test("a multiline field holds a composition and reports its selection", () => {
+  const { host, player } = page();
+  player.apply([
+    ["c", 2, "input"],
+    ["i", 1, 2, null],
+    [
+      "in",
+      2,
+      null,
+      {
+        placeholder: "body",
+        secure: false,
+        keyboard: "text",
+        disabled: false,
+        rtl: false,
+        multiline: true,
+      },
+    ],
+    ["iv", 2, "ab", 0],
+  ]);
+  let field = player.view(2)._field;
+  assert.equal(field.tagName, "TEXTAREA");
+  assert.equal(field.value, "ab");
+
+  field.selectionStart = 1;
+  field.selectionEnd = 2;
+  field.dispatch("select");
+  assert.deepEqual(host.selections, [[2, 1, 2]]);
+
+  // A composition reports its text, and the value JS writes meanwhile waits.
+  field.dispatch("compositionstart", { data: "zhong" });
+  field.value = "a中b";
+  field.dispatch("input");
+  assert.deepEqual(host.compositions, [[2, true, "zhong"]]);
+  player.apply([["iv", 2, "held", 1]]);
+  assert.equal(field.value, "a中b");
+  field.dispatch("compositionend");
+  assert.deepEqual(host.compositions, [
+    [2, true, "zhong"],
+    [2, false, ""],
+  ]);
+  assert.equal(field.value, "held");
+
+  // Back to one line: the editor is replaced and keeps the text.
+  player.apply([
+    [
+      "in",
+      2,
+      null,
+      {
+        placeholder: "body",
+        secure: false,
+        keyboard: "text",
+        disabled: false,
+        rtl: false,
+        multiline: false,
+      },
+    ],
+  ]);
+  field = player.view(2)._field;
+  assert.equal(field.tagName, "INPUT");
+  assert.equal(field.value, "held");
+});
+
+test("setSelection moves the caret without reporting it back", () => {
+  const { host, player } = page();
+  player.apply([
+    ["c", 2, "input"],
+    ["i", 1, 2, null],
+    [
+      "in",
+      2,
+      null,
+      {
+        placeholder: "",
+        secure: false,
+        keyboard: "text",
+        disabled: false,
+        rtl: false,
+        multiline: false,
+      },
+    ],
+    ["iv", 2, "hello", 0],
+  ]);
+  const field = player.view(2)._field;
+  field.setSelectionRange = (start, end) => {
+    field.selectionStart = start;
+    field.selectionEnd = end;
+    field.dispatch("select");
+  };
+  player.apply([["cmd", 2, "setSelection", 1, 3, false]]);
+  assert.equal(field.selectionStart, 1);
+  assert.equal(field.selectionEnd, 3);
+  assert.deepEqual(host.selections, [], "the controlled range is not a user move");
 });

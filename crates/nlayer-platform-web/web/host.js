@@ -560,6 +560,11 @@ function nodeJson(el, parent, root) {
     node.keyboard = field._keyboard || "text";
     node.disabled = !!field.disabled;
     node.focused = field.ownerDocument?.activeElement === field;
+    node.multiline = field.tagName === "TEXTAREA";
+    node.selection = {
+      start: field.selectionStart ?? 0,
+      end: field.selectionEnd ?? 0,
+    };
   }
   if (el._kind === "image" && el._img) {
     node.src =

@@ -222,9 +222,10 @@ impl Encoder {
                 push_str(&mut out.s, keyboard_name(config.keyboard));
                 let _ = write!(
                     out.s,
-                    ",\"disabled\":{},\"rtl\":{}",
+                    ",\"disabled\":{},\"rtl\":{},\"multiline\":{}",
                     if config.disabled { "true" } else { "false" },
-                    if config.rtl { "true" } else { "false" }
+                    if config.rtl { "true" } else { "false" },
+                    if config.multiline { "true" } else { "false" }
                 );
                 out.s.push('}');
                 out.end();
