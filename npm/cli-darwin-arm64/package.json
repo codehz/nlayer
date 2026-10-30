@@ -1,6 +1,6 @@
 {
   "name": "@nlayer/cli-darwin-arm64",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The nlayer CLI binary for macOS on Apple Silicon",
   "license": "Apache-2.0",
   "repository": {

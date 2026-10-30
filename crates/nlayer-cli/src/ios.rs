@@ -381,7 +381,7 @@ fn info_plist() -> String {
     <key>CFBundleName</key><string>nlayer</string>
     <key>CFBundleDisplayName</key><string>nlayer</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1.0</string>
+    <key>CFBundleShortVersionString</key><string>{version}</string>
     <key>CFBundleVersion</key><string>1</string>
     <key>UIApplicationSupportsMultipleScenes</key><false/>
     <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
@@ -392,7 +392,8 @@ fn info_plist() -> String {
     <key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><true/></dict>
 </dict>
 </plist>
-"#
+"#,
+        version = env!("CARGO_PKG_VERSION")
     )
 }
 
@@ -658,6 +659,13 @@ mod tests {
         );
         assert!(!text.contains("UISceneConfigurations"), "{text}");
         assert!(text.contains("NSAllowsArbitraryLoads"), "{text}");
+        assert!(
+            text.contains(&format!(
+                "<key>CFBundleShortVersionString</key><string>{}</string>",
+                env!("CARGO_PKG_VERSION")
+            )),
+            "{text}"
+        );
     }
 
     #[test]

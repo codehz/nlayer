@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "Apache-2.0"
 publish = false
@@ -15,12 +15,12 @@ private_interfaces = "deny"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(getrandom_backend, values("custom"))'] }
 
 [workspace.dependencies]
-nlayer-core = { version = "0.1.0", path = "crates/nlayer-core" }
-nlayer-js = { version = "0.1.0", path = "crates/nlayer-js" }
-nlayer-engine = { version = "0.1.0", path = "crates/nlayer-engine" }
-nlayer-bundler = { version = "0.1.0", path = "crates/nlayer-bundler" }
-nlayer-platform-web = { version = "0.1.0", path = "crates/nlayer-platform-web" }
-nlayer-testing = { version = "0.1.0", path = "crates/nlayer-testing" }
+nlayer-core = { version = "0.2.0", path = "crates/nlayer-core" }
+nlayer-js = { version = "0.2.0", path = "crates/nlayer-js" }
+nlayer-engine = { version = "0.2.0", path = "crates/nlayer-engine" }
+nlayer-bundler = { version = "0.2.0", path = "crates/nlayer-bundler" }
+nlayer-platform-web = { version = "0.2.0", path = "crates/nlayer-platform-web" }
+nlayer-testing = { version = "0.2.0", path = "crates/nlayer-testing" }
 crossbeam-channel = "0.5"
 log = "0.4"
 ordered-float = { version = "5", default-features = false }
