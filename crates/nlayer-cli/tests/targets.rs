@@ -122,6 +122,15 @@ fn the_browser_renders_and_scrolls_a_long_list() {
 }
 
 #[test]
+fn the_browser_opens_a_list_at_initial_scroll_index() {
+    let _guard = lock();
+    let dir = app_fixture("initial");
+    let report = run(&dir.join("App.test.tsx"), Some(TestTarget::Web));
+    let _ = fs::remove_dir_all(&dir);
+    assert!(report.ok(), "web: {report}");
+}
+
+#[test]
 fn the_simulator_renders_and_scrolls_a_long_list() {
     let _guard = lock();
     let dir = app_fixture("list");

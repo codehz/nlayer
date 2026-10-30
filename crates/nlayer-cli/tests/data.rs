@@ -151,3 +151,23 @@ fn a_list_lays_items_out_in_columns() {
     assert!(report.ok(), "{report}");
     let _ = fs::remove_dir_all(&dir);
 }
+
+const INITIAL_APP: &str = include_str!("fixtures/initial/App.tsx");
+
+const INITIAL_TESTS: &str = include_str!("fixtures/initial/App.test.tsx");
+
+#[test]
+fn a_list_opens_at_initial_scroll_index() {
+    let _fixture = FIXTURE.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = scratch("initial");
+    fs::write(dir.join("App.tsx"), INITIAL_APP).unwrap();
+    fs::write(dir.join("App.test.tsx"), INITIAL_TESTS).unwrap();
+    let report = test(&TestOptions {
+        path: dir.clone(),
+        filter: None,
+        target: None,
+    })
+    .expect("the test runs");
+    assert!(report.ok(), "{report}");
+    let _ = fs::remove_dir_all(&dir);
+}
