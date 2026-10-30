@@ -1,0 +1,130 @@
+#!/usr/bin/env node
+// Moves the one version: Cargo.toml, Cargo.lock, the four npm packages and
+// the five type packages. Usage:
+//
+//   scripts/bump 0.3.0
+//   scripts/bump minor
+//
+// It writes files only; committing and tagging stay manual.
+const fs = require("node:fs");
+const path = require("node:path");
+const { packageDirs, readWorkspaceVersion, syncVersions } = require("../npm/scripts/version");
+
+const root = path.join(__dirname, "..");
+const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+const LEVELS = ["major", "minor", "patch"];
+
+function usage(message) {
+  if (message) console.error(`bump: ${message}`);
+  console.error("usage: scripts/bump <version|major|minor|patch>");
+  process.exit(2);
+}
+
+function nextVersion(current, argument) {
+  if (!LEVELS.includes(argument)) {
+    if (!SEMVER.test(argument)) usage(`not a version: ${argument}`);
+    return argument;
+  }
+  const [major, minor, patch] = current.split("-")[0].split(".").map(Number);
+  if (argument === "major") return `${major + 1}.0.0`;
+  if (argument === "minor") return `${major}.${minor + 1}.0`;
+  return `${major}.${minor}.${patch + 1}`;
+}
+
+/// Rewrites the workspace version and every `nlayer-*` workspace dependency
+/// in place, leaving the rest of the file alone.
+function writeCargoToml(next) {
+  const file = path.join(root, "Cargo.toml");
+  const lines = fs.readFileSync(file, "utf8").split("\n");
+  let section = "";
+  let versioned = 0;
+  const updated = lines.map((line) => {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("[")) {
+      section = trimmed;
+      return line;
+    }
+    if (section === "[workspace.package]" && /^version\s*=/.test(trimmed)) {
+      versioned += 1;
+      return line.replace(/version\s*=\s*"[^"]*"/, `version = "${next}"`);
+    }
+    if (section === "[workspace.dependencies]" && /^nlayer-[a-z-]+\s*=\s*\{/.test(trimmed)) {
+      versioned += 1;
+      return line.replace(/version\s*=\s*"[^"]*"/, `version = "${next}"`);
+    }
+    return line;
+  });
+  if (versioned < 2) {
+    throw new Error(
+      `Cargo.toml: found ${versioned} version lines, expected the workspace version and its dependencies`,
+    );
+  }
+  fs.writeFileSync(file, updated.join("\n"));
+  return versioned;
+}
+
+/// Rewrites the version of each `nlayer-*` entry in place. Cargo only needs
+/// those to agree with the manifests, and doing it here keeps `scripts/bump`
+/// offline; `cargo metadata --locked` then has nothing to rewrite.
+function writeCargoLock(current, next) {
+  const file = path.join(root, "Cargo.lock");
+  const blocks = fs.readFileSync(file, "utf8").split("\n\n");
+  let rewritten = 0;
+  const updated = blocks.map((block) => {
+    if (!/^name = "nlayer-[a-z-]+"$/m.test(block)) return block;
+    return block.replace(/^version = ".*"$/m, (line) => {
+      if (line !== `version = "${current}"`) {
+        throw new Error(`Cargo.lock: unexpected version line ${line}`);
+      }
+      rewritten += 1;
+      return `version = "${next}"`;
+    });
+  });
+  const entries = blocks.filter((block) => /^name = "nlayer-[a-z-]+"$/m.test(block)).length;
+  if (rewritten !== entries || entries === 0) {
+    throw new Error(`Cargo.lock: rewrote ${rewritten} of ${entries} workspace entries`);
+  }
+  fs.writeFileSync(file, updated.join("\n\n"));
+  return rewritten;
+}
+
+function verify(next) {
+  const problems = [];
+  const cargoVersion = readWorkspaceVersion(root);
+  if (cargoVersion !== next) problems.push(`Cargo.toml says ${cargoVersion}`);
+  for (const dir of packageDirs()) {
+    const file = path.join(root, dir, "package.json");
+    const value = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (value.version !== next) problems.push(`${dir} says ${value.version}`);
+    for (const [dep, version] of Object.entries(value.optionalDependencies ?? {})) {
+      if (version !== next) problems.push(`${dir} pins ${dep} ${version}`);
+    }
+  }
+  const lock = fs.readFileSync(path.join(root, "Cargo.lock"), "utf8");
+  for (const block of lock.split("\n\n")) {
+    const name = block.match(/^name = "(nlayer-[a-z-]+)"$/m);
+    if (!name) continue;
+    const version = block.match(/^version = "(.*)"$/m)?.[1];
+    if (version !== next) problems.push(`Cargo.lock: ${name[1]} is ${version}`);
+  }
+  if (problems.length > 0) {
+    throw new Error(`version did not reach everything:\n  ${problems.join("\n  ")}`);
+  }
+}
+
+const argument = process.argv[2];
+if (!argument) usage();
+if (process.argv.length > 3) usage("one argument");
+
+const current = readWorkspaceVersion(root);
+const next = nextVersion(current, argument);
+if (!SEMVER.test(next)) usage(`not a version: ${next}`);
+
+writeCargoToml(next);
+const { changed } = syncVersions(root);
+writeCargoLock(current, next);
+
+verify(next);
+
+console.log(`${current} -> ${next}`);
+console.log(`Cargo.toml and Cargo.lock, ${changed.length} package.json files`);

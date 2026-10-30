@@ -21,14 +21,19 @@ separate package: Rosetta 2 translates x86-64 for arm64, not the reverse.
 
 ## Versions
 
-`Cargo.toml`'s `[workspace.package] version` is the only version. Run
+`Cargo.toml`'s `[workspace.package] version` is the only version.
 
 ```sh
-node npm/scripts/sync-version.js
+scripts/bump 0.3.0      # or major / minor / patch
 ```
 
-after bumping it. That writes the four npm packages and the five type packages
-in `packages/`, whose versions `nlayer-bundler` asserts against the CLI.
+writes it into `Cargo.toml`, the six `nlayer-*` workspace dependencies and the
+matching `Cargo.lock` entries, then copies it to the four npm packages and the
+five type packages in `packages/`, whose versions `nlayer-bundler` asserts
+against the CLI. It edits files only: committing and tagging stay manual.
+
+`npm/scripts/sync-version.js` does just the copy from the current `Cargo.toml`,
+which is what CI runs after assembling the packages.
 
 ## Try the layout locally
 
