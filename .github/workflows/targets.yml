@@ -15,16 +15,27 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Android Rust targets
         run: rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
-      - name: Boot an Android emulator
+      - name: Setup Android SDK
         run: |
-          avd="$(${ANDROID_HOME}/emulator/emulator -list-avds | head -1)"
-          ${ANDROID_HOME}/emulator/emulator -avd "$avd" -no-window -no-audio -no-boot-anim &
+          echo "y" | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --install "system-images;android-33;google_apis;x86_64"
+          echo "no" | ${ANDROID_HOME}/cmdline-tools/latest/bin/avdmanager create avd -n test_avd -k "system-images;android-33;google_apis;x86_64" --force
+      - name: Start Android emulator
+        id: android-emulator
+        background: true
+        run: |
+          ${ANDROID_HOME}/emulator/emulator -avd test_avd -no-window -no-audio -no-boot-anim &
           ${ANDROID_HOME}/platform-tools/adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done'
+          echo "Android emulator is ready"
+          # Keep emulator running
+          tail -f /dev/null
       - name: Boot an iPhone simulator
         run: |
           udid="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"];
           print(next(d["udid"] for runtimes in devices.values() for d in runtimes if "iPhone" in d["name"] and d["isAvailable"]))')"
           xcrun simctl boot "$udid" || true
           xcrun simctl bootstatus "$udid" -b
-      - name: Host targets
+      - name: Run tests
         run: scripts/test-targets
+      - name: Stop Android emulator
+        if: always()
+        run: cancel android-emulator
