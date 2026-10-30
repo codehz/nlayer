@@ -2631,6 +2631,7 @@ impl<M: TextEngine> Core<M> {
                 )
             };
             let mut anchor = 0.0;
+            let mut scrolls: Vec<(f32, bool)> = Vec::new();
             for &(index, cell) in &ready {
                 if let Some(cell_layout) = self.nodes.get(cell as usize).and_then(|c| c.layout) {
                     let size = self.rounded_layout(cell_layout).size.height;
@@ -2659,7 +2660,7 @@ impl<M: TextEngine> Core<M> {
                 list.offset += anchor;
                 anchor += list.take_splice_anchor();
                 if let Some(target) = list.follow_pin() {
-                    self.issue_list_scroll_to(key, target, true);
+                    scrolls.push((target, true));
                 }
             }
 
@@ -2684,16 +2685,7 @@ impl<M: TextEngine> Core<M> {
                 let offset = list.target_offset(target);
                 list.pin(Some(target), offset);
                 list.jump(offset);
-                list.issue_scroll_to(offset);
-                let y = Points(offset);
-                self.mount.push(MountItem::Command {
-                    id,
-                    command: Command::ScrollTo {
-                        x: Points::ZERO,
-                        y,
-                        animated,
-                    },
-                });
+                scrolls.push((offset, animated));
             }
 
             let mut binds = Vec::new();
@@ -2870,25 +2862,24 @@ impl<M: TextEngine> Core<M> {
             } else {
                 self.set_scroll_content(key, content);
             }
+            // The content is final before a scroll command: platforms
+            // clamp an offset to the content they know.
+            for (offset, animated) in scrolls {
+                self.nodes[key as usize]
+                    .list
+                    .as_mut()
+                    .expect("list")
+                    .issue_scroll_to(offset);
+                self.mount.push(MountItem::Command {
+                    id,
+                    command: Command::ScrollTo {
+                        x: Points::ZERO,
+                        y: Points(offset),
+                        animated,
+                    },
+                });
+            }
         }
-    }
-
-    /// Scrolls list `key` to `offset` (following a measured scroll target).
-    fn issue_list_scroll_to(&mut self, key: Key, offset: f32, animated: bool) {
-        let id = self.nodes[key as usize].id;
-        self.nodes[key as usize]
-            .list
-            .as_mut()
-            .expect("list")
-            .issue_scroll_to(offset);
-        self.mount.push(MountItem::Command {
-            id,
-            command: Command::ScrollTo {
-                x: Points::ZERO,
-                y: Points(offset),
-                animated,
-            },
-        });
     }
 
     fn set_scroll_content(&mut self, key: Key, size: Size<Points>) {

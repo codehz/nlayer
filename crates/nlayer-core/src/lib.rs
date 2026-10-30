@@ -34,7 +34,7 @@ pub use keyboard::{drag_dismisses, press_allowed, return_resigns, tap_dismisses}
 pub use mount::{InputConfig, MountBatch, MountItem, ViewKind};
 pub use ops::{
     Accessibility, AccessibilityProp, AccessibilityRole, AccessibilityState, AccessibilityValue,
-    Checked, Command, EventKind, IMAGE_SCALES, ImageScales, ImageSource, Interaction,
+    CellSlot, Checked, Command, EventKind, IMAGE_SCALES, ImageScales, ImageSource, Interaction,
     KeyboardDismiss, KeyboardTaps, KeyboardType, Op, Prop, Tag,
 };
 pub use platform::ColorScheme;
