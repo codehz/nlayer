@@ -2711,12 +2711,19 @@ impl<M: TextEngine> Core<M> {
             for command in commands {
                 match command {
                     Command::ScrollToIndex { index, animated } => {
-                        let target = list::PinTarget::Index(index);
-                        let list = self.nodes[key as usize].list.as_mut().expect("list");
-                        let offset = list.target_offset(target);
-                        list.pin(Some(target), offset);
-                        list.jump(offset);
-                        scrolls.push((offset, animated));
+                        // Special case: scrollToIndex(0) should always go to position 0
+                        if index == 0 {
+                            let list = self.nodes[key as usize].list.as_mut().expect("list");
+                            list.jump(0.0);
+                            scrolls.push((0.0, animated));
+                        } else {
+                            let target = list::PinTarget::Index(index);
+                            let list = self.nodes[key as usize].list.as_mut().expect("list");
+                            let offset = list.target_offset(target);
+                            list.pin(Some(target), offset);
+                            list.jump(offset);
+                            scrolls.push((offset, animated));
+                        }
                     }
                     Command::ScrollToEnd { animated } => {
                         // Don't calculate offset - let the platform use actual scrollHeight
