@@ -201,6 +201,28 @@ Copied files:
   `crates/nlayer-platform-web/web/nlayer.js` from nsh's `InputBox.java` and
   `web/nsh.js` input section (submit, paste, autofill and scroll indicator
   behavior are not copied)
+- `crates/nlayer-core/src/core/fenwick.rs` from `nsh-core/src/fenwick.rs`
+  (prefix sums of row sizes; copied as is)
+- `crates/nlayer-core/src/core/list.rs` from
+  `nsh-core/src/core/list.rs`, cut to vertical lists, `numColumns`,
+  header / footer / empty, measurement anchoring, load-more and scroll
+  commands. Parent-viewport lists, inverted lists, sticky headers,
+  viewability, keep-rendered selections, pacing and follow-end are not
+  copied. The scroll-offset replay and cell hiding follow the same source.
+- `crates/nlayer-js/src/list.rs` from `nsh-js/src/list.rs`, cut to the v2
+  list: slot cells, `cellIndex` confirmation, keyed data splices, header /
+  footer / empty / separator, `initialScrollIndex` and the ref handle.
+  Sticky headers, viewability, inverted lists and parent viewports are not
+  copied.
+- `crates/nlayer-platform-web/web/browser/list.js` from
+  `nsh-platform-web/web/browser/list.js`, cut the same way; the page's
+  `browser/list.js` serves the app's row render closures while the wasm
+  core decides the window.
+- list scroll reporting without an `onScroll` listener, in
+  `crates/nlayer-platform-web/web/nlayer.js`,
+  `crates/nlayer-platform-ios/src/mount.rs` and
+  `java/dev/nlayer/android/ScrollBox.java`, follows the offset reporting
+  of nsh's list hosts (nsh only sends when listening).
 - `BackHandler` follows `nsh-js/src/platform_modules.rs` (newest listener
   first, `true` handles it, the subscription removes) and nsh's Android
   activity back delegation; the listener table here is written for these

@@ -6,8 +6,8 @@
 //! that stream.
 //!
 //! Extracted from `nsh-platform-android` (`encode.rs`, `host.rs`, `text.rs`,
-//! `java.rs`) and cut to views, text, images, one-axis scroll and a
-//! text field (one line or several, with selection and compositions). `onPress` is the view's own touch: a nested span wins
+//! `java.rs`) and cut to views, text, images, one-axis scroll, virtualized lists and
+//! a text field (one line or several, with selection and compositions). `onPress` is the view's own touch: a nested span wins
 //! over its text view, and a view that does not take one leaves the touch
 //! for the nearest ancestor that does. A scroll view reports `onScroll` (at
 //! most once per frame), drag and momentum, with the content offset, content

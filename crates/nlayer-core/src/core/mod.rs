@@ -1,7 +1,7 @@
 //! Shadow tree.
 //!
-//! Apply, commit and frame emission for views, text, images, scroll views
-//! and single-line inputs, extracted from `nsh_core::core` and cut to those
+//! Apply, commit and frame emission for views, text, images, scroll views,
+//! virtualized lists and inputs, extracted from `nsh_core::core` and cut to those
 //! hosts. `env()` on padding and margin follows the surface safe area and
 //! the keyboard inset. `activeStyle`, `hoverStyle` and `focusStyle` are
 //! stored and sent to the platform; they do not change layout. `testID` is
@@ -350,7 +350,7 @@ impl<P> TextContext<P> {
     }
 }
 
-/// Measured leaves: text blocks, single-line inputs and images with a known
+/// Measured leaves: text blocks, inputs and images with a known
 /// natural size.
 enum LeafContext<P> {
     Text(TextContext<P>),

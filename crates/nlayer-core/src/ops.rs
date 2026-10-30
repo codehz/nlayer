@@ -3,7 +3,7 @@
 //! `ResizeMode`, `ImageSource` and `ImageScales` are copied from
 //! `nsh_core::ops`. The `PropEnum` derive arrives with the element macros.
 //! Scroll ops are the axis lock only: no refresh, zoom or paging. `data:`
-//! image bytes are not part of v1. Input is a single line: `value`,
+//! image bytes are not part of v1. An input is one line or several: `value`,
 //! `placeholder`, `disabled`, `secureTextEntry` and `keyboardType`.
 //! `activeStyle`, `hoverStyle` and `focusStyle` are paint the platform
 //! applies; they are not the node's layout style.
