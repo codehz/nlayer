@@ -202,6 +202,9 @@ enum Message {
     NetworkDone,
     /// Native animations finished or were interrupted.
     AnimationFinished(Vec<Finished>),
+    /// Acknowledge after earlier messages have committed.
+    #[cfg(not(target_arch = "wasm32"))]
+    Barrier(Sender<()>),
     /// The engine thread was asked to exit.
     #[cfg(not(target_arch = "wasm32"))]
     Stop,
@@ -217,6 +220,17 @@ impl EngineControl {
     /// Calls node `id`'s handler of `event` on the engine thread.
     pub fn dispatch_event(&self, id: NodeId, event: EventKind, payload: EventPayload) {
         let _ = self.tx.send(Message::Event { id, event, payload });
+    }
+
+    /// Waits until earlier messages have been committed by the engine thread.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn synchronize(&self) -> Result<(), EngineError> {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        self.tx
+            .send(Message::Barrier(tx))
+            .map_err(|_| EngineError::new("engine stopped".to_owned()))?;
+        rx.recv()
+            .map_err(|_| EngineError::new("engine stopped".to_owned()))
     }
 
     /// The selection or caret of input `id` moved (UTF-16 units): the
@@ -605,6 +619,10 @@ impl<M: TextEngine> Session<M> {
     /// The thread engine's path; wasm commits through [`on_burst`](Self::on_burst).
     #[cfg(not(target_arch = "wasm32"))]
     fn on_message(&mut self, message: Message) -> bool {
+        if let Message::Barrier(reply) = message {
+            let _ = reply.send(());
+            return true;
+        }
         #[cfg(feature = "js")]
         complete_network(&self.host, &self.results, &mut self.fetches);
         if !self.apply(message) {
@@ -681,6 +699,8 @@ impl<M: TextEngine> Session<M> {
                 self.host.animations_finished(&finished);
             }
             Message::NetworkDone => {}
+            #[cfg(not(target_arch = "wasm32"))]
+            Message::Barrier(_) => unreachable!("barriers are handled before apply"),
             #[cfg(not(target_arch = "wasm32"))]
             Message::Stop => return false,
         }

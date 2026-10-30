@@ -875,7 +875,10 @@ impl HostedApp for HeadlessApp {
     fn press(&mut self, selector: &str) -> Result<(), String> {
         let app = self.app()?;
         app.press_selector(selector)?;
-        let _ = app.next_frame(Duration::from_secs(2));
+        app.control()
+            .synchronize()
+            .map_err(|error| error.to_string())?;
+        app.refresh();
         Ok(())
     }
 
