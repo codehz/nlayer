@@ -20,6 +20,68 @@ export interface Frame {
   height: number;
 }
 
+/** What an element is, for assistive technologies. */
+export type AccessibilityRole =
+  | "none"
+  | "button"
+  | "link"
+  | "search"
+  | "image"
+  | "imagebutton"
+  | "keyboardkey"
+  | "text"
+  | "adjustable"
+  | "header"
+  | "summary"
+  | "alert"
+  | "checkbox"
+  | "combobox"
+  | "menu"
+  | "menubar"
+  | "menuitem"
+  | "progressbar"
+  | "radio"
+  | "radiogroup"
+  | "scrollbar"
+  | "spinbutton"
+  | "switch"
+  | "tab"
+  | "tablist"
+  | "timer"
+  | "toolbar"
+  | "list"
+  | "grid"
+  | "table"
+  | "row"
+  | "cell"
+  | "columnheader"
+  | "rowgroup"
+  | "listbox"
+  | "option"
+  | "group"
+  | "region"
+  | "navigation"
+  | "tree"
+  | "treeitem"
+  | "menuitemcheckbox"
+  | "menuitemradio";
+
+/** `accessibilityState`. */
+export interface AccessibilityState {
+  disabled?: boolean;
+  selected?: boolean;
+  checked?: boolean | "mixed";
+  expanded?: boolean;
+}
+
+/** `accessibilityValue`. */
+export interface AccessibilityValue {
+  min?: number;
+  max?: number;
+  now?: number;
+  text?: string;
+}
+
 /** One view. `text` is a text view's content, `value` an input's, `src` an image's URL. */
 export interface Node {
   kind: "view" | "text" | "image" | "scroll" | "input";
