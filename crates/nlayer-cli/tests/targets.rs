@@ -6,6 +6,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Mutex;
 
 use nlayer_cli::{TestOptions, TestTarget, test};
@@ -261,4 +262,85 @@ fn the_data_channel_runs_on_each_target() {
         }
         let _ = fs::remove_dir_all(&dir);
     }
+}
+
+/// The SDK's newest `aapt2`.
+fn aapt2() -> PathBuf {
+    let root = ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
+        .iter()
+        .find_map(std::env::var_os)
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Android/sdk"))
+        })
+        .expect("the Android SDK (ANDROID_HOME)");
+    let mut builds: Vec<PathBuf> = fs::read_dir(root.join("build-tools"))
+        .expect("Android build-tools")
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    builds.sort();
+    builds.pop().expect("Android build-tools").join("aapt2")
+}
+
+#[test]
+fn packages_build_for_each_target() {
+    let _guard = lock();
+    let entry = gallery();
+    let dir = entry.parent().expect("the gallery directory").to_path_buf();
+    let out = scratch("packages");
+
+    let web = out.join("web");
+    nlayer_cli::package_web(&dir, &web).expect("the web package");
+    let page = fs::read_to_string(web.join("index.html")).unwrap();
+    assert!(page.contains("dev.nlayer.gallery"), "{page}");
+    assert!(page.contains("\"mark.png\":\"assets/"), "{page}");
+    assert!(web.join("bundle.js").is_file());
+    assert!(web.join("bundle.js.map").is_file());
+    assert!(web.join("nlayer.wasm").is_file());
+
+    let apk = out.join("app.apk");
+    nlayer_cli::package_android(&nlayer_cli::AndroidPackageOptions {
+        entry: dir.clone(),
+        out: apk.clone(),
+        keystore: None,
+        alias: None,
+        store_pass: None,
+    })
+    .expect("the Android package");
+    let badging = Command::new(aapt2())
+        .args(["dump", "badging"])
+        .arg(&apk)
+        .output()
+        .expect("aapt2");
+    let badging = String::from_utf8_lossy(&badging.stdout);
+    assert!(badging.contains("name='dev.nlayer.gallery'"), "{badging}");
+    assert!(badging.contains("versionCode='1'"), "{badging}");
+    assert!(badging.contains("versionName='1.0.0'"), "{badging}");
+    let mut zip = zip::ZipArchive::new(fs::File::open(&apk).unwrap()).unwrap();
+    assert!(zip.by_name("assets/app.js").is_ok(), "the bundled app");
+    assert!(zip.by_name("assets/mark.png").is_ok(), "the bundled image");
+    for abi in ["arm64-v8a", "armeabi-v7a", "x86_64"] {
+        assert!(
+            zip.by_name(&format!("lib/{abi}/libnlayer.so")).is_ok(),
+            "{abi}"
+        );
+    }
+
+    let bundle = out.join("Nlayer.app");
+    nlayer_cli::package_ios(&dir, &bundle).expect("the iOS package");
+    let info = plist::Value::from_file(bundle.join("Info.plist")).expect("Info.plist");
+    let info = info.as_dictionary().expect("a dictionary");
+    assert_eq!(
+        info["CFBundleIdentifier"].as_string(),
+        Some("dev.nlayer.gallery")
+    );
+    assert_eq!(info["CFBundleVersion"].as_string(), Some("1"));
+    assert!(bundle.join("app.js").is_file());
+    assert!(bundle.join("mark.png").is_file());
+    assert!(
+        !bundle.join("_CodeSignature").exists(),
+        "the .app is unsigned"
+    );
+
+    let _ = fs::remove_dir_all(&out);
 }
