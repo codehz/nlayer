@@ -4,6 +4,10 @@ One TSX application, run on web, iOS and Android. Mechanisms are extracted
 from [nsh](https://github.com/longbridge/nsh); existing nsh apps are not
 compatible.
 
+Install the CLI with `npm install -g @nlayer/cli`, which covers macOS on Apple
+Silicon, Linux x64 and Windows x64; elsewhere use `cargo install --path
+crates/nlayer-cli`. The npm packages are described in `npm/README.md`.
+
 v1 is the `nlayer` CLI (`init` / `build` / `run --target web|ios|android`)
 plus a TSX test runner: headless by default, and the same steps on a real web, iOS or Android host (`nlayer test --target`). An app entry instead of a test file is opened and the steps from standard input run, on that host too. The public surface is `View`, `Text`,
 `Image`, `Scroll` and single-line `Input`, with the nsh reactive graph and

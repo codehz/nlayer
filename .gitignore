@@ -3,3 +3,10 @@
 .nlayer/
 node_modules/
 dist/
+
+# npm packages: the binary and the web runtime are built in CI
+npm/cli/nlayer.wasm
+npm/cli-*/bin/
+npm/*/LICENSE
+npm/*/node_modules/
+npm/*/*.tgz

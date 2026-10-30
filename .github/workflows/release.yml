@@ -1,0 +1,158 @@
+name: release
+
+# Publishing is manual until the packages are on npm. `dry_run` builds and
+# packs everything and publishes nothing; `false` uploads. Tag triggers stay
+# off until a release is routine; uncomment `push.tags` then.
+on:
+  # push:
+  #   tags:
+  #     - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and pack only (publish nothing)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  wasm:
+    name: Web runtime
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-wasm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - run: cargo build -p nlayer-platform-web --target wasm32-unknown-unknown --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm
+          path: target/wasm32-unknown-unknown/release/nlayer_platform_web.wasm
+          if-no-files-found: error
+          retention-days: 1
+
+  binary:
+    name: Binary ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            platform: darwin-arm64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: win32-x64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.platform }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }} -p nlayer-cli
+      - name: Collect the binary
+        shell: bash
+        run: |
+          name=nlayer
+          [ "${{ matrix.platform }}" = win32-x64 ] && name=nlayer.exe
+          mkdir -p "npm/cli-${{ matrix.platform }}/bin"
+          cp "target/${{ matrix.target }}/release/$name" "npm/cli-${{ matrix.platform }}/bin/$name"
+          chmod +x "npm/cli-${{ matrix.platform }}/bin/$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.platform }}
+          path: npm/cli-${{ matrix.platform }}/bin/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish
+    needs: [wasm, binary]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Assemble the packages
+        run: |
+          for platform in darwin-arm64 linux-x64 win32-x64; do
+            mkdir -p "npm/cli-$platform/bin"
+            cp artifacts/binary-$platform/* "npm/cli-$platform/bin/"
+            chmod +x "npm/cli-$platform/bin/"*
+          done
+          cp artifacts/wasm/nlayer_platform_web.wasm npm/cli/nlayer.wasm
+          for dir in cli cli-darwin-arm64 cli-linux-x64 cli-win32-x64; do
+            cp LICENSE-APACHE "npm/$dir/LICENSE"
+          done
+          node npm/scripts/sync-version.js
+      - name: Check the layout
+        run: |
+          test -x npm/cli-darwin-arm64/bin/nlayer
+          test -x npm/cli-linux-x64/bin/nlayer
+          test -f npm/cli-win32-x64/bin/nlayer.exe
+          test -f npm/cli/nlayer.wasm
+          node -e '
+            const fs = require("fs");
+            const cli = JSON.parse(fs.readFileSync("npm/cli/package.json", "utf8"));
+            const version = cli.version;
+            for (const dep of Object.keys(cli.optionalDependencies)) {
+              const dir = dep.replace("@nlayer/", "");
+              const pkg = JSON.parse(fs.readFileSync(`npm/${dir}/package.json`, "utf8"));
+              if (pkg.version !== version) throw new Error(`${dep} is ${pkg.version}, cli is ${version}`);
+            }
+            for (const name of ["runtime", "ui", "jsx-runtime", "test", "globals"]) {
+              const pkg = JSON.parse(fs.readFileSync(`packages/${name}/package.json`, "utf8"));
+              if (pkg.version !== version) throw new Error(`@nlayer/${name} is ${pkg.version}, cli is ${version}`);
+            }
+          '
+      - name: Pack (dry run)
+        if: inputs.dry_run
+        run: |
+          # `npm pack` runs the same file selection as publish and leaves the
+          # tarball behind, so the dry run has something to inspect.
+          for dir in cli-darwin-arm64 cli-linux-x64 cli-win32-x64 cli; do
+            echo "== @nlayer/$dir"
+            (cd "npm/$dir" && npm pack)
+          done
+      - name: Publish
+        if: ${{ !inputs.dry_run }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # The platform packages first: `@nlayer/cli` names them in
+          # optionalDependencies at the version being published.
+          for dir in cli-darwin-arm64 cli-linux-x64 cli-win32-x64 cli; do
+            (cd "npm/$dir" && npm publish --provenance --access public)
+          done
+      - name: Keep the packed tarballs
+        if: inputs.dry_run
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-tarballs
+          path: |
+            npm/cli-darwin-arm64/*.tgz
+            npm/cli-linux-x64/*.tgz
+            npm/cli-win32-x64/*.tgz
+            npm/cli/*.tgz
+          if-no-files-found: error
+          retention-days: 7

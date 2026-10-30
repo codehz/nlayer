@@ -1,0 +1,31 @@
+{
+  "name": "@nlayer/cli",
+  "version": "0.1.0",
+  "description": "Create, build, test and run a TSX app on web, iOS and Android.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/longbridge/native-layer.git",
+    "directory": "npm/cli"
+  },
+  "bin": {
+    "nlayer": "bin/nlayer.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "optionalDependencies": {
+    "@nlayer/cli-darwin-arm64": "0.1.0",
+    "@nlayer/cli-linux-x64": "0.1.0",
+    "@nlayer/cli-win32-x64": "0.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "bin",
+    "scripts",
+    "nlayer.wasm",
+    "README.md"
+  ]
+}
