@@ -1185,11 +1185,11 @@ impl<M: TextEngine> Core<M> {
         }
         if let Some(layout) = layout {
             if self.nodes[parent as usize].kind == Kind::List {
-                if self.nodes[key as usize].kind == Kind::Cell {
-                    if let Some(list) = self.nodes[parent as usize].list.as_mut() {
-                        list.remove_cell(key);
-                        self.mark(parent, dirty::LIST);
-                    }
+                if self.nodes[key as usize].kind == Kind::Cell
+                    && let Some(list) = self.nodes[parent as usize].list.as_mut()
+                {
+                    list.remove_cell(key);
+                    self.mark(parent, dirty::LIST);
                 }
             } else {
                 let parent_layout = self.nodes[parent as usize]
@@ -2742,14 +2742,14 @@ impl<M: TextEngine> Core<M> {
                     continue;
                 }
                 let (start, size) = (frame.origin.y.0, frame.size.height.0);
-                if items_changed || (start + size > window_start && start < window_end) {
-                    if frame.origin.y.0 != hidden {
-                        let away = Bounds {
-                            origin: Point::new(frame.origin.x, Points(hidden)),
-                            ..frame
-                        };
-                        self.set_frame(cell, away);
-                    }
+                if (items_changed || (start + size > window_start && start < window_end))
+                    && frame.origin.y.0 != hidden
+                {
+                    let away = Bounds {
+                        origin: Point::new(frame.origin.x, Points(hidden)),
+                        ..frame
+                    };
+                    self.set_frame(cell, away);
                 }
             }
             // Place the cells that show their item.

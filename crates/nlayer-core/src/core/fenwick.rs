@@ -14,7 +14,7 @@ impl Fenwick {
         let mut tree = vec![0.0; n + 1];
         for (i, size) in sizes.enumerate() {
             tree[i + 1] += size;
-            let parent = (i + 1) + ((i + 1) & (i + 1).wrapping_neg());
+            let parent = (i + 1) + (i + 1).isolate_lowest_one();
             if parent <= n {
                 tree[parent] += tree[i + 1];
             }
@@ -31,7 +31,7 @@ impl Fenwick {
         let mut i = i + 1;
         while i < self.tree.len() {
             self.tree[i] += delta;
-            i += i & i.wrapping_neg();
+            i += i.isolate_lowest_one();
         }
     }
 
