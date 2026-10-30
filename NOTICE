@@ -48,13 +48,16 @@ Copied files:
   in `core` from `nsh_core` (one axis; refresh, zoom, paging, snap and scrollbar
   props are not copied)
 - `NodeId`, `ROOT_ID`, `EventMask` from `nsh_core::ops`
-- `Tag::Input`, `EventKind::Change`, `KeyboardType`, `Prop::Value` /
-  `Placeholder` / `Secure` / `Keyboard` / `Disabled` from `nsh_core::ops`
-  (single-line only: no multiline, submit, accessory or IME events)
+- `Tag::Input`, `EventKind::Change` / `SelectionChange` /
+  `CompositionChange`, `KeyboardType`, `Prop::Value` / `Placeholder` /
+  `Secure` / `Keyboard` / `Disabled` / `Selection` / `Multiline`,
+  `Command::SetSelection` from `nsh_core::ops` (submit, accessory and
+  paste props are not copied)
 - `InputConfig`, `MountItem::Input` / `InputValue` / `InputContent` and
   `ViewKind::Input` from `nsh_core::mount` (the same cut)
-- the input path in `core` (`InputState`, `measure_input`, `input_changed`)
-  from `nsh_core::core` (one line; content-size events are not copied)
+- the input path in `core` (`InputState`, `measure_input`, `input_text`,
+  `input_changed`, `broken_runs`) from `nsh_core::core` (content-size and
+  caret events are not copied)
 - safe-area and keyboard `env()` on padding and margin in `core`
   (`Core::set_safe_area`, `Core::set_keyboard_inset`) from `nsh_core::core`
   (one surface; no per-screen insets and no keyboard layout animation)
@@ -140,7 +143,8 @@ Copied files:
   `activeStyle` / `hoverStyle` / `focusStyle`, safe area, CoreText
   measurement, one-axis scroll, PNG / JPEG / WebP from a bundled file or
   `http(s)`, and a single-line field (`value`, `onChange`, `placeholder`,
-  `disabled`, `secureTextEntry`, `keyboardType`). Vertical false-width
+  `disabled`, `secureTextEntry`, `keyboardType`, the multiline `UITextView`
+  area, selection and compositions). Vertical false-width
   narrowing (`crates/nlayer-platform-ios/src/scroll_extent.rs` and
   `reaches_beyond` in `mount.rs`, from `mount.rs` `settled_content_width`,
   `narrowed_width`, `still_judged`, `reaches_beyond`) keeps a stale content
@@ -148,8 +152,7 @@ Copied files:
   overlap (`crates/nlayer-platform-ios/src/keyboard.rs`, from
   `surface.rs` `keyboard_changed`) is `env(keyboard-inset-height)`; the
   animation and the mounter's scroll-into-view are not copied. Refresh, zoom,
-  paging, disk cache, SVG, GIF frames, multiline input and composition events
-  are not mounted. `synth.rs` is the one-finger touch and the software keyboard
+  paging, disk cache, SVG and GIF frames are not mounted. `synth.rs` is the one-finger touch and the software keyboard
   from `crates/nsh-platform-ios/src/synth.rs` (no drag path, no hardware
   modifiers, no screenshot). The runner binary is `nlayer-ios-app`.
 - `crates/nlayer-platform-android/src/encode.rs` from
@@ -188,6 +191,16 @@ Copied files:
 - the ARIA attributes of `crates/nlayer-platform-web/web/nlayer.js` and the
   `label:` / `role:` selectors of `web/host.js` follow
   `nsh-platform-web/web/nsh.js`'s accessibility mapping
+- `crates/nlayer-platform-ios/src/input.rs`'s `AreaInput` (the multiline
+  `UITextView`, its placeholder label and content insets), the selection and
+  composition helpers and the delegate callbacks from
+  `crates/nsh-platform-ios/src/input.rs` and `target.rs` (submit, accessories,
+  paste and caret reporting are not copied)
+- the composition, selection and held-value paths of
+  `crates/nlayer-platform-android/java/dev/nlayer/android/InputBox.java` and
+  `crates/nlayer-platform-web/web/nlayer.js` from nsh's `InputBox.java` and
+  `web/nsh.js` input section (submit, paste, autofill and scroll indicator
+  behavior are not copied)
 - `BackHandler` follows `nsh-js/src/platform_modules.rs` (newest listener
   first, `true` handles it, the subscription removes) and nsh's Android
   activity back delegation; the listener table here is written for these

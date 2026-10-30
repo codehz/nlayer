@@ -1,7 +1,7 @@
 //! Platform-independent core of nlayer.
 //!
 //! Reactive graph, geometry, the style IR, text layout and the shadow tree
-//! (views, text, images, scroll views and single-line inputs) are extracted
+//! (views, text, images, scroll views and inputs) are extracted
 //! from nsh.
 
 pub mod animation;
