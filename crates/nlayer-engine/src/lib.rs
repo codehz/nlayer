@@ -535,11 +535,16 @@ struct Session<M: TextEngine> {
     #[cfg(not(target_arch = "wasm32"))]
     #[cfg_attr(feature = "browser", allow(dead_code))]
     notify: Wake,
+    /// Cells a list asked for that this frame's budget did not reach.
+    pending_binds: Vec<ListBind>,
 }
 
 /// Rounds of "list asks for items -> JS renders them -> layout" folded into
 /// one frame. Bounded so a list that never settles cannot stall the engine.
 const MAX_LIST_ROUNDS: usize = 8;
+/// Cells rendered per frame. A frame with a huge viewport leaves the rest
+/// pending; the engine wakes at once for the next.
+const MAX_LIST_BINDS_PER_FRAME: usize = 64;
 
 impl<M: TextEngine> Session<M> {
     fn open(
@@ -576,10 +581,14 @@ impl<M: TextEngine> Session<M> {
             edits: HashMap::new(),
             #[cfg(not(target_arch = "wasm32"))]
             notify,
+            pending_binds: Vec::new(),
         })
     }
 
     fn next_timer(&self) -> Option<Duration> {
+        if !self.pending_binds.is_empty() {
+            return Some(Duration::ZERO);
+        }
         self.host.next_timer()
     }
 
@@ -671,6 +680,7 @@ impl<M: TextEngine> Session<M> {
     /// [`MAX_LIST_ROUNDS`]); every round's mount items go into one batch.
     fn commit(&mut self) {
         let mut merged: Vec<nlayer_core::MountItem> = Vec::new();
+        let mut budget = MAX_LIST_BINDS_PER_FRAME;
         let mut failed = false;
         for _ in 0..MAX_LIST_ROUNDS {
             let mut ops = Vec::new();
@@ -698,11 +708,35 @@ impl<M: TextEngine> Session<M> {
             }
             let mut binds: Vec<ListBind> = Vec::new();
             self.core.take_list_binds(&mut binds);
-            if binds.is_empty() && events.is_empty() {
+            let asked = !binds.is_empty();
+            self.pending_binds.extend(binds);
+            let mut bound = 0;
+            while budget > 0 && !self.pending_binds.is_empty() {
+                let mut bind = self.pending_binds.remove(0);
+                let n = bind.binds.len().min(budget);
+                let rest = bind.binds.split_off(n);
+                if n > 0 {
+                    self.bind_list(bind.list, &bind.binds);
+                    budget -= n;
+                    bound += n;
+                }
+                if !rest.is_empty() {
+                    self.pending_binds.insert(
+                        0,
+                        ListBind {
+                            list: bind.list,
+                            binds: rest,
+                        },
+                    );
+                }
+            }
+            // New cells queued JS ops; another round applies them. With the
+            // budget spent, the rest waits for the next frame.
+            if !asked && events.is_empty() && bound == 0 {
                 break;
             }
-            for bind in binds {
-                self.bind_list(bind.list, &bind.binds);
+            if budget == 0 && !self.pending_binds.is_empty() {
+                break;
             }
         }
         if !merged.is_empty() {
