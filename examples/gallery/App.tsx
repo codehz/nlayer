@@ -1,5 +1,5 @@
-import { cleanup, effect, mount, signal } from "@nlayer/runtime";
-import { Image, Input, Scroll, Text, View, platform } from "@nlayer/ui";
+import { cleanup, effect, mount, resource, signal, storage } from "@nlayer/runtime";
+import { Animated, BackHandler, Image, Input, List, Scroll, Text, View, createAnimatedValue, platform } from "@nlayer/ui";
 import mark from "./mark.png";
 
 declare global {
@@ -392,6 +392,251 @@ function Surface() {
   );
 }
 
+function VirtualList() {
+  const items = Array.from({ length: 5000 }, (_, i) => ({ id: i, title: `Item ${i}` }));
+  const count = signal(items.length);
+  let listRef: { scrollToIndex: (index: number, options?: { animated?: boolean }) => void; scrollToEnd: (options?: { animated?: boolean }) => void } | undefined;
+
+  return (
+    <Section title="List">
+      <Text style={{ fontSize: 14, color: "#64748b", marginBottom: 8 }}>
+        {count()} items, recycled. Scroll to see more.
+      </Text>
+      <View style={{ height: 300, borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 8 }}>
+        <List
+          each={items.slice(0, count())}
+          estimatedItemSize={44}
+          header={<View style={{ padding: 12, backgroundColor: "#f1f5f9" }}><Text style={{ fontWeight: "600" }}>Header</Text></View>}
+          footer={<View style={{ padding: 12, backgroundColor: "#f1f5f9" }}><Text style={{ fontWeight: "600" }}>Footer</Text></View>}
+          separator={<View style={{ height: 1, backgroundColor: "#e2e8f0" }} />}
+          onLoadMore={() => {
+            if (count() < items.length) {
+              count.set(Math.min(count() + 50, items.length));
+            }
+          }}
+          ref={(handle) => (listRef = handle)}
+          style={{ flex: 1 }}
+        >
+          {(item, index) => (
+            <View style={{ padding: 12 }}>
+              <Text style={{ fontSize: 14, color: "#0f172a" }}>
+                {item().title} (index: {index()})
+              </Text>
+            </View>
+          )}
+        </List>
+      </View>
+      <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+        <View
+          testID="scroll-to-end"
+          style={{ padding: 8, backgroundColor: "#3b82f6", borderRadius: 6 }}
+          onPress={() => listRef?.scrollToEnd({ animated: true })}
+        >
+          <Text style={{ color: "#ffffff", fontSize: 12 }}>Scroll to End</Text>
+        </View>
+        <View
+          testID="scroll-to-top"
+          style={{ padding: 8, backgroundColor: "#3b82f6", borderRadius: 6 }}
+          onPress={() => listRef?.scrollToIndex(0, { animated: true })}
+        >
+          <Text style={{ color: "#ffffff", fontSize: 12 }}>Scroll to Top</Text>
+        </View>
+      </View>
+    </Section>
+  );
+}
+
+function Animations() {
+  const opacity = createAnimatedValue(1);
+  const scale = createAnimatedValue(1);
+  const longPressed = signal(false);
+
+  const animate = () => {
+    opacity.timing({ toValue: 0.3, duration: 300, easing: "ease-out" });
+    scale.spring({ toValue: 1.2, stiffness: 180, damping: 12 });
+    setTimeout(() => {
+      opacity.timing({ toValue: 1, duration: 300 });
+      scale.spring({ toValue: 1, stiffness: 180, damping: 12 });
+    }, 300);
+  };
+
+  return (
+    <Section title="Animations">
+      <Text style={{ fontSize: 14, color: "#64748b", marginBottom: 8 }}>
+        Tap to animate, long-press for different action.
+      </Text>
+      <View
+        testID="animated-box"
+        style={{
+          width: 100,
+          height: 100,
+          backgroundColor: "#3b82f6",
+          borderRadius: 12,
+          opacity,
+          transform: [{ scale }],
+        }}
+        onPress={animate}
+        onLongPress={() => {
+          longPressed.set(true);
+          setTimeout(() => longPressed.set(false), 1000);
+        }}
+        delayLongPress={500}
+      />
+      {longPressed() && (
+        <Text style={{ fontSize: 14, color: "#10b981", marginTop: 8 }}>
+          Long pressed!
+        </Text>
+      )}
+    </Section>
+  );
+}
+
+function DataFetch() {
+  const trigger = signal(0);
+  const data = resource(
+    () => trigger(),
+    async (_, { signal }) => {
+      const response = await fetch(quoteUrl(), { signal });
+      if (!response.ok) throw new Error("Failed to fetch");
+      return response.json();
+    }
+  );
+
+  return (
+    <Section title="Resource">
+      <Text style={{ fontSize: 14, color: "#64748b", marginBottom: 8 }}>
+        State: {data.state()} {data.loading() && "(loading)"}
+      </Text>
+      {data.error() && (
+        <Text style={{ fontSize: 14, color: "#ef4444" }}>
+          Error: {String(data.error())}
+        </Text>
+      )}
+      {data() && (
+        <Text style={{ fontSize: 14, color: "#0f172a" }}>
+          {JSON.stringify(data(), null, 2)}
+        </Text>
+      )}
+      <View
+        testID="refetch"
+        style={{ padding: 8, backgroundColor: "#3b82f6", borderRadius: 6, marginTop: 8 }}
+        onPress={() => data.refetch()}
+      >
+        <Text style={{ color: "#ffffff", fontSize: 12 }}>Refetch</Text>
+      </View>
+    </Section>
+  );
+}
+
+function StorageDemo() {
+  const storedValue = signal("");
+  const inputValue = signal("");
+
+  effect(() => {
+    storage.getItem("demo-key").then((value) => {
+      storedValue.set(value || "(empty)");
+    });
+  });
+
+  const save = () => {
+    storage.setItem("demo-key", inputValue()).then(() => {
+      storedValue.set(inputValue());
+    });
+  };
+
+  const clear = () => {
+    storage.removeItem("demo-key").then(() => {
+      storedValue.set("(empty)");
+      inputValue.set("");
+    });
+  };
+
+  return (
+    <Section title="Storage">
+      <Text style={{ fontSize: 14, color: "#64748b", marginBottom: 8 }}>
+        Stored: {storedValue()}
+      </Text>
+      <Input
+        testID="storage-input"
+        value={inputValue()}
+        onChange={inputValue.set}
+        placeholder="Enter value to store"
+        style={{ padding: 8, borderWidth: 1, borderColor: "#cbd5e1", borderRadius: 6 }}
+      />
+      <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+        <View
+          testID="save-storage"
+          style={{ padding: 8, backgroundColor: "#3b82f6", borderRadius: 6 }}
+          onPress={save}
+        >
+          <Text style={{ color: "#ffffff", fontSize: 12 }}>Save</Text>
+        </View>
+        <View
+          testID="clear-storage"
+          style={{ padding: 8, backgroundColor: "#ef4444", borderRadius: 6 }}
+          onPress={clear}
+        >
+          <Text style={{ color: "#ffffff", fontSize: 12 }}>Clear</Text>
+        </View>
+      </View>
+    </Section>
+  );
+}
+
+function ColorScheme() {
+  const scheme = signal(platform.colorScheme());
+
+  effect(() => {
+    scheme.set(platform.colorScheme());
+  });
+
+  return (
+    <Section title="Color Scheme">
+      <Text style={{ fontSize: 14, color: "#64748b" }}>
+        Current scheme: {scheme()} (change system settings to see update)
+      </Text>
+      <View
+        style={{
+          padding: 16,
+          backgroundColor: scheme() === "dark" ? "#1e293b" : "#f8fafc",
+          borderRadius: 8,
+          marginTop: 8,
+        }}
+      >
+        <Text style={{ color: scheme() === "dark" ? "#f1f5f9" : "#0f172a" }}>
+          This box adapts to {scheme()} mode
+        </Text>
+      </View>
+    </Section>
+  );
+}
+
+function BackNav() {
+  const handled = signal(false);
+
+  effect(() => {
+    const remove = BackHandler.addEventListener(() => {
+      handled.set(true);
+      setTimeout(() => handled.set(false), 1000);
+      return true; // handled
+    });
+    cleanup(remove);
+  });
+
+  return (
+    <Section title="Back Handler">
+      <Text style={{ fontSize: 14, color: "#64748b" }}>
+        Press back button (Android) or browser back to trigger.
+      </Text>
+      {handled() && (
+        <Text style={{ fontSize: 14, color: "#10b981", marginTop: 8 }}>
+          Back handled!
+        </Text>
+      )}
+    </Section>
+  );
+}
+
 function App() {
   return (
     <Scroll testID="page" style={{ flex: 1, backgroundColor: "#f8fafc" }}>
@@ -407,7 +652,7 @@ function App() {
       >
         <Text style={{ fontSize: 28, fontWeight: "700", color: "#0f172a" }}>Gallery</Text>
         <Text style={{ fontSize: 14, color: "#64748b" }}>
-          View, Text, Image, Scroll, Input, and platform.os.
+          View, Text, Image, Scroll, Input, List, Animations, Resource, Storage, and more.
         </Text>
         <Surface />
         <Layout />
@@ -418,6 +663,12 @@ function App() {
         <ScrollEvents />
         <Fields />
         <Quote />
+        <VirtualList />
+        <Animations />
+        <DataFetch />
+        <StorageDemo />
+        <ColorScheme />
+        <BackNav />
       </View>
     </Scroll>
   );
