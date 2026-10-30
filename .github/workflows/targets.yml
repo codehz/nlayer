@@ -23,7 +23,7 @@ jobs:
         id: android-emulator
         background: true
         run: |
-          ${ANDROID_HOME}/emulator/emulator -avd test_avd -no-window -no-audio -no-boot-anim &
+          ${ANDROID_HOME}/emulator/emulator -avd test_avd -no-window -no-audio -no-boot-anim -accel off -gpu swiftshader_indirect &
           ${ANDROID_HOME}/platform-tools/adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done'
           echo "Android emulator is ready"
           # Keep emulator running
