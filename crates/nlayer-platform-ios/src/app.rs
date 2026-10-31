@@ -1,5 +1,6 @@
-//! The process's `UIApplication` and the one window it owns. The window root
-//! hosts the surface controller, which hosts navigation.
+//! The process's `UIApplication` and the one window it owns. The window's
+//! root controller hosts the surface, and the screens' navigation controllers
+//! are its children.
 
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol};
@@ -7,9 +8,8 @@ use objc2::{ClassType, MainThreadMarker, MainThreadOnly, define_class, msg_send}
 use objc2_foundation::NSString;
 use objc2_ui_kit::{
     UIApplication, UIApplicationDelegate, UIColor, UIResponder, UIScene, UISceneConfiguration,
-    UISceneConnectionOptions, UISceneDelegate, UISceneSession, UIViewAutoresizing,
-    UIViewController, UIWindow, UIWindowScene, UIWindowSceneDelegate,
-    UIWindowSceneSessionRoleApplication,
+    UISceneConnectionOptions, UISceneDelegate, UISceneSession, UIViewController, UIWindow,
+    UIWindowScene, UIWindowSceneDelegate, UIWindowSceneSessionRoleApplication,
 };
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -97,21 +97,6 @@ define_class!(
     unsafe impl NSObjectProtocol for RootController {}
 );
 
-define_class!(
-    #[unsafe(super(UIViewController, UIResponder, NSObject))]
-    #[thread_kind = MainThreadOnly]
-    struct SurfaceController;
-
-    unsafe impl NSObjectProtocol for SurfaceController {}
-);
-
-impl SurfaceController {
-    fn new(mtm: MainThreadMarker) -> Retained<Self> {
-        // SAFETY: UIViewController's designated initializer.
-        unsafe { msg_send![Self::alloc(mtm), init] }
-    }
-}
-
 impl RootController {
     fn new(mtm: MainThreadMarker) -> Retained<Self> {
         // SAFETY: UIViewController's designated initializer.
@@ -133,19 +118,7 @@ fn connect(mtm: MainThreadMarker, scene: &UIWindowScene) {
     window.setRootViewController(Some(&controller));
     window.makeKeyAndVisible();
 
-    // Add surface controller as a child of the root controller.
-    let surface = SurfaceController::new(mtm);
-    controller.addChildViewController(&surface);
-    let surface_view = surface.view().expect("view controller has a view");
-    surface_view.setBackgroundColor(Some(&UIColor::systemBackgroundColor()));
-    surface_view.setFrame(root.bounds());
-    surface_view.setAutoresizingMask(
-        UIViewAutoresizing::FlexibleWidth | UIViewAutoresizing::FlexibleHeight,
-    );
-    root.addSubview(&surface_view);
-    surface.didMoveToParentViewController(Some(&controller));
-
-    let session = host::start(mtm, &surface_view, &bundle, assets);
+    let session = host::start(mtm, &root, &bundle, assets);
     APP.with(|app| {
         *app.borrow_mut() = Some(AppState {
             _window: window,
@@ -166,4 +139,74 @@ pub(crate) fn run_app(bundle: String, assets: PathBuf) -> ! {
             .expect("class name is UTF-8"),
     );
     UIApplication::main(None, Some(&delegate), mtm)
+}
+
+#[cfg(feature = "host-tests")]
+pub(crate) mod tests {
+    use super::*;
+    use nlayer_core::{MountBatch, MountItem, ROOT_ID, ViewKind};
+    use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+
+    pub(crate) fn tests() -> Vec<(&'static str, fn())> {
+        vec![(
+            "app::a_stack_is_a_child_of_the_window_root",
+            a_stack_is_a_child_of_the_window_root as fn(),
+        )]
+    }
+
+    /// A stack's `UINavigationController` is a child of the window's root
+    /// controller: appearance callbacks, safe areas and rotation reach it.
+    fn a_stack_is_a_child_of_the_window_root() {
+        let mtm =
+            MainThreadMarker::new().expect("the iOS host test runner runs on the main thread");
+        let window = UIWindow::initWithFrame(
+            UIWindow::alloc(mtm),
+            CGRect::new(CGPoint::ZERO, CGSize::new(320.0, 640.0)),
+        );
+        let controller = RootController::new(mtm);
+        let root = controller.view().expect("view controller has a view");
+        window.setRootViewController(Some(&controller));
+        window.makeKeyAndVisible();
+
+        // An empty bundle still mounts the root view, as the app's does.
+        let session = host::start(mtm, &root, "", PathBuf::new());
+        let mounter = host::mounter().expect("mounter");
+        mounter.borrow_mut().apply(MountBatch {
+            items: vec![
+                MountItem::Create {
+                    id: 2,
+                    kind: ViewKind::Stack,
+                },
+                MountItem::Insert {
+                    parent: ROOT_ID,
+                    child: 2,
+                    before: None,
+                },
+                MountItem::Create {
+                    id: 3,
+                    kind: ViewKind::Screen,
+                },
+                MountItem::Insert {
+                    parent: 2,
+                    child: 3,
+                    before: None,
+                },
+            ],
+        });
+
+        {
+            let mounter = mounter.borrow();
+            let stack = mounter.stack(2).expect("stack");
+            let parent = stack
+                .nav
+                .parentViewController()
+                .expect("a parent controller");
+            assert!(
+                std::ptr::eq::<UIViewController>(&*parent, &**controller),
+                "the navigation controller is a child of the window root"
+            );
+        }
+        drop(session);
+        drop(window);
+    }
 }

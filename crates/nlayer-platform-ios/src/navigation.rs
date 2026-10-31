@@ -191,12 +191,9 @@ fn first_responder(view: &UIView) -> Option<Retained<UIView>> {
     if view.isFirstResponder() {
         return Some(view.retain());
     }
-    for sub in view.subviews().to_vec() {
-        if let Some(responder) = first_responder(&sub) {
-            return Some(responder);
-        }
-    }
-    None
+    view.subviews()
+        .iter()
+        .find_map(|child| first_responder(&child))
 }
 
 pub(crate) struct ModalIvars {
@@ -405,7 +402,7 @@ fn defer_to_back_swipe(nav: &UINavigationController) {
                 .panGestureRecognizer()
                 .requireGestureRecognizerToFail(&pop);
         }
-        pending.extend(view.subviews().to_vec());
+        pending.extend(view.subviews().iter());
     }
 }
 
@@ -420,7 +417,7 @@ fn defer_to_back_swipe(nav: &UINavigationController) {
 /// the whole subtree under it: the screen is visible and nothing in it
 /// can be touched or found.
 fn size_screens(nav: &UINavigationController) {
-    for controller in nav.viewControllers().to_vec() {
+    for controller in nav.viewControllers().iter() {
         if !controller.isViewLoaded() {
             continue;
         }
@@ -482,7 +479,7 @@ fn clip_side_safe_area(nav: &UINavigationController) {
     };
     let left = covered(bounds.min().x, bounds.min().x + safe.left) - safe.left;
     let right = covered(bounds.max().x - safe.right, bounds.max().x) - safe.right;
-    for controller in nav.viewControllers().to_vec() {
+    for controller in nav.viewControllers().iter() {
         let current = controller.additionalSafeAreaInsets();
         if current.left == left && current.right == right {
             continue;
@@ -619,9 +616,7 @@ define_class!(
             // UIKit installs its own pop delegate while loading the navigation
             // view. Restore ours after showing a screen so hidden headers still
             // use the mounted swipe-back policy.
-            if let Some(pop) = nav.interactivePopGestureRecognizer() {
-                pop.setDelegate(Some(ProtocolObject::from_ref(self)));
-            }
+            install_pop_delegate(nav, self);
         }
     }
 
@@ -655,6 +650,23 @@ define_class!(
         }
     }
 );
+
+/// Gives the back swipe's recognizers this stack's permission delegate.
+/// UIKit installs its own delegates while loading the navigation view, so
+/// this runs after the view exists and again after every transition. On
+/// iOS 26 an edge drag can start on the content recognizer, whose default
+/// delegate refuses to pop under a hidden navigation bar; both therefore
+/// carry the mounted `popOnSwipe` / `popOnBack` policy.
+fn install_pop_delegate(nav: &UINavigationController, delegate: &StackDelegate) {
+    if let Some(pop) = nav.interactivePopGestureRecognizer() {
+        pop.setDelegate(Some(ProtocolObject::from_ref(delegate)));
+    }
+    if nav.respondsToSelector(objc2::sel!(interactiveContentPopGestureRecognizer))
+        && let Some(pop) = nav.interactiveContentPopGestureRecognizer()
+    {
+        pop.setDelegate(Some(ProtocolObject::from_ref(delegate)));
+    }
+}
 
 impl StackDelegate {
     fn with_mounter(&self, f: impl FnOnce(&mut crate::mount::Mounter)) {
@@ -708,9 +720,7 @@ impl StackHost {
         }
         // Loading the navigation view installs UIKit's gesture delegates.
         // Apply our permission delegate afterwards.
-        if let Some(pop) = nav.interactivePopGestureRecognizer() {
-            pop.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
-        }
+        install_pop_delegate(&nav, &delegate);
         Self {
             container,
             nav,
@@ -759,7 +769,7 @@ impl StackHost {
         let same = current.count() == desired.len()
             && desired
                 .iter()
-                .zip(current.to_vec())
+                .zip(current.iter())
                 .all(|(a, b)| std::ptr::eq::<UIViewController>(&**a, &*b));
         if same {
             return;

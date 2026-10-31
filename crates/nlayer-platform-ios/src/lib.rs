@@ -88,6 +88,7 @@ pub fn run_app(bundle: String, assets: PathBuf) -> ! {
 #[cfg(all(target_os = "ios", feature = "host-tests"))]
 pub fn run_host_tests() -> std::process::ExitCode {
     let mut tests = Vec::new();
+    tests.extend(app::tests::tests());
     tests.extend(host::tests::tests());
     tests.extend(driver::tests::tests());
     tests.extend(mount::tests::tests());

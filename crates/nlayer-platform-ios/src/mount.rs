@@ -1083,7 +1083,12 @@ impl Mounter {
                     self.end_focus(id);
                 }
                 self.remove_hosted(id);
-                if let Some(slot) = self.take(id) {
+                if let Some(mut slot) = self.take(id) {
+                    // A modal deleted while presented (its subtree released
+                    // without a remove) goes away too, as on Android.
+                    if let Native::Modal(modal) = &mut slot.native {
+                        modal.dismiss(|| {});
+                    }
                     slot.native.view().removeFromSuperview();
                 }
             }
@@ -2150,23 +2155,7 @@ impl Mounter {
                 view.removeFromSuperview();
                 self.dirty_headers.push(parent);
             }
-            Some(Native::Modal(modal)) => {
-                if modal.presented {
-                    let control = self.control.clone();
-                    if let Some(Slot {
-                        native: Native::Modal(modal),
-                        ..
-                    }) = self.slot_mut(id)
-                    {
-                        modal.dismiss(move || {
-                            if let Some(control) = control.as_ref() {
-                                control.dispatch_event(id, EventKind::Dismiss, EventPayload::None);
-                            }
-                        });
-                    }
-                }
-                self.dirty_modals.push(id);
-            }
+            Some(Native::Modal(_)) => self.dirty_modals.push(id),
             _ => {}
         }
         true
@@ -2365,8 +2354,8 @@ impl Mounter {
             .filter(|s| stack.screens.contains(s))
             .filter(|s| !stack.popped.contains(s))
             .filter(|&s| match self.slot(s).map(|s| &s.native) {
-                Some(Native::Screen(screen)) => !shown.to_vec().iter().any(|c| {
-                    std::ptr::eq::<objc2_ui_kit::UIViewController>(&**c, &**screen.controller)
+                Some(Native::Screen(screen)) => !shown.iter().any(|c| {
+                    std::ptr::eq::<objc2_ui_kit::UIViewController>(&*c, &**screen.controller)
                 }),
                 _ => false,
             })
@@ -3373,6 +3362,10 @@ pub(crate) mod tests {
                 a_screen_header_and_back_policy_reach_uikit as fn(),
             ),
             (
+                "mount::a_back_swipe_follows_the_mounted_policy",
+                a_back_swipe_follows_the_mounted_policy as fn(),
+            ),
+            (
                 "mount::the_modal_presents_over_the_root",
                 the_modal_presents_over_the_root as fn(),
             ),
@@ -4171,8 +4164,138 @@ pub(crate) mod tests {
         }
     }
 
+    fn a_back_swipe_follows_the_mounted_policy() {
+        use objc2_ui_kit::UIGestureRecognizer;
+
+        let mounter = mounter();
+        apply(
+            &mounter,
+            vec![
+                MountItem::Create {
+                    id: 2,
+                    kind: ViewKind::Stack,
+                },
+                MountItem::Insert {
+                    parent: ROOT_ID,
+                    child: 2,
+                    before: None,
+                },
+                MountItem::Frame {
+                    id: 2,
+                    frame: frame(0.0, 0.0, 320.0, 640.0),
+                },
+            ],
+        );
+        let mut root = nlayer_core::ScreenConfig::default();
+        root.header_visible = false;
+        apply(
+            &mounter,
+            vec![
+                MountItem::Create {
+                    id: 3,
+                    kind: ViewKind::Screen,
+                },
+                MountItem::ScreenConfig {
+                    id: 3,
+                    config: Box::new(root),
+                },
+                MountItem::Insert {
+                    parent: 2,
+                    child: 3,
+                    before: None,
+                },
+            ],
+        );
+
+        // iOS 26 can start a back swipe from the content recognizer too: it
+        // carries the same delegate as the edge recognizer.
+        fn recognizers(mounter: &Rc<RefCell<Mounter>>) -> Vec<Retained<UIGestureRecognizer>> {
+            let borrowed = mounter.borrow();
+            let stack = borrowed.stack(2).expect("stack");
+            let mut found = Vec::new();
+            if let Some(edge) = stack.nav.interactivePopGestureRecognizer() {
+                found.push(edge);
+            }
+            if let Some(content) = stack.nav.interactiveContentPopGestureRecognizer() {
+                found.push(content);
+            }
+            found
+        }
+        fn begins(mounter: &Rc<RefCell<Mounter>>) -> Vec<bool> {
+            recognizers(mounter)
+                .iter()
+                .map(|recognizer| {
+                    recognizer
+                        .delegate()
+                        .expect("the stack installs its delegate")
+                        .gestureRecognizerShouldBegin(recognizer)
+                })
+                .collect()
+        }
+
+        // The root keeps the user.
+        assert!(!mounter.borrow().stack_can_pop(2));
+        if mounter
+            .borrow()
+            .stack(2)
+            .expect("stack")
+            .nav
+            .respondsToSelector(objc2::sel!(interactiveContentPopGestureRecognizer))
+        {
+            // iOS 26+: the content recognizer takes part too.
+            assert_eq!(recognizers(&mounter).len(), 2);
+        }
+        assert_eq!(begins(&mounter), vec![false; recognizers(&mounter).len()]);
+
+        let mut page = nlayer_core::ScreenConfig::default();
+        page.animation = nlayer_core::ScreenAnimation::None;
+        page.header_visible = false;
+        apply(
+            &mounter,
+            vec![
+                MountItem::Create {
+                    id: 4,
+                    kind: ViewKind::Screen,
+                },
+                MountItem::ScreenConfig {
+                    id: 4,
+                    config: Box::new(page.clone()),
+                },
+                MountItem::Insert {
+                    parent: 2,
+                    child: 4,
+                    before: None,
+                },
+            ],
+        );
+
+        // `popOnSwipe` and `popOnBack` allow it on a page above the root.
+        assert_eq!(begins(&mounter), vec![true; recognizers(&mounter).len()]);
+
+        page.gesture_enabled = false;
+        apply(
+            &mounter,
+            vec![MountItem::ScreenConfig {
+                id: 4,
+                config: Box::new(page.clone()),
+            }],
+        );
+        assert_eq!(begins(&mounter), vec![false; recognizers(&mounter).len()]);
+
+        page.gesture_enabled = true;
+        page.prevent_back = true;
+        apply(
+            &mounter,
+            vec![MountItem::ScreenConfig {
+                id: 4,
+                config: Box::new(page.clone()),
+            }],
+        );
+        assert_eq!(begins(&mounter), vec![false; recognizers(&mounter).len()]);
+    }
+
     fn the_modal_presents_over_the_root() {
-        use objc2_ui_kit::{UIViewController, UIWindow};
+        use objc2_ui_kit::{UIPresentationController, UIViewController, UIWindow};
 
         let mounter = mounter();
         let mtm =
@@ -4228,6 +4351,52 @@ pub(crate) mod tests {
             // until the presentation animation completes (even with ModalAnimation::None).
             // We only assert the `presented` flag here.
             assert!(modal.presented, "modal should be marked as presented");
+
+            // `closeOnSwipe` false: a swipe asks (`onRequestClose`) but the
+            // sheet stays.
+            let presentation =
+                UIPresentationController::initWithPresentedViewController_presentingViewController(
+                    UIPresentationController::alloc(mtm),
+                    &modal.controller,
+                    Some(&controller),
+                );
+            let accepts: bool = unsafe {
+                objc2::msg_send![
+                    &*modal.controller,
+                    presentationControllerShouldDismiss: &*presentation
+                ]
+            };
+            assert!(!accepts);
+        }
+
+        // `closeOnSwipe` applies while presented.
+        apply(
+            &mounter,
+            vec![MountItem::ModalConfig {
+                id: 5,
+                config: nlayer_core::ModalConfig {
+                    close_on_swipe: true,
+                    ..config
+                },
+            }],
+        );
+        {
+            let borrowed = mounter.borrow();
+            let modal = borrowed.modal(5).unwrap();
+            assert!(!modal.controller.isModalInPresentation());
+            let presentation =
+                UIPresentationController::initWithPresentedViewController_presentingViewController(
+                    UIPresentationController::alloc(mtm),
+                    &modal.controller,
+                    Some(&controller),
+                );
+            let accepts: bool = unsafe {
+                objc2::msg_send![
+                    &*modal.controller,
+                    presentationControllerShouldDismiss: &*presentation
+                ]
+            };
+            assert!(accepts);
         }
 
         // Remove modal
