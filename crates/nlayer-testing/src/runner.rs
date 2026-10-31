@@ -753,8 +753,9 @@ impl Session {
                 Ok("null".to_owned())
             }
             "back" => {
-                let id = parse_id(payload)?;
-                self.app_mut(id)?.back()?;
+                let request: DropRequest =
+                    serde_json::from_str(payload).map_err(|e| e.to_string())?;
+                self.app_mut(request.id)?.back()?;
                 Ok("null".to_owned())
             }
             "advance" => {

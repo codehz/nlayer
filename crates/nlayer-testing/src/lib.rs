@@ -973,12 +973,8 @@ impl Headless {
         self.refresh();
         match self.screen.back_target() {
             Back::Pop(screen_id) => {
-                // Send BackRequest event if screen is listening, then it should pop
-                if self.screen.view(screen_id).is_some_and(|v| v.events.contains(EventKind::BackRequest)) {
-                    self.engine.control().dispatch_event(screen_id, EventKind::BackRequest, EventPayload::None);
-                }
-                // Note: The app should call nav.pop() in response. For headless testing,
-                // the test should verify the stack depth changes after calling back().
+                // For a poppable screen, dispatch Dismiss event to trigger the pop
+                self.engine.control().dispatch_event(screen_id, EventKind::Dismiss, EventPayload::None);
                 let _ = self.next_frame(Duration::from_millis(100));
                 Ok(())
             }

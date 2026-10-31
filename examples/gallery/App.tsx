@@ -668,8 +668,8 @@ type Route =
   | { name: "list" };
 
 function DialogDemoPage(props: { nav: ReturnType<typeof createNavStack<Route>> }) {
-  const [dialogOpen, setDialogOpen] = signal(false);
-  const [dialogAnimation, setDialogAnimation] = signal<"fade" | "slide" | "scale">("fade");
+  const dialogOpen = signal(false);
+  const dialogAnimation = signal<"fade" | "slide" | "scale">("fade");
   
   return (
     <View testID="dialog-page" style={{ flex: 1, backgroundColor: "#fff", padding: 16 }}>
@@ -679,15 +679,15 @@ function DialogDemoPage(props: { nav: ReturnType<typeof createNavStack<Route>> }
       </Text>
       
       <View style={{ gap: 12 }}>
-        <Text testID="open-dialog" onPress={() => { setDialogAnimation("fade"); setDialogOpen(true); }}
+        <Text testID="open-dialog" onPress={() => { dialogAnimation.set("fade"); dialogOpen.set(true); }}
               style={{ padding: 12, backgroundColor: "#3b82f6", color: "#fff", borderRadius: 6, textAlign: "center" }}>
           Open Dialog (fade)
         </Text>
-        <Text testID="open-slide" onPress={() => { setDialogAnimation("slide"); setDialogOpen(true); }}
+        <Text testID="open-slide" onPress={() => { dialogAnimation.set("slide"); dialogOpen.set(true); }}
               style={{ padding: 12, backgroundColor: "#8b5cf6", color: "#fff", borderRadius: 6, textAlign: "center" }}>
           Open Dialog (slide)
         </Text>
-        <Text testID="open-scale" onPress={() => { setDialogAnimation("scale"); setDialogOpen(true); }}
+        <Text testID="open-scale" onPress={() => { dialogAnimation.set("scale"); dialogOpen.set(true); }}
               style={{ padding: 12, backgroundColor: "#ec4899", color: "#fff", borderRadius: 6, textAlign: "center" }}>
           Open Dialog (scale)
         </Text>
@@ -697,14 +697,14 @@ function DialogDemoPage(props: { nav: ReturnType<typeof createNavStack<Route>> }
         <Dialog
           testID="demo-dialog"
           animation={dialogAnimation()}
-          onClose={() => setDialogOpen(false)}
+          onClose={() => dialogOpen.set(false)}
         >
           <View style={{ backgroundColor: "#fff", padding: 24, borderRadius: 12, minWidth: 280 }}>
             <Text style={{ fontSize: 18, fontWeight: "700", marginBottom: 12 }}>Dialog Title</Text>
             <Text style={{ color: "#64748b", marginBottom: 16 }}>
               Click outside, press Escape, or use back to close
             </Text>
-            <Text testID="close-dialog" onPress={() => setDialogOpen(false)}
+            <Text testID="close-dialog" onPress={() => dialogOpen.set(false)}
                   style={{ padding: 12, backgroundColor: "#3b82f6", color: "#fff", borderRadius: 6, textAlign: "center" }}>
               Close
             </Text>
@@ -746,14 +746,14 @@ function GestureCardPage(props: { nav: ReturnType<typeof createNavStack<Route>> 
 }
 
 function DetailPage(props: { nav: ReturnType<typeof createNavStack<Route>> }) {
-  const [interceptBack, setInterceptBack] = signal(false);
-  const [backIntercepted, setBackIntercepted] = signal(false);
+  const interceptBack = signal(false);
+  const backIntercepted = signal(false);
   
   effect(() => {
     if (!interceptBack()) return;
     const remove = BackHandler.addEventListener(() => {
-      setBackIntercepted(true);
-      setTimeout(() => setBackIntercepted(false), 1000);
+      backIntercepted.set(true);
+      setTimeout(() => backIntercepted.set(false), 1000);
       return true;
     });
     cleanup(remove);
@@ -768,7 +768,7 @@ function DetailPage(props: { nav: ReturnType<typeof createNavStack<Route>> }) {
               style={{ color: "#3b82f6", marginBottom: 16, fontWeight: "600" }}>
           ← Back
         </Text>
-        <Text testID="intercept-back" onPress={() => setInterceptBack(!interceptBack())}
+        <Text testID="intercept-back" onPress={() => interceptBack.set(!interceptBack())}
               style={{ padding: 12, backgroundColor: interceptBack() ? "#10b981" : "#cbd5e1", 
                        borderRadius: 6, textAlign: "center", marginBottom: 16 }}>
           {interceptBack() ? "Back Interception ON" : "Enable Back Interception"}
@@ -784,7 +784,7 @@ function DetailPage(props: { nav: ReturnType<typeof createNavStack<Route>> }) {
 }
 
 function ListDemoPage(props: { nav: ReturnType<typeof createNavStack<Route>> }) {
-  const [loaded, setLoaded] = signal(1000);
+  const loaded = signal(1000);
   
   return (
     <View testID="list-page" style={{ flex: 1, backgroundColor: "#fff" }}>
@@ -802,7 +802,7 @@ function ListDemoPage(props: { nav: ReturnType<typeof createNavStack<Route>> }) 
         estimated={32}
         onLoadMore={() => {
           if (loaded() < 5000) {
-            setLoaded(Math.min(5000, loaded() + 1000));
+            loaded.set(Math.min(5000, loaded() + 1000));
           }
         }}
       >

@@ -233,6 +233,10 @@ impl HostedApp for AndroidApp {
     fn drop(&mut self) -> Result<(), String> {
         self.call("drop", "", "", 0.0).map(|_| ())
     }
+    fn back(&mut self) -> Result<(), String> {
+        self.call("back", "", "", 0.0).map(|_| ())
+    }
+
 
     fn close(&mut self) {
         if !self.open {

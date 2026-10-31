@@ -283,7 +283,7 @@ test("press detail link navigates to detail", () => {
   app.waitFor("detail-title");
   const tree = app.tree();
   const detailTitle = flat(tree, []).find((n) => n.testID === "detail-title");
-  expect(detailTitle).not.toBe(undefined);
+  expect(detailTitle !== undefined).toBe(true);
   expect(must(detailTitle).text).toBe("Detail Screen");
 });
 
@@ -311,7 +311,7 @@ test("onBackPress intercepts back() on detail", () => {
   app.waitFor("back-intercepted");
   const tree = app.tree();
   const intercepted = flat(tree, []).find((n) => n.testID === "back-intercepted");
-  expect(intercepted).not.toBe(undefined);
+  expect(intercepted !== undefined).toBe(true);
 });
 
 test("dialog opens and back() closes it", () => {

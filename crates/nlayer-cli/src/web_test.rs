@@ -398,6 +398,10 @@ impl HostedApp for WebApp {
         self.mouse("mouseReleased", 0.0, 0.0, 0)?;
         Ok(())
     }
+    fn back(&mut self) -> Result<(), String> {
+        self.call("back", &[]).map(|_| ())
+    }
+
 
     fn close(&mut self) {
         if let Some(page) = self.page.take()
