@@ -103,19 +103,26 @@ class Box extends ViewGroup {
     decor.drawBorders(canvas);
   }
 
-  @Override
   public boolean onTouchEvent(android.view.MotionEvent e) {
     if (disabled || pointerEvents == 1) return false;
-    // Gestures first
-    if (gestures != null && gestures.onTouchEvent(e)) {
-      return true;
+    
+    // Gestures first - request to disallow parent interception when gesture active
+    if (gestures != null) {
+      int action = e.getActionMasked();
+      boolean handled = gestures.onTouchEvent(e);
+      if (handled && action == android.view.MotionEvent.ACTION_MOVE) {
+        // Gesture is active, prevent parent scroll from stealing
+        getParent().requestDisallowInterceptTouchEvent(true);
+      }
+      if (handled) return true;
     }
+    
     // Then press handling
     int action = e.getActionMasked();
     boolean press = (pressMask & 1) != 0;
-    if (action == MotionEvent.ACTION_DOWN && press) {
+    if (action == android.view.MotionEvent.ACTION_DOWN && press) {
       return true;
-    } else if (action == MotionEvent.ACTION_UP && press) {
+    } else if (action == android.view.MotionEvent.ACTION_UP && press) {
       if (e.getX() >= 0 && e.getY() >= 0 && e.getX() < getWidth() && e.getY() < getHeight()) {
         Native.sendPress(this, id);
       }

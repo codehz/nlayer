@@ -43,7 +43,9 @@ const ACCESSIBILITY: i32 = 18;
 const LONG_PRESS_DELAY: i32 = 19;
 const SCREEN_CONFIG: i32 = 20;
 const MODAL_CONFIG: i32 = 21;
-
+const PAN_BINDING: i32 = 22;
+const PINCH_BINDING: i32 = 23;
+const ROTATION_BINDING: i32 = 24;
 /// A `StaticLayout` measured on the engine thread and drawn on the UI thread.
 #[cfg(target_os = "android")]
 pub(crate) struct AndroidLayout(pub(crate) jni::objects::GlobalRef);
@@ -110,12 +112,24 @@ pub fn encode(batch: MountBatch) -> Encoded {
                 e.float(frame.size.width.0);
                 e.float(frame.size.height.0);
             }
-            MountItem::Animation(_)
-            | MountItem::AnimationBindings { .. }
-            | MountItem::PanBinding { .. }
-            | MountItem::PinchBinding { .. }
-            | MountItem::RotationBinding { .. } => {
+            MountItem::Animation(_) | MountItem::AnimationBindings { .. } => {
                 // The UI-thread animation graph consumes these.
+            }
+            MountItem::PanBinding { id, x, y } => {
+                e.int(PAN_BINDING);
+                e.id(id);
+                e.bool(x.is_some());
+                e.bool(y.is_some());
+            }
+            MountItem::PinchBinding { id, scale } => {
+                e.int(PINCH_BINDING);
+                e.id(id);
+                e.bool(scale.is_some());
+            }
+            MountItem::RotationBinding { id, angle } => {
+                e.int(ROTATION_BINDING);
+                e.id(id);
+                e.bool(angle.is_some());
             }
             MountItem::LongPressDelay { id, delay } => {
                 e.int(LONG_PRESS_DELAY);

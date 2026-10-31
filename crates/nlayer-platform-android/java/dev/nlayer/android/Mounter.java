@@ -57,11 +57,17 @@ final class Mounter {
       ACCESSIBILITY = 18,
       LONG_PRESS_DELAY = 19,
       SCREEN_CONFIG = 20,
-      MODAL_CONFIG = 21;
+      MODAL_CONFIG = 21,
+      PAN_BINDING = 22,
+      PINCH_BINDING = 23,
+      ROTATION_BINDING = 24;
   final HostView host;
   final float density;
   final SparseArray<View> views = new SparseArray<>();
   final SparseArray<Integer> events = new SparseArray<>();
+  final SparseArray<Boolean> panBindings = new SparseArray<>();
+  final SparseArray<Boolean> pinchBindings = new SparseArray<>();
+  final SparseArray<Boolean> rotationBindings = new SparseArray<>();
   final SparseArray<String> testIds = new SparseArray<>();
   final SparseArray<A11y.Info> accessibility = new SparseArray<>();
   final SparseArray<Style> bases = new SparseArray<>();
@@ -169,13 +175,21 @@ final class Mounter {
         case MODAL_CONFIG:
           modalConfig(b);
           break;
+        case PAN_BINDING:
+          panBinding(b);
+          break;
+        case PINCH_BINDING:
+          pinchBinding(b);
+          break;
+        case ROTATION_BINDING:
+          rotationBinding(b);
+          break;
         default:
           throw new IllegalArgumentException("Unknown nlayer opcode");
       }
     }
     finishNavigation();
   }
-
   private void events(ByteBuffer b) {
     int id = b.getInt(), mask = b.getInt();
     b.getInt();
@@ -185,15 +199,9 @@ final class Mounter {
     View v = views.get(id);
     if (v == null) return;
     
-    // Check for gesture events (bits 17-22: PanStart, PanEnd, PinchStart, PinchEnd, RotationStart, RotationEnd)
-    boolean hasGestures = (mask & (0x3F << 17)) != 0; // Bits 17-22
+    // Update gesture box based on events and bindings
     if (v instanceof Box) {
-      Box box = (Box) v;
-      if (hasGestures && box.gestures == null) {
-        box.gestures = new GestureBox(box, id, this);
-      } else if (!hasGestures && box.gestures != null) {
-        box.gestures = null;
-      }
+      updateGestureBox(id);
     }
     
     boolean press = (mask & 1) != 0 || (mask & (1 << 11)) != 0;
@@ -214,6 +222,59 @@ final class Mounter {
           });
     } else {
       v.setOnTouchListener(null);
+    }
+  }
+
+  private void panBinding(ByteBuffer b) {
+    int id = b.getInt();
+    boolean hasX = b.get() != 0, hasY = b.get() != 0;
+    boolean hasPan = hasX || hasY;
+    if (hasPan) {
+      panBindings.put(id, true);
+    } else {
+      panBindings.remove(id);
+    }
+    updateGestureBox(id);
+  }
+
+  private void pinchBinding(ByteBuffer b) {
+    int id = b.getInt();
+    boolean hasScale = b.get() != 0;
+    if (hasScale) {
+      pinchBindings.put(id, true);
+    } else {
+      pinchBindings.remove(id);
+    }
+    updateGestureBox(id);
+  }
+
+  private void rotationBinding(ByteBuffer b) {
+    int id = b.getInt();
+    boolean hasAngle = b.get() != 0;
+    if (hasAngle) {
+      rotationBindings.put(id, true);
+    } else {
+      rotationBindings.remove(id);
+    }
+    updateGestureBox(id);
+  }
+
+  private void updateGestureBox(int id) {
+    View v = views.get(id);
+    if (!(v instanceof Box)) return;
+    Box box = (Box) v;
+    
+    // Gesture box needed if: bindings OR events (17-22)
+    int mask = events.get(id, 0);
+    boolean hasEvents = (mask & (0x3F << 17)) != 0;
+    boolean hasBindings = panBindings.get(id, false) 
+        || pinchBindings.get(id, false) 
+        || rotationBindings.get(id, false);
+    
+    if ((hasEvents || hasBindings) && box.gestures == null) {
+      box.gestures = new GestureBox(box, id, this);
+    } else if (!hasEvents && !hasBindings && box.gestures != null) {
+      box.gestures = null;
     }
   }
 

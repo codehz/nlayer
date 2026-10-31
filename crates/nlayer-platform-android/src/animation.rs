@@ -263,6 +263,172 @@ pub(crate) fn transform_moved(id: NodeId, rotation: bool, amount: f32) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nlayer_core::animation::NodeId as AnimationNode;
+
+    #[test]
+    fn test_pan_gesture_tracking() {
+        reset();
+        {
+            let mut s = state();
+            let UiAnimation { graph, finished, gestures, .. } = &mut *s;
+            graph.apply(
+                nlayer_core::animation::AnimationOp::CreateValue { node: 1, value: 0.0_f32.into() },
+                finished
+            );
+            graph.apply(
+                nlayer_core::animation::AnimationOp::CreateValue { node: 2, value: 0.0_f32.into() },
+                finished
+            );
+            let g = gestures.entry(1).or_default();
+            g.x = Some(1);
+            g.y = Some(2);
+        }
+        
+        pan_began(1);
+        {
+            let s = state();
+            assert_eq!(s.gestures.get(&1).unwrap().start[0], 0.0);
+            assert_eq!(s.gestures.get(&1).unwrap().start[1], 0.0);
+        }
+        
+        pan_moved(1, 10.0, 20.0);
+        let (x, y) = pan_values(1);
+        assert_eq!(x, Some(10.0));
+        assert_eq!(y, Some(20.0));
+        
+        pan_moved(1, 15.0, 25.0);
+        let (x, y) = pan_values(1);
+        assert_eq!(x, Some(15.0));
+        assert_eq!(y, Some(25.0));
+    }
+
+    #[test]
+    fn test_pinch_gesture_multiplies() {
+        reset();
+        {
+            let mut s = state();
+            let UiAnimation { graph, finished, gestures, .. } = &mut *s;
+            graph.apply(
+                nlayer_core::animation::AnimationOp::CreateValue { node: 3, value: 1.0_f32.into() },
+                finished
+            );
+            let g = gestures.entry(2).or_default();
+            g.scale = Some(3);
+        }
+        
+        transform_began(2, false);
+        {
+            let s = state();
+            assert_eq!(s.gestures.get(&2).unwrap().start[2], 1.0);
+        }
+        
+        transform_moved(2, false, 1.5);
+        assert_eq!(transform_value(2, false), Some(1.5));
+        
+        transform_began(2, false);
+        transform_moved(2, false, 2.0);
+        assert_eq!(transform_value(2, false), Some(3.0));
+    }
+
+    #[test]
+    fn test_rotation_gesture_adds() {
+        reset();
+        {
+            let mut s = state();
+            let UiAnimation { graph, finished, gestures, .. } = &mut *s;
+            graph.apply(
+                nlayer_core::animation::AnimationOp::CreateValue { node: 4, value: 0.0_f32.into() },
+                finished
+            );
+            let g = gestures.entry(3).or_default();
+            g.angle = Some(4);
+        }
+        
+        transform_began(3, true);
+        {
+            let s = state();
+            assert_eq!(s.gestures.get(&3).unwrap().start[3], 0.0);
+        }
+        
+        transform_moved(3, true, 45.0);
+        assert_eq!(transform_value(3, true), Some(45.0));
+        
+        transform_moved(3, true, 90.0);
+        assert_eq!(transform_value(3, true), Some(90.0));
+    }
+
+    #[test]
+    fn test_multiple_gestures_coexist() {
+        reset();
+        {
+            let mut s = state();
+            let UiAnimation { graph, finished, gestures, .. } = &mut *s;
+            graph.apply(
+                nlayer_core::animation::AnimationOp::CreateValue { node: 10, value: 0.0_f32.into() },
+                finished
+            );
+            graph.apply(
+                nlayer_core::animation::AnimationOp::CreateValue { node: 11, value: 0.0_f32.into() },
+                finished
+            );
+            graph.apply(
+                nlayer_core::animation::AnimationOp::CreateValue { node: 12, value: 1.0_f32.into() },
+                finished
+            );
+            graph.apply(
+                nlayer_core::animation::AnimationOp::CreateValue { node: 13, value: 0.0_f32.into() },
+                finished
+            );
+            let g = gestures.entry(100).or_default();
+            g.x = Some(10);
+            g.y = Some(11);
+            g.scale = Some(12);
+            g.angle = Some(13);
+        }
+        
+        pan_began(100);
+        transform_began(100, false);
+        transform_began(100, true);
+        
+        pan_moved(100, 5.0, 10.0);
+        transform_moved(100, false, 1.2);
+        transform_moved(100, true, 30.0);
+        
+        let (x, y) = pan_values(100);
+        assert_eq!(x, Some(5.0));
+        assert_eq!(y, Some(10.0));
+        assert_eq!(transform_value(100, false), Some(1.2));
+        assert_eq!(transform_value(100, true), Some(30.0));
+    }
+
+    #[test]
+    fn test_gesture_bindings_cleared() {
+        reset();
+        {
+            let mut s = state();
+            let UiAnimation { graph, finished, gestures, .. } = &mut *s;
+            graph.apply(
+                nlayer_core::animation::AnimationOp::CreateValue { node: 20, value: 0.0_f32.into() },
+                finished
+            );
+            let g = gestures.entry(200).or_default();
+            g.x = Some(20);
+        }
+        
+        assert!(has_pan(200));
+        
+        {
+            let mut s = state();
+            s.gestures.remove(&200);
+        }
+        
+        assert!(!has_pan(200));
+    }
+}
+
 /// The current pinch/rotation value for reporting in events.
 pub(crate) fn transform_value(id: NodeId, rotation: bool) -> Option<f32> {
     let s = state();
