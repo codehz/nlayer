@@ -302,3 +302,13 @@ Copied files:
   `crates/nsh-platform-android/java/com/longbridge/nsh/ModalHost.java` (dialog
   window, edge-to-edge insets, slide/fade presentation, back handling; v3 keeps
   the engine-owned back/close path and drops status-bar/touch-tracker plumbing)
+- Gesture event kinds (PanStart/PanEnd/PinchStart/PinchEnd/RotationStart/RotationEnd)
+  and prop variants (Pan/Pinch/Rotation) from
+  `crates/nsh-core/src/ops.rs` (PanValues line 1940-1945, PinchValue line 2188-2189,
+  RotationValue line 2191-2192 in nsh commit ca59368b)
+- Gesture prop decoders (pan/pinch/rotation) from
+  `crates/nsh-core/src/js/host_values.rs` (lines 405-418 in nsh commit ca59368b)
+- iOS gesture recognizer setup and handlers from
+  `crates/nsh-platform-ios/src/mount.rs` (recognizer installation lines 2717-2748,
+  Slot fields lines 143-145) and `crates/nsh-platform-ios/src/target.rs`
+  (handlePan/handlePinch/handleRotation lines 96-120 in nsh commit ca59368b)
