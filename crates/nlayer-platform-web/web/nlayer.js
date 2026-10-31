@@ -593,47 +593,7 @@ export class Player {
     return chain;
   }
 
-  pointerDown(event) {
-    this.swallowTarget = null;
-    this.noteKeyboardTap(event);
-    if (event.pointerType === "mouse" || event.button > 0) return;
-    
-    // Find gesture targets
-    let pan = null;
-    for (let el = event.target; el && el._id != null; el = el.parentNode) {
-      if (el._panNodes) {
-        pan = el;
-        break;
-      }
-    }
-    
-    const scrolls = this.scrollChain(event.target);
-    if (!scrolls.length && !pan) return;
-    this.holding++;
-    this.pointers.set(event.pointerId ?? 0, {
-      x: event.clientX || 0,
-      y: event.clientY || 0,
-      startX: event.clientX || 0,
-      startY: event.clientY || 0,
-      scrolls,
-      pan,
-      mode: null,
-    });
-  }
 
-  pointerCancel(event) {
-    if (event.pointerType === "mouse") return;
-    const id = event.pointerId ?? 0;
-    const tracked = this.pointers.get(id);
-    this.pointers.delete(id);
-    const scrolls = tracked?.scrolls ?? this.scrollChain(event.target);
-    if (!scrolls.length) return;
-    const dx = (event.clientX || 0) - (tracked?.x || 0);
-    const dy = (event.clientY || 0) - (tracked?.y || 0);
-    const horizontal = Math.abs(dx) > Math.abs(dy);
-    const el = scrolls.find((view) => !!view._horizontal === horizontal) ?? scrolls[0];
-    this.beginDrag(el);
-  }
 
   beginDrag(el) {
     if (!el || el._touchDrag) return;
@@ -1200,52 +1160,7 @@ export class Player {
   }
 
 
-  pointerMove(event) {
-    const id = event.pointerId ?? 0;
-    const p = this.pointers.get(id);
-    if (!p || !p.pan) return;
-    
-    const x = event.clientX || 0;
-    const y = event.clientY || 0;
-    const tx = x - p.startX;
-    const ty = y - p.startY;
-    
-    if (!p.mode && Math.hypot(tx, ty) > 6) {
-      p.mode = "pan";
-      p.t0 = this.now();
-      this.host.pan?.(p.pan._id, 0, 0, 0, 0, 0);
-    }
-    
-    if (p.mode === "pan") {
-      event.preventDefault();
-      const now = this.now();
-      const dt = Math.max(1, now - (p.t0 || now));
-      const vx = tx / dt;
-      const vy = ty / dt;
-      this.host.pan?.(p.pan._id, 1, tx, ty, vx, vy);
-      p.x = x;
-      p.y = y;
-      p.lastT = now;
-    }
-  }
 
-  pointerUp(event) {
-    const id = event.pointerId ?? 0;
-    const p = this.pointers.get(id);
-    if (!p) return;
-    
-    this.pointers.delete(id);
-    
-    if (p.mode === "pan") {
-      const now = this.now();
-      const tx = (p.x || p.startX) - p.startX;
-      const ty = (p.y || p.startY) - p.startY;
-      const dt = Math.max(1, now - (p.t0 || now));
-      const vx = tx / dt;
-      const vy = ty / dt;
-      this.host.pan?.(p.pan._id, 2, tx, ty, vx, vy);
-    }
-  }
   dispose() {
     if (this.onPopState) {
       this.window.removeEventListener?.("popstate", this.onPopState);
