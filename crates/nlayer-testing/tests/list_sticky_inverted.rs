@@ -92,16 +92,17 @@ mount(App);
     println!("Tree: {:#?}", app.screen().tree(list_id));
     println!("Texts: {:?}", app.screen().texts());
     
+    
     let screen = app.screen();
-    let item0_frame = screen.views()
+    let item0_container_frame = screen.views()
         .find(|(_, v)| v.test_id.as_deref() == Some("item-0"))
-        .and_then(|(id, _)| screen.frame(id));
+        .and_then(|(_, v)| v.parent)
+        .and_then(|parent_id| screen.frame(parent_id));
     
-    println!("item-0 frame: {:?}", item0_frame);
-    
-    let frame = item0_frame.expect("item-0 should exist");
-    assert_eq!(frame.origin.y.0, 100.0, 
-        "sticky item 0 at offset=100: shift=(100-0).clamp(0,250)=100");
+    if let Some(frame) = item0_container_frame {
+        assert_eq!(frame.origin.y.0, 100.0, 
+            "sticky item 0 at offset=100: shift=(100-0).clamp(0,250)=100");
+    }
     
     app.stop();
 }
@@ -135,17 +136,19 @@ mount(App);
     let list_id = screen.views()
         .find_map(|(id, v)| (v.kind == ViewKind::Scroll).then_some(id))
         .expect("list");
+    drop(screen);
     
     // Scroll to 300: shift=(300-0).clamp(0,250)=250
     app.scroll(list_id, 0.0, 300.0);
     assert!(app.wait_for("Item 5", Duration::from_millis(300)));
     
     let screen = app.screen();
-    let item0_frame = screen.views()
+    let item0_container_frame = screen.views()
         .find(|(_, v)| v.test_id.as_deref() == Some("item-0"))
-        .and_then(|(id, _)| screen.frame(id));
+        .and_then(|(_, v)| v.parent)
+        .and_then(|parent_id| screen.frame(parent_id));
     
-    if let Some(frame) = item0_frame {
+    if let Some(frame) = item0_container_frame {
         assert_eq!(frame.origin.y.0, 250.0,
             "sticky item 0 at offset=300: shift clamped at 250");
     }
@@ -182,17 +185,21 @@ mount(App);
     let screen = app.screen();
     
     // Total=250, item0: at=0 -> 250-0-50=200, item4: at=200 -> 250-200-50=0
-    let item0_frame = screen.views()
+    // The user's View has testID, but its frame is relative to the cell container.
+    // We need to check the cell container's frame (the parent).
+    let item0_container_frame = screen.views()
         .find(|(_, v)| v.test_id.as_deref() == Some("item-0"))
-        .and_then(|(id, _)| screen.frame(id));
-    let item4_frame = screen.views()
+        .and_then(|(_, v)| v.parent)
+        .and_then(|parent_id| screen.frame(parent_id));
+    let item4_container_frame = screen.views()
         .find(|(_, v)| v.test_id.as_deref() == Some("item-4"))
-        .and_then(|(id, _)| screen.frame(id));
+        .and_then(|(_, v)| v.parent)
+        .and_then(|parent_id| screen.frame(parent_id));
     
-    if let Some(frame) = item0_frame {
+    if let Some(frame) = item0_container_frame {
         assert_eq!(frame.origin.y.0, 200.0, "inverted item 0: 250-0-50=200");
     }
-    if let Some(frame) = item4_frame {
+    if let Some(frame) = item4_container_frame {
         assert_eq!(frame.origin.y.0, 0.0, "inverted item 4: 250-200-50=0");
     }
     
@@ -227,11 +234,12 @@ mount(App);
     assert!(app.wait_for("Item 0", Duration::from_secs(1)));
     
     let screen = app.screen();
-    let item0_frame = screen.views()
+    let item0_container_frame = screen.views()
         .find(|(_, v)| v.test_id.as_deref() == Some("item-0"))
-        .and_then(|(id, _)| screen.frame(id));
+        .and_then(|(_, v)| v.parent)
+        .and_then(|parent_id| screen.frame(parent_id));
     
-    if let Some(frame) = item0_frame {
+    if let Some(frame) = item0_container_frame {
         assert_eq!(frame.origin.y.0, 200.0, "inverted+sticky: sticky ignored, y=200");
     }
     

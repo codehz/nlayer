@@ -757,6 +757,17 @@ impl<M: TextEngine> Core<M> {
                 }
             }
         }
+        
+        // Update list offset if this scroll view has a list
+        let horizontal = scroll.horizontal;
+        if let Some(list) = self.nodes[key as usize].list.as_mut() {
+            let new_offset = if horizontal { offset.x.0 } else { offset.y.0 };
+            if list.offset != new_offset {
+                list.offset = new_offset;
+                // Mark dirty so sticky headers recompute
+                self.mark(key, dirty::LIST);
+            }
+        }
     }
 
     /// Moves the cells the runtime must render before the frame shows.
