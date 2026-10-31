@@ -236,6 +236,15 @@ impl MountSink for Queue {
         let message = error.to_string();
         DispatchQueue::main().exec_async(move || show_error(&message));
     }
+
+    fn request_frame(&self) -> bool {
+        DispatchQueue::main().exec_async(|| {
+            if let Some(mounter) = mounter() {
+                mounter.borrow_mut().request_frame();
+            }
+        });
+        true
+    }
 }
 
 thread_local! {

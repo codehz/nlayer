@@ -3,7 +3,7 @@
 use std::{
     io::{BufRead, BufReader, Write},
     net::{TcpListener, TcpStream},
-    sync::Arc,
+    sync::{Arc, atomic::AtomicUsize},
     time::Duration,
 };
 
@@ -265,4 +265,87 @@ mount(App);
         engine.pump();
     }
     assert!(saw, "the response reaches the text");
+}
+
+struct RequestSink {
+    tx: crossbeam_channel::Sender<MountBatch>,
+    requests: Arc<AtomicUsize>,
+}
+
+impl MountSink for RequestSink {
+    fn submit(&self, batch: MountBatch) {
+        let _ = self.tx.send(batch);
+    }
+
+    fn request_frame(&self) -> bool {
+        self.requests
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        true
+    }
+}
+
+fn start_with_requests(
+    bundle: &str,
+) -> (
+    LocalEngine<ApproxTextEngine>,
+    Receiver<MountBatch>,
+    Arc<AtomicUsize>,
+) {
+    let (tx, rx) = unbounded();
+    let requests = Arc::new(AtomicUsize::new(0));
+    let engine = LocalEngine::start(
+        EngineConfig::new(bundle, Size::new(px(390.0), px(844.0))),
+        ApproxTextEngine,
+        Arc::new(RequestSink {
+            tx,
+            requests: Arc::clone(&requests),
+        }),
+        Arc::new(|| {}),
+    )
+    .expect("the engine starts");
+    (engine, rx, requests)
+}
+
+/// A local host binds overscan a frame at a time: each pump is one frame.
+#[test]
+fn a_local_host_binds_overscan_a_frame_at_a_time() {
+    const APP: &str = r#"
+import { mount } from "@nlayer/runtime";
+import { List, Text, View } from "@nlayer/ui";
+const rows = Array.from({ length: 200 }, (_, i) => i);
+mount(() => List({
+    each: rows,
+    estimatedItemSize: 50,
+    style: { flex: 1 },
+    children: (item) => View({
+        style: { height: 50 },
+        children: Array.from({ length: 8 }, (_, k) => Text({ children: "row " + item() + " " + k })),
+    }),
+}));
+"#;
+    let (mut engine, rx, requests) = start_with_requests(APP);
+    // After start, a frame was requested.
+    assert!(
+        requests.load(std::sync::atomic::Ordering::SeqCst) >= 1,
+        "frame requested after start"
+    );
+    // The engine waits for the page's frame, not an immediate pump.
+    assert!(
+        engine.deadline().is_none(),
+        "waiting for a frame, not a timer"
+    );
+    // Pump in a loop: each pump is one frame. The start frame is in `rx`
+    // already; the pumps must add the overscan.
+    let first = texts(&rx.try_recv().expect("the start frame")).len();
+    let mut total = first;
+    for _ in 0..100 {
+        engine.pump();
+        if let Ok(batch) = rx.try_recv() {
+            total += texts(&batch).len();
+        } else {
+            // No batch: done.
+            break;
+        }
+    }
+    assert!(total > first, "{first} first, {total} in all");
 }

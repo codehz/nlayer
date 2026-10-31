@@ -293,3 +293,89 @@ mount(() => List({
     assert!(total <= 60, "{total} rows in all");
     engine.stop();
 }
+
+struct FrameSink {
+    tx: crossbeam_channel::Sender<MountBatch>,
+    requests: crossbeam_channel::Sender<()>,
+}
+
+impl MountSink for FrameSink {
+    fn submit(&self, batch: MountBatch) {
+        let _ = self.tx.send(batch);
+    }
+
+    fn request_frame(&self) -> bool {
+        let _ = self.requests.send(());
+        true
+    }
+}
+
+/// A list that cannot finish its overscan in one turn waits for a display
+/// frame before binding more.
+#[test]
+fn a_list_waits_for_a_display_frame_before_binding_more_overscan() {
+    const APP: &str = r#"
+import { mount } from "@nlayer/runtime";
+import { List, Text, View } from "@nlayer/ui";
+const rows = Array.from({ length: 200 }, (_, i) => i);
+mount(() => List({
+    each: rows,
+    estimatedItemSize: 50,
+    style: { flex: 1 },
+    children: (item) => View({
+        style: { height: 50 },
+        children: Array.from({ length: 8 }, (_, k) => Text({ children: "row " + item() + " " + k })),
+    }),
+}));
+"#;
+    let (tx, rx) = unbounded();
+    let (req_tx, requests) = unbounded();
+    let engine = Engine::start(
+        EngineConfig::new(APP, Size::new(px(390.0), px(844.0))),
+        || ApproxTextEngine,
+        Arc::new(FrameSink {
+            tx,
+            requests: req_tx,
+        }),
+    )
+    .unwrap();
+    // The first batch has texts.
+    let first = frame(&rx);
+    let shown = texts(&first);
+    assert!(!shown.is_empty(), "first batch has texts");
+    // A frame was requested for the remaining overscan.
+    requests
+        .recv_timeout(Duration::from_secs(5))
+        .expect("a frame was requested");
+    // Nothing is submitted until the frame.
+    assert!(
+        rx.recv_timeout(Duration::from_millis(150)).is_err(),
+        "no batch until the frame"
+    );
+    // Send the frame and collect batches.
+    engine.control().frame();
+    let mut total = shown.len();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if std::time::Instant::now() > deadline {
+            break;
+        }
+        match rx.recv_timeout(Duration::from_millis(500)) {
+            Ok(batch) => {
+                total += texts(&batch).len();
+                // Send another frame if one was requested.
+                if requests.try_recv().is_ok() {
+                    engine.control().frame();
+                }
+            }
+            Err(_) => {
+                // No batch and no request: done.
+                if requests.try_recv().is_err() {
+                    break;
+                }
+            }
+        }
+    }
+    assert!(total > shown.len(), "{} first, {total} total", shown.len());
+    engine.stop();
+}

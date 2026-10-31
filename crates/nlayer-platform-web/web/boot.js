@@ -119,6 +119,22 @@ function requestPump() {
   });
 }
 
+let frameQueued = false;
+/** The engine waits for a display frame: pump on the page's next animation frame. */
+function requestFrame() {
+  if (frameQueued) return;
+  frameQueued = true;
+  const run = () => {
+    frameQueued = false;
+    enter(() => wasm.nlayer_pump());
+  };
+  if (typeof globalThis.requestAnimationFrame === "function") {
+    globalThis.requestAnimationFrame(run);
+  } else {
+    setTimeout(run, 16);
+  }
+}
+
 function importsFor(options) {
   return {
     nlayer_browser: {
@@ -132,6 +148,7 @@ function importsFor(options) {
         player?.apply(JSON.parse(text(ptr, len)));
       },
       nlayer_request_pump: requestPump,
+      nlayer_request_frame: requestFrame,
       nlayer_report_error(ptr, len) {
         const message = text(ptr, len);
         options.onError?.(message);

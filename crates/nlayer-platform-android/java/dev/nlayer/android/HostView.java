@@ -64,6 +64,16 @@ public final class HostView extends FrameLayout {
         }
       };
 
+  private final Choreographer.FrameCallback jsFrame =
+      nanos -> {
+        if (handle != 0) Native.frame(handle);
+      };
+
+  /** The engine waits for a display frame. Called from any thread. */
+  void requestFrame() {
+    main.post(() -> Choreographer.getInstance().postFrameCallback(jsFrame));
+  }
+
   /** Schedules the animation clock while the graph runs. */
   void animationChanged() {
     if (handle == 0 || inFrame || framePosted) return;

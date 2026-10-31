@@ -44,6 +44,12 @@ pub trait Page: Send + Sync + 'static {
     /// Schedule [`PageSession::pump`]; do not call it from here.
     fn request_pump(&self);
 
+    /// Asks the page for the next display frame (it calls [`PageSession::pump`]
+    /// when it begins); `false` when the page has none.
+    fn request_frame(&self) -> bool {
+        false
+    }
+
     /// The app failed outside a handler, or a frame could not be applied.
     fn report_error(&self, message: &str);
 }
@@ -183,6 +189,10 @@ impl MountSink for Sink {
     fn submit(&self, batch: nlayer_core::MountBatch) {
         let json = self.encoder.lock().expect("encoder").encode(&batch);
         self.page.submit(&json);
+    }
+
+    fn request_frame(&self) -> bool {
+        self.page.request_frame()
     }
 
     fn failed(&self, error: EngineError) {

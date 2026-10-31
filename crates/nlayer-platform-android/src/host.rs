@@ -89,6 +89,21 @@ impl MountSink for Sink {
             Ok(())
         });
     }
+
+    fn request_frame(&self) -> bool {
+        with_env(|env| {
+            // SAFETY: matches the signature checked in `java::init`.
+            unsafe {
+                env.call_method_unchecked(
+                    self.view.as_obj(),
+                    java().view_request_frame,
+                    jni::signature::ReturnType::Primitive(jni::signature::Primitive::Void),
+                    &[],
+                )
+            }?;
+            Ok(true)
+        })
+    }
 }
 
 fn report(view: &jni::objects::GlobalRef, message: &str) {
@@ -550,6 +565,28 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_composition(
         .as_ref()
     {
         control.composition_changed(id as NodeId, composing != 0, text);
+    }
+}
+
+/// # Safety
+///
+/// `handle` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_frame(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+) {
+    if handle == 0 {
+        return;
+    }
+    if let Some(control) = unsafe { host(handle) }
+        .control
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .as_ref()
+    {
+        control.frame();
     }
 }
 

@@ -31,6 +31,7 @@ pub(crate) struct Java {
     pub(crate) view_type_char: JMethodID,
     pub(crate) view_scroll_to: JMethodID,
     pub(crate) view_back_unhandled: JMethodID,
+    pub(crate) view_request_frame: JMethodID,
 }
 
 static JAVA: OnceLock<Java> = OnceLock::new();
@@ -70,6 +71,7 @@ pub(crate) fn init(vm: JavaVM) -> jni::errors::Result<()> {
         view_type_char: env.get_method_id(view_class, "typeChar", "(ILjava/lang/String;)V")?,
         view_scroll_to: env.get_method_id(view_class, "scrollTo", "(IFF)V")?,
         view_back_unhandled: env.get_method_id(view_class, "backUnhandled", "()V")?,
+        view_request_frame: env.get_method_id(view_class, "requestFrame", "()V")?,
         text,
         vm,
     };

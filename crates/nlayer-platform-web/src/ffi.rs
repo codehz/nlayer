@@ -3,7 +3,7 @@
 //! JS copies them before returning.
 //!
 //! Imports are the module `nlayer` (`nlayer_submit`, `nlayer_request_pump`,
-//! `nlayer_report_error`, `nlayer_log`). The module does not
+//! `nlayer_request_frame`, `nlayer_report_error`, `nlayer_log`). The module does not
 //! link QuickJS, so it imports no `env` clock or entropy. The page evaluates
 //! the app and starts it with [`nlayer_browser_start`].
 #![allow(unreachable_pub)]
@@ -33,6 +33,12 @@ impl Page for HostPage {
         unsafe { nlayer_request_pump() }
     }
 
+    fn request_frame(&self) -> bool {
+        // SAFETY: no pointers. JS schedules a frame pump; it does not call one here.
+        unsafe { nlayer_request_frame() };
+        true
+    }
+
     fn report_error(&self, message: &str) {
         // SAFETY: as [`Page::submit`].
         unsafe { nlayer_report_error(message.as_ptr(), message.len()) }
@@ -43,6 +49,7 @@ impl Page for HostPage {
 unsafe extern "C" {
     fn nlayer_submit(ptr: *const u8, len: usize);
     fn nlayer_request_pump();
+    fn nlayer_request_frame();
     fn nlayer_report_error(ptr: *const u8, len: usize);
     fn nlayer_log(level: u32, ptr: *const u8, len: usize);
 }

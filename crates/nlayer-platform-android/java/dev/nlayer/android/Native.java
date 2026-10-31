@@ -30,6 +30,9 @@ final class Native {
   /** The back button: `BackHandler` listeners, then the platform default. */
   static native void back(long handle);
 
+  /** A display frame began after {@code HostView.requestFrame}. */
+  static native void frame(long handle);
+
   static native void press(long handle, int id);
 
   /** A press stayed down long enough (`onLongPress`). */

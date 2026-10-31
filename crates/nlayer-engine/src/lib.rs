@@ -68,6 +68,15 @@ pub trait MountSink: Send + Sync + 'static {
     /// Applies one frame.
     fn submit(&self, batch: MountBatch);
 
+    /// Asks the host for a display frame: list overscan remains to bind,
+    /// and binds when the frame begins. `true` when the host scheduled one
+    /// and calls [`EngineControl::frame`] when it starts; `false` (the
+    /// default) when it has no display frames and the engine keeps going
+    /// at once, as headless hosts do.
+    fn request_frame(&self) -> bool {
+        false
+    }
+
     /// The app failed (it threw outside a handler, or the VM did not
     /// start).
     fn failed(&self, error: EngineError) {
@@ -202,6 +211,8 @@ enum Message {
     NetworkDone,
     /// Native animations finished or were interrupted.
     AnimationFinished(Vec<Finished>),
+    /// A display frame began, after `MountSink::request_frame`.
+    Frame,
     /// Acknowledge after earlier messages have committed.
     #[cfg(not(target_arch = "wasm32"))]
     Barrier(Sender<()>),
@@ -298,6 +309,13 @@ impl EngineControl {
     /// the promises JS made settle. Call it on the platform's UI thread.
     pub fn animations_finished(&self, finished: Vec<Finished>) {
         let _ = self.tx.send(Message::AnimationFinished(finished));
+    }
+
+    /// A display frame began, after [`MountSink::request_frame`]: the
+    /// engine binds the rest of a list's overscan within this frame's
+    /// budget.
+    pub fn frame(&self) {
+        let _ = self.tx.send(Message::Frame);
     }
 }
 
@@ -463,6 +481,8 @@ impl<M: TextEngine> LocalEngine<M> {
             return None;
         }
         self.notify.pumping.store(true, Ordering::SeqCst);
+        // On wasm every pump is the display frame the page scheduled.
+        self.session.frame_requested = false;
         // Bounded: a fetch that finishes while this pump runs is handled
         // here too. A loop that never settles is not.
         for _ in 0..4 {
@@ -565,6 +585,8 @@ struct Session<M: TextEngine> {
     queued_ops: Vec<nlayer_core::Op>,
     /// [`keep_last_sets`]'s buffer, reused across turns.
     sets_seen: HashMap<(u8, NodeId), usize>,
+    /// Whether a display frame was requested and has not yet begun.
+    frame_requested: bool,
 }
 
 /// Rounds of "list asks for items -> JS renders them -> layout" folded into
@@ -617,14 +639,21 @@ impl<M: TextEngine> Session<M> {
             pending_binds: Vec::new(),
             queued_ops: Vec::new(),
             sets_seen: HashMap::new(),
+            frame_requested: false,
         })
     }
 
+    /// How long until the next timer. When work remains but a display frame
+    /// was requested, returns `None` (waits for the frame, not an immediate
+    /// turn).
     fn next_timer(&self) -> Option<Duration> {
         if !self.pending_binds.is_empty()
             || !self.queued_ops.is_empty()
             || self.core.has_paced_list_binds()
         {
+            if self.frame_requested {
+                return None;
+            }
             return Some(Duration::ZERO);
         }
         self.host.next_timer()
@@ -713,6 +742,7 @@ impl<M: TextEngine> Session<M> {
             Message::AnimationFinished(finished) => {
                 self.host.animations_finished(&finished);
             }
+            Message::Frame => self.frame_requested = false,
             Message::NetworkDone => {}
             #[cfg(not(target_arch = "wasm32"))]
             Message::Barrier(_) => unreachable!("barriers are handled before apply"),
@@ -817,6 +847,14 @@ impl<M: TextEngine> Session<M> {
                     }
                 }
             }
+        }
+        // Request a display frame if work remains and the host schedules them.
+        if (!self.pending_binds.is_empty()
+            || !self.queued_ops.is_empty()
+            || self.core.has_paced_list_binds())
+            && !self.frame_requested
+        {
+            self.frame_requested = self.sink.request_frame();
         }
     }
 

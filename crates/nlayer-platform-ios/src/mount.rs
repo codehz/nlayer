@@ -594,6 +594,8 @@ pub(crate) struct Mounter {
     frames_applied: bool,
     /// The animation graph, moved by the display link.
     animator: crate::animation::Animator,
+    /// Whether the engine requested a frame via `request_frame`.
+    frame_pending: bool,
 }
 
 impl Mounter {
@@ -623,6 +625,7 @@ impl Mounter {
             narrowed: Vec::new(),
             frames_applied: false,
             animator: crate::animation::Animator::default(),
+            frame_pending: false,
         }));
         CURRENT.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&mounter)));
         relay.bind(Rc::downgrade(&mounter));
@@ -665,6 +668,15 @@ impl Mounter {
         self.keyboard = height;
         if let Some(control) = &self.control {
             control.set_keyboard_inset(height);
+        }
+    }
+
+    /// Engine thread requested a frame. Unpause the display link and mark
+    /// that a frame is pending.
+    pub(crate) fn request_frame(&mut self) {
+        self.frame_pending = true;
+        if let Some(link) = self.relay.ivars().link.borrow().as_ref() {
+            link.setPaused(false);
         }
     }
 
@@ -879,6 +891,12 @@ impl Mounter {
     /// Runs one display frame: the graph moves, bound values are painted,
     /// and finished animations go back to the engine.
     fn tick_animation(&mut self, now: f64) {
+        if self.frame_pending {
+            self.frame_pending = false;
+            if let Some(control) = &self.control {
+                control.frame();
+            }
+        }
         if self.animator.tick(now) {
             self.apply_animations();
         }
@@ -889,7 +907,7 @@ impl Mounter {
     fn update_link(&mut self) {
         let animating = self.animator.animating();
         if let Some(link) = self.relay.ivars().link.borrow().as_ref() {
-            link.setPaused(!animating);
+            link.setPaused(!(animating || self.frame_pending));
         }
     }
 

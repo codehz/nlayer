@@ -38,6 +38,7 @@ test("the page graph and a text mount do not need QuickJS", async () => {
         frames.push(JSON.parse(text));
       },
       nlayer_request_pump: () => {},
+      nlayer_request_frame: () => {},
       nlayer_report_error: (ptr, len) => {
         const text = new TextDecoder().decode(new Uint8Array(wasm.memory.buffer, ptr, len));
         throw new Error(text);
