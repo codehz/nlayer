@@ -171,9 +171,71 @@ impl Bridge for Runtime {
                 Ok(value) => value,
                 Err(_) => return,
             },
-            EventPayload::Pan { .. } | EventPayload::Pinch { .. } | EventPayload::Rotation { .. } => {
-                // Gesture events not supported in web platform yet
-                return;
+            EventPayload::Pan { translation, velocity, values } => {
+                let object = match Value::object() {
+                    Ok(object) => object,
+                    Err(_) => return,
+                };
+                let (Ok(tx), Ok(ty), Ok(vx), Ok(vy), Ok(val_x), Ok(val_y)) = (
+                    Value::number(f64::from(translation.0)),
+                    Value::number(f64::from(translation.1)),
+                    Value::number(f64::from(velocity.0)),
+                    Value::number(f64::from(velocity.1)),
+                    Value::number(f64::from(values.0)),
+                    Value::number(f64::from(values.1)),
+                ) else {
+                    return;
+                };
+                if object.set("translationX", tx).is_err()
+                    || object.set("translationY", ty).is_err()
+                    || object.set("velocityX", vx).is_err()
+                    || object.set("velocityY", vy).is_err()
+                    || object.set("valueX", val_x).is_err()
+                    || object.set("valueY", val_y).is_err()
+                {
+                    return;
+                }
+                object
+            }
+            EventPayload::Pinch { scale, velocity, value } => {
+                let object = match Value::object() {
+                    Ok(object) => object,
+                    Err(_) => return,
+                };
+                let (Ok(s), Ok(v), Ok(val)) = (
+                    Value::number(f64::from(*scale)),
+                    Value::number(f64::from(*velocity)),
+                    Value::number(f64::from(*value)),
+                ) else {
+                    return;
+                };
+                if object.set("scale", s).is_err()
+                    || object.set("velocity", v).is_err()
+                    || object.set("value", val).is_err()
+                {
+                    return;
+                }
+                object
+            }
+            EventPayload::Rotation { angle, velocity, value } => {
+                let object = match Value::object() {
+                    Ok(object) => object,
+                    Err(_) => return,
+                };
+                let (Ok(a), Ok(v), Ok(val)) = (
+                    Value::number(f64::from(*angle)),
+                    Value::number(f64::from(*velocity)),
+                    Value::number(f64::from(*value)),
+                ) else {
+                    return;
+                };
+                if object.set("angle", a).is_err()
+                    || object.set("velocity", v).is_err()
+                    || object.set("value", val).is_err()
+                {
+                    return;
+                }
+                object
             }
         };
         let Ok(id) = Value::number(id as f64) else {
