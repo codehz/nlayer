@@ -116,12 +116,38 @@ const LIST_APP: &str = include_str!("fixtures/list/App.tsx");
 
 const LIST_TESTS: &str = include_str!("fixtures/list/App.test.tsx");
 
+const LIST_BEHAVIORS: &str = include_str!("fixtures/list/Behaviors.test.tsx");
+
 #[test]
 fn a_long_list_renders_windows_and_scrolls_on_the_headless_engine() {
     let _fixture = FIXTURE.lock().unwrap_or_else(|e| e.into_inner());
     let dir = scratch("list");
     fs::write(dir.join("App.tsx"), LIST_APP).unwrap();
     fs::write(dir.join("App.test.tsx"), LIST_TESTS).unwrap();
+    fs::write(dir.join("Behaviors.test.tsx"), LIST_BEHAVIORS).unwrap();
+    let report = test(&TestOptions {
+        path: dir.clone(),
+        filter: None,
+        target: None,
+    })
+    .expect("the test runs");
+    assert!(report.ok(), "{report}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+const LIST_MEASURED_APP: &str = include_str!("fixtures/list/Measured.tsx");
+
+const LIST_MEASURED_TESTS: &str = include_str!("fixtures/list/Measured.test.tsx");
+
+#[test]
+fn a_list_follows_measured_rows_on_the_headless_engine() {
+    let _fixture = FIXTURE.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = scratch("list-measured");
+    // Only the measured fixture runs in this directory.
+    let _ = fs::remove_file(dir.join("App.tsx"));
+    let _ = fs::remove_file(dir.join("App.test.tsx"));
+    fs::write(dir.join("Measured.tsx"), LIST_MEASURED_APP).unwrap();
+    fs::write(dir.join("Measured.test.tsx"), LIST_MEASURED_TESTS).unwrap();
     let report = test(&TestOptions {
         path: dir.clone(),
         filter: None,

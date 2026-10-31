@@ -110,7 +110,6 @@ fn replay(offset: f32, pending: &[PendingScroll]) -> f32 {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum PinTarget {
     Index(u32),
-    #[allow(dead_code)]
     End,
 }
 
@@ -288,9 +287,16 @@ impl ListState {
                 s.requested = None;
                 continue;
             };
+            // A cell the items moved under shows its new index: ask the
+            // runtime for it again, so `item()` and `index()` follow.
+            let moved = s.index != Some(new);
             s.index = Some(new);
             s.rendered = s.rendered.and_then(shift);
-            s.requested = s.requested.and_then(shift);
+            s.requested = if moved {
+                None
+            } else {
+                s.requested.and_then(shift)
+            };
             self.by_index.insert(new, slot as u32);
         }
         self.free.sort_unstable();
@@ -807,6 +813,295 @@ mod tests {
         assert_eq!(l.offset, 1000.0);
         l.reported(1000.0);
         assert_eq!(l.offset, 1000.0);
+    }
+
+    #[test]
+    fn measurements_before_the_viewport_report_their_delta() {
+        let mut l = list(100, 50.0, 200.0);
+        l.offset = 500.0;
+        // A row above the viewport grew: the scroll follows it.
+        assert_eq!(l.measured(2, 80.0), 30.0);
+        assert_eq!(l.item_at(3), 180.0);
+        // Shrinking reports the fall.
+        assert_eq!(l.measured(2, 20.0), -60.0);
+        assert_eq!(l.item_at(3), 120.0);
+        // The same size again is not a change.
+        assert_eq!(l.measured(2, 20.0), 0.0);
+        // A row at or below the viewport grows the content, not the scroll.
+        let before = l.item_at(10);
+        assert_eq!(l.measured(10, 90.0), 0.0);
+        assert_eq!(l.item_at(11) - before, 90.0);
+        assert_eq!(l.item_at(10), before);
+    }
+
+    #[test]
+    fn a_row_takes_its_tallest_cell() {
+        let mut l = list(6, 50.0, 100.0);
+        l.set_columns(2);
+        // Items 2 and 3 share row 1.
+        assert_eq!(l.measured(3, 80.0), 0.0);
+        assert_eq!(l.row_size(1), 80.0);
+        assert_eq!(l.item_at(4), 130.0);
+        // A shorter cell leaves the row as it was.
+        assert_eq!(l.measured(2, 30.0), 0.0);
+        assert_eq!(l.row_size(1), 80.0);
+        assert_eq!(l.item_at(4), 130.0);
+        // A taller one grows the row and moves everything after it.
+        assert_eq!(l.measured(2, 100.0), 0.0);
+        assert_eq!(l.row_size(1), 100.0);
+        assert_eq!(l.item_at(4), 150.0);
+        assert_eq!(l.item_at(5), 150.0);
+    }
+
+    #[test]
+    fn extra_sizes_anchor_only_above_the_viewport() {
+        let mut l = list(10, 50.0, 200.0);
+        l.add_slot_cell(CellSlot::Header, 1);
+        l.add_slot_cell(CellSlot::Footer, 2);
+        // In the viewport the header pushes the items down without scrolling.
+        assert_eq!(l.measured_extra(ExtraKind::Header, 30.0), 0.0);
+        assert_eq!(l.blocks().body, 30.0);
+        assert_eq!(l.item_at(0), 30.0);
+        // Above it, its growth is the scroll that keeps the rows in place.
+        l.offset = 300.0;
+        assert_eq!(l.measured_extra(ExtraKind::Header, 50.0), 20.0);
+        assert_eq!(l.blocks().body, 50.0);
+        assert_eq!(l.measured_extra(ExtraKind::Header, 50.0), 0.0);
+        // Nothing follows the footer, so it never scrolls the list.
+        l.offset = l.end_offset();
+        assert_eq!(l.measured_extra(ExtraKind::Footer, 40.0), 0.0);
+        assert_eq!(l.blocks().footer, 550.0);
+        assert_eq!(l.content_len(), 590.0);
+    }
+
+    #[test]
+    fn an_empty_placeholder_below_the_viewport_does_not_scroll() {
+        let mut l = list(0, 50.0, 100.0);
+        l.add_slot_cell(CellSlot::Header, 1);
+        l.add_slot_cell(CellSlot::Empty, 2);
+        assert_eq!(l.measured_extra(ExtraKind::Header, 60.0), 0.0);
+        assert_eq!(l.measured_extra(ExtraKind::Empty, 200.0), 0.0);
+        assert_eq!(l.blocks().body, 60.0);
+        // It ends after the viewport from anywhere in the content.
+        l.offset = l.end_offset();
+        assert_eq!(l.measured_extra(ExtraKind::Empty, 100.0), 0.0);
+        assert_eq!(l.content_len(), 160.0);
+    }
+
+    #[test]
+    fn blocks_swap_the_empty_placeholder_for_items() {
+        let mut l = list(0, 50.0, 200.0);
+        l.add_slot_cell(CellSlot::Header, 1);
+        l.add_slot_cell(CellSlot::Footer, 2);
+        l.add_slot_cell(CellSlot::Empty, 3);
+        l.measured_extra(ExtraKind::Header, 20.0);
+        l.measured_extra(ExtraKind::Empty, 60.0);
+        l.measured_extra(ExtraKind::Footer, 10.0);
+        let empty = l.blocks();
+        assert_eq!((empty.header, empty.body, empty.footer), (0.0, 20.0, 80.0));
+        assert_eq!(empty.total, 90.0);
+        l.set_count(3);
+        let items = l.blocks();
+        assert_eq!((items.header, items.body), (0.0, 20.0));
+        assert_eq!(items.footer, 170.0);
+        assert_eq!(items.total, 180.0);
+        l.set_count(0);
+        assert_eq!(l.blocks(), empty);
+    }
+
+    #[test]
+    fn a_new_window_reuses_the_cells_of_the_old_one() {
+        let mut l = list(1000, 50.0, 200.0);
+        l.offset = 10_000.0;
+        let mut binds = Vec::new();
+        l.update_window(&mut binds);
+        assert_eq!(l.slots.len(), 13);
+        assert_eq!(binds.first().map(|b| b.1), Some(196));
+        assert_eq!(binds.last().map(|b| b.1), Some(208));
+        // Far away: the window's slots are the old ones, rebound.
+        l.offset = 20_000.0;
+        binds.clear();
+        l.update_window(&mut binds);
+        assert_eq!(l.slots.len(), 13);
+        assert_eq!(binds.first().map(|b| b.1), Some(396));
+        assert_eq!(binds.last().map(|b| b.1), Some(408));
+        assert!(!l.by_index.contains_key(&196));
+        for index in l.slots.iter().filter_map(|s| s.index) {
+            assert!((396..=408).contains(&index), "slot holds {index}");
+        }
+    }
+
+    #[test]
+    fn shrinking_count_leaves_no_out_of_range_slot() {
+        let mut l = list(100, 50.0, 200.0);
+        let mut binds = Vec::new();
+        l.update_window(&mut binds);
+        l.set_count(2);
+        binds.clear();
+        l.update_window(&mut binds);
+        assert!(l.slots.iter().all(|s| s.index.is_none_or(|i| i < 2)));
+        assert_eq!(l.by_index.len(), 2);
+        assert_eq!(l.content_len(), 100.0);
+    }
+
+    #[test]
+    fn columns_reset_measurements_to_the_estimate() {
+        let mut l = list(10, 50.0, 200.0);
+        l.measured(1, 80.0);
+        assert_eq!(l.item_at(2), 130.0);
+        l.set_columns(2);
+        assert_eq!(l.row_count(), 5);
+        assert_eq!(l.item_at(2), 50.0);
+        assert_eq!(l.item_at(3), 50.0);
+        assert_eq!(l.item_at(4), 100.0);
+        assert_eq!(l.column_of(3), 1);
+        assert_eq!(l.column(300.0, 1), (150.0, 150.0));
+        // Zero columns is one column.
+        l.set_columns(0);
+        assert_eq!(l.row_count(), 10);
+        assert_eq!(l.column_of(3), 0);
+        assert_eq!(l.column(300.0, 0), (0.0, 300.0));
+    }
+
+    #[test]
+    fn splicing_above_the_viewport_keeps_the_visible_rows() {
+        let mut l = list(10, 50.0, 200.0);
+        l.measured(0, 80.0);
+        l.offset = 200.0;
+        let anchor = l.item_at(3) - l.offset;
+        l.splice(0, 0, 2);
+        assert_eq!(l.count, 12);
+        // The first visible row is where it was, two items further down.
+        assert_eq!(l.item_at(5) - l.offset, anchor);
+        assert_eq!(l.take_splice_anchor(), 100.0);
+        // Its measurement followed it.
+        assert_eq!(l.measured(2, 80.0), 0.0);
+        // Removing the two again puts the list back.
+        l.splice(0, 2, 0);
+        assert_eq!(l.count, 10);
+        assert_eq!(l.item_at(3) - l.offset, anchor);
+        assert_eq!(l.take_splice_anchor(), -100.0);
+        assert_eq!(l.measured(0, 80.0), 0.0);
+    }
+
+    #[test]
+    fn splicing_a_visible_item_frees_its_cell() {
+        let mut l = list(10, 50.0, 200.0);
+        let mut binds = Vec::new();
+        l.update_window(&mut binds);
+        let (slot, item) = binds[0];
+        assert_eq!(item, 0);
+        l.add_slot_cell(CellSlot::Item(slot), 500);
+        l.rendered(500, 0);
+        assert_eq!(l.slots[slot as usize].ready(), Some(0));
+        l.splice(0, 1, 0);
+        // The cell loses its item and waits for a new one.
+        assert_eq!(l.count, 9);
+        assert_eq!(l.slots[slot as usize].index, None);
+        assert_eq!(l.slots[slot as usize].rendered, None);
+        assert!(l.free.contains(&slot));
+        // The old item 1 is item 0 now; the deleted one binds nothing.
+        assert_eq!(l.by_index.get(&0), Some(&1));
+        assert_eq!(l.by_index.get(&9), None);
+        binds.clear();
+        l.update_window(&mut binds);
+        // Rebinding takes the next item, never the deleted index.
+        assert_eq!(l.slots[slot as usize].index, Some(8));
+        assert_eq!(binds.iter().find(|b| b.0 == slot).map(|b| b.1), Some(8));
+        assert!(!binds.iter().any(|b| b.1 == 9));
+    }
+
+    #[test]
+    fn offsets_stay_inside_the_content() {
+        let l = list(10, 50.0, 200.0);
+        assert_eq!(l.offset_for_index(0), 0.0);
+        assert_eq!(l.offset_for_index(9), 300.0);
+        // Past the end is the last item, not past it.
+        assert_eq!(l.offset_for_index(999), l.offset_for_index(9));
+        assert_eq!(l.end_offset(), 300.0);
+        // Content shorter than the viewport never scrolls.
+        let short = list(3, 50.0, 200.0);
+        assert_eq!(short.offset_for_index(2), 0.0);
+        assert_eq!(short.end_offset(), 0.0);
+        // No content at all: no negative range.
+        let empty = list(0, 50.0, 200.0);
+        assert_eq!(empty.content_len(), 0.0);
+        assert_eq!(empty.offset_for_index(0), 0.0);
+        assert_eq!(empty.end_offset(), 0.0);
+    }
+
+    #[test]
+    fn end_threshold_gates_load_more() {
+        let mut l = list(100, 50.0, 200.0);
+        l.set_end_threshold(0.0);
+        let mut binds = Vec::new();
+        // Not at the end: no load.
+        l.offset = 2000.0;
+        assert!(!l.update_window(&mut binds));
+        // The very end: once.
+        l.offset = 4800.0;
+        assert!(l.update_window(&mut binds));
+        assert!(!l.update_window(&mut binds));
+        // Away and back: still the same items.
+        l.offset = 0.0;
+        assert!(!l.update_window(&mut binds));
+        l.offset = 4800.0;
+        assert!(!l.update_window(&mut binds));
+        // More items move the end: reaching it loads once more.
+        l.set_count(150);
+        l.offset = 7300.0;
+        assert!(l.update_window(&mut binds));
+        assert!(!l.update_window(&mut binds));
+    }
+
+    #[test]
+    fn the_end_threshold_counts_headers_and_footers() {
+        let mut l = list(100, 50.0, 200.0);
+        l.add_slot_cell(CellSlot::Header, 1);
+        l.add_slot_cell(CellSlot::Footer, 2);
+        l.measured_extra(ExtraKind::Header, 100.0);
+        l.measured_extra(ExtraKind::Footer, 100.0);
+        assert_eq!(l.content_len(), 5200.0);
+        let mut binds = Vec::new();
+        // One viewport before the content ends, extras included.
+        l.offset = 4750.0;
+        assert!(!l.update_window(&mut binds));
+        l.offset = 4800.0;
+        assert!(l.update_window(&mut binds));
+    }
+
+    #[test]
+    fn an_empty_or_unmeasured_list_never_loads() {
+        let mut l = list(0, 50.0, 200.0);
+        let mut binds = Vec::new();
+        assert!(!l.update_window(&mut binds));
+        assert!(l.slots.iter().all(|s| s.index.is_none()));
+        let mut zero = list(100, 50.0, 0.0);
+        assert!(!zero.update_window(&mut binds));
+        assert!(zero.slots.iter().all(|s| s.index.is_none()));
+    }
+
+    #[test]
+    fn a_splice_rebinds_the_cells_it_moved() {
+        let mut l = list(10, 50.0, 200.0);
+        let mut binds = Vec::new();
+        l.update_window(&mut binds);
+        assert_eq!(l.slots[0].index, Some(0));
+        // Two items above: each cell shows a new index.
+        l.splice(0, 0, 2);
+        binds.clear();
+        l.update_window(&mut binds);
+        assert!(binds.contains(&(0, 2)), "binds {binds:?}");
+        assert_eq!(l.slots[0].index, Some(2));
+        assert_eq!(l.slots[0].requested, Some(2));
+        // A cell whose index did not move is not asked again.
+        let mut still = list(10, 50.0, 200.0);
+        let mut binds = Vec::new();
+        still.update_window(&mut binds);
+        still.splice(4, 0, 1);
+        binds.clear();
+        still.update_window(&mut binds);
+        assert!(!binds.iter().any(|b| b.1 == 0), "binds {binds:?}");
     }
 
     #[test]

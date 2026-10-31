@@ -2714,6 +2714,8 @@ impl<M: TextEngine> Core<M> {
                         // Special case: scrollToIndex(0) should always go to position 0
                         if index == 0 {
                             let list = self.nodes[key as usize].list.as_mut().expect("list");
+                            // Nothing to follow: the top is the top.
+                            list.pin(None, 0.0);
                             list.jump(0.0);
                             scrolls.push((0.0, animated));
                         } else {
@@ -2726,9 +2728,15 @@ impl<M: TextEngine> Core<M> {
                         }
                     }
                     Command::ScrollToEnd { animated } => {
-                        // Don't calculate offset - let the platform use actual scrollHeight
-                        // Store as a special marker to emit the command directly
-                        scrolls.push((f32::INFINITY, animated));
+                        // The core owns the content length: the end is an
+                        // offset it can name, and it follows it as rows
+                        // measure, like a pinned index.
+                        let target = list::PinTarget::End;
+                        let list = self.nodes[key as usize].list.as_mut().expect("list");
+                        let offset = list.target_offset(target);
+                        list.pin(Some(target), offset);
+                        list.jump(offset);
+                        scrolls.push((offset, animated));
                     }
                     _ => {}
                 }
@@ -2920,27 +2928,19 @@ impl<M: TextEngine> Core<M> {
             // The content is final before a scroll command: platforms
             // clamp an offset to the content they know.
             for (offset, animated) in scrolls {
-                if offset.is_infinite() {
-                    // This is a ScrollToEnd command - send it directly to platform
-                    self.mount.push(MountItem::Command {
-                        id,
-                        command: Command::ScrollToEnd { animated },
-                    });
-                } else {
-                    self.nodes[key as usize]
-                        .list
-                        .as_mut()
-                        .expect("list")
-                        .issue_scroll_to(offset);
-                    self.mount.push(MountItem::Command {
-                        id,
-                        command: Command::ScrollTo {
-                            x: Points::ZERO,
-                            y: Points(offset),
-                            animated,
-                        },
-                    });
-                }
+                self.nodes[key as usize]
+                    .list
+                    .as_mut()
+                    .expect("list")
+                    .issue_scroll_to(offset);
+                self.mount.push(MountItem::Command {
+                    id,
+                    command: Command::ScrollTo {
+                        x: Points::ZERO,
+                        y: Points(offset),
+                        animated,
+                    },
+                });
             }
         }
     }
@@ -3317,6 +3317,34 @@ mod tests {
         let mut binds = Vec::new();
         c.take_list_binds(&mut binds);
         assert_eq!(binds[0].binds[0].1, 46);
+    }
+
+    #[test]
+    fn a_scroll_to_end_resolves_to_the_content_end() {
+        let mut c = list_core();
+        c.apply(Op::Command {
+            id: 2,
+            command: Command::ScrollToEnd { animated: false },
+        })
+        .unwrap();
+        let batch = c.commit().expect("list");
+        let command = batch.items.iter().find_map(|item| match item {
+            MountItem::Command {
+                id: 2,
+                command: Command::ScrollTo { y, animated, .. },
+            } => Some((y.0, *animated)),
+            _ => None,
+        });
+        // 100 rows of 50 in a 200-point viewport: the end is 4800.
+        assert_eq!(command, Some((4800.0, false)));
+        // The platform is never asked for an end it cannot name.
+        assert!(!batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::Command {
+                command: Command::ScrollToEnd { .. },
+                ..
+            }
+        )));
     }
 
     #[test]
