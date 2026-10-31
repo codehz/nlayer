@@ -217,6 +217,17 @@ struct ScrollState {
     /// never sees a transient size (which would clamp the offset before the
     /// content grows back).
     content_item: Option<usize>,
+    /// Refresh state.
+    refreshing: bool,
+    refresh_indicator: Option<Points>,
+    refresh_reported: bool,
+    /// Snap configuration.
+    paging: bool,
+    snap_interval: Option<f32>,
+    snap_offsets: Option<Box<[f32]>>,
+    snap_alignment: crate::ops::SnapAlignment,
+    disable_interval_momentum: bool,
+    deceleration: f32,
 }
 
 /// A single-line input's text and the configuration last sent.
@@ -1156,6 +1167,119 @@ impl<M: TextEngine> Core<M> {
                     self.mark(key, dirty::SCROLL);
                 }
             }
+            Prop::Refreshing(refreshing) => {
+                let changed = self.nodes[key as usize]
+                    .scroll
+                    .as_mut()
+                    .is_some_and(|scroll| {
+                        let was_refreshing = scroll.refreshing;
+                        scroll.refreshing = refreshing;
+                        // Reset reported flag when transitioning false -> true
+                        if !was_refreshing && refreshing {
+                            scroll.refresh_reported = false;
+                        }
+                        was_refreshing != refreshing
+                    });
+                if changed {
+                    self.mark(key, dirty::SCROLL);
+                }
+            }
+            Prop::RefreshIndicator(height) => {
+                let changed = self.nodes[key as usize]
+                    .scroll
+                    .as_mut()
+                    .is_some_and(|scroll| {
+                        let changed = scroll.refresh_indicator != height;
+                        scroll.refresh_indicator = height;
+                        changed
+                    });
+                if changed {
+                    self.mark(key, dirty::SCROLL);
+                }
+            }
+            Prop::PullValue(node) => {
+                // Animation binding handled separately in animation graph
+                let _ = node;
+            }
+            Prop::PagingEnabled(paging) => {
+                let changed = self.nodes[key as usize]
+                    .scroll
+                    .as_mut()
+                    .is_some_and(|scroll| {
+                        let changed = scroll.paging != paging;
+                        scroll.paging = paging;
+                        changed
+                    });
+                if changed {
+                    self.mark(key, dirty::SCROLL);
+                }
+            }
+            Prop::SnapToInterval(interval) => {
+                let changed = self.nodes[key as usize]
+                    .scroll
+                    .as_mut()
+                    .is_some_and(|scroll| {
+                        let changed = scroll.snap_interval != interval;
+                        scroll.snap_interval = interval;
+                        changed
+                    });
+                if changed {
+                    self.mark(key, dirty::SCROLL);
+                }
+            }
+            Prop::SnapToOffsets(offsets) => {
+                let changed = self.nodes[key as usize]
+                    .scroll
+                    .as_mut()
+                    .is_some_and(|scroll| {
+                        let changed = scroll.snap_offsets != offsets;
+                        scroll.snap_offsets = offsets;
+                        changed
+                    });
+                if changed {
+                    self.mark(key, dirty::SCROLL);
+                }
+            }
+            Prop::SnapToAlignment(alignment) => {
+                let changed = self.nodes[key as usize]
+                    .scroll
+                    .as_mut()
+                    .is_some_and(|scroll| {
+                        let changed = scroll.snap_alignment != alignment;
+                        scroll.snap_alignment = alignment;
+                        changed
+                    });
+                if changed {
+                    self.mark(key, dirty::SCROLL);
+                }
+            }
+            Prop::DisableIntervalMomentum(disable) => {
+                let changed = self.nodes[key as usize]
+                    .scroll
+                    .as_mut()
+                    .is_some_and(|scroll| {
+                        let changed = scroll.disable_interval_momentum != disable;
+                        scroll.disable_interval_momentum = disable;
+                        changed
+                    });
+                if changed {
+                    self.mark(key, dirty::SCROLL);
+                }
+            }
+            Prop::DecelerationRate(rate) => {
+                let changed = self.nodes[key as usize]
+                    .scroll
+                    .as_mut()
+                    .is_some_and(|scroll| {
+                        let value = rate.value();
+                        let changed = (scroll.deceleration - value).abs() > 0.001;
+                        scroll.deceleration = value;
+                        changed
+                    });
+                if changed {
+                    self.mark(key, dirty::SCROLL);
+                }
+            }
             Prop::Count(count) => {
                 if let Some(list) = self.nodes[key as usize].list.as_mut() {
                     list.set_count(count);
@@ -1206,6 +1330,36 @@ impl<M: TextEngine> Core<M> {
             Prop::LoadMoreThreshold(threshold) => {
                 if let Some(list) = self.nodes[key as usize].list.as_mut() {
                     list.set_end_threshold(threshold);
+                    self.mark(key, dirty::LIST);
+                }
+            }
+            Prop::StickyHeaderIndices(indices) => {
+                if let Some(list) = self.nodes[key as usize].list.as_mut() {
+                    list.sticky_indices = indices.unwrap_or_else(|| Box::new([]));
+                    self.mark(key, dirty::LIST);
+                }
+            }
+            Prop::Inverted(inverted) => {
+                if let Some(list) = self.nodes[key as usize].list.as_mut() {
+                    list.inverted = inverted;
+                    self.mark(key, dirty::LIST);
+                }
+            }
+            Prop::MaintainVisibleContentPosition(config) => {
+                if let Some(list) = self.nodes[key as usize].list.as_mut() {
+                    list.maintain_position = config;
+                    self.mark(key, dirty::LIST);
+                }
+            }
+            Prop::Viewport(viewport) => {
+                if let Some(list) = self.nodes[key as usize].list.as_mut() {
+                    list.viewport_parent = matches!(viewport, crate::ops::ListViewport::Parent);
+                    self.mark(key, dirty::LIST);
+                }
+            }
+            Prop::ViewabilityConfig(config) => {
+                if let Some(list) = self.nodes[key as usize].list.as_mut() {
+                    list.viewability = config;
                     self.mark(key, dirty::LIST);
                 }
             }
@@ -3597,7 +3751,7 @@ impl<M: TextEngine> Core<M> {
     }
 
     fn set_scroll_content(&mut self, key: Key, size: Size<Points>) {
-        let (id, rtl, kind, viewport, horizontal, old, content_item) = {
+        let (id, rtl, kind, viewport, horizontal, old, content_item, refresh_indicator, paging, snap_interval, snap_offsets, snap_alignment, disable_interval_momentum, deceleration) = {
             let node = &mut self.nodes[key as usize];
             let Some(scroll) = node.scroll.as_mut() else {
                 return;
@@ -3614,6 +3768,13 @@ impl<M: TextEngine> Core<M> {
                 scroll.horizontal,
                 old,
                 scroll.content_item,
+                scroll.refresh_indicator,
+                scroll.paging,
+                scroll.snap_interval,
+                scroll.snap_offsets.clone(),
+                scroll.snap_alignment,
+                scroll.disable_interval_momentum,
+                scroll.deceleration,
             )
         };
         // Items are only inserted before it since (a `ScrollBy`), so it is
@@ -3625,7 +3786,17 @@ impl<M: TextEngine> Core<M> {
             Some(i + at)
         });
         if let Some(j) = queued {
-            self.mount[j] = MountItem::ScrollContent { id, size };
+            self.mount[j] = MountItem::ScrollContent {
+                id,
+                size,
+                refresh_indicator,
+                paging,
+                snap_interval,
+                snap_offsets: snap_offsets.clone(),
+                snap_alignment: snap_alignment as u8,
+                disable_interval_momentum,
+                deceleration,
+            };
         }
         // A scroll queued after it must still come before the new size.
         let scrolled_since = queued.is_some_and(|j| {
@@ -3635,7 +3806,17 @@ impl<M: TextEngine> Core<M> {
         });
         if queued.is_none() || scrolled_since {
             let at = self.mount.len();
-            self.mount.push(MountItem::ScrollContent { id, size });
+            self.mount.push(MountItem::ScrollContent {
+                id,
+                size,
+                refresh_indicator,
+                paging,
+                snap_interval,
+                snap_offsets,
+                snap_alignment: snap_alignment as u8,
+                disable_interval_momentum,
+                deceleration,
+            });
             if let Some(scroll) = self.nodes[key as usize].scroll.as_mut() {
                 scroll.content_item = Some(at);
             }

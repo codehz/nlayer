@@ -263,13 +263,27 @@ pub enum MountItem {
         /// `keyboardDismissMode`.
         dismiss: KeyboardDismiss,
     },
-    /// Set the scrollable content size.
+    /// Set the scrollable content size and scroll behavior.
     ScrollContent {
         /// Scroll view.
         id: NodeId,
         /// Content size. The viewport is the view's frame; the platform
         /// scrolls where this is larger.
         size: Size<Points>,
+        /// Height of app-drawn refresh indicator (platform spinner hidden when Some).
+        refresh_indicator: Option<Points>,
+        /// Paging enabled: snap to viewport-sized pages.
+        paging: bool,
+        /// Snap to multiples of this interval (points).
+        snap_interval: Option<f32>,
+        /// Snap to these specific offsets (points).
+        snap_offsets: Option<Box<[f32]>>,
+        /// Where the snap target aligns (0=start, 1=center, 2=end).
+        snap_alignment: u8,
+        /// One interval per swipe when snapping (no momentum).
+        disable_interval_momentum: bool,
+        /// Deceleration rate (0..1, 0.998 is normal, 0.99 is fast).
+        deceleration: f32,
     },
     /// Shift the scroll position, keeping visible content in place when a
     /// right-to-left horizontal scroll view's content width changes.
@@ -379,6 +393,21 @@ pub enum MountItem {
         id: NodeId,
         /// The options.
         config: ModalConfig,
+    },
+    /// Configure a list: structure and viewability.
+    ListContent {
+        /// List view.
+        id: NodeId,
+        /// Item indices that pin to the top (non-inverted, single-column).
+        sticky_indices: Box<[u32]>,
+        /// List flows bottom-to-top (chat-style).
+        inverted: bool,
+        /// Uses parent's scroll view instead of its own.
+        viewport_parent: bool,
+        /// Viewability thresholds.
+        viewability: Option<crate::ops::Viewability>,
+        /// Keep first visible item in place when prepending.
+        maintain_position: Option<crate::ops::MaintainPosition>,
     },
 }
 

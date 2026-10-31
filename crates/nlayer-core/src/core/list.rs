@@ -161,6 +161,17 @@ pub(super) struct ListState {
     pending: Vec<PendingScroll>,
     /// The offset before the first pending scroll.
     before_pending: f32,
+    /// Sticky header indices (empty if none).
+    pub(super) sticky_indices: Box<[u32]>,
+    /// List is inverted (bottom-to-top).
+    pub(super) inverted: bool,
+    /// Uses parent's scroll view.
+    pub(super) viewport_parent: bool,
+    /// Viewability config and last reported range.
+    pub(super) viewability: Option<crate::ops::Viewability>,
+    pub(super) viewable_range: Option<(u32, u32)>,
+    /// Maintain visible content position.
+    pub(super) maintain_position: Option<crate::ops::MaintainPosition>,
 }
 
 impl ListState {
@@ -189,6 +200,12 @@ impl ListState {
             pin: None,
             pending: Vec::new(),
             before_pending: 0.0,
+            sticky_indices: Box::new([]),
+            inverted: false,
+            viewport_parent: false,
+            viewability: None,
+            viewable_range: None,
+            maintain_position: None,
         }
     }
 

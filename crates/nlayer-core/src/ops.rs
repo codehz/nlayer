@@ -132,6 +132,10 @@ pub enum EventKind {
     RotationStart,
     /// Rotation gesture ended (`onRotationEnd`).
     RotationEnd,
+    /// Pull-to-refresh triggered (`onRefresh`).
+    Refresh,
+    /// The range of viewable list items changed (`onViewableItemsChange`).
+    ViewableItemsChange,
 }
 
 impl EventKind {
@@ -161,7 +165,8 @@ impl EventKind {
             "onPinchStart" => Some(EventKind::PinchStart),
             "onPinchEnd" => Some(EventKind::PinchEnd),
             "onRotationStart" => Some(EventKind::RotationStart),
-            "onRotationEnd" => Some(EventKind::RotationEnd),
+            "onRefresh" => Some(EventKind::Refresh),
+            "onViewableItemsChange" => Some(EventKind::ViewableItemsChange),
             _ => None,
         }
     }
@@ -194,6 +199,8 @@ impl EventKind {
             20 => Some(EventKind::PinchEnd),
             21 => Some(EventKind::RotationStart),
             22 => Some(EventKind::RotationEnd),
+            23 => Some(EventKind::Refresh),
+            24 => Some(EventKind::ViewableItemsChange),
             _ => None,
         }
     }
@@ -225,6 +232,8 @@ impl EventKind {
             EventKind::PinchEnd => "onPinchEnd",
             EventKind::RotationStart => "onRotationStart",
             EventKind::RotationEnd => "onRotationEnd",
+            EventKind::Refresh => "onRefresh",
+            EventKind::ViewableItemsChange => "onViewableItemsChange",
         }
     }
 }
@@ -874,6 +883,84 @@ pub enum AccessibilityProp {
     /// `accessibilityElementsHidden`.
     Hidden(bool),
 }
+/// Where snapping aligns the target (`snapToAlignment`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SnapAlignment {
+    /// Align to the start of the viewport (default).
+    #[default]
+    Start,
+    /// Align to the center.
+    Center,
+    /// Align to the end.
+    End,
+}
+
+/// Deceleration rate of scroll momentum (`decelerationRate`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DecelerationRate {
+    /// Normal rate (0.998, default).
+    Normal,
+    /// Fast rate (0.99).
+    Fast,
+    /// Custom rate (0..1).
+    Custom(f32),
+}
+
+impl DecelerationRate {
+    /// The numeric rate.
+    pub fn value(&self) -> f32 {
+        match self {
+            DecelerationRate::Normal => 0.998,
+            DecelerationRate::Fast => 0.99,
+            DecelerationRate::Custom(v) => v.clamp(0.0, 1.0),
+        }
+    }
+}
+
+impl Default for DecelerationRate {
+    fn default() -> Self {
+        DecelerationRate::Normal
+    }
+}
+
+/// What a list scrolls in (`viewport`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ListViewport {
+    /// A scroll view of its own (default).
+    #[default]
+    Own,
+    /// The scroll view around it.
+    Parent,
+}
+
+/// When list items count as viewable (`viewabilityConfig`).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Viewability {
+    /// How much of the viewport an item must cover (0 to 1).
+    pub view_area_coverage_threshold: Option<f32>,
+    /// How much of an item must be visible (0 to 1).
+    pub item_visible_threshold: Option<f32>,
+}
+
+/// Keep the first visible item in place (`maintainVisibleContentPosition`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MaintainPosition {
+    /// The first item index to anchor (default 0).
+    pub min_index_for_visible: u32,
+    /// Auto-scroll to the bottom when new items arrive within this many
+    /// points of the end (no auto-scroll if `None`).
+    pub autoscroll_to_bottom_threshold: Option<f32>,
+}
+
+impl Default for MaintainPosition {
+    fn default() -> Self {
+        MaintainPosition {
+            min_index_for_visible: 0,
+            autoscroll_to_bottom_threshold: None,
+        }
+    }
+}
+
 
 /// What a list cell holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1031,6 +1118,35 @@ pub enum Prop {
     KeyboardTaps(KeyboardTaps),
     /// `keyboardDismissMode`: `none` (default), `on-drag` or `interactive`.
     KeyboardDismiss(KeyboardDismiss),
+    /// `refreshing`: the refresh indicator shows while true.
+    Refreshing(bool),
+    /// `refreshIndicator`: app draws its own indicator of this height;
+    /// platform spinner is hidden.
+    RefreshIndicator(Option<Points>),
+    /// `pullValue`: animated value driven by pull distance (0 at rest).
+    PullValue(Option<crate::animation::NodeId>),
+    /// `pagingEnabled`: snaps to viewport-sized pages.
+    PagingEnabled(bool),
+    /// `snapToInterval`: snaps to multiples of this interval (points).
+    SnapToInterval(Option<f32>),
+    /// `snapToOffsets`: snaps to these specific offsets (points).
+    SnapToOffsets(Option<Box<[f32]>>),
+    /// `snapToAlignment`: where the snap target aligns in the viewport.
+    SnapToAlignment(SnapAlignment),
+    /// `disableIntervalMomentum`: one interval per swipe (no momentum).
+    DisableIntervalMomentum(bool),
+    /// `decelerationRate`: how fast momentum decays.
+    DecelerationRate(DecelerationRate),
+    /// `stickyHeaderIndices`: item indices that pin to the top (non-inverted, single-column).
+    StickyHeaderIndices(Option<Box<[u32]>>),
+    /// `inverted`: list flows bottom-to-top (chat-style).
+    Inverted(bool),
+    /// `maintainVisibleContentPosition`: keep first visible item in place when prepending.
+    MaintainVisibleContentPosition(Option<MaintainPosition>),
+    /// `viewport`: whether the list has its own scroll view or uses parent's.
+    Viewport(ListViewport),
+    /// `viewabilityConfig`: thresholds for viewable items.
+    ViewabilityConfig(Option<Viewability>),
     /// `value`: the text of an input, controlled by JS.
     Value(String),
     /// `placeholder`: shown while an input is empty.
