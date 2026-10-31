@@ -679,7 +679,10 @@ impl<M: TextEngine> Core<M> {
             if node.events.contains(EventKind::RequestClose) {
                 self.events.push((id, EventKind::RequestClose));
             }
-            can_act
+            // Always consume back for a modal (return true), even when closeOnEscape=false.
+            // With closeOnEscape=false, the app decides via onRequestClose; must not fall
+            // through to BackHandler/platform default (which would move app to background).
+            true
         } else {
             // For screens: return true if non-root (even if popOnBack=false).
             // Emit Dismiss only if can_act is true.
@@ -6693,11 +6696,11 @@ mod tests {
         .unwrap();
         c.commit();
 
-        // Should not consume back.
+        // Should still consume back (not fall through to platform default).
         let consumed = c.handle_back();
         assert!(
-            !consumed,
-            "modal with closeOnEscape=false should not dismiss"
+            consumed,
+            "modal with closeOnEscape=false should still consume back"
         );
     }
 
@@ -7268,5 +7271,65 @@ mod tests {
         c.take_events(&mut events);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].0, 3, "topmost modal should receive back");
+    }
+
+    #[test]
+    fn modal_back_always_consumed() {
+        let mut c = core();
+
+        // Test closeOnEscape=true: consumes back and emits RequestClose.
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Modal,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Modal(crate::ops::ModalProp::CloseOnEscape(true)),
+        })
+        .unwrap();
+        c.apply(Op::Listen {
+            id: 2,
+            event: EventKind::RequestClose,
+            enabled: true,
+        })
+        .unwrap();
+        c.commit();
+
+        let consumed = c.handle_back();
+        assert!(
+            consumed,
+            "modal with closeOnEscape=true should consume back"
+        );
+        let mut events = Vec::new();
+        c.take_events(&mut events);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0, 2);
+        assert_eq!(events[0].1, EventKind::RequestClose);
+
+        // Test closeOnEscape=false: still consumes back and emits RequestClose.
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Modal(crate::ops::ModalProp::CloseOnEscape(false)),
+        })
+        .unwrap();
+        c.commit();
+
+        let consumed = c.handle_back();
+        assert!(
+            consumed,
+            "modal with closeOnEscape=false should still consume back (not fall through)"
+        );
+        let mut events = Vec::new();
+        c.take_events(&mut events);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0, 2);
+        assert_eq!(events[0].1, EventKind::RequestClose);
     }
 }
