@@ -3679,7 +3679,33 @@ impl<M: TextEngine> Core<M> {
                     .as_ref()
                     .expect("list")
                     .item_at(index);
-                let frame = rect(column, at, width, size.height);
+                
+                // Apply sticky shift for sticky headers (single-column, non-inverted only)
+                let adjusted_at = {
+                    let list = self.nodes[key as usize].list.as_ref().expect("list");
+                    if !list.sticky_indices.is_empty() && !list.inverted {
+                        // Check if this cell is a sticky header
+                        if let Some(_sticky_pos) = list.sticky_indices.iter().position(|&i| i == index) {
+                            let offset = list.offset;
+                            let start = at;
+                            // Find next sticky header or end of content
+                            let end = list.sticky_indices.iter()
+                                .skip_while(|&&i| i <= index)
+                                .next()
+                                .map(|&next_i| list.item_at(next_i))
+                                .unwrap_or_else(|| list.content_len());
+                            // Apply sticky_shift: (offset - start).clamp(0, (end - start).max(0))
+                            let shift = (offset - start).clamp(0.0, (end - start).max(0.0));
+                            at + shift
+                        } else {
+                            at
+                        }
+                    } else {
+                        at
+                    }
+                };
+                
+                let frame = rect(column, adjusted_at, width, size.height);
                 self.set_frame(cell, frame);
                 if std::mem::take(&mut self.nodes[cell as usize].relaid) {
                     let children = std::mem::take(&mut self.nodes[cell as usize].children);
