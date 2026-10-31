@@ -318,9 +318,9 @@ test("dialog opens and back() closes it", () => {
   const app = open("./App.tsx");
   reveal(app, (n) => n.testID === "open-dialog");
   app.press("open-dialog");
-  app.waitFor("open-dialog");
+  app.waitFor("dialog-page");
   
-  app.press("open-dialog");
+  app.press("open-dialog-fade");
   app.waitFor("demo-dialog");
   
   app.back();

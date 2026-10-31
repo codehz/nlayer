@@ -679,7 +679,7 @@ function DialogDemoPage(props: { nav: ReturnType<typeof createNavStack<Route>> }
       </Text>
       
       <View style={{ gap: 12 }}>
-        <Text testID="open-dialog" onPress={() => { dialogAnimation.set("fade"); dialogOpen.set(true); }}
+        <Text testID="open-dialog-fade" onPress={() => { dialogAnimation.set("fade"); dialogOpen.set(true); }}
               style={{ padding: 12, backgroundColor: "#3b82f6", color: "#fff", borderRadius: 6, textAlign: "center" }}>
           Open Dialog (fade)
         </Text>
@@ -726,7 +726,7 @@ function GestureCardPage(props: { nav: ReturnType<typeof createNavStack<Route>> 
         ← Back
       </Text>
       
-      <Animated
+      <View
         testID="gesture-card"
         pan={{ x: translateX, y: translateY }}
         style={{
@@ -740,7 +740,7 @@ function GestureCardPage(props: { nav: ReturnType<typeof createNavStack<Route>> 
         }}
       >
         <Text style={{ color: "#fff", fontSize: 16, fontWeight: "600" }}>Drag Me</Text>
-      </Animated>
+      </View>
     </View>
   );
 }
@@ -749,15 +749,6 @@ function DetailPage(props: { nav: ReturnType<typeof createNavStack<Route>> }) {
   const interceptBack = signal(false);
   const backIntercepted = signal(false);
   
-  effect(() => {
-    if (!interceptBack()) return;
-    const remove = BackHandler.addEventListener(() => {
-      backIntercepted.set(true);
-      setTimeout(() => backIntercepted.set(false), 1000);
-      return true;
-    });
-    cleanup(remove);
-  });
   
   return (
     <Scroll testID="detail" style={{ flex: 1, backgroundColor: "#fff" }}>
