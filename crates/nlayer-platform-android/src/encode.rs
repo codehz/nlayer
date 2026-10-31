@@ -957,6 +957,13 @@ mod tests {
                         width: px(40.0),
                         height: px(10.0),
                     },
+                    refresh_indicator: None,
+                    paging: false,
+                    snap_interval: None,
+                    snap_offsets: None,
+                    snap_alignment: 0,
+                    disable_interval_momentum: false,
+                    deceleration: 0.0,
                 },
                 MountItem::ScrollBy {
                     id: 5,
@@ -1012,6 +1019,20 @@ mod tests {
         assert_eq!(words.int(), super::SCROLL_CONTENT);
         assert_eq!(words.int(), 5);
         assert_eq!((words.float(), words.float()), (40.0, 10.0));
+        // Skip new ScrollContent fields: refresh_indicator, paging, snap_interval, 
+        // snap_offsets (len + array), snap_alignment, disable_interval_momentum, deceleration
+        words.float(); // refresh_indicator
+        words.int();   // paging
+        words.float(); // snap_interval
+        let offsets_len = words.int(); // snap_offsets length
+        if offsets_len >= 0 {
+            for _ in 0..offsets_len {
+                words.float();
+            }
+        }
+        words.int();   // snap_alignment
+        words.int();   // disable_interval_momentum
+        words.float(); // deceleration
         assert_eq!(words.int(), super::SCROLL_BY);
         assert_eq!(words.int(), 5);
         assert_eq!((words.float(), words.float()), (2.0, 0.0));
@@ -1266,6 +1287,41 @@ mod tests {
         assert_eq!(words.int(), 0); // close_on_escape false
         assert_eq!(words.int(), 1); // close_on_backdrop_press true
         assert_eq!(words.int(), 0); // close_on_swipe false
+        assert!(words.done());
+    }
+
+    #[test]
+    fn scroll_content_encodes_snap_behavior() {
+        let encoded = super::encode(MountBatch {
+            items: vec![MountItem::ScrollContent {
+                id: 10,
+                size: Size {
+                    width: px(100.0),
+                    height: px(200.0),
+                },
+                refresh_indicator: Some(px(50.0)),
+                paging: true,
+                snap_interval: Some(25.0),
+                snap_offsets: Some(vec![10.0, 20.0, 30.0].into()),
+                snap_alignment: 1, // Center
+                disable_interval_momentum: true,
+                deceleration: 0.99,
+            }],
+        });
+        let mut words = read(&encoded);
+        assert_eq!(words.int(), super::SCROLL_CONTENT);
+        assert_eq!(words.int(), 10);
+        assert_eq!((words.float(), words.float()), (100.0, 200.0));
+        assert_eq!(words.float(), 50.0); // refresh_indicator
+        assert_eq!(words.int(), 1); // paging true
+        assert_eq!(words.float(), 25.0); // snap_interval
+        assert_eq!(words.int(), 3); // snap_offsets length
+        assert_eq!(words.float(), 10.0);
+        assert_eq!(words.float(), 20.0);
+        assert_eq!(words.float(), 30.0);
+        assert_eq!(words.int(), 1); // snap_alignment Center
+        assert_eq!(words.int(), 1); // disable_interval_momentum true
+        assert_eq!(words.float(), 0.99); // deceleration
         assert!(words.done());
     }
 }

@@ -67,6 +67,14 @@ final class ScrollBox extends FrameLayout {
   private final Runnable rest = this::cameToRest;
   private boolean scrollQueued;
 
+  /** Snap behavior configuration. */
+  private boolean snapPaging;
+  private float snapInterval;
+  private float[] snapOffsets;
+  private int snapAlignment;
+  private boolean snapDisableIntervalMomentum;
+  private float snapDeceleration;
+
   private final Choreographer.FrameCallback scrollFrame =
       new Choreographer.FrameCallback() {
         @Override
@@ -257,6 +265,21 @@ final class ScrollBox extends FrameLayout {
       return;
     }
     flushScroll();
+    
+    // Apply snap if flung
+    if (flung && scroller != null) {
+      flung = false;
+      float snapTarget = computeSnapTarget();
+      if (snapTarget >= 0) {
+        if (horizontal) {
+          scroller.smoothScrollTo(Math.round(snapTarget), scroller.getScrollY());
+        } else {
+          scroller.smoothScrollTo(scroller.getScrollX(), Math.round(snapTarget));
+        }
+        return; // Let smoothScroll complete, which will call cameToRest again
+      }
+    }
+    
     if (momentum) {
       momentum = false;
       emit(MOMENTUM_END);
@@ -328,6 +351,69 @@ final class ScrollBox extends FrameLayout {
         if (spinner != null) spinner.setVisibility(GONE);
       });
     }
+  }
+
+  void setSnapBehavior(boolean paging, float interval, float[] offsets, 
+                       int alignment, boolean disableIntervalMomentum, float deceleration) {
+    this.snapPaging = paging;
+    this.snapInterval = interval;
+    this.snapOffsets = offsets;
+    this.snapAlignment = alignment;
+    this.snapDisableIntervalMomentum = disableIntervalMomentum;
+    this.snapDeceleration = deceleration;
+  }
+
+  private float computeSnapTarget() {
+    if (scroller == null) return -1.0f;
+    
+    // Get current scroll position and dimensions in pixels
+    float offsetPx = horizontal ? scroller.getScrollX() : scroller.getScrollY();
+    float viewportPx = horizontal ? getWidth() : getHeight();
+    float contentPx = horizontal ? contentW : contentH;
+    
+    // Compute deceleration rate using same logic as nlayer_core::snap::rate
+    float decel = snapDeceleration;
+    boolean hasSnapping = snapInterval > 0 || (snapOffsets != null && snapOffsets.length > 0);
+    if (decel <= 0.0f || decel >= 1.0f) {
+      if (hasSnapping || snapPaging) {
+        decel = 0.99f;
+      } else {
+        decel = 0.998f;
+      }
+    }
+    
+    // Estimate velocity from last fling (we don't have actual velocity tracked)
+    // Use projected = offset for simplicity (assumes velocity ~0 at rest)
+    float targetPx = offsetPx;
+    float velocityPxPerMs = 0.0f;
+    
+    return Native.snapTarget(
+        getHostHandle(),
+        id,
+        offsetPx,
+        targetPx,
+        velocityPxPerMs,
+        viewportPx,
+        contentPx,
+        snapPaging,
+        snapInterval,
+        snapOffsets,
+        snapAlignment,
+        snapDisableIntervalMomentum,
+        decel
+    );
+  }
+
+  private long getHostHandle() {
+    android.view.View v = this;
+    while (v != null) {
+      if (v instanceof HostView) {
+        return ((HostView) v).handle();
+      }
+      android.view.ViewParent p = v.getParent();
+      v = p instanceof android.view.View ? (android.view.View) p : null;
+    }
+    return 0;
   }
 
   private boolean canPull() {

@@ -894,3 +894,81 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_hasPan(
 ) -> jboolean {
     crate::animation::has_pan(id as NodeId) as jboolean
 }
+
+/// # Safety
+///
+/// `handle` is live. Computes snap target for scroll behavior. All lengths
+/// are in pixels; this converts to points using the host's density.
+/// Returns -1.0 if no snapping, otherwise the snap target in pixels.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_snapTarget(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    _id: jint,
+    offset_px: jfloat,
+    target_px: jfloat,
+    velocity_px_per_ms: jfloat,
+    viewport_px: jfloat,
+    content_px: jfloat,
+    paging: jboolean,
+    snap_interval_pt: jfloat,
+    snap_offsets_pt: jni::sys::jfloatArray,
+    snap_alignment: jint,
+    disable_interval_momentum: jboolean,
+    deceleration: jfloat,
+) -> jfloat {
+    if handle == 0 {
+        return -1.0;
+    }
+    let host = unsafe { host(handle) };
+    let density = host.density.0;
+
+    // Convert px to points
+    let offset = Points(offset_px / density);
+    let target = Points(target_px / density);
+    let velocity = velocity_px_per_ms / density;
+    let viewport = Points(viewport_px / density);
+    let content = Points(content_px / density);
+
+    // Extract snap_offsets array
+    let snap_offsets = if snap_offsets_pt.is_null() {
+        Vec::new()
+    } else {
+        let arr = unsafe { jni::objects::JFloatArray::from_raw(snap_offsets_pt) };
+        match env.get_float_array_elements(&arr, jni::objects::ReleaseMode::NoCopyBack) {
+            Ok(elements) => {
+                let slice = unsafe {
+                    std::slice::from_raw_parts(elements.as_ptr(), elements.len())
+                };
+                slice.iter().map(|&v| Points(v)).collect()
+            }
+            Err(_) => Vec::new(),
+        }
+    };
+
+    let snap_alignment = match snap_alignment {
+        0 => nlayer_core::snap::SnapAlignment::Start,
+        1 => nlayer_core::snap::SnapAlignment::Center,
+        2 => nlayer_core::snap::SnapAlignment::End,
+        _ => nlayer_core::snap::SnapAlignment::Start,
+    };
+
+    let behavior = nlayer_core::snap::SnapBehavior {
+        paging: paging != 0,
+        snap_interval: if snap_interval_pt > 0.0 {
+            Points(snap_interval_pt)
+        } else {
+            Points(0.0)
+        },
+        snap_offsets,
+        snap_alignment,
+        deceleration,
+        one_step: disable_interval_momentum != 0,
+    };
+
+    match nlayer_core::snap::snap_target(&behavior, offset, target, velocity, viewport, content) {
+        Some(snap_pt) => snap_pt.0 * density,
+        None => -1.0,
+    }
+}

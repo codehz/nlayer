@@ -93,6 +93,21 @@ final class Native {
 
   static native boolean hasPan(long handle, int id);
 
+  static native float snapTarget(
+      long handle,
+      int id,
+      float offsetPx,
+      float targetPx,
+      float velocityPxPerMs,
+      float viewportPx,
+      float contentPx,
+      boolean paging,
+      float snapIntervalPt,
+      float[] snapOffsetsPt,
+      int snapAlignment,
+      boolean disableIntervalMomentum,
+      float deceleration);
+
   private Native() {}
 
   static void sendPress(android.view.View view, int id) {

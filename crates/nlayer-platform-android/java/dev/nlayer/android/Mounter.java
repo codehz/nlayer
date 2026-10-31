@@ -778,10 +778,10 @@ final class Mounter {
         s.setRefresh(false, 0);
       }
       
-      // TODO: Handle paging, snap_interval, snap_offsets, snap_alignment, 
-      // disable_interval_momentum, deceleration in task 2
+      // Set snap behavior
+      s.setSnapBehavior(paging, snapInterval, snapOffsets, snapAlignment, 
+                        disableIntervalMomentum, deceleration);
     }
-  }
 
   private void scrollBy(ByteBuffer b) {
     View v = views.get(b.getInt());
