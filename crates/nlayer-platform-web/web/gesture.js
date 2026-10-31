@@ -74,6 +74,7 @@ export class GestureGate {
           pinchNode: p1.pinch?.node,
           rotationNode: p1.rotation?.node,
           animation: anim,
+          startTime: performance.now(),
         };
       }
     }
@@ -250,13 +251,15 @@ export class GestureGate {
         if (this.twoFinger.pinchId) {
           const scale = dist / Math.max(1, this.twoFinger.dist);
           const currentValue = this.twoFinger.pinchStart * scale;
+          const dt = Math.max(0.001, (now - this.twoFinger.startTime) / 1000);
+          const velocity = (currentValue - this.twoFinger.pinchStart) / dt;
           results.push({
             transform: true,
             rotation: false,
             phase: 2,
             amount: scale,
             value: currentValue,
-            velocity: 0,
+            velocity,
             targetId: this.twoFinger.pinchId,
           });
         }
@@ -264,13 +267,15 @@ export class GestureGate {
         if (this.twoFinger.rotationId) {
           const rotation = ((angle - this.twoFinger.angle) * 180) / Math.PI;
           const currentValue = this.twoFinger.rotationStart + rotation;
+          const dt = Math.max(0.001, (now - this.twoFinger.startTime) / 1000);
+          const velocity = (currentValue - this.twoFinger.rotationStart) / dt;
           results.push({
             transform: true,
             rotation: true,
             phase: 2,
             amount: rotation,
             value: currentValue,
-            velocity: 0,
+            velocity,
             targetId: this.twoFinger.rotationId,
           });
         }

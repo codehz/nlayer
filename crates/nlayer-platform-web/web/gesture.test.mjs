@@ -317,3 +317,241 @@ test("GestureGate: pan and transform do not interfere", () => {
   const panContinue = gate.move(1, 130, 130, performance.now());
   assert.equal(panContinue.consumed, true);
 });
+
+// Animation value tracking tests
+
+test("GestureGate: pan reads initial animation values and stops animations", () => {
+  const gate = new GestureGate();
+  const stopCalls = [];
+  const animation = {
+    value: (id) => (id === 10 ? 5 : id === 11 ? -3 : 0),
+    stop: (id) => stopCalls.push(id),
+    setValue: () => {},
+  };
+  
+  gate.begin(1, { 
+    x: 100, y: 100, 
+    pan: { id: 2, panNodes: [10, 11] }, 
+    scroll: null, pinch: null, rotation: null,
+    animation,
+  });
+  
+  // Trigger pan start (first move past threshold)
+  const result = gate.move(1, 120, 100, performance.now());
+  
+  assert.equal(result.consumed, true);
+  assert.equal(result.phase, 0);
+  assert.deepEqual(stopCalls, [10, 11]);
+});
+
+test("GestureGate: pan move updates animation values", () => {
+  const gate = new GestureGate();
+  const setValueCalls = [];
+  const animation = {
+    value: (id) => (id === 10 ? 5 : id === 11 ? -3 : 0),
+    stop: () => {},
+    setValue: (id, v) => setValueCalls.push({ id, v }),
+  };
+  
+  gate.begin(1, { 
+    x: 100, y: 100, 
+    pan: { id: 2, panNodes: [10, 11] }, 
+    scroll: null, pinch: null, rotation: null,
+    animation,
+  });
+  
+  // Start pan (first move past threshold returns phase 0)
+  const start = gate.move(1, 120, 100, performance.now());
+  assert.equal(start.phase, 0);
+  
+  setValueCalls.length = 0;
+  
+  // Continue pan - should update values
+  const move = gate.move(1, 150, 130, performance.now());
+  assert.equal(move.phase, 1);
+  assert.equal(setValueCalls.length, 2);
+  assert.deepEqual(setValueCalls[0], { id: 10, v: 5 + 50 }); // startX + tx
+  assert.deepEqual(setValueCalls[1], { id: 11, v: -3 + 30 }); // startY + ty
+});
+
+test("GestureGate: pan end includes current animation values", () => {
+  const gate = new GestureGate();
+  const animation = {
+    value: (id) => (id === 10 ? 5 : id === 11 ? -3 : 0),
+    stop: () => {},
+    setValue: () => {},
+  };
+  
+  gate.begin(1, { 
+    x: 100, y: 100, 
+    pan: { id: 2, panNodes: [10, 11] }, 
+    scroll: null, pinch: null, rotation: null,
+    animation,
+  });
+  
+  // Start and move
+  gate.move(1, 110, 100, performance.now());
+  gate.move(1, 120, 100, performance.now());
+  gate.move(1, 150, 130, performance.now());
+  
+  // End
+  const result = gate.end(1, performance.now());
+  assert.equal(result.phase, 2);
+  assert.equal(result.valueX, 5 + 50);
+  assert.equal(result.valueY, -3 + 30);
+});
+
+test("GestureGate: pinch reads initial value and stops animation", () => {
+  const gate = new GestureGate();
+  const stopCalls = [];
+  const animation = {
+    value: (id) => (id === 20 ? 2.5 : 1.0),
+    stop: (id) => stopCalls.push(id),
+    setValue: () => {},
+  };
+  
+  gate.begin(1, { 
+    x: 100, y: 100, 
+    pan: null, scroll: null, 
+    pinch: { id: 3, node: 20 }, 
+    rotation: null,
+    animation,
+  });
+  
+  gate.begin(2, { 
+    x: 200, y: 100, 
+    pan: null, scroll: null, 
+    pinch: { id: 3, node: 20 }, 
+    rotation: null,
+    animation,
+  });
+  
+  assert.deepEqual(stopCalls, [20]);
+});
+
+test("GestureGate: pinch move multiplies start value by scale", () => {
+  const gate = new GestureGate();
+  const setValueCalls = [];
+  const animation = {
+    value: (id) => (id === 20 ? 2.5 : 1.0),
+    stop: () => {},
+    setValue: (id, v) => setValueCalls.push({ id, v }),
+  };
+  
+  gate.begin(1, { 
+    x: 100, y: 100, 
+    pan: null, scroll: null, 
+    pinch: { id: 3, node: 20 }, 
+    rotation: null,
+    animation,
+  });
+  
+  gate.begin(2, { 
+    x: 200, y: 100, 
+    pan: null, scroll: null, 
+    pinch: { id: 3, node: 20 }, 
+    rotation: null,
+    animation,
+  });
+  
+  setValueCalls.length = 0;
+  
+  // Move finger 1 from x=100 to x=50, distance changes from 100 to 150, scale = 1.5
+  const result = gate.move(1, 50, 100, performance.now());
+  assert.ok(Array.isArray(result));
+  assert.equal(result[0].value, 2.5 * 1.5); // start * scale = 3.75
+  assert.equal(setValueCalls.length, 1);
+  assert.equal(setValueCalls[0].id, 20);
+  assert.equal(setValueCalls[0].v, 3.75);
+});
+
+test("GestureGate: rotation adds angle to start value", () => {
+  const gate = new GestureGate();
+  const setValueCalls = [];
+  const animation = {
+    value: (id) => (id === 30 ? 45 : 0),
+    stop: () => {},
+    setValue: (id, v) => setValueCalls.push({ id, v }),
+  };
+  
+  gate.begin(1, { 
+    x: 100, y: 100, 
+    pan: null, scroll: null, 
+    pinch: null, 
+    rotation: { id: 4, node: 30 },
+    animation,
+  });
+  
+  gate.begin(2, { 
+    x: 200, y: 100, 
+    pan: null, scroll: null, 
+    pinch: null, 
+    rotation: { id: 4, node: 30 },
+    animation,
+  });
+  
+  setValueCalls.length = 0;
+  
+  // Move finger 1 to (150, 50), making vector (150,50) to (200,100)
+  // dx=50, dy=50, new angle = atan2(50,50) = 45 degrees
+  // Initial angle was atan2(0, 100) = 0, so rotation = 45 degrees
+  const result = gate.move(1, 150, 50, performance.now());
+  assert.ok(Array.isArray(result));
+  const rotation = result[0];
+  assert.equal(rotation.rotation, true);
+  assert.ok(Math.abs(rotation.value - (45 + 45)) < 0.1); // start + angle
+  assert.equal(setValueCalls.length, 1);
+  assert.equal(setValueCalls[0].id, 30);
+});
+test("GestureGate: transform end includes velocity", () => {
+  const gate = new GestureGate();
+  const animation = {
+    value: (id) => (id === 20 ? 1.0 : 0),
+    stop: () => {},
+    setValue: () => {},
+  };
+  
+  const t0 = performance.now();
+  
+  gate.begin(1, { 
+    x: 100, y: 100, 
+    pan: null, scroll: null, 
+    pinch: { id: 3, node: 20 }, 
+    rotation: null,
+    animation,
+  });
+  
+  gate.begin(2, { 
+    x: 200, y: 100, 
+    pan: null, scroll: null, 
+    pinch: { id: 3, node: 20 }, 
+    rotation: null,
+    animation,
+  });
+  
+  // Move finger 1 from 100 to 50, distance 100->150, scale = 1.5 over 0.5 seconds
+  gate.move(1, 50, 100, t0 + 500);
+  
+  const result = gate.end(1, t0 + 500);
+  assert.ok(Array.isArray(result));
+  const pinch = result[0];
+  assert.equal(pinch.value, 1.5);
+  // velocity = (1.5 - 1.0) / 0.5 = 1.0 per second
+  assert.ok(Math.abs(pinch.velocity - 1.0) < 0.1);
+});
+
+test("GestureGate: single-axis horizontal pan, vertical drag does not consume", () => {
+  const gate = new GestureGate();
+  
+  gate.begin(1, { 
+    x: 100, y: 100, 
+    pan: { id: 2, panNodes: [10, null] }, // x-only
+    scroll: { id: 1, horizontal: false }, // vertical scroll available
+    pinch: null, rotation: null,
+  });
+  
+  // Vertical drag
+  const result = gate.move(1, 100, 120, performance.now());
+  assert.equal(result.consumed, false);
+  assert.equal(result.preventDefault, false);
+});

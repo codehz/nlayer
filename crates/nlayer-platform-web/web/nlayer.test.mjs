@@ -478,3 +478,141 @@ test("Dispose removes event listeners", () => {
   assert.equal(player.onPopState, null);
   assert.equal(player.onResize, null);
 });
+
+test("Pan event reports translation, velocity, and values in correct units", () => {
+  const { player, doc } = createTestEnv();
+  const panCalls = [];
+  player.host.pan = (...args) => panCalls.push(args);
+  
+  // Create view with pan binding
+  player.apply([
+    ["c", 2, "view"],
+    ["i", 1, 2, null],
+    ["op_xf", 2, [["translateX", 100]]],
+  ]);
+  
+  const el = player.view(2);
+  el._panNodes = [100, 101];
+  
+  // Mock animation
+  player.animation = {
+    value: (id) => (id === 100 ? 10 : id === 101 ? 20 : 0),
+    stop: () => {},
+    setValue: () => {},
+  };
+  
+  // Simulate pan gesture
+  const downEvent = new doc.defaultView.PointerEvent("pointerdown", { 
+    clientX: 100, clientY: 150, pointerId: 1 
+  });
+  Object.defineProperty(downEvent, "target", { value: el });
+  player.pointerDown(downEvent);
+  
+  // Move to trigger pan start
+  player.pointerMove(new doc.defaultView.PointerEvent("pointermove", { 
+    clientX: 110, clientY: 150, pointerId: 1 
+  }));
+  
+  player.pointerMove(new doc.defaultView.PointerEvent("pointermove", { 
+    clientX: 150, clientY: 180, pointerId: 1 
+  }));
+  
+  // End gesture
+  player.pointerUp(new doc.defaultView.PointerEvent("pointerup", { 
+    clientX: 150, clientY: 180, pointerId: 1 
+  }));
+  
+  // Find the end event (phase 2)
+  const endCall = panCalls.find(args => args[1] === 2);
+  assert.ok(endCall, "Should have pan end event");
+  
+  const [id, phase, tx, ty, vx, vy, valueX, valueY] = endCall;
+  assert.equal(id, 2);
+  assert.equal(phase, 2);
+  assert.equal(tx, 50); // CSS pixels
+  assert.equal(ty, 30); // CSS pixels
+  // velocity is in points/ms, should be non-zero
+  assert.ok(typeof vx === "number");
+  assert.ok(typeof vy === "number");
+  // values should be start + displacement
+  assert.equal(valueX, 10 + 50);
+  assert.equal(valueY, 20 + 30);
+});
+
+test("Single-axis horizontal pan does not produce vertical scroll", () => {
+  const { player, doc } = createTestEnv();
+  
+  // Create scrollable view and pan view
+  player.apply([
+    ["c", 2, "scroll"],
+    ["c", 3, "view"],
+    ["i", 1, 2, null],
+    ["i", 2, 3, null],
+  ]);
+  
+  const scroll = player.view(2);
+  const view = player.view(3);
+  scroll._horizontal = false; // vertical scroll
+  view._panNodes = [100, null]; // x-only pan
+  
+  // Simulate vertical drag
+  const downEvent = new doc.defaultView.PointerEvent("pointerdown", { 
+    clientX: 100, clientY: 100, pointerId: 1 
+  });
+  Object.defineProperty(downEvent, "target", { value: view });
+  player.pointerDown(downEvent);
+  
+  // Move vertically (should not consume for x-only pan)
+  const moveEvent = new doc.defaultView.PointerEvent("pointermove", { 
+    clientX: 100, clientY: 150, pointerId: 1 
+  });
+  let preventDefaultCalled = false;
+  moveEvent.preventDefault = () => { preventDefaultCalled = true; };
+  
+  player.pointerMove(moveEvent);
+  
+  // Should not prevent default (scroll should happen)
+  assert.equal(preventDefaultCalled, false);
+});
+
+test("Single-axis horizontal pan activates on horizontal drag", () => {
+  const { player, doc } = createTestEnv();
+  const panCalls = [];
+  player.host.pan = (...args) => panCalls.push(args);
+  
+  // Create scrollable view and pan view
+  player.apply([
+    ["c", 2, "scroll"],
+    ["c", 3, "view"],
+    ["i", 1, 2, null],
+    ["i", 2, 3, null],
+  ]);
+  
+  const scroll = player.view(2);
+  const view = player.view(3);
+  scroll._horizontal = false; // vertical scroll
+  view._panNodes = [100, null]; // x-only pan
+  
+  player.animation = {
+    value: () => 0,
+    stop: () => {},
+    setValue: () => {},
+  };
+  
+  // Simulate horizontal drag
+  const downEvent = new doc.defaultView.PointerEvent("pointerdown", { 
+    clientX: 100, clientY: 100, pointerId: 1 
+  });
+  Object.defineProperty(downEvent, "target", { value: view });
+  player.pointerDown(downEvent);
+  
+  // Move horizontally
+  player.pointerMove(new doc.defaultView.PointerEvent("pointermove", { 
+    clientX: 150, clientY: 100, pointerId: 1 
+  }));
+  
+  // Should activate pan
+  assert.ok(panCalls.length > 0, "Should call pan");
+  const startCall = panCalls.find(args => args[1] === 0);
+  assert.ok(startCall, "Should have pan start event");
+});
