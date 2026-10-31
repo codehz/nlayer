@@ -44,7 +44,8 @@ use objc2_ui_kit::{
     UIAccessibilityTraitSearchField, UIAccessibilityTraitSelected, UIAccessibilityTraitStaticText,
     UIAccessibilityTraitSummaryElement, UIAccessibilityTraitUpdatesFrequently, UIGestureRecognizer,
     UIGestureRecognizerDelegate, UIGestureRecognizerState, UIHoverGestureRecognizer,
-    UILongPressGestureRecognizer, UIScreen, UIScrollView,
+    UILongPressGestureRecognizer, UIPanGestureRecognizer, UIPinchGestureRecognizer,
+    UIRotationGestureRecognizer, UIScreen, UIScrollView,
     UIScrollViewContentInsetAdjustmentBehavior, UIScrollViewDelegate, UITapGestureRecognizer,
     UITextField, UITextFieldDelegate, UITextView, UITextViewDelegate, UITouch, UIView,
     UIViewControllerTransitionCoordinator,
@@ -79,6 +80,14 @@ struct Slot {
     /// A nested span listens to `onPress`.
     link_press: bool,
     hover: Option<Retained<UIHoverGestureRecognizer>>,
+    /// Pan gesture recognizer.
+    pan: Option<Retained<UIPanGestureRecognizer>>,
+    /// Pinch gesture recognizer.
+    pinch: Option<Retained<UIPinchGestureRecognizer>>,
+    /// Rotation gesture recognizer.
+    rotation: Option<Retained<UIRotationGestureRecognizer>>,
+    /// Gesture start values: [pan_x, pan_y, pinch_scale, rotation_angle].
+    gesture_start: [f32; 4],
     /// A dashed or dotted uniform border, above the children.
     dash: Option<Retained<CAShapeLayer>>,
     /// Clip shape when the four radii differ. Reused across paints.
@@ -173,6 +182,43 @@ define_class!(
         #[unsafe(method(hovered:))]
         fn hovered(&self, gesture: &UIHoverGestureRecognizer) {
             self.forward(gesture.view().as_deref(), gesture.state());
+        }
+
+        #[unsafe(method(handlePan:))]
+        fn handle_pan(&self, gesture: &UIPanGestureRecognizer) {
+            let Some(view) = gesture.view() else { return };
+            let Some(superview) = view.superview() else { return };
+            let translation = gesture.translationInView(Some(&superview));
+            let velocity = gesture.velocityInView(Some(&superview));
+            let id = view.tag() as NodeId;
+            let state = gesture.state();
+            with_mounter(move |m| {
+                m.handle_pan(id, state, translation, velocity);
+            });
+        }
+
+        #[unsafe(method(handlePinch:))]
+        fn handle_pinch(&self, gesture: &UIPinchGestureRecognizer) {
+            let Some(view) = gesture.view() else { return };
+            let id = view.tag() as NodeId;
+            let state = gesture.state();
+            let scale = gesture.scale() as f32;
+            let velocity = gesture.velocity() as f32;
+            with_mounter(move |m| {
+                m.handle_pinch(id, state, scale, velocity);
+            });
+        }
+
+        #[unsafe(method(handleRotation:))]
+        fn handle_rotation(&self, gesture: &UIRotationGestureRecognizer) {
+            let Some(view) = gesture.view() else { return };
+            let id = view.tag() as NodeId;
+            let state = gesture.state();
+            let angle = gesture.rotation().to_degrees() as f32;
+            let velocity = gesture.velocity().to_degrees() as f32;
+            with_mounter(move |m| {
+                m.handle_rotation(id, state, angle, velocity);
+            });
         }
 
         #[unsafe(method(edited:))]
@@ -1471,6 +1517,7 @@ impl Mounter {
         }
         self.sync_press(id);
         self.sync_hover(id);
+        self.sync_gestures(id);
     }
 
     fn dispatch_scroll(&self, id: NodeId, event: EventKind, payload: EventPayload) {
@@ -1575,6 +1622,85 @@ impl Mounter {
                 view.removeGestureRecognizer(gesture);
                 slot.hover = None;
                 slot.hovered = false;
+            }
+            _ => {}
+        }
+    }
+
+    fn sync_gestures(&mut self, id: NodeId) {
+        let mtm = self.mtm;
+        let relay = self.relay.clone();
+        let Some(slot) = self.slot_mut(id) else {
+            return;
+        };
+        let events = slot.events;
+        let view = slot.native.view().retain();
+        let delegate = ProtocolObject::from_ref(&*relay);
+
+        let want_pan = events.contains(EventKind::PanStart) || events.contains(EventKind::PanEnd);
+        match (&slot.pan, want_pan) {
+            (None, true) => {
+                // SAFETY: the relay implements `handlePan:`.
+                let gesture = unsafe {
+                    UIPanGestureRecognizer::initWithTarget_action(
+                        UIPanGestureRecognizer::alloc(mtm),
+                        Some(&relay),
+                        Some(sel!(handlePan:)),
+                    )
+                };
+                gesture.setDelegate(Some(delegate));
+                view.addGestureRecognizer(&gesture);
+                slot.pan = Some(gesture);
+            }
+            (Some(gesture), false) => {
+                view.removeGestureRecognizer(gesture);
+                slot.pan = None;
+            }
+            _ => {}
+        }
+
+        let want_pinch =
+            events.contains(EventKind::PinchStart) || events.contains(EventKind::PinchEnd);
+        match (&slot.pinch, want_pinch) {
+            (None, true) => {
+                // SAFETY: the relay implements `handlePinch:`.
+                let gesture = unsafe {
+                    UIPinchGestureRecognizer::initWithTarget_action(
+                        UIPinchGestureRecognizer::alloc(mtm),
+                        Some(&relay),
+                        Some(sel!(handlePinch:)),
+                    )
+                };
+                gesture.setDelegate(Some(delegate));
+                view.addGestureRecognizer(&gesture);
+                slot.pinch = Some(gesture);
+            }
+            (Some(gesture), false) => {
+                view.removeGestureRecognizer(gesture);
+                slot.pinch = None;
+            }
+            _ => {}
+        }
+
+        let want_rotation =
+            events.contains(EventKind::RotationStart) || events.contains(EventKind::RotationEnd);
+        match (&slot.rotation, want_rotation) {
+            (None, true) => {
+                // SAFETY: the relay implements `handleRotation:`.
+                let gesture = unsafe {
+                    UIRotationGestureRecognizer::initWithTarget_action(
+                        UIRotationGestureRecognizer::alloc(mtm),
+                        Some(&relay),
+                        Some(sel!(handleRotation:)),
+                    )
+                };
+                gesture.setDelegate(Some(delegate));
+                view.addGestureRecognizer(&gesture);
+                slot.rotation = Some(gesture);
+            }
+            (Some(gesture), false) => {
+                view.removeGestureRecognizer(gesture);
+                slot.rotation = None;
             }
             _ => {}
         }
@@ -2445,6 +2571,223 @@ impl Mounter {
             None => false,
         }
     }
+
+    fn handle_pan(
+        &mut self,
+        id: NodeId,
+        state: UIGestureRecognizerState,
+        translation: CGPoint,
+        velocity: CGPoint,
+    ) {
+        let Some(slot) = self.slot(id) else { return };
+        let events = slot.events;
+        let bindings = slot.bindings.clone();
+
+        if state == UIGestureRecognizerState::Began {
+            // Read current values and stop animations
+            let x = bindings
+                .iter()
+                .find(|(prop, _)| {
+                    matches!(prop, nlayer_core::animation::AnimationProp::Transform(0))
+                })
+                .map(|(_, node)| self.animator.value(*node))
+                .unwrap_or(0.0);
+            let y = bindings
+                .iter()
+                .find(|(prop, _)| {
+                    matches!(prop, nlayer_core::animation::AnimationProp::Transform(1))
+                })
+                .map(|(_, node)| self.animator.value(*node))
+                .unwrap_or(0.0);
+
+            if let Some(slot) = self.slot_mut(id) {
+                slot.gesture_start[0] = x;
+                slot.gesture_start[1] = y;
+            }
+
+            if events.contains(EventKind::PanStart) {
+                let payload = EventPayload::Pan {
+                    translation: (translation.x as f32, translation.y as f32),
+                    velocity: (velocity.x as f32, velocity.y as f32),
+                    values: (x, y),
+                };
+                if let Some(control) = &self.control {
+                    control.dispatch_event(id, EventKind::PanStart, payload);
+                }
+            }
+        }
+
+        if matches!(
+            state,
+            UIGestureRecognizerState::Began | UIGestureRecognizerState::Changed
+        ) {
+            let start = self.slot(id).map_or([0.0; 4], |s| s.gesture_start);
+            for (prop, node) in &bindings {
+                match prop {
+                    nlayer_core::animation::AnimationProp::Transform(0) => {
+                        self.animator.set(*node, start[0] + translation.x as f32);
+                    }
+                    nlayer_core::animation::AnimationProp::Transform(1) => {
+                        self.animator.set(*node, start[1] + translation.y as f32);
+                    }
+                    _ => {}
+                }
+            }
+            self.apply_animations();
+        }
+
+        if matches!(
+            state,
+            UIGestureRecognizerState::Ended | UIGestureRecognizerState::Cancelled
+        ) && events.contains(EventKind::PanEnd)
+        {
+            let x = bindings
+                .iter()
+                .find(|(prop, _)| {
+                    matches!(prop, nlayer_core::animation::AnimationProp::Transform(0))
+                })
+                .map(|(_, node)| self.animator.value(*node))
+                .unwrap_or(0.0);
+            let y = bindings
+                .iter()
+                .find(|(prop, _)| {
+                    matches!(prop, nlayer_core::animation::AnimationProp::Transform(1))
+                })
+                .map(|(_, node)| self.animator.value(*node))
+                .unwrap_or(0.0);
+
+            let payload = EventPayload::Pan {
+                translation: (translation.x as f32, translation.y as f32),
+                velocity: (velocity.x as f32, velocity.y as f32),
+                values: (x, y),
+            };
+            if let Some(control) = &self.control {
+                control.dispatch_event(id, EventKind::PanEnd, payload);
+            }
+        }
+    }
+
+    fn handle_pinch(
+        &mut self,
+        id: NodeId,
+        state: UIGestureRecognizerState,
+        scale: f32,
+        velocity: f32,
+    ) {
+        let Some(slot) = self.slot(id) else { return };
+        let events = slot.events;
+        let bindings = slot.bindings.clone();
+        let node = bindings
+            .iter()
+            .find(|(prop, _)| matches!(prop, nlayer_core::animation::AnimationProp::Transform(0)))
+            .map(|(_, n)| *n);
+
+        if state == UIGestureRecognizerState::Began {
+            let start = node.map(|n| self.animator.value(n)).unwrap_or(1.0);
+            if let Some(slot) = self.slot_mut(id) {
+                slot.gesture_start[2] = start;
+            }
+
+            if events.contains(EventKind::PinchStart) {
+                let payload = EventPayload::Pinch {
+                    scale,
+                    velocity,
+                    value: start,
+                };
+                if let Some(control) = &self.control {
+                    control.dispatch_event(id, EventKind::PinchStart, payload);
+                }
+            }
+        }
+
+        if matches!(
+            state,
+            UIGestureRecognizerState::Began | UIGestureRecognizerState::Changed
+        ) {
+            if let Some(n) = node {
+                let start = self.slot(id).map_or(1.0, |s| s.gesture_start[2]);
+                self.animator.set(n, start * scale);
+                self.apply_animations();
+            }
+        }
+
+        if matches!(
+            state,
+            UIGestureRecognizerState::Ended | UIGestureRecognizerState::Cancelled
+        ) && events.contains(EventKind::PinchEnd)
+        {
+            let value = node.map(|n| self.animator.value(n)).unwrap_or(1.0);
+            let payload = EventPayload::Pinch {
+                scale,
+                velocity,
+                value,
+            };
+            if let Some(control) = &self.control {
+                control.dispatch_event(id, EventKind::PinchEnd, payload);
+            }
+        }
+    }
+
+    fn handle_rotation(
+        &mut self,
+        id: NodeId,
+        state: UIGestureRecognizerState,
+        angle: f32,
+        velocity: f32,
+    ) {
+        let Some(slot) = self.slot(id) else { return };
+        let events = slot.events;
+        let bindings = slot.bindings.clone();
+        let node = bindings
+            .iter()
+            .find(|(prop, _)| matches!(prop, nlayer_core::animation::AnimationProp::Transform(0)))
+            .map(|(_, n)| *n);
+
+        if state == UIGestureRecognizerState::Began {
+            let start = node.map(|n| self.animator.value(n)).unwrap_or(0.0);
+            if let Some(slot) = self.slot_mut(id) {
+                slot.gesture_start[3] = start;
+            }
+
+            if events.contains(EventKind::RotationStart) {
+                let payload = EventPayload::Rotation {
+                    angle,
+                    velocity,
+                    value: start,
+                };
+                if let Some(control) = &self.control {
+                    control.dispatch_event(id, EventKind::RotationStart, payload);
+                }
+            }
+        }
+
+        if matches!(
+            state,
+            UIGestureRecognizerState::Began | UIGestureRecognizerState::Changed
+        ) {
+            if let Some(n) = node {
+                let start = self.slot(id).map_or(0.0, |s| s.gesture_start[3]);
+                self.animator.set(n, start + angle);
+                self.apply_animations();
+            }
+        }
+
+        if matches!(
+            state,
+            UIGestureRecognizerState::Ended | UIGestureRecognizerState::Cancelled
+        ) && events.contains(EventKind::RotationEnd)
+        {
+            let value = node.map(|n| self.animator.value(n)).unwrap_or(0.0);
+            let payload = EventPayload::Rotation {
+                angle,
+                velocity,
+                value,
+            };
+            if let Some(control) = &self.control {
+                control.dispatch_event(id, EventKind::RotationEnd, payload);
+            }
+        }
+    }
 }
 
 fn style_runs(text: &nlayer_core::text::AttributedText) -> Vec<crate::scene::Run> {
@@ -2548,6 +2891,10 @@ impl Slot {
             events: EventMask::default(),
             link_press: false,
             hover: None,
+            pan: None,
+            pinch: None,
+            rotation: None,
+            gesture_start: [0.0; 4],
             dash: None,
             mask: None,
             sides: [None, None, None, None],
