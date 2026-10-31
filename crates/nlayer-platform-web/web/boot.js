@@ -272,6 +272,14 @@ export async function startPage(root, options = {}) {
           return wasm.nlayer_pump();
         });
       },
+      pan(id, phase, tx, ty, vx, vy) {
+        if (!wasm) return;
+        enter(() => wasm.nlayer_pan(id, phase, tx, ty, vx, vy));
+      },
+      transformGesture(id, rotation, phase, amount) {
+        if (!wasm) return;
+        enter(() => wasm.nlayer_transform_gesture(id, rotation, phase, amount));
+      },
       change(id, value) {
         enter(() =>
           withBytes([encoder.encode(value)], (p, l) => {

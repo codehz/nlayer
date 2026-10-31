@@ -21,6 +21,7 @@
 //! the attributed spans inside the content box the core measured.
 //! Measurement on the page is the headless stand-in.
 
+mod animation;
 #[cfg(target_arch = "wasm32")]
 mod browser;
 mod encode;

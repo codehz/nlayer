@@ -46,6 +46,20 @@ enum Pending {
         left: f32,
     },
     Back,
+    Pan {
+        id: u32,
+        phase: u32,
+        tx: f32,
+        ty: f32,
+        vx: f32,
+        vy: f32,
+    },
+    Transform {
+        id: u32,
+        rotation: bool,
+        phase: u32,
+        amount: f32,
+    },
 }
 
 fn finite(value: f32) -> f32 {
@@ -95,6 +109,56 @@ fn apply_pending(session: &mut PageSession) {
                 },
             ),
             Pending::Back => session.back(),
+            Pending::Pan {
+                id,
+                phase,
+                tx,
+                ty,
+                vx,
+                vy,
+            } => {
+                use nlayer_core::EventKind;
+                let kind = match phase {
+                    0 => EventKind::PanStart,
+                    2 | 3 => EventKind::PanEnd,
+                    _ => return, // phase 1 (move) doesn't send events, just updates values
+                };
+                let payload = EventPayload::Pan {
+                    translation: Point::new(px(tx), px(ty)),
+                    velocity: Point::new(px(vx * 1000.0), px(vy * 1000.0)),
+                };
+                session.event(id.into(), kind, payload);
+            }
+            Pending::Transform {
+                id,
+                rotation,
+                phase,
+                amount,
+            } => {
+                use nlayer_core::EventKind;
+                let (kind_start, kind_end) = if rotation {
+                    (EventKind::RotationStart, EventKind::RotationEnd)
+                } else {
+                    (EventKind::PinchStart, EventKind::PinchEnd)
+                };
+                let kind = match phase {
+                    0 => kind_start,
+                    2 => kind_end,
+                    _ => return,
+                };
+                let payload = if rotation {
+                    EventPayload::Rotation {
+                        rotation: amount,
+                        velocity: 0.0,
+                    }
+                } else {
+                    EventPayload::Pinch {
+                        scale: amount,
+                        velocity: 0.0,
+                    }
+                };
+                session.event(id.into(), kind, payload);
+            }
         }
     }
 }
@@ -391,5 +455,32 @@ pub extern "C" fn nlayer_root_size(
         right: finite(right),
         bottom: finite(bottom),
         left: finite(left),
+    });
+}
+
+/// Pan gesture phase on view `id` (`phase`: 0 = start, 1 = move, 2 = end, 3 = cancel).
+/// Translation in CSS pixels. Applied at the next [`nlayer_pump`].
+#[unsafe(no_mangle)]
+pub extern "C" fn nlayer_pan(id: u32, phase: u32, tx: f32, ty: f32, vx: f32, vy: f32) {
+    push(Pending::Pan {
+        id,
+        phase,
+        tx: finite(tx),
+        ty: finite(ty),
+        vx: finite(vx),
+        vy: finite(vy),
+    });
+}
+
+/// Pinch or rotation gesture phase on view `id` (`rotation`: 0 = pinch, 1 = rotation;
+/// `phase`: 0 = start, 1 = move, 2 = end). Amount is scale or degrees.
+/// Applied at the next [`nlayer_pump`].
+#[unsafe(no_mangle)]
+pub extern "C" fn nlayer_transform_gesture(id: u32, rotation: u32, phase: u32, amount: f32) {
+    push(Pending::Transform {
+        id,
+        rotation: rotation != 0,
+        phase,
+        amount: finite(amount),
     });
 }

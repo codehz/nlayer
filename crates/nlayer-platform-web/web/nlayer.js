@@ -137,6 +137,8 @@ export class Player {
     this.views.set(1, root);
     root.addEventListener("pointerdown", (event) => this.pointerDown(event), true);
     root.addEventListener("pointercancel", (event) => this.pointerCancel(event), true);
+    root.addEventListener("pointermove", (event) => this.pointerMove(event), true);
+    root.addEventListener("pointerup", (event) => this.pointerUp(event), true);
     root.addEventListener("touchend", this.onTouchEnd);
     root.addEventListener("touchcancel", this.onTouchEnd);
     const view = this.doc.defaultView;
@@ -530,6 +532,24 @@ export class Player {
     if (el._bindings) this.animation?.bind(id, el, el._bindings);
   }
 
+  op_pb([, id, x, y]) {
+    const el = this.view(id);
+    if (!el) return;
+    el._panNodes = x != null || y != null ? [x, y] : null;
+  }
+
+  op_pinchb([, id, scale]) {
+    const el = this.view(id);
+    if (!el) return;
+    el._pinchNode = scale != null ? scale : null;
+  }
+
+  op_rotb([, id, angle]) {
+    const el = this.view(id);
+    if (!el) return;
+    el._rotationNode = angle != null ? angle : null;
+  }
+
   /**
    * Touch scrolling is the browser's (nsh's `touchScroll` / `scrolled` /
    * `scrollEnded`, cut to no refresh, zoom, snap or custom bar). A
@@ -573,13 +593,27 @@ export class Player {
     this.swallowTarget = null;
     this.noteKeyboardTap(event);
     if (event.pointerType === "mouse" || event.button > 0) return;
+    
+    // Find gesture targets
+    let pan = null;
+    for (let el = event.target; el && el._id != null; el = el.parentNode) {
+      if (el._panNodes) {
+        pan = el;
+        break;
+      }
+    }
+    
     const scrolls = this.scrollChain(event.target);
-    if (!scrolls.length) return;
+    if (!scrolls.length && !pan) return;
     this.holding++;
     this.pointers.set(event.pointerId ?? 0, {
       x: event.clientX || 0,
       y: event.clientY || 0,
+      startX: event.clientX || 0,
+      startY: event.clientY || 0,
       scrolls,
+      pan,
+      mode: null,
     });
   }
 
@@ -1161,6 +1195,53 @@ export class Player {
     }
   }
 
+
+  pointerMove(event) {
+    const id = event.pointerId ?? 0;
+    const p = this.pointers.get(id);
+    if (!p || !p.pan) return;
+    
+    const x = event.clientX || 0;
+    const y = event.clientY || 0;
+    const tx = x - p.startX;
+    const ty = y - p.startY;
+    
+    if (!p.mode && Math.hypot(tx, ty) > 6) {
+      p.mode = "pan";
+      p.t0 = this.now();
+      this.host.pan?.(p.pan._id, 0, 0, 0, 0, 0);
+    }
+    
+    if (p.mode === "pan") {
+      event.preventDefault();
+      const now = this.now();
+      const dt = Math.max(1, now - (p.t0 || now));
+      const vx = tx / dt;
+      const vy = ty / dt;
+      this.host.pan?.(p.pan._id, 1, tx, ty, vx, vy);
+      p.x = x;
+      p.y = y;
+      p.lastT = now;
+    }
+  }
+
+  pointerUp(event) {
+    const id = event.pointerId ?? 0;
+    const p = this.pointers.get(id);
+    if (!p) return;
+    
+    this.pointers.delete(id);
+    
+    if (p.mode === "pan") {
+      const now = this.now();
+      const tx = (p.x || p.startX) - p.startX;
+      const ty = (p.y || p.startY) - p.startY;
+      const dt = Math.max(1, now - (p.t0 || now));
+      const vx = tx / dt;
+      const vy = ty / dt;
+      this.host.pan?.(p.pan._id, 2, tx, ty, vx, vy);
+    }
+  }
   dispose() {
     if (this.onPopState) {
       this.window.removeEventListener?.("popstate", this.onPopState);

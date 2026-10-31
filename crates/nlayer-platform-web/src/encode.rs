@@ -450,6 +450,34 @@ impl Encoder {
                     .opt_str(value.and_then(|v| v.text.as_deref()))
                     .end();
             }
+            MountItem::PanBinding { id, x, y } => {
+                out.item("pb").num(*id);
+                match x {
+                    Some(node) => out.num(*node),
+                    None => out.raw("null"),
+                };
+                match y {
+                    Some(node) => out.num(*node),
+                    None => out.raw("null"),
+                };
+                out.end();
+            }
+            MountItem::PinchBinding { id, scale } => {
+                out.item("pinchb").num(*id);
+                match scale {
+                    Some(node) => out.num(*node),
+                    None => out.raw("null"),
+                };
+                out.end();
+            }
+            MountItem::RotationBinding { id, angle } => {
+                out.item("rotb").num(*id);
+                match angle {
+                    Some(node) => out.num(*node),
+                    None => out.raw("null"),
+                };
+                out.end();
+            }
             MountItem::StateStyle {
                 id,
                 interaction,
