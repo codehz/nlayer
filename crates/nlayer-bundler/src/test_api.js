@@ -114,6 +114,18 @@ export function open(entry, options) {
     scroll(selector, distance) {
       call("scroll", { id, selector, distance });
     },
+    drag(selector, x, y) {
+      call("drag", { id, selector, x, y });
+    },
+    dragAndHold(selector, x, y) {
+      call("dragAndHold", { id, selector, x, y });
+    },
+    drop() {
+      call("drop", { id });
+    },
+    back() {
+      call("back", { id });
+    },
     advance(ms) {
       call("advance", { id, ms });
     },

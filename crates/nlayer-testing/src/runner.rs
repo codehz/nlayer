@@ -236,6 +236,8 @@ pub trait HostedApp {
     fn drag_and_hold(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String>;
     /// Releases the held pointer.
     fn drop(&mut self) -> Result<(), String>;
+    /// Sends a back request through navigation precedence.
+    fn back(&mut self) -> Result<(), String>;
     /// Closes the app.
     fn close(&mut self);
 }
@@ -750,6 +752,11 @@ impl Session {
                 self.app_mut(request.id)?.drop()?;
                 Ok("null".to_owned())
             }
+            "back" => {
+                let id = parse_id(payload)?;
+                self.app_mut(id)?.back()?;
+                Ok("null".to_owned())
+            }
             "advance" => {
                 let request: AdvanceRequest =
                     serde_json::from_str(payload).map_err(|e| e.to_string())?;
@@ -970,6 +977,10 @@ impl HostedApp for HeadlessApp {
     fn drop(&mut self) -> Result<(), String> {
         self.app.as_mut().ok_or("closed")?.drop()
     }
+    fn back(&mut self) -> Result<(), String> {
+        self.app()?.back()
+    }
+
 
     fn close(&mut self) {
         if let Some(app) = self.app.take() {

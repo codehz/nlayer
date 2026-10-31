@@ -270,3 +270,109 @@ test("NavStack app opens with content", () => {
   const nodes = flat(tree, []);
   expect(nodes.length > 10).toBe(true); // Has substantial content
 });
+
+test("home title is visible initially", () => {
+  const app = open("./App.tsx");
+  app.waitFor("home-title");
+});
+
+test("press detail link navigates to detail", () => {
+  const app = open("./App.tsx");
+  reveal(app, (n) => n.testID === "open-detail");
+  app.press("open-detail");
+  app.waitFor("detail-title");
+  const tree = app.tree();
+  const detailTitle = flat(tree, []).find((n) => n.testID === "detail-title");
+  expect(detailTitle).not.toBe(undefined);
+  expect(must(detailTitle).text).toBe("Detail Screen");
+});
+
+test("back() returns from detail to home", () => {
+  const app = open("./App.tsx");
+  reveal(app, (n) => n.testID === "open-detail");
+  app.press("open-detail");
+  app.waitFor("detail-title");
+  
+  app.back();
+  app.waitFor("open-detail");
+  const tree = app.tree();
+  const detailTitle = flat(tree, []).find((n) => n.testID === "detail-title");
+  expect(detailTitle).toBe(undefined);
+});
+
+test("onBackPress intercepts back() on detail", () => {
+  const app = open("./App.tsx");
+  reveal(app, (n) => n.testID === "open-detail");
+  app.press("open-detail");
+  app.waitFor("intercept-back");
+  
+  app.press("intercept-back");
+  app.back();
+  app.waitFor("back-intercepted");
+  const tree = app.tree();
+  const intercepted = flat(tree, []).find((n) => n.testID === "back-intercepted");
+  expect(intercepted).not.toBe(undefined);
+});
+
+test("dialog opens and back() closes it", () => {
+  const app = open("./App.tsx");
+  reveal(app, (n) => n.testID === "open-dialog");
+  app.press("open-dialog");
+  app.waitFor("open-dialog");
+  
+  app.press("open-dialog");
+  app.waitFor("demo-dialog");
+  
+  app.back();
+  const tree = app.tree();
+  const dialog = flat(tree, []).find((n) => n.testID === "demo-dialog");
+  expect(dialog).toBe(undefined);
+});
+
+test("detail pop increments dismissed count", () => {
+  const app = open("./App.tsx");
+  reveal(app, (n) => n.testID === "open-detail");
+  
+  const initialTree = app.tree();
+  const initialCount = flat(initialTree, []).find((n) => n.testID === "dismissed-count");
+  expect(must(initialCount).text).toBe("Dismissed: 0");
+  
+  app.press("open-detail");
+  app.waitFor("detail-title");
+  app.back();
+  app.waitFor("dismissed-count");
+  
+  const finalTree = app.tree();
+  const finalCount = flat(finalTree, []).find((n) => n.testID === "dismissed-count");
+  expect(must(finalCount).text).toBe("Dismissed: 1");
+});
+
+test("drag gesture card moves it", () => {
+  const app = open("./App.tsx");
+  reveal(app, (n) => n.testID === "open-gesture");
+  app.press("open-gesture");
+  app.waitFor("gesture-card");
+  
+  const beforeTree = app.tree();
+  const cardBefore = flat(beforeTree, []).find((n) => n.testID === "gesture-card");
+  const xBefore = must(cardBefore).frame.x;
+  
+  app.drag("gesture-card", 80, 0);
+  
+  const afterTree = app.tree();
+  const cardAfter = flat(afterTree, []).find((n) => n.testID === "gesture-card");
+  const xAfter = must(cardAfter).frame.x;
+  
+  expect(xAfter > xBefore).toBe(true);
+});
+
+test("list demo shows virtual list", () => {
+  const app = open("./App.tsx");
+  reveal(app, (n) => n.testID === "open-list");
+  app.press("open-list");
+  app.waitFor("list");
+  app.waitFor("first");
+  
+  app.press("list-back");
+  app.waitFor("open-list");
+});
