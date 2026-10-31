@@ -191,3 +191,135 @@ mount(App);
     assert_eq!(app.texts(), ["count: 0"]);
     app.stop();
 }
+
+#[test]
+fn dialog_onclose_fires_on_back() {
+    let source = r#"
+import { mount, signal } from "@nlayer/runtime";
+import { Dialog, Text, View } from "@nlayer/ui";
+
+function App() {
+    const open = signal(true);
+    const closed = signal(false);
+    return (
+        <View style={{ flex: 1 }}>
+            <Text testID="status">{closed() ? "closed" : "open"}</Text>
+            <Dialog
+                open={open()}
+                onOpenChange={(e) => open.set(e.open)}
+                onClose={() => closed.set(true)}
+            >
+                <View style={{ width: 200, height: 100 }}>
+                    <Text>Modal content</Text>
+                </View>
+            </Dialog>
+        </View>
+    );
+}
+mount(App);
+"#;
+    let mut app = app(source);
+    assert_eq!(app.texts(), ["open", "Modal content"]);
+
+    app.back();
+    app.next_frame(Duration::from_secs(1));
+
+    assert!(
+        app.wait_for("closed", Duration::from_secs(1)),
+        "onClose should fire and set closed=true, texts: {:?}",
+        app.texts()
+    );
+    assert_eq!(app.texts(), ["closed"], "modal should unmount after back");
+    app.stop();
+}
+
+#[test]
+fn dialog_onclose_not_fired_with_close_on_escape_false() {
+    let source = r#"
+import { mount, signal } from "@nlayer/runtime";
+import { Dialog, Text, View } from "@nlayer/ui";
+
+function App() {
+    const open = signal(true);
+    const closed = signal(false);
+    return (
+        <View style={{ flex: 1 }}>
+            <Text testID="status">{closed() ? "closed" : "open"}</Text>
+            <Dialog
+                open={open()}
+                closeOnEscape={false}
+                onOpenChange={(e) => open.set(e.open)}
+                onClose={() => closed.set(true)}
+            >
+                <View style={{ width: 200, height: 100 }}>
+                    <Text>Modal content</Text>
+                </View>
+            </Dialog>
+        </View>
+    );
+}
+mount(App);
+"#;
+    let mut app = app(source);
+    assert_eq!(app.texts(), ["open", "Modal content"]);
+
+    app.back();
+    app.next_frame(Duration::from_secs(1));
+
+    // Modal should stay mounted, onClose should not fire
+    assert_eq!(
+        app.texts(),
+        ["open", "Modal content"],
+        "modal should stay open when closeOnEscape=false"
+    );
+    app.stop();
+}
+
+#[test]
+fn dialog_onclose_not_fired_on_programmatic_close() {
+    let source = r#"
+import { mount, signal } from "@nlayer/runtime";
+import { Dialog, Text, View } from "@nlayer/ui";
+
+function App() {
+    const open = signal(true);
+    const closed = signal(false);
+    return (
+        <View style={{ flex: 1 }}>
+            <Text testID="status">{closed() ? "closed" : "open"}</Text>
+            <View
+                testID="close-button"
+                style={{ width: 100, height: 40 }}
+                onPress={() => open.set(false)}
+            >
+                <Text>Close</Text>
+            </View>
+            <Dialog
+                open={open()}
+                onOpenChange={(e) => open.set(e.open)}
+                onClose={() => closed.set(true)}
+            >
+                <View style={{ width: 200, height: 100 }}>
+                    <Text>Modal content</Text>
+                </View>
+            </Dialog>
+        </View>
+    );
+}
+mount(App);
+"#;
+    let mut app = app(source);
+    assert_eq!(app.texts(), ["open", "Close", "Modal content"]);
+
+    // Press the close button (programmatic close via open=false)
+    app.press_selector("close-button").unwrap();
+    app.next_frame(Duration::from_secs(1));
+
+    // Modal should close but onClose should NOT fire
+    assert_eq!(
+        app.texts(),
+        ["open", "Close"],
+        "modal should close but status should stay 'open' (onClose not called)"
+    );
+    app.stop();
+}

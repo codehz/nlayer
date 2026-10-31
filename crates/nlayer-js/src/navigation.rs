@@ -820,9 +820,10 @@ unsafe extern "C" fn modal_component(
 ) -> JsValue {
     let props = reactive::arg(argc, argv, 0);
 
-    // Create state: closed_by_user flag and tick signal
+    // Create state: closed_by_user flag, close_reported flag, and tick signal
     let state = qjs::JS_NewObject(cx);
     qjs::JS_SetPropertyStr(cx, state, c"closedByUser".as_ptr(), qjs::JS_FALSE);
+    qjs::JS_SetPropertyStr(cx, state, c"closeReported".as_ptr(), qjs::JS_FALSE);
     let initial_tick = qjs::JS_NewFloat64(0.0);
     let tick = reactive::new_signal(cx, initial_tick);
     free(cx, initial_tick);
@@ -858,30 +859,55 @@ unsafe extern "C" fn modal_render(
 
     // Check if open
     // SAFETY: cx and props are valid, c-string is valid
-    let open_prop = unsafe { qjs::JS_GetPropertyStr(cx, props, c"open".as_ptr()) };
-    // SAFETY: open_prop is a live JS value
-    let is_open = if unsafe { qjs::JS_IsBool(open_prop) } {
-        // SAFETY: cx and open_prop are valid
-        unsafe { qjs::JS_ToBool(cx, open_prop) == 1 }
-    } else {
-        true
-    };
-    free(cx, open_prop);
+    let open = unsafe { qjs::JS_GetPropertyStr(cx, props, c"open".as_ptr()) };
+    // SAFETY: cx and open are valid, calling a signal or reading a boolean
+    let is_open = unsafe { qjs::JS_ToBool(cx, open) == 1 };
+    free(cx, open);
 
+    // Check closedByUser flag
     // SAFETY: cx and state are valid, c-string is valid
     let closed_by_user = unsafe { qjs::JS_GetPropertyStr(cx, state, c"closedByUser".as_ptr()) };
-    // SAFETY: cx and closed_by_user are valid
+    // SAFETY: cx and closed_by_user are valid, reading a boolean
     let was_closed = unsafe { qjs::JS_ToBool(cx, closed_by_user) } == 1;
     free(cx, closed_by_user);
 
-    if !is_open {
-        // Reset closed flag when open becomes false
-        // SAFETY: cx and state are valid, setting a boolean property
-        unsafe { qjs::JS_SetPropertyStr(cx, state, c"closedByUser".as_ptr(), qjs::JS_FALSE) };
+    // Check was_closed FIRST - if user closed, call onClose before unmounting,
+    // regardless of whether open prop is true or false (controlled vs uncontrolled)
+    if was_closed {
+        // User closed the dialog - report onClose once before unmounting
+        let close_reported =
+            unsafe { qjs::JS_GetPropertyStr(cx, state, c"closeReported".as_ptr()) };
+        let already_reported = unsafe { qjs::JS_ToBool(cx, close_reported) } == 1;
+        free(cx, close_reported);
+
+        if !already_reported {
+            // Call onClose once before unmounting
+            let on_close = unsafe { qjs::JS_GetPropertyStr(cx, props, c"onClose".as_ptr()) };
+            if unsafe { qjs::JS_IsFunction(cx, on_close) } {
+                // Set reported flag BEFORE calling to prevent re-entrant calls
+                unsafe {
+                    qjs::JS_SetPropertyStr(cx, state, c"closeReported".as_ptr(), qjs::JS_TRUE)
+                };
+
+                let mut args = [];
+                let result = unsafe { qjs::JS_Call(cx, on_close, UNDEFINED, 0, args.as_mut_ptr()) };
+                if !unsafe { qjs::JS_IsException(result) } {
+                    free(cx, result);
+                }
+            }
+            free(cx, on_close);
+        }
         return UNDEFINED;
     }
 
-    if was_closed {
+    if !is_open {
+        // Reset closed flag and closeReported when open becomes false programmatically
+        // (not via user action)
+        // SAFETY: cx and state are valid, setting boolean properties
+        unsafe {
+            qjs::JS_SetPropertyStr(cx, state, c"closedByUser".as_ptr(), qjs::JS_FALSE);
+            qjs::JS_SetPropertyStr(cx, state, c"closeReported".as_ptr(), qjs::JS_FALSE);
+        }
         return UNDEFINED;
     }
 
@@ -990,8 +1016,8 @@ unsafe extern "C" fn modal_render(
         let mut parts = Vec::new();
         if has_backdrop_result {
             let backdrop_fn = {
-                let mut fdata = [props];
-                native(cx, create_backdrop, 1, &mut fdata)
+                let mut fdata = [props, state];
+                native(cx, create_backdrop, 2, &mut fdata)
             };
             let backdrop_memo = reactive::memo(cx, backdrop_fn, false);
             parts.push(backdrop_memo);
@@ -1265,6 +1291,7 @@ unsafe extern "C" fn create_backdrop(
     data: *mut JsValue,
 ) -> JsValue {
     let props = *data;
+    let state = *data.add(1);
 
     if !has_backdrop(cx, props) {
         return UNDEFINED;
@@ -1326,10 +1353,10 @@ unsafe extern "C" fn create_backdrop(
         }
         free(cx, test_id);
 
-        // Set onPress handler
+        // Set onPress handler with state
         let press_handler = {
-            let mut fdata = [props];
-            native(cx, on_backdrop_press, 1, &mut fdata)
+            let mut fdata = [props, state];
+            native(cx, on_backdrop_press, 2, &mut fdata)
         };
         if let Err(e) = dom::set_prop_value(cx, view, "onPress", press_handler) {
             free(cx, press_handler);
@@ -1383,6 +1410,7 @@ unsafe extern "C" fn on_backdrop_press(
     data: *mut JsValue,
 ) -> JsValue {
     let props = *data;
+    let state = *data.add(1);
 
     // Call onCancel
     let on_cancel = qjs::JS_GetPropertyStr(cx, props, c"onCancel".as_ptr());
@@ -1426,6 +1454,18 @@ unsafe extern "C" fn on_backdrop_press(
         free(cx, event);
     }
     free(cx, on_change);
+
+    // Set closed flag and bump tick (same as on_request_close)
+    qjs::JS_SetPropertyStr(cx, state, c"closedByUser".as_ptr(), qjs::JS_TRUE);
+
+    let tick_signal = qjs::JS_GetPropertyStr(cx, state, c"tick".as_ptr());
+    let current = reactive::peek(cx, tick_signal);
+    let current_int = qjs::JS_VALUE_GET_INT(current);
+    let next = qjs::JS_NewFloat64((current_int + 1) as f64);
+    reactive::set_signal(cx, tick_signal, next);
+    free(cx, next);
+    free(cx, current);
+    free(cx, tick_signal);
 
     UNDEFINED
 }
