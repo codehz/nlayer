@@ -221,6 +221,7 @@ struct ScrollState {
     refreshing: bool,
     refresh_indicator: Option<Points>,
     refresh_reported: bool,
+    pull_value_node: Option<crate::animation::NodeId>,
     /// Snap configuration.
     paging: bool,
     snap_interval: Option<f32>,
@@ -721,17 +722,20 @@ impl<M: TextEngine> Core<M> {
         self.mark(key, dirty::LIST);
     }
 
-    /// The platform scrolled a scroll view to `offset`. Checks for pull-to-refresh.
+    /// The platform scrolled a scroll view to `offset`. Checks for pull-to-refresh
+    /// and updates pull distance animation value.
     pub fn update_scroll_position(&mut self, id: NodeId, offset: Point<Points>) {
         let Ok(key) = self.key(id) else { return };
         let Some(scroll) = self.nodes[key as usize].scroll.as_mut() else {
             return;
         };
         
+        // Calculate pull distance (negative offset means pulling down)
+        let pull_distance = if offset.y.0 < 0.0 { -offset.y.0 } else { 0.0 };
+        
         // Check for pull-to-refresh trigger
         if let Some(indicator_height) = scroll.refresh_indicator {
-            // Negative offset means pulling down beyond top
-            if offset.y.0 < 0.0 && offset.y.0.abs() >= indicator_height.0 {
+            if pull_distance >= indicator_height.0 {
                 // Fire refresh event only once per cycle
                 if !scroll.refresh_reported && !scroll.refreshing {
                     scroll.refresh_reported = true;
@@ -1218,8 +1222,9 @@ impl<M: TextEngine> Core<M> {
                 }
             }
             Prop::PullValue(node) => {
-                // Animation binding handled separately in animation graph
-                let _ = node;
+                if let Some(scroll) = self.nodes[key as usize].scroll.as_mut() {
+                    scroll.pull_value_node = node;
+                }
             }
             Prop::PagingEnabled(paging) => {
                 let changed = self.nodes[key as usize]
