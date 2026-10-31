@@ -230,6 +230,12 @@ pub trait HostedApp {
     fn wait_for(&mut self, selector: &str) -> Result<(), String>;
     /// The mounted tree: kind, text, input, frame.
     fn tree(&mut self) -> Result<serde_json::Value, String>;
+    /// Drags `selector` by (`x`, `y`) points.
+    fn drag(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String>;
+    /// Drags `selector` by (`x`, `y`) but keeps pointer down.
+    fn drag_and_hold(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String>;
+    /// Releases the held pointer.
+    fn drop(&mut self) -> Result<(), String>;
     /// Closes the app.
     fn close(&mut self);
 }
@@ -656,6 +662,19 @@ struct AdvanceRequest {
     ms: f64,
 }
 
+#[derive(Deserialize)]
+struct DragRequest {
+    id: usize,
+    selector: String,
+    x: f32,
+    y: f32,
+}
+
+#[derive(Deserialize)]
+struct DropRequest {
+    id: usize,
+}
+
 impl Session {
     fn call(&mut self, op: &str, payload: &str) -> Result<String, String> {
         match op {
@@ -709,6 +728,26 @@ impl Session {
                     serde_json::from_str(payload).map_err(|e| e.to_string())?;
                 self.app_mut(request.id)?
                     .scroll(&request.selector, request.distance as f32)?;
+                Ok("null".to_owned())
+            }
+            "drag" => {
+                let request: DragRequest =
+                    serde_json::from_str(payload).map_err(|e| e.to_string())?;
+                self.app_mut(request.id)?
+                    .drag(&request.selector, request.x, request.y)?;
+                Ok("null".to_owned())
+            }
+            "dragAndHold" => {
+                let request: DragRequest =
+                    serde_json::from_str(payload).map_err(|e| e.to_string())?;
+                self.app_mut(request.id)?
+                    .drag_and_hold(&request.selector, request.x, request.y)?;
+                Ok("null".to_owned())
+            }
+            "drop" => {
+                let request: DropRequest =
+                    serde_json::from_str(payload).map_err(|e| e.to_string())?;
+                self.app_mut(request.id)?.drop()?;
                 Ok("null".to_owned())
             }
             "advance" => {
@@ -918,6 +957,18 @@ impl HostedApp for HeadlessApp {
             .tree(ROOT_ID)
             .ok_or_else(|| "the screen has no root".to_owned())?;
         Ok(node_json(&root, screen))
+    }
+
+    fn drag(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String> {
+        self.app.as_mut().ok_or("closed")?.drag(selector, x, y)
+    }
+
+    fn drag_and_hold(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String> {
+        self.app.as_mut().ok_or("closed")?.drag_and_hold(selector, x, y)
+    }
+
+    fn drop(&mut self) -> Result<(), String> {
+        self.app.as_mut().ok_or("closed")?.drop()
     }
 
     fn close(&mut self) {
