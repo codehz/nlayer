@@ -263,3 +263,10 @@ test("platform.os is the surface", () => {
     .filter((text) => text === "web" || text === "ios" || text === "android");
   expect(shown).toEqual([os]);
 });
+
+test("NavStack app opens with content", () => {
+  const app = open("./App.tsx");
+  const tree = app.tree();
+  const nodes = flat(tree, []);
+  expect(nodes.length > 10).toBe(true); // Has substantial content
+});
