@@ -750,11 +750,36 @@ final class Mounter {
   private void scrollContent(ByteBuffer b) {
     View v = views.get(b.getInt());
     float w = b.getFloat(), h = b.getFloat();
+    float refreshIndicator = b.getFloat();
+    boolean paging = b.getInt() != 0;
+    float snapInterval = b.getFloat();
+    int offsetsLen = b.getInt();
+    float[] snapOffsets = null;
+    if (offsetsLen >= 0) {
+      snapOffsets = new float[offsetsLen];
+      for (int i = 0; i < offsetsLen; i++) {
+        snapOffsets[i] = b.getFloat();
+      }
+    }
+    int snapAlignment = b.getInt();
+    boolean disableIntervalMomentum = b.getInt() != 0;
+    float deceleration = b.getFloat();
+    
     if (v instanceof ScrollBox) {
       ScrollBox s = (ScrollBox) v;
       s.contentPointsW = w;
       s.contentPointsH = h;
       s.size(Math.round(w * density), Math.round(h * density));
+      
+      // Handle refresh indicator
+      if (refreshIndicator >= 0) {
+        s.setRefresh(true, refreshIndicator);
+      } else {
+        s.setRefresh(false, 0);
+      }
+      
+      // TODO: Handle paging, snap_interval, snap_offsets, snap_alignment, 
+      // disable_interval_momentum, deceleration in task 2
     }
   }
 

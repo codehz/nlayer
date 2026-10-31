@@ -7,14 +7,15 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 
 /**
- * One-axis scroll view. Drag and fling callbacks match UIKit's scroll delegate, cut to no refresh,
- * zoom or paging. Event kinds are {@code EventKind} discriminants. Each callback carries the
+ * One-axis scroll view. Drag and fling callbacks match UIKit's scroll delegate, with pull-to-refresh.
+ * Event kinds are {@code EventKind} discriminants. Each callback carries the
  * content offset, the content size and this view's visible size, in points. {@code onScroll} is at
  * most once per frame. There is no decelerating callback: rest is no movement for a moment after
- * the finger lifts. An iOS bounce can report a negative offset; this view does not.
+ * the finger lifts. An iOS bounce can report a negative offset; this view does not (but pull reports negative).
  */
 final class ScrollBox extends FrameLayout {
   private static final int SCROLL = 1;
@@ -23,7 +24,10 @@ final class ScrollBox extends FrameLayout {
   private static final int DRAG_END = 4;
   private static final int MOMENTUM_START = 5;
   private static final int MOMENTUM_END = 6;
+  private static final int REFRESH = 7;
   private static final int REST_MS = 120;
+  private static final float REFRESH_THRESHOLD = 64f;
+  private static final float REFRESH_INSET = 56f;
 
   final int id;
   final Decor decor = new Decor();
@@ -40,6 +44,16 @@ final class ScrollBox extends FrameLayout {
 
   /** `keyboardDismissMode`: 0 none, 1 on-drag, 2 interactive. */
   int dismiss;
+
+  /** Pull-to-refresh state. */
+  private boolean refreshing;
+  private float pull;
+  private boolean pulling;
+  private float startY;
+  private boolean refreshIndicator = true;
+  private float refreshThreshold = REFRESH_THRESHOLD;
+  private float refreshInset = REFRESH_INSET;
+  private ProgressBar spinner;
 
   private final float density;
   private boolean armed;
@@ -70,6 +84,15 @@ final class ScrollBox extends FrameLayout {
     density = c.getResources().getDisplayMetrics().density;
     setBackground(decor);
     content = new Content(c, m, id);
+    
+    // Add spinner for pull-to-refresh
+    spinner = new ProgressBar(c);
+    spinner.setIndeterminate(true);
+    spinner.setVisibility(GONE);
+    int size = Math.round(28 * density);
+    addView(spinner, new FrameLayout.LayoutParams(size, size, 
+        android.view.Gravity.CENTER_HORIZONTAL | android.view.Gravity.TOP));
+    
     build(c);
   }
 
@@ -278,10 +301,121 @@ final class ScrollBox extends FrameLayout {
     scroller.setHorizontalScrollBarEnabled(indicator && horizontal);
   }
 
+  /** Pull to refresh: whether the spinner shows, where (dp) a pull refreshes and the room kept while refreshing. */
+  void setRefresh(boolean own, float height) {
+    float inset = own ? height : REFRESH_INSET;
+    boolean changed = refreshIndicator == own || inset != refreshInset;
+    refreshIndicator = !own;
+    refreshThreshold = own ? height : REFRESH_THRESHOLD;
+    refreshInset = inset;
+    if (changed && spinner != null) {
+      spinner.setVisibility(refreshIndicator && pull > 0 ? VISIBLE : GONE);
+    }
+    // A refresh in progress keeps the room of the indicator now showing.
+    if (refreshing && !pulling) animatePull(inset * density, null);
+  }
+
+  void setRefreshing(boolean on) {
+    if (on == refreshing) return;
+    refreshing = on;
+    float d = density;
+    if (on) {
+      if (refreshIndicator && spinner != null) {
+        spinner.setVisibility(VISIBLE);
+        spinner.setAlpha(1);
+      }
+      animatePull(refreshInset * d, null);
+    } else {
+      animatePull(0, () -> {
+        if (spinner != null) spinner.setVisibility(GONE);
+      });
+    }
+  }
+
+  private boolean canPull() {
+    return !horizontal && (pressMask & (1 << REFRESH)) != 0 && 
+           scroller != null && scroller.getScrollY() == 0;
+  }
+
+  @Override
+  public boolean onInterceptTouchEvent(MotionEvent e) {
+    if (refreshing || !canPull()) return false;
+    if (e.getActionMasked() == MotionEvent.ACTION_MOVE) {
+      float dy = e.getY() - startY;
+      float slop = android.view.ViewConfiguration.get(getContext()).getScaledTouchSlop();
+      if (dy > slop) {
+        pulling = true;
+        startY = e.getY();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  @Override
+  public boolean onTouchEvent(MotionEvent e) {
+    if (!pulling) return false;
+    float d = density;
+    switch (e.getActionMasked()) {
+      case MotionEvent.ACTION_MOVE:
+        // Resistance like a rubber band.
+        setPull(Math.max(0, (e.getY() - startY) * 0.5f));
+        if (refreshIndicator && spinner != null) {
+          spinner.setVisibility(VISIBLE);
+          spinner.setAlpha(Math.min(1, pull / (refreshThreshold * d)));
+        }
+        return true;
+      case MotionEvent.ACTION_UP:
+      case MotionEvent.ACTION_CANCEL:
+        pulling = false;
+        if (pull >= refreshThreshold * d) {
+          setRefreshing(true);
+          emit(REFRESH);
+        } else {
+          animatePull(0, () -> {
+            if (spinner != null) spinner.setVisibility(GONE);
+          });
+        }
+        return true;
+    }
+    return true;
+  }
+
+  private void setPull(float px) {
+    if (px == pull) return;
+    pull = px;
+    if (scroller != null) {
+      scroller.setTranslationY(px);
+    }
+    if (spinner != null) {
+      spinner.setTranslationY(Math.max(0, px / 2 - spinner.getHeight() / 2f));
+    }
+    // Report pull distance to core (negative offset means pull)
+    Native.sendScroll(this, id, SCROLL, 0, -px / density, 
+        contentPointsW, contentPointsH, 
+        getWidth() / density, getHeight() / density);
+  }
+
+  private void animatePull(float to, Runnable end) {
+    android.animation.ValueAnimator a = android.animation.ValueAnimator.ofFloat(pull, to);
+    a.setDuration(250);
+    a.addUpdateListener(v -> setPull((float) v.getAnimatedValue()));
+    if (end != null) {
+      a.addListener(new android.animation.AnimatorListenerAdapter() {
+        @Override
+        public void onAnimationEnd(android.animation.Animator animation) {
+          end.run();
+        }
+      });
+    }
+    a.start();
+  }
+
   @Override
   public boolean dispatchTouchEvent(MotionEvent e) {
     int action = e.getActionMasked();
     if (action == MotionEvent.ACTION_DOWN) {
+      startY = e.getY();
       swallowing = false;
       tapDismiss = false;
       if (scrollUnder(this, e) == null) {

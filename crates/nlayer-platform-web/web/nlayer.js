@@ -29,6 +29,9 @@ const ARIA_ROLES = {
   summary: "",
 };
 
+/** Pull-to-refresh thresholds (points). */
+const REFRESH_PULL = 64;
+const REFRESH_SPACE = 56;
 /** The sheet of generated classes, or of the views' own rules. */
 function classSheet(doc, id) {
   if (!CLASSES.sheets[id]) {
@@ -569,6 +572,7 @@ export class Player {
     el._spacer.className = "nl-spacer";
     el.append(el._spacer);
     el._horizontal = false;
+    el._pull = 0;
     el.addEventListener("scroll", () => this.scrolled(el), { passive: true });
     el.addEventListener("scrollend", () => this.scrollEnded(el));
     // The user takes over an instant command (`noteInstant`).
@@ -578,6 +582,93 @@ export class Player {
     for (const type of ["wheel", "pointerdown", "touchstart", "keydown"]) {
       el.addEventListener(type, takeOver, { passive: true });
     }
+    
+    // Pull-to-refresh touch handling
+    let startY = 0;
+    let pulling = false;
+    el.addEventListener("touchstart", (e) => {
+      if (e.touches.length === 1 && this.canPull(el)) {
+        startY = e.touches[0].clientY;
+        pulling = false;
+      }
+    }, { passive: true });
+    
+    el.addEventListener("touchmove", (e) => {
+      if (e.touches.length !== 1 || !this.canPull(el)) return;
+      const dy = e.touches[0].clientY - startY;
+      const scrollTop = el.scrollTop - (el._pull || 0);
+      if (scrollTop <= 0 && dy > 0) {
+        if (!e.cancelable) {
+          pulling = false;
+          return;
+        }
+        e.preventDefault();
+        pulling = true;
+        this.dragPull(el, -dy);
+      }
+    }, { passive: false });
+    
+    const endPull = () => {
+      if (pulling) {
+        pulling = false;
+        this.releasePull(el);
+      }
+    };
+    el.addEventListener("touchend", endPull);
+    el.addEventListener("touchcancel", endPull);
+  }
+  
+  canPull(el) {
+    return !el._horizontal && el._events?.has("onRefresh") && 
+           el.scrollTop - (el._pull || 0) <= 0.5;
+  }
+  
+  dragPull(el, distance) {
+    const pull = Math.max(0, distance * 0.5);
+    this.setPull(el, pull);
+  }
+  
+  releasePull(el) {
+    const threshold = el._refreshThreshold || REFRESH_PULL;
+    if (!el._refreshing && el._pull >= threshold) {
+      el._refreshing = true;
+      this.scrollEvent(el, "onRefresh");
+    }
+    const target = el._refreshing ? (el._refreshSpace || REFRESH_SPACE) : 0;
+    this.animatePull(el, target);
+  }
+  
+  setPull(el, pull) {
+    if (pull === el._pull) return;
+    el._pull = pull;
+    if (el._spacer) {
+      el._spacer.style.paddingTop = `${pull}px`;
+    }
+    // Report pull distance (negative offset means pull)
+    this.host.scroll?.(
+      el._id,
+      "onScroll",
+      0,
+      -pull,
+      el._contentW || 0,
+      el._contentH || 0,
+      el.clientWidth,
+      el.clientHeight
+    );
+  }
+  
+  animatePull(el, target) {
+    cancelAnimationFrame(el._pullAnimation);
+    const from = el._pull || 0;
+    if (from === target) return;
+    const t0 = this.now();
+    const step = (now) => {
+      const t = Math.min(1, (now - t0) / 250);
+      const eased = 1 - Math.pow(1 - t, 3);
+      this.setPull(el, from + (target - from) * eased);
+      if (t < 1) el._pullAnimation = requestAnimationFrame(step);
+    };
+    el._pullAnimation = requestAnimationFrame(step);
   }
 
   now() {
