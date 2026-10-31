@@ -140,6 +140,29 @@ struct ActiveGesture {
     start_values: [f32; 4], // pan_x, pan_y (only these used; pinch/rotation not supported headless)
 }
 
+/// Stack state: screens pushed onto it.
+#[derive(Debug, Default, Clone)]
+struct StackState {
+    /// Screens in push order; last is top.
+    screens: Vec<NodeId>,
+}
+
+/// What a back does ([`Screen::back_target`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Back {
+    /// The stack pops this screen.
+    Pop(NodeId),
+    /// This screen prevents going back: it is asked.
+    Ask(NodeId),
+    /// The modal asks to close, and closes when the user may close it.
+    Close {
+        modal: NodeId,
+        close_on_escape: bool,
+    },
+    /// Nothing to go back from.
+    Nothing,
+}
+
 #[derive(Debug, Default)]
 pub struct Screen {
     views: HashMap<NodeId, View>,
@@ -155,6 +178,12 @@ pub struct Screen {
     gesture_bindings: HashMap<NodeId, GestureBindings>,
     /// Active gesture state.
     active_gesture: Option<ActiveGesture>,
+    /// Stacks, each holding their screens in push order.
+    stacks: HashMap<NodeId, StackState>,
+    /// Modals, in presentation order; last is top.
+    modals: Vec<NodeId>,
+    /// Screen header heights (from ScreenConfig.header_height).
+    screen_headers: HashMap<NodeId, Points>,
 }
 
 /// A node of [`Screen::tree`].
@@ -315,6 +344,67 @@ impl Screen {
         self.views.get(&id)?.parent
     }
 
+    /// The screens of `stack_id`, in push order.
+    fn screens(&self, stack_id: NodeId) -> &[NodeId] {
+        self.stacks
+            .get(&stack_id)
+            .map(|s| s.screens.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// The depth of `stack_id`: how many screens are pushed.
+    pub fn stack_depth(&self, stack_id: NodeId) -> usize {
+        self.screens(stack_id).len()
+    }
+
+    /// The top screen of `stack_id`.
+    pub fn top_screen(&self, stack_id: NodeId) -> Option<NodeId> {
+        self.screens(stack_id).last().copied()
+    }
+
+    /// The top modal, if any.
+    pub fn top_modal(&self) -> Option<NodeId> {
+        self.modals.last().copied()
+    }
+
+    /// What a back does: which screen to pop, ask, or modal to close.
+    pub fn back_target(&self) -> Back {
+        // 1. Top modal with close_on_escape
+        if let Some(&modal_id) = self.modals.last() {
+            if let Some(modal) = self.views.get(&modal_id).and_then(|v| v.modal.as_ref()) {
+                if modal.close_on_escape {
+                    return Back::Close {
+                        modal: modal_id,
+                        close_on_escape: true,
+                    };
+                }
+            }
+        }
+
+        // 2. Top screen of any stack
+        for (&_stack_id, state) in &self.stacks {
+            if let Some(&screen_id) = state.screens.last() {
+                let view = self.views.get(&screen_id);
+                let screen_cfg = view.and_then(|v| v.screen.as_ref());
+                
+                // If screen has onBackPress listener, ask it first
+                if view.is_some_and(|v| v.events.contains(EventKind::BackRequest)) {
+                    return Back::Ask(screen_id);
+                }
+                
+                // If depth > 1 and !prevent_back, can pop
+                if state.screens.len() > 1 {
+                    let prevent_back = screen_cfg.map_or(false, |cfg| cfg.prevent_back);
+                    if !prevent_back {
+                        return Back::Pop(screen_id);
+                    }
+                }
+            }
+        }
+
+        Back::Nothing
+    }
+
     /// Applies one batch.
     pub fn apply(&mut self, batch: &MountBatch) {
         for item in &batch.items {
@@ -361,6 +451,25 @@ impl Screen {
                 self.ensure(*parent, ViewKind::View);
                 self.ensure(*child, ViewKind::View);
                 self.detach(*child);
+                
+                // Track stack/screen relationships
+                let parent_kind = self.views.get(parent).map(|v| v.kind);
+                let child_kind = self.views.get(child).map(|v| v.kind);
+                
+                if parent_kind == Some(ViewKind::Stack) && child_kind == Some(ViewKind::Screen) {
+                    let state = self.stacks.entry(*parent).or_insert_with(StackState::default);
+                    if !state.screens.contains(child) {
+                        state.screens.push(*child);
+                    }
+                }
+                
+                // Track modals
+                if child_kind == Some(ViewKind::Modal) {
+                    if !self.modals.contains(child) {
+                        self.modals.push(*child);
+                    }
+                }
+                
                 let children = &mut self.views.get_mut(parent).expect("a view").children;
                 let at = match before {
                     Some(before) => children
@@ -372,8 +481,38 @@ impl Screen {
                 children.insert(at, *child);
                 self.views.get_mut(child).expect("a view").parent = Some(*parent);
             }
-            MountItem::Remove { id } => self.detach(*id),
+            MountItem::Remove { id } => {
+                // Clean up from stacks/modals
+                if let Some(view) = self.views.get(id) {
+                    if view.kind == ViewKind::Screen {
+                        // Remove from parent stack
+                        if let Some(parent_id) = view.parent {
+                            if let Some(state) = self.stacks.get_mut(&parent_id) {
+                                state.screens.retain(|&s| s != *id);
+                            }
+                        }
+                    } else if view.kind == ViewKind::Modal {
+                        self.modals.retain(|&m| m != *id);
+                    }
+                }
+                self.detach(*id);
+            }
             MountItem::Delete { id } => {
+                // Clean up from stacks/modals
+                if let Some(view) = self.views.get(id) {
+                    if view.kind == ViewKind::Screen {
+                        if let Some(parent_id) = view.parent {
+                            if let Some(state) = self.stacks.get_mut(&parent_id) {
+                                state.screens.retain(|&s| s != *id);
+                            }
+                        }
+                        self.screen_headers.remove(id);
+                    } else if view.kind == ViewKind::Modal {
+                        self.modals.retain(|&m| m != *id);
+                    } else if view.kind == ViewKind::Stack {
+                        self.stacks.remove(id);
+                    }
+                }
                 self.animated.remove(id);
                 self.delete(*id);
             }
@@ -459,6 +598,8 @@ impl Screen {
             }
             MountItem::ScreenConfig { id, config } => {
                 self.ensure(*id, ViewKind::Screen);
+                // Record header height for insets
+                self.screen_headers.insert(*id, config.header_height);
                 self.views.get_mut(id).expect("a screen").screen = Some(config.clone());
             }
             MountItem::ModalConfig { id, config } => {
@@ -824,9 +965,45 @@ impl Headless {
         }
     }
 
-    /// Sends a back request through the engine's navigation precedence.
-    pub fn back(&mut self) {
-        self.engine.control().back();
+    /// Sends a back request through the navigation precedence.
+    pub fn back(&mut self) -> Result<(), String> {
+        self.refresh();
+        match self.screen.back_target() {
+            Back::Pop(screen_id) => {
+                // Send BackRequest event if screen is listening, then it should pop
+                if self.screen.view(screen_id).is_some_and(|v| v.events.contains(EventKind::BackRequest)) {
+                    self.engine.control().dispatch_event(screen_id, EventKind::BackRequest, EventPayload::None);
+                }
+                // Note: The app should call nav.pop() in response. For headless testing,
+                // the test should verify the stack depth changes after calling back().
+                let _ = self.next_frame(Duration::from_millis(100));
+                Ok(())
+            }
+            Back::Ask(screen_id) => {
+                // Only send BackRequest event, let app decide
+                self.engine.control().dispatch_event(screen_id, EventKind::BackRequest, EventPayload::None);
+                let _ = self.next_frame(Duration::from_millis(100));
+                Ok(())
+            }
+            Back::Close { modal, close_on_escape } => {
+                if close_on_escape {
+                    // Send RequestClose event
+                    if self.screen.view(modal).is_some_and(|v| v.events.contains(EventKind::RequestClose)) {
+                        self.engine.control().dispatch_event(modal, EventKind::RequestClose, EventPayload::None);
+                    }
+                    let _ = self.next_frame(Duration::from_millis(100));
+                    Ok(())
+                } else {
+                    Err("modal does not close on back".into())
+                }
+            }
+            Back::Nothing => {
+                // Send Back command to indicate no navigation handled it
+                self.engine.control().back();
+                let _ = self.next_frame(Duration::from_millis(100));
+                Ok(())
+            }
+        }
     }
     /// Calls node `id`'s press handler.
     pub fn press(&mut self, id: NodeId) {
@@ -1331,3 +1508,150 @@ mod tests {
         assert!(parent_has_binding);
     }
 }
+
+    #[test]
+    fn stack_tracks_screens() {
+        let mut screen = Screen::default();
+        let stack_id = 10;
+        let screen1 = 11;
+        let screen2 = 12;
+        
+        screen.apply_item(&MountItem::Create { id: stack_id, kind: ViewKind::Stack });
+        screen.apply_item(&MountItem::Create { id: screen1, kind: ViewKind::Screen });
+        screen.apply_item(&MountItem::Create { id: screen2, kind: ViewKind::Screen });
+        
+        screen.apply_item(&MountItem::Insert { parent: stack_id, child: screen1, before: None });
+        assert_eq!(screen.stack_depth(stack_id), 1);
+        
+        screen.apply_item(&MountItem::Insert { parent: stack_id, child: screen2, before: None });
+        assert_eq!(screen.stack_depth(stack_id), 2);
+        assert_eq!(screen.top_screen(stack_id), Some(screen2));
+    }
+
+    #[test]
+    fn back_target_pops_when_allowed() {
+        let mut screen = Screen::default();
+        let stack_id = 10;
+        let screen1 = 11;
+        let screen2 = 12;
+        
+        screen.apply_item(&MountItem::Create { id: stack_id, kind: ViewKind::Stack });
+        screen.apply_item(&MountItem::Create { id: screen1, kind: ViewKind::Screen });
+        screen.apply_item(&MountItem::Create { id: screen2, kind: ViewKind::Screen });
+        
+        screen.apply_item(&MountItem::Insert { parent: stack_id, child: screen1, before: None });
+        screen.apply_item(&MountItem::Insert { parent: stack_id, child: screen2, before: None });
+        
+        // Default prevent_back is false, so should pop
+        match screen.back_target() {
+            Back::Pop(id) => assert_eq!(id, screen2),
+            other => panic!("Expected Back::Pop, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn back_target_asks_when_listening() {
+        let mut screen = Screen::default();
+        let stack_id = 10;
+        let screen1 = 11;
+        
+        screen.apply_item(&MountItem::Create { id: stack_id, kind: ViewKind::Stack });
+        screen.apply_item(&MountItem::Create { id: screen1, kind: ViewKind::Screen });
+        screen.apply_item(&MountItem::Insert { parent: stack_id, child: screen1, before: None });
+        
+        // Add BackRequest listener using EventMask::set
+        let mut events = EventMask::default();
+        events.set(EventKind::BackRequest, true);
+        screen.apply_item(&MountItem::Events { id: screen1, events });
+        
+        match screen.back_target() {
+            Back::Ask(id) => assert_eq!(id, screen1),
+            other => panic!("Expected Back::Ask, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn back_target_closes_modal() {
+        let mut screen = Screen::default();
+        let modal_id = 20;
+        
+        screen.apply_item(&MountItem::Create { id: modal_id, kind: ViewKind::Modal });
+        screen.apply_item(&MountItem::Insert { parent: 1, child: modal_id, before: None });
+        
+        let config = ModalConfig {
+            close_on_escape: true,
+            ..Default::default()
+        };
+        screen.apply_item(&MountItem::ModalConfig { id: modal_id, config });
+        
+        match screen.back_target() {
+            Back::Close { modal, close_on_escape } => {
+                assert_eq!(modal, modal_id);
+                assert!(close_on_escape);
+            }
+            other => panic!("Expected Back::Close, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn back_target_nothing_at_root() {
+        let screen = Screen::default();
+        assert_eq!(screen.back_target(), Back::Nothing);
+    }
+
+    #[test]
+    fn modal_stacks_correctly() {
+        let mut screen = Screen::default();
+        let modal1 = 20;
+        let modal2 = 21;
+        
+        screen.apply_item(&MountItem::Create { id: modal1, kind: ViewKind::Modal });
+        screen.apply_item(&MountItem::Insert { parent: 1, child: modal1, before: None });
+        assert_eq!(screen.top_modal(), Some(modal1));
+        
+        screen.apply_item(&MountItem::Create { id: modal2, kind: ViewKind::Modal });
+        screen.apply_item(&MountItem::Insert { parent: 1, child: modal2, before: None });
+        assert_eq!(screen.top_modal(), Some(modal2));
+        
+        screen.apply_item(&MountItem::Remove { id: modal2 });
+        assert_eq!(screen.top_modal(), Some(modal1));
+    }
+
+    #[test]
+    fn screen_header_records_height() {
+        let mut screen = Screen::default();
+        let screen_id = 11;
+        
+        screen.apply_item(&MountItem::Create { id: screen_id, kind: ViewKind::Screen });
+        
+        let config = Box::new(ScreenConfig {
+            header_height: Points(44.0),
+            ..Default::default()
+        });
+        screen.apply_item(&MountItem::ScreenConfig { id: screen_id, config });
+        
+        assert_eq!(screen.screen_headers.get(&screen_id), Some(&Points(44.0)));
+    }
+
+    #[test]
+    fn remove_cleans_up_stacks_and_modals() {
+        let mut screen = Screen::default();
+        let stack_id = 10;
+        let screen1 = 11;
+        let modal_id = 20;
+        
+        screen.apply_item(&MountItem::Create { id: stack_id, kind: ViewKind::Stack });
+        screen.apply_item(&MountItem::Create { id: screen1, kind: ViewKind::Screen });
+        screen.apply_item(&MountItem::Insert { parent: stack_id, child: screen1, before: None });
+        assert_eq!(screen.stack_depth(stack_id), 1);
+        
+        screen.apply_item(&MountItem::Remove { id: screen1 });
+        assert_eq!(screen.stack_depth(stack_id), 0);
+        
+        screen.apply_item(&MountItem::Create { id: modal_id, kind: ViewKind::Modal });
+        screen.apply_item(&MountItem::Insert { parent: 1, child: modal_id, before: None });
+        assert_eq!(screen.top_modal(), Some(modal_id));
+        
+        screen.apply_item(&MountItem::Remove { id: modal_id });
+        assert_eq!(screen.top_modal(), None);
+    }
