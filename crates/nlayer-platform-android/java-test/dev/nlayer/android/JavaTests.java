@@ -1169,6 +1169,9 @@ public final class JavaTests extends Instrumentation {
             return null;
           });
       equal(0, screen2.toolbar.getBackground().getAlpha(), "transparent toolbar background");
+      check(
+          screen2.toolbar.getLayoutParams().height > 0,
+          "a transparent header still draws above the content");
 
       // Test preventBack=true, gesture=false
       Batch b3 = batch();

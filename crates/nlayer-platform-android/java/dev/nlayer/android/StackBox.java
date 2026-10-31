@@ -341,6 +341,9 @@ final class StackBox extends FrameLayout {
       toolbar.setTitle(titleView >= 0 ? null : title);
       int height = Math.round(headerHeight * d);
       int bar = Math.round(56 * d);
+      // A transparent header has no height in the core (the content starts
+      // at the top), but the bar still shows over the content.
+      if (transparent) height = Math.max(height, m.host.safeTop + bar);
       toolbar.setPadding(0, Math.max(0, height - bar), 0, 0);
       ViewGroup.LayoutParams p = toolbar.getLayoutParams();
       p.height = height;
