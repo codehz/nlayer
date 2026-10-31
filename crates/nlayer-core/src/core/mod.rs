@@ -3633,6 +3633,38 @@ impl<M: TextEngine> Core<M> {
                     .iter()
                     .filter_map(|s| s.ready().map(|i| (i, s.cell))),
             );
+            
+            // Keep sticky indices in ready even if outside window (non-inverted only)
+            {
+                let list = self.nodes[key as usize].list.as_ref().expect("list");
+                if !list.inverted && !list.sticky_indices.is_empty() {
+                    for &sticky_index in list.sticky_indices.iter() {
+                        if let Some(slot) = list.slots.iter().find(|s| {
+                            s.ready() == Some(sticky_index)
+                        }) {
+                            if !ready.iter().any(|(i, _)| *i == sticky_index) {
+                                ready.push((sticky_index, slot.cell));
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Keep sticky indices in ready even if outside window (non-inverted only)
+            {
+                let list = self.nodes[key as usize].list.as_ref().expect("list");
+                if !list.inverted && !list.sticky_indices.is_empty() {
+                    for &sticky_index in list.sticky_indices.iter() {
+                        if let Some(slot) = list.slots.iter().find(|s| {
+                            s.ready() == Some(sticky_index)
+                        }) {
+                            if !ready.iter().any(|(i, _)| *i == sticky_index) {
+                                ready.push((sticky_index, slot.cell));
+                            }
+                        }
+                    }
+                }
+            }
             let (window_start, window_end) = self.nodes[key as usize]
                 .list
                 .as_ref()

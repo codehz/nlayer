@@ -1403,7 +1403,8 @@ impl Headless {
         Ok(())
     }
 
-    /// Scrolls the scroll view by setting its content offset.
+    /// Scrolls the scroll view to the given offset. Waits for the engine to
+    /// settle (multiple layout passes may occur for sticky headers).
     pub fn scroll(&mut self, id: NodeId, x: f32, y: f32) {
         self.refresh();
         if let Some(view) = self.screen.views.get_mut(&id) {
@@ -1429,6 +1430,9 @@ impl Headless {
         for event in [EventKind::Scroll, EventKind::ScrollEnd] {
             self.engine.control().dispatch_event(id, event, payload.clone());
         }
+        
+        // Drain frames until engine settles (sticky rows may take multiple passes)
+        while self.next_frame(Duration::from_millis(30)) {}
         self.refresh();
     }
 

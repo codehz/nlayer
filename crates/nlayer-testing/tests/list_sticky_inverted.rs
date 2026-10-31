@@ -42,11 +42,10 @@ mount(App);
     let screen = app.screen();
     let item0_frame = screen.views()
         .find(|(_, v)| v.test_id.as_deref() == Some("item-0"))
-        .and_then(|(id, _)| screen.frame(id));
+        .and_then(|(id, _)| screen.frame(id))
+        .expect("item-0 frame");
     
-    if let Some(frame) = item0_frame {
-        assert_eq!(frame.origin.y.0, 0.0, "sticky item 0 at offset=0: y=0");
-    }
+    assert_eq!(item0_frame.origin.y.0, 0.0, "sticky item 0 at offset=0: y=0");
     
     app.stop();
 }
@@ -88,21 +87,17 @@ mount(App);
     // Wait for content to update
     std::thread::sleep(Duration::from_millis(100));
     
-    println!("=== After scroll to 100 ===");
-    println!("Tree: {:#?}", app.screen().tree(list_id));
-    println!("Texts: {:?}", app.screen().texts());
     
     
     let screen = app.screen();
     let item0_container_frame = screen.views()
         .find(|(_, v)| v.test_id.as_deref() == Some("item-0"))
         .and_then(|(_, v)| v.parent)
-        .and_then(|parent_id| screen.frame(parent_id));
+        .and_then(|parent_id| screen.frame(parent_id))
+        .expect("item-0 container");
     
-    if let Some(frame) = item0_container_frame {
-        assert_eq!(frame.origin.y.0, 100.0, 
-            "sticky item 0 at offset=100: shift=(100-0).clamp(0,250)=100");
-    }
+    assert_eq!(item0_container_frame.origin.y.0, 100.0, 
+        "sticky item 0 at offset=100: shift=(100-0).clamp(0,250)=100");
     
     app.stop();
 }
@@ -116,7 +111,7 @@ function App() {
     return (
         <View style={{ width: 390, height: 400 }}>
             <List
-                each={Array.from({ length: 10 }, (_, i) => i)}
+                each={Array.from({ length: 20 }, (_, i) => i)}
                 stickyHeaderIndices={[0, 5]}
                 style={{ width: 390, height: 400 }}
             >{(item, index) => (
@@ -138,7 +133,8 @@ mount(App);
         .expect("list");
     drop(screen);
     
-    // Scroll to 300: shift=(300-0).clamp(0,250)=250
+    // Scroll to 300: with 20 items (1000pt content, 400pt viewport, max offset 600)
+    // shift = (300-0).clamp(0, 250) = 250
     app.scroll(list_id, 0.0, 300.0);
     assert!(app.wait_for("Item 5", Duration::from_millis(300)));
     
@@ -146,12 +142,11 @@ mount(App);
     let item0_container_frame = screen.views()
         .find(|(_, v)| v.test_id.as_deref() == Some("item-0"))
         .and_then(|(_, v)| v.parent)
-        .and_then(|parent_id| screen.frame(parent_id));
+        .and_then(|parent_id| screen.frame(parent_id))
+        .expect("item-0 container");
     
-    if let Some(frame) = item0_container_frame {
-        assert_eq!(frame.origin.y.0, 250.0,
-            "sticky item 0 at offset=300: shift clamped at 250");
-    }
+    assert_eq!(item0_container_frame.origin.y.0, 250.0,
+        "sticky item 0 at offset=300: shift clamped at 250");
     
     app.stop();
 }
@@ -186,22 +181,19 @@ mount(App);
     
     // Total=250, item0: at=0 -> 250-0-50=200, item4: at=200 -> 250-200-50=0
     // The user's View has testID, but its frame is relative to the cell container.
-    // We need to check the cell container's frame (the parent).
     let item0_container_frame = screen.views()
         .find(|(_, v)| v.test_id.as_deref() == Some("item-0"))
         .and_then(|(_, v)| v.parent)
-        .and_then(|parent_id| screen.frame(parent_id));
+        .and_then(|parent_id| screen.frame(parent_id))
+        .expect("item-0 container");
     let item4_container_frame = screen.views()
         .find(|(_, v)| v.test_id.as_deref() == Some("item-4"))
         .and_then(|(_, v)| v.parent)
-        .and_then(|parent_id| screen.frame(parent_id));
+        .and_then(|parent_id| screen.frame(parent_id))
+        .expect("item-4 container");
     
-    if let Some(frame) = item0_container_frame {
-        assert_eq!(frame.origin.y.0, 200.0, "inverted item 0: 250-0-50=200");
-    }
-    if let Some(frame) = item4_container_frame {
-        assert_eq!(frame.origin.y.0, 0.0, "inverted item 4: 250-200-50=0");
-    }
+    assert_eq!(item0_container_frame.origin.y.0, 200.0, "inverted item 0: 250-0-50=200");
+    assert_eq!(item4_container_frame.origin.y.0, 0.0, "inverted item 4: 250-200-50=0");
     
     app.stop();
 }
@@ -237,11 +229,10 @@ mount(App);
     let item0_container_frame = screen.views()
         .find(|(_, v)| v.test_id.as_deref() == Some("item-0"))
         .and_then(|(_, v)| v.parent)
-        .and_then(|parent_id| screen.frame(parent_id));
+        .and_then(|parent_id| screen.frame(parent_id))
+        .expect("item-0 container");
     
-    if let Some(frame) = item0_container_frame {
-        assert_eq!(frame.origin.y.0, 200.0, "inverted+sticky: sticky ignored, y=200");
-    }
+    assert_eq!(item0_container_frame.origin.y.0, 200.0, "inverted+sticky: sticky ignored, y=200");
     
     app.stop();
 }
