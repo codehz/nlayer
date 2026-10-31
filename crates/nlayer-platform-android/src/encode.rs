@@ -110,7 +110,11 @@ pub fn encode(batch: MountBatch) -> Encoded {
                 e.float(frame.size.width.0);
                 e.float(frame.size.height.0);
             }
-            MountItem::Animation(_) | MountItem::AnimationBindings { .. } => {
+            MountItem::Animation(_)
+            | MountItem::AnimationBindings { .. }
+            | MountItem::PanBinding { .. }
+            | MountItem::PinchBinding { .. }
+            | MountItem::RotationBinding { .. } => {
                 // The UI-thread animation graph consumes these.
             }
             MountItem::LongPressDelay { id, delay } => {

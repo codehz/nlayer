@@ -12,9 +12,10 @@ class Box extends ViewGroup {
   final Mounter mounter;
   final Decor decor = new Decor();
   boolean clip;
-  float alpha = 1;
   int pressMask;
   boolean disabled;
+  GestureBox gestures;
+  int pointerEvents; // 0 auto, 1 none, 2 box-only, 3 box-none
 
   Box(Context c, Mounter m, int id) {
     super(c);
@@ -104,19 +105,22 @@ class Box extends ViewGroup {
 
   @Override
   public boolean onTouchEvent(android.view.MotionEvent e) {
-    if (disabled || Mounter.blocked(getParent())) {
-      if (e.getAction() == android.view.MotionEvent.ACTION_DOWN) setPressed(false);
+    if (disabled || pointerEvents == 1) return false;
+    // Gestures first
+    if (gestures != null && gestures.onTouchEvent(e)) {
       return true;
     }
-    if ((pressMask & 1) == 0) return false;
-    int action = e.getAction();
-    if (action == android.view.MotionEvent.ACTION_DOWN) setPressed(true);
-    else if (action == android.view.MotionEvent.ACTION_UP) {
-      setPressed(false);
-      Native.sendPress(this, id);
-    } else if (action == android.view.MotionEvent.ACTION_CANCEL) setPressed(false);
-    else return true;
-    mounter.paint(id);
-    return true;
+    // Then press handling
+    int action = e.getActionMasked();
+    boolean press = (pressMask & 1) != 0;
+    if (action == MotionEvent.ACTION_DOWN && press) {
+      return true;
+    } else if (action == MotionEvent.ACTION_UP && press) {
+      if (e.getX() >= 0 && e.getY() >= 0 && e.getX() < getWidth() && e.getY() < getHeight()) {
+        Native.sendPress(this, id);
+      }
+      return true;
+    }
+    return false;
   }
 }

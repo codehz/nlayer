@@ -184,6 +184,18 @@ final class Mounter {
     events.put(id, mask);
     View v = views.get(id);
     if (v == null) return;
+    
+    // Check for gesture events (bits 17-22: PanStart, PanEnd, PinchStart, PinchEnd, RotationStart, RotationEnd)
+    boolean hasGestures = (mask & (0x3F << 17)) != 0; // Bits 17-22
+    if (v instanceof Box) {
+      Box box = (Box) v;
+      if (hasGestures && box.gestures == null) {
+        box.gestures = new GestureBox(box, id, this);
+      } else if (!hasGestures && box.gestures != null) {
+        box.gestures = null;
+      }
+    }
+    
     boolean press = (mask & 1) != 0 || (mask & (1 << 11)) != 0;
     if (v instanceof Box) ((Box) v).pressMask = mask;
     if (v instanceof ImageBox) ((ImageBox) v).pressMask = mask;
@@ -202,7 +214,6 @@ final class Mounter {
           });
     } else {
       v.setOnTouchListener(null);
-      cancelLong(id);
     }
   }
 

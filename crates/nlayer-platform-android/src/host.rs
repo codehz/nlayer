@@ -719,3 +719,178 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_modalShow(
     }
     dispatch(handle, id, EventKind::Show, EventPayload::None);
 }
+
+/// # Safety
+///
+/// `handle` is live. Gesture values are in points and points/second.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_panStart(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    id: jint,
+) {
+    crate::animation::pan_began(id as NodeId);
+    dispatch(handle, id, EventKind::PanStart, EventPayload::None);
+}
+
+/// # Safety
+///
+/// `handle` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_panMove(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    _handle: jlong,
+    id: jint,
+    tx: jfloat,
+    ty: jfloat,
+) {
+    crate::animation::pan_moved(id as NodeId, tx, ty);
+}
+
+/// # Safety
+///
+/// `handle` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_panEnd(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    id: jint,
+    tx: jfloat,
+    ty: jfloat,
+    vx: jfloat,
+    vy: jfloat,
+) {
+    let (x_val, y_val) = crate::animation::pan_values(id as NodeId);
+    dispatch(
+        handle,
+        id,
+        EventKind::PanEnd,
+        EventPayload::Pan {
+            translation: (tx, ty),
+            velocity: (vx, vy),
+            values: (x_val.unwrap_or(0.0), y_val.unwrap_or(0.0)),
+        },
+    );
+}
+
+/// # Safety
+///
+/// `handle` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_pinchStart(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    id: jint,
+) {
+    crate::animation::transform_began(id as NodeId, false);
+    dispatch(handle, id, EventKind::PinchStart, EventPayload::None);
+}
+
+/// # Safety
+///
+/// `handle` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_pinchMove(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    _handle: jlong,
+    id: jint,
+    scale: jfloat,
+) {
+    crate::animation::transform_moved(id as NodeId, false, scale);
+}
+
+/// # Safety
+///
+/// `handle` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_pinchEnd(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    id: jint,
+    scale: jfloat,
+    velocity: jfloat,
+) {
+    let value = crate::animation::transform_value(id as NodeId, false).unwrap_or(1.0);
+    dispatch(
+        handle,
+        id,
+        EventKind::PinchEnd,
+        EventPayload::Pinch {
+            scale,
+            velocity,
+            value,
+        },
+    );
+}
+
+/// # Safety
+///
+/// `handle` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_rotationStart(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    id: jint,
+) {
+    crate::animation::transform_began(id as NodeId, true);
+    dispatch(handle, id, EventKind::RotationStart, EventPayload::None);
+}
+
+/// # Safety
+///
+/// `handle` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_rotationMove(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    _handle: jlong,
+    id: jint,
+    angle: jfloat,
+) {
+    crate::animation::transform_moved(id as NodeId, true, angle);
+}
+
+/// # Safety
+///
+/// `handle` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_rotationEnd(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    id: jint,
+    angle: jfloat,
+    velocity: jfloat,
+) {
+    let value = crate::animation::transform_value(id as NodeId, true).unwrap_or(0.0);
+    dispatch(
+        handle,
+        id,
+        EventKind::RotationEnd,
+        EventPayload::Rotation {
+            angle,
+            velocity,
+            value,
+        },
+    );
+}
+
+/// # Safety
+///
+/// `handle` is live. Returns true if the view has pan gesture bindings.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_hasPan(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    _handle: jlong,
+    id: jint,
+) -> jboolean {
+    crate::animation::has_pan(id as NodeId) as jboolean
+}

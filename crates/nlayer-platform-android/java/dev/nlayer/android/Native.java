@@ -73,6 +73,26 @@ final class Native {
 
   static native void modalShow(long handle, int id);
 
+  static native void panStart(long handle, int id);
+
+  static native void panMove(long handle, int id, float tx, float ty);
+
+  static native void panEnd(long handle, int id, float tx, float ty, float vx, float vy);
+
+  static native void pinchStart(long handle, int id);
+
+  static native void pinchMove(long handle, int id, float scale);
+
+  static native void pinchEnd(long handle, int id, float scale, float velocity);
+
+  static native void rotationStart(long handle, int id);
+
+  static native void rotationMove(long handle, int id, float angle);
+
+  static native void rotationEnd(long handle, int id, float angle, float velocity);
+
+  static native boolean hasPan(long handle, int id);
+
   private Native() {}
 
   static void sendPress(android.view.View view, int id) {
