@@ -351,6 +351,27 @@ export function createAnimation() {
     bind,
     unbind,
     refresh,
+    value(id) {
+      return valueOf(id);
+    },
+    setValue(id, v) {
+      const node = nodes.get(id);
+      if (!node || node.kind !== "value") return;
+      if (node.running) {
+        node.running = null;
+      }
+      node.value = Number(v) || 0;
+      node.velocity = 0;
+      applyAll();
+    },
+    stop(id) {
+      const node = nodes.get(id);
+      if (!node || node.kind !== "value") return;
+      if (node.running) {
+        node.running = null;
+        applyAll();
+      }
+    },
     dispose() {
       if (frame && globalThis.cancelAnimationFrame) globalThis.cancelAnimationFrame(frame);
       frame = 0;

@@ -11,7 +11,7 @@ use std::cell::RefCell;
 
 use nlayer_core::{
     EventKind, NodeId,
-    geometry::{Edges, Size, px},
+    geometry::{Edges, Point, Size, px},
 };
 
 use crate::{Page, PageSession};
@@ -53,12 +53,16 @@ enum Pending {
         ty: f32,
         vx: f32,
         vy: f32,
+        value_x: f32,
+        value_y: f32,
     },
     Transform {
         id: u32,
         rotation: bool,
         phase: u32,
         amount: f32,
+        value: f32,
+        velocity: f32,
     },
 }
 
@@ -116,16 +120,19 @@ fn apply_pending(session: &mut PageSession) {
                 ty,
                 vx,
                 vy,
+                value_x,
+                value_y,
             } => {
                 use nlayer_core::EventKind;
                 let kind = match phase {
                     0 => EventKind::PanStart,
                     2 | 3 => EventKind::PanEnd,
-                    _ => return, // phase 1 (move) doesn't send events, just updates values
+                    _ => return,
                 };
                 let payload = EventPayload::Pan {
                     translation: Point::new(px(tx), px(ty)),
                     velocity: Point::new(px(vx * 1000.0), px(vy * 1000.0)),
+                    values: (value_x, value_y),
                 };
                 session.event(id.into(), kind, payload);
             }
@@ -134,6 +141,8 @@ fn apply_pending(session: &mut PageSession) {
                 rotation,
                 phase,
                 amount,
+                value,
+                velocity,
             } => {
                 use nlayer_core::EventKind;
                 let (kind_start, kind_end) = if rotation {
@@ -148,13 +157,15 @@ fn apply_pending(session: &mut PageSession) {
                 };
                 let payload = if rotation {
                     EventPayload::Rotation {
-                        rotation: amount,
-                        velocity: 0.0,
+                        angle: amount,
+                        velocity,
+                        value,
                     }
                 } else {
                     EventPayload::Pinch {
                         scale: amount,
-                        velocity: 0.0,
+                        velocity,
+                        value,
                     }
                 };
                 session.event(id.into(), kind, payload);
@@ -461,7 +472,7 @@ pub extern "C" fn nlayer_root_size(
 /// Pan gesture phase on view `id` (`phase`: 0 = start, 1 = move, 2 = end, 3 = cancel).
 /// Translation in CSS pixels. Applied at the next [`nlayer_pump`].
 #[unsafe(no_mangle)]
-pub extern "C" fn nlayer_pan(id: u32, phase: u32, tx: f32, ty: f32, vx: f32, vy: f32) {
+pub extern "C" fn nlayer_pan(id: u32, phase: u32, tx: f32, ty: f32, vx: f32, vy: f32, value_x: f32, value_y: f32) {
     push(Pending::Pan {
         id,
         phase,
@@ -469,6 +480,8 @@ pub extern "C" fn nlayer_pan(id: u32, phase: u32, tx: f32, ty: f32, vx: f32, vy:
         ty: finite(ty),
         vx: finite(vx),
         vy: finite(vy),
+        value_x: finite(value_x),
+        value_y: finite(value_y),
     });
 }
 
@@ -476,11 +489,13 @@ pub extern "C" fn nlayer_pan(id: u32, phase: u32, tx: f32, ty: f32, vx: f32, vy:
 /// `phase`: 0 = start, 1 = move, 2 = end). Amount is scale or degrees.
 /// Applied at the next [`nlayer_pump`].
 #[unsafe(no_mangle)]
-pub extern "C" fn nlayer_transform_gesture(id: u32, rotation: u32, phase: u32, amount: f32) {
+pub extern "C" fn nlayer_transform_gesture(id: u32, rotation: u32, phase: u32, amount: f32, velocity: f32, value: f32) {
     push(Pending::Transform {
         id,
         rotation: rotation != 0,
         phase,
         amount: finite(amount),
+        value: finite(value),
+        velocity: finite(velocity),
     });
 }

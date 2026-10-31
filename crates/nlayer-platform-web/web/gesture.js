@@ -26,6 +26,8 @@ export class GestureGate {
       rotation: info.rotation,
       gateState: 0,
       mode: null,
+      panStartValues: null,
+      animation: info.animation,
     });
 
     // Start two-finger transform (only if both pointers target same view)
@@ -44,12 +46,34 @@ export class GestureGate {
       if (pinchId || rotationId) {
         const dx = p2.x - p1.x;
         const dy = p2.y - p1.y;
+        
+        const anim = info.animation;
+        let pinchStart = 1.0;
+        let rotationStart = 0.0;
+        
+        if (pinchId && anim) {
+          const node = p1.pinch?.node ?? pinchId;
+          pinchStart = anim.value?.(node) ?? 1.0;
+          anim.stop?.(node);
+        }
+        
+        if (rotationId && anim) {
+          const node = p1.rotation?.node ?? rotationId;
+          rotationStart = anim.value?.(node) ?? 0.0;
+          anim.stop?.(node);
+        }
+        
         this.twoFinger = {
           pointers: [p1.id, p2.id],
           dist: Math.hypot(dx, dy),
           angle: Math.atan2(dy, dx),
           pinchId,
           rotationId,
+          pinchStart,
+          rotationStart,
+          pinchNode: p1.pinch?.node,
+          rotationNode: p1.rotation?.node,
+          animation: anim,
         };
       }
     }
@@ -76,22 +100,38 @@ export class GestureGate {
 
       if (this.twoFinger.pinchId) {
         const scale = dist / Math.max(1, this.twoFinger.dist);
+        const currentValue = this.twoFinger.pinchStart * scale;
+        
+        if (this.twoFinger.animation) {
+          const node = this.twoFinger.pinchNode ?? this.twoFinger.pinchId;
+          this.twoFinger.animation.setValue?.(node, currentValue);
+        }
+        
         results.push({
           transform: true,
           rotation: false,
           phase: 1,
           amount: scale,
+          value: currentValue,
           targetId: this.twoFinger.pinchId,
         });
       }
 
       if (this.twoFinger.rotationId) {
         const rotation = ((angle - this.twoFinger.angle) * 180) / Math.PI;
+        const currentValue = this.twoFinger.rotationStart + rotation;
+        
+        if (this.twoFinger.animation) {
+          const node = this.twoFinger.rotationNode ?? this.twoFinger.rotationId;
+          this.twoFinger.animation.setValue?.(node, currentValue);
+        }
+        
         results.push({
           transform: true,
           rotation: true,
           phase: 1,
           amount: rotation,
+          value: currentValue,
           targetId: this.twoFinger.rotationId,
         });
       }
@@ -134,6 +174,18 @@ export class GestureGate {
       if (p.pan && (!gated || p.gateState === 1)) {
         p.mode = "pan";
         if (!p.t0) p.t0 = now;
+        
+        // Capture initial animation values and stop animations
+        const panNodes = p.pan.panNodes;
+        const startX = p.animation?.value?.(panNodes[0]) ?? 0;
+        const startY = p.animation?.value?.(panNodes[1]) ?? 0;
+        p.panStartValues = [startX, startY];
+        
+        if (p.animation) {
+          if (panNodes[0] != null) p.animation.stop?.(panNodes[0]);
+          if (panNodes[1] != null) p.animation.stop?.(panNodes[1]);
+        }
+        
         return {
           consumed: true,
           phase: 0,
@@ -151,6 +203,18 @@ export class GestureGate {
       const dt = Math.max(1, now - p.t0);
       const vx = tx / dt;
       const vy = ty / dt;
+      
+      // Update animation values during pan
+      if (p.animation && p.panStartValues && p.pan) {
+        const panNodes = p.pan.panNodes;
+        if (panNodes[0] != null) {
+          p.animation.setValue?.(panNodes[0], p.panStartValues[0] + tx);
+        }
+        if (panNodes[1] != null) {
+          p.animation.setValue?.(panNodes[1], p.panStartValues[1] + ty);
+        }
+      }
+      
       return {
         consumed: true,
         phase: 1,
@@ -185,22 +249,28 @@ export class GestureGate {
 
         if (this.twoFinger.pinchId) {
           const scale = dist / Math.max(1, this.twoFinger.dist);
+          const currentValue = this.twoFinger.pinchStart * scale;
           results.push({
             transform: true,
             rotation: false,
             phase: 2,
             amount: scale,
+            value: currentValue,
+            velocity: 0,
             targetId: this.twoFinger.pinchId,
           });
         }
 
         if (this.twoFinger.rotationId) {
           const rotation = ((angle - this.twoFinger.angle) * 180) / Math.PI;
+          const currentValue = this.twoFinger.rotationStart + rotation;
           results.push({
             transform: true,
             rotation: true,
             phase: 2,
             amount: rotation,
+            value: currentValue,
+            velocity: 0,
             targetId: this.twoFinger.rotationId,
           });
         }
@@ -220,12 +290,23 @@ export class GestureGate {
       const dt = Math.max(1, now - p.t0);
       const vx = tx / dt;
       const vy = ty / dt;
+      
+      // Get current animation values for end event
+      let valueX = 0;
+      let valueY = 0;
+      if (p.panStartValues && p.pan) {
+        valueX = p.panStartValues[0] + tx;
+        valueY = p.panStartValues[1] + ty;
+      }
+      
       return {
         phase: 2,
         tx,
         ty,
         vx,
         vy,
+        valueX,
+        valueY,
         panId: p.pan.id,
       };
     }
@@ -248,12 +329,23 @@ export class GestureGate {
     if (p.mode === "pan") {
       const tx = p.x - p.startX;
       const ty = p.y - p.startY;
+      
+      // Get current animation values for cancel event
+      let valueX = 0;
+      let valueY = 0;
+      if (p.panStartValues && p.pan) {
+        valueX = p.panStartValues[0] + tx;
+        valueY = p.panStartValues[1] + ty;
+      }
+      
       return {
         phase: 3,
         tx,
         ty,
         vx: 0,
         vy: 0,
+        valueX,
+        valueY,
         panId: p.pan.id,
       };
     }
@@ -279,8 +371,8 @@ export function attachGestures(player) {
     let pan = null, pinch = null, rotation = null;
     for (let el = event.target; el && el._id != null; el = el.parentNode) {
       if (!pan && el._panNodes) pan = { id: el._id, panNodes: el._panNodes };
-      if (!pinch && el._pinchNode) pinch = { id: el._id };
-      if (!rotation && el._rotationNode) rotation = { id: el._id };
+      if (!pinch && el._pinchNode) pinch = { id: el._id, node: el._pinchNode };
+      if (!rotation && el._rotationNode) rotation = { id: el._id, node: el._rotationNode };
     }
     
     const scrolls = this.scrollChain(event.target);
@@ -304,6 +396,7 @@ export function attachGestures(player) {
       scroll,
       pinch,
       rotation,
+      animation: this.animation,
     });
   };
   
@@ -321,10 +414,10 @@ export function attachGestures(player) {
     
     if (Array.isArray(result)) {
       for (const r of result) {
-        this.host.transformGesture?.(r.targetId, r.rotation ? 1 : 0, r.phase, r.amount);
+        this.host.transformGesture?.(r.targetId, r.rotation ? 1 : 0, r.phase, r.amount, 0, r.value ?? 0);
       }
     } else {
-      this.host.pan?.(result.panId, result.phase, result.tx, result.ty, result.vx, result.vy);
+      this.host.pan?.(result.panId, result.phase, result.tx, result.ty, result.vx, result.vy, result.valueX ?? 0, result.valueY ?? 0);
     }
   };
   
@@ -335,10 +428,10 @@ export function attachGestures(player) {
     
     if (Array.isArray(result)) {
       for (const r of result) {
-        this.host.transformGesture?.(r.targetId, r.rotation ? 1 : 0, r.phase, r.amount);
+        this.host.transformGesture?.(r.targetId, r.rotation ? 1 : 0, r.phase, r.amount, r.velocity ?? 0, r.value ?? 0);
       }
     } else if (result.panId) {
-      this.host.pan?.(result.panId, result.phase, result.tx, result.ty, result.vx, result.vy);
+      this.host.pan?.(result.panId, result.phase, result.tx, result.ty, result.vx, result.vy, result.valueX ?? 0, result.valueY ?? 0);
     }
   };
   
@@ -351,7 +444,7 @@ export function attachGestures(player) {
     
     const result = this.gestures.cancel(id);
     if (result && result.panId) {
-      this.host.pan?.(result.panId, result.phase, result.tx, result.ty, result.vx, result.vy);
+      this.host.pan?.(result.panId, result.phase, result.tx, result.ty, result.vx, result.vy, result.valueX ?? 0, result.valueY ?? 0);
     }
     
     const scrolls = tracked?.scrolls ?? this.scrollChain(event.target);
