@@ -2,13 +2,16 @@ import { cleanup, effect, mount, resource, signal, storage } from "@nlayer/runti
 import {
   Animated,
   BackHandler,
+  Dialog,
   Image,
   Input,
   List,
+  NavStack,
   Scroll,
   Text,
   View,
   createAnimatedValue,
+  createNavStack,
   platform,
 } from "@nlayer/ui";
 import mark from "./mark.png";
@@ -650,6 +653,84 @@ function BackNav() {
         <Text style={{ fontSize: 14, color: "#10b981", marginTop: 8 }}>Back handled!</Text>
       )}
     </Section>
+  );
+}
+
+function DialogDemoPage(props: { nav: ReturnType<typeof createNavStack<Route>> }) {
+  const [dialogOpen, setDialogOpen] = signal(false);
+  const [dialogAnimation, setDialogAnimation] = signal<"fade" | "slide" | "scale">("fade");
+  
+  return (
+    <View testID="dialog-page" style={{ flex: 1, backgroundColor: "#fff", padding: 16 }}>
+      <Text style={{ fontSize: 20, fontWeight: "700", marginBottom: 16 }}>Dialog Demo</Text>
+      <Text testID="dialog-back" onPress={() => props.nav.pop()} style={{ color: "#3b82f6", marginBottom: 16 }}>
+        ← Back
+      </Text>
+      
+      <View style={{ gap: 12 }}>
+        <Text testID="open-dialog" onPress={() => { setDialogAnimation("fade"); setDialogOpen(true); }}
+              style={{ padding: 12, backgroundColor: "#3b82f6", color: "#fff", borderRadius: 6, textAlign: "center" }}>
+          Open Dialog (fade)
+        </Text>
+        <Text testID="open-slide" onPress={() => { setDialogAnimation("slide"); setDialogOpen(true); }}
+              style={{ padding: 12, backgroundColor: "#8b5cf6", color: "#fff", borderRadius: 6, textAlign: "center" }}>
+          Open Dialog (slide)
+        </Text>
+        <Text testID="open-scale" onPress={() => { setDialogAnimation("scale"); setDialogOpen(true); }}
+              style={{ padding: 12, backgroundColor: "#ec4899", color: "#fff", borderRadius: 6, textAlign: "center" }}>
+          Open Dialog (scale)
+        </Text>
+      </View>
+      
+      {dialogOpen() && (
+        <Dialog
+          testID="demo-dialog"
+          animation={dialogAnimation()}
+          onClose={() => setDialogOpen(false)}
+        >
+          <View style={{ backgroundColor: "#fff", padding: 24, borderRadius: 12, minWidth: 280 }}>
+            <Text style={{ fontSize: 18, fontWeight: "700", marginBottom: 12 }}>Dialog Title</Text>
+            <Text style={{ color: "#64748b", marginBottom: 16 }}>
+              Click outside, press Escape, or use back to close
+            </Text>
+            <Text testID="close-dialog" onPress={() => setDialogOpen(false)}
+                  style={{ padding: 12, backgroundColor: "#3b82f6", color: "#fff", borderRadius: 6, textAlign: "center" }}>
+              Close
+            </Text>
+          </View>
+        </Dialog>
+      )}
+    </View>
+  );
+}
+
+function GestureCardPage(props: { nav: ReturnType<typeof createNavStack<Route>> }) {
+  const translateX = createAnimatedValue(0);
+  const translateY = createAnimatedValue(0);
+  
+  return (
+    <View testID="gesture-page" style={{ flex: 1, backgroundColor: "#fff", padding: 16 }}>
+      <Text style={{ fontSize: 20, fontWeight: "700", marginBottom: 16 }}>Gesture Card</Text>
+      <Text testID="gesture-back" onPress={() => props.nav.pop()} style={{ color: "#3b82f6", marginBottom: 16 }}>
+        ← Back
+      </Text>
+      
+      <Animated
+        testID="gesture-card"
+        pan={{ x: translateX, y: translateY }}
+        style={{
+          width: 200,
+          height: 200,
+          backgroundColor: "#3b82f6",
+          borderRadius: 12,
+          justifyContent: "center",
+          alignItems: "center",
+          transform: [{ translateX }, { translateY }],
+        }}
+      >
+        <Text style={{ color: "#fff", fontSize: 16, fontWeight: "600" }}>Drag Me</Text>
+      </Animated>
+    </View>
   );
 }
 
