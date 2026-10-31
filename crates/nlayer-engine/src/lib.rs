@@ -964,7 +964,7 @@ fn extend_frame(frame: &mut Vec<nlayer_core::MountItem>, items: Vec<nlayer_core:
     let start = frame.len();
     frame.extend(items);
     for k in start..frame.len() {
-        let MountItem::ScrollContent { id, size } = frame[k] else {
+        let MountItem::ScrollContent { id, size, .. } = frame[k] else {
             continue;
         };
         let earlier = frame[..k].iter().rposition(|m| {

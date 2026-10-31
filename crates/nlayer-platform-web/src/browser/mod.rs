@@ -171,6 +171,10 @@ impl Bridge for Runtime {
                 Ok(value) => value,
                 Err(_) => return,
             },
+            EventPayload::Pan { .. } | EventPayload::Pinch { .. } | EventPayload::Rotation { .. } => {
+                // Gesture events not supported in web platform yet
+                return;
+            }
         };
         let Ok(id) = Value::number(id as f64) else {
             return;

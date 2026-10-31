@@ -226,11 +226,38 @@ impl Encoder {
                     .str(dismiss.name())
                     .end();
             }
-            MountItem::ScrollContent { id, size } => {
+            MountItem::ScrollContent {
+                id,
+                size,
+                refresh_indicator,
+                paging,
+                snap_interval,
+                snap_offsets,
+                snap_alignment,
+                disable_interval_momentum,
+                deceleration,
+            } => {
                 out.item("scs")
                     .num(*id)
                     .num(size.width.0)
                     .num(size.height.0)
+                    .opt_num(refresh_indicator.as_ref().map(|h| h.0))
+                    .bool(*paging)
+                    .opt_num(*snap_interval);
+                out.s.push(',');
+                if let Some(offsets) = snap_offsets {
+                    out.s.push('[');
+                    for (i, off) in offsets.iter().enumerate() {
+                        if i > 0 { out.s.push(','); }
+                        write!(out.s, "{}", off).unwrap();
+                    }
+                    out.s.push(']');
+                } else {
+                    out.s.push_str("null");
+                }
+                out.num(*snap_alignment)
+                    .bool(*disable_interval_momentum)
+                    .num(*deceleration)
                     .end();
             }
             MountItem::ScrollBy { id, dx, dy } => {
@@ -414,6 +441,54 @@ impl Encoder {
                 } else {
                     "false"
                 });
+                out.s.push('}');
+                out.end();
+            }
+            MountItem::ListContent {
+                id,
+                sticky_indices,
+                inverted,
+                viewport_parent,
+                viewability,
+                maintain_position,
+            } => {
+                out.item("lc").num(*id);
+                out.s.push_str(",{");
+                out.s.push_str("\"stickyIndices\":[");
+                for (i, idx) in sticky_indices.iter().enumerate() {
+                    if i > 0 {
+                        out.s.push(',');
+                    }
+                    write!(out.s, "{}", idx).unwrap();
+                }
+                out.s.push_str("],\"inverted\":");
+                out.s.push_str(if *inverted { "true" } else { "false" });
+                out.s.push_str(",\"viewportParent\":");
+                out.s.push_str(if *viewport_parent { "true" } else { "false" });
+                if let Some(v) = viewability {
+                    out.s.push_str(",\"viewability\":{");
+                    if let Some(coverage) = v.view_area_coverage_threshold {
+                        out.s.push_str("\"viewAreaCoverage\":");
+                        write!(out.s, "{}", coverage).unwrap();
+                    }
+                    if let Some(item_visible) = v.item_visible_threshold {
+                        if v.view_area_coverage_threshold.is_some() {
+                            out.s.push(',');
+                        }
+                        out.s.push_str("\"itemVisible\":");
+                        write!(out.s, "{}", item_visible).unwrap();
+                    }
+                    out.s.push('}');
+                }
+                if let Some(m) = maintain_position {
+                    out.s.push_str(",\"maintainPosition\":{\"minIndex\":");
+                    write!(out.s, "{}", m.min_index_for_visible).unwrap();
+                    if let Some(threshold) = m.autoscroll_to_bottom_threshold {
+                        out.s.push_str(",\"autoscrollThreshold\":");
+                        write!(out.s, "{}", threshold).unwrap();
+                    }
+                    out.s.push('}');
+                }
                 out.s.push('}');
                 out.end();
             }
