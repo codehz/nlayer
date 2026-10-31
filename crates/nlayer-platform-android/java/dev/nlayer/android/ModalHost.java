@@ -38,6 +38,9 @@ final class ModalHost {
   /** The dialog window's keyboard inset (IME bottom), in pixels. */
   int keyboardInset;
 
+  /** Show order for topmost determination (from mounter.modalShowOrder). */
+  int showOrder;
+
   ModalHost(Context context, Mounter mounter, int id) {
     this.mounter = mounter;
     this.id = id;
@@ -95,6 +98,7 @@ final class ModalHost {
               android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, () -> mounter.host.back());
     }
     dialog.show();
+    showOrder = ++mounter.modalShowOrder;
     mounter.host.updateKeyboard();
     matchSystemBars(window);
     container.setAlpha(animation == 1 ? 0 : 1);

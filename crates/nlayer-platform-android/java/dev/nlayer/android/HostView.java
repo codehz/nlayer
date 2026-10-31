@@ -23,7 +23,11 @@ public final class HostView extends FrameLayout {
   private long handle;
   private String code, assetsDir;
   private boolean apkAssets;
-  int safeTop, safeRight, safeBottom, safeLeft, activityKeyboard;
+  int safeTop, safeRight, safeBottom, safeLeft, activityKeyboard, keyboard;
+
+  /** Last published insets for regression testing. Package-private for JavaTests. */
+  int lastPublishedTop, lastPublishedKeyboard;
+
   private boolean served;
   private boolean framePosted;
   private boolean inFrame;
@@ -229,33 +233,38 @@ public final class HostView extends FrameLayout {
   }
 
   /**
-   * Recomputes the effective keyboard from modals and activity. The topmost shown modal with a
-   * keyboard > 0 wins; otherwise the activity's keyboard.
+   * Recomputes the effective keyboard from modals and activity, then publishes all insets. Always
+   * publishes to avoid dropping safe-area changes when the keyboard is unchanged. The topmost shown
+   * modal (by show order) with a keyboard > 0 wins; otherwise the activity's keyboard.
    */
   void updateKeyboard() {
-    int effective = effectiveKeyboard();
-    if (keyboard != effective) {
-      keyboard = effective;
-      if (handle != 0)
-        Native.insets(
-            handle,
-            safeTop / density,
-            safeRight / density,
-            safeBottom / density,
-            safeLeft / density,
-            keyboard / density);
+    if (pin != null) return;
+    keyboard = effectiveKeyboard();
+    if (handle != 0) {
+      lastPublishedTop = safeTop;
+      lastPublishedKeyboard = keyboard;
+      Native.insets(
+          handle,
+          safeTop / density,
+          safeRight / density,
+          safeBottom / density,
+          safeLeft / density,
+          keyboard / density);
     }
   }
 
   private int effectiveKeyboard() {
-    // Topmost shown modal with keyboard > 0, else activity
-    for (int i = mounter.modals.size() - 1; i >= 0; i--) {
+    // Topmost shown modal by show order with keyboard > 0, else activity
+    ModalHost topmost = null;
+    int topmostOrder = -1;
+    for (int i = 0; i < mounter.modals.size(); i++) {
       ModalHost modal = mounter.modals.valueAt(i);
-      if (modal.shown() && modal.keyboardInset > 0) {
-        return modal.keyboardInset;
+      if (modal.shown() && modal.keyboardInset > 0 && modal.showOrder > topmostOrder) {
+        topmost = modal;
+        topmostOrder = modal.showOrder;
       }
     }
-    return activityKeyboard;
+    return topmost != null ? topmost.keyboardInset : activityKeyboard;
   }
 
   /** The system's color scheme changed (`onConfigurationChanged`). */

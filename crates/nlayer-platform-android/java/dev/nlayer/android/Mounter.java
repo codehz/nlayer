@@ -79,6 +79,10 @@ final class Mounter {
   final SparseArray<ModalOptions> modalOptions = new SparseArray<>();
   final SparseArray<int[]> headerSizes = new SparseArray<>();
   final SparseArray<ModalHost> modals = new SparseArray<>();
+
+  /** Monotonic counter for modal show order (topmost determination). */
+  int modalShowOrder;
+
   final java.util.LinkedHashSet<Integer> dirtyStacks = new java.util.LinkedHashSet<>();
   final java.util.LinkedHashSet<Integer> dirtyScreens = new java.util.LinkedHashSet<>();
   final java.util.LinkedHashSet<Integer> dirtyModals = new java.util.LinkedHashSet<>();

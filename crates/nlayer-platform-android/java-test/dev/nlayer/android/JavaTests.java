@@ -59,6 +59,7 @@ public final class JavaTests extends Instrumentation {
     "testModalConfigurationAndBackStack",
     "testPushAnimationUsesScreenConfig",
     "testKeyboardHeightCalculation",
+    "testSafeAreaUpdatesWithUnchangedKeyboard",
   };
 
   @Override
@@ -1507,5 +1508,45 @@ public final class JavaTests extends Instrumentation {
     // Unlaid-out view
     equal(0, HostActivity.keyboardHeight(0, 0, 0), "zero height root: no keyboard");
     equal(0, HostActivity.keyboardHeight(0, -100, 0), "negative visible: no keyboard");
+  }
+
+  void testSafeAreaUpdatesWithUnchangedKeyboard() {
+    Intent intent = new Intent(getTargetContext(), HostActivity.class);
+    intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+    Activity activity = startActivitySync(intent);
+    waitForIdleSync();
+    try {
+      HostView host =
+          main(
+              () -> {
+                ViewGroup root = (ViewGroup) activity.findViewById(android.R.id.content);
+                return (HostView) root.getChildAt(0);
+              });
+      // Simulate a safe-area change (rotation/cutout) with keyboard unchanged at 0
+      main(
+          () -> {
+            host.setInsets(100, 0, 0, 0, 0);
+            return null;
+          });
+      waitForIdleSync();
+      equal(100, host.lastPublishedTop, "safe-area change published with keyboard=0");
+      equal(0, host.lastPublishedKeyboard, "keyboard=0 published");
+      // Another safe-area change, keyboard still 0
+      main(
+          () -> {
+            host.setInsets(150, 0, 0, 0, 0);
+            return null;
+          });
+      waitForIdleSync();
+      equal(150, host.lastPublishedTop, "second safe-area change published");
+      equal(0, host.lastPublishedKeyboard, "keyboard still 0");
+    } finally {
+      main(
+          () -> {
+            activity.finish();
+            return null;
+          });
+      waitForIdleSync();
+    }
   }
 }

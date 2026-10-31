@@ -230,6 +230,7 @@ public class HostActivity extends Activity {
   }
 
   static int keyboardHeight(int rootHeight, int visibleBottom, int navBottom) {
+    if (rootHeight <= 0) return 0;
     int overlap = rootHeight - visibleBottom;
     if (overlap <= navBottom) return 0;
     return overlap;
