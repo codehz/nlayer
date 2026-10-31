@@ -900,17 +900,15 @@ pub(crate) fn new_graph(raw: *mut JsContext) -> Graph {
             qjs::JS_SetClassProto(raw, id, proto);
             id
         };
-        // A signal's methods: `count.set(1)`, `count.update(n => n + 1)`.
-        let signal_proto = qjs::JS_NewObjectProto(raw, function_proto);
-        for (name, f, length) in [
-            (c"set", signal_set as Native, 1),
-            (c"update", signal_update as Native, 1),
-        ] {
-            let func = new_function(raw, name, f, length);
-            qjs::JS_SetPropertyStr(raw, signal_proto, name.as_ptr(), func);
-        }
         let classes = Classes {
-            signal: class(c"Signal", Some(signal_call), true, signal_proto),
+            // `set` and `update` are own methods (`signal_object`), bound
+            // to their signal.
+            signal: class(
+                c"Signal",
+                Some(signal_call),
+                true,
+                qjs::JS_DupValue(raw, function_proto),
+            ),
             setter: class(
                 c"SignalSetter",
                 Some(setter_call),
@@ -1030,8 +1028,46 @@ pub(crate) unsafe extern "C" fn signal(
     argv: *mut JsValue,
 ) -> JsValue {
     let id = new_signal_node(cx, arg(argc, argv, 0), arg(argc, argv, 1));
+    signal_object(cx, id)
+}
+
+/// A signal object naming `id`: callable to read it, with its own `set` and
+/// `update` bound to it, so a signal's method works as a callback
+/// (`onChange={value.set}`), as the browser facade's accessor does.
+fn signal_object(cx: *mut JsContext, id: u32) -> JsValue {
     let class = unsafe { graph(cx) }.data.classes.signal;
-    object(cx, class, id)
+    let obj = object(cx, class, id);
+    for (name, f) in [
+        (c"set", signal_set as DataNative),
+        (c"update", signal_update as DataNative),
+    ] {
+        let mut data = [obj];
+        // SAFETY: the function keeps dups of `data`.
+        let func = unsafe { qjs::JS_NewCFunctionData(cx, Some(f), 1, 0, 1, data.as_mut_ptr()) };
+        unsafe { qjs::JS_SetPropertyStr(cx, obj, name.as_ptr(), func) };
+    }
+    obj
+}
+
+/// A native function holding data (a signal's own method).
+type DataNative = unsafe extern "C" fn(
+    *mut JsContext,
+    JsValue,
+    c_int,
+    *mut JsValue,
+    c_int,
+    *mut JsValue,
+) -> JsValue;
+
+/// The signal `data`'s first value names, or a thrown `TypeError`.
+fn bound_signal(cx: *mut JsContext, data: *mut JsValue) -> Result<u32, JsValue> {
+    let class = unsafe { graph(cx) }.data.classes.signal;
+    // SAFETY: one data value (`signal_object`).
+    match unsafe { node_of(cx, *data, class) } {
+        Some(id) => Ok(id),
+        // SAFETY: throwing on a live context.
+        None => Err(unsafe { qjs::JS_ThrowTypeError(cx, c"not a live signal".as_ptr()) }),
+    }
 }
 
 /// The signal `this` names, or a thrown `TypeError`.
@@ -1044,14 +1080,16 @@ fn this_signal(cx: *mut JsContext, this: JsValue) -> Result<u32, JsValue> {
     }
 }
 
-/// `signal.set(value)`.
+/// A signal's `set(value)`.
 unsafe extern "C" fn signal_set(
     cx: *mut JsContext,
-    this: JsValue,
+    _this: JsValue,
     argc: c_int,
     argv: *mut JsValue,
+    _magic: c_int,
+    data: *mut JsValue,
 ) -> JsValue {
-    let id = match this_signal(cx, this) {
+    let id = match bound_signal(cx, data) {
         Ok(id) => id,
         Err(e) => return e,
     };
@@ -1060,14 +1098,16 @@ unsafe extern "C" fn signal_set(
     finish(cx, UNDEFINED)
 }
 
-/// `signal.update(fn)`: sets `fn(current value)`.
+/// A signal's `update(fn)`: sets `fn(current value)`.
 unsafe extern "C" fn signal_update(
     cx: *mut JsContext,
-    this: JsValue,
+    _this: JsValue,
     argc: c_int,
     argv: *mut JsValue,
+    _magic: c_int,
+    data: *mut JsValue,
 ) -> JsValue {
-    let id = match this_signal(cx, this) {
+    let id = match bound_signal(cx, data) {
         Ok(id) => id,
         Err(e) => return e,
     };
