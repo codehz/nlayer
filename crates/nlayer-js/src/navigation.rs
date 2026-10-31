@@ -1493,18 +1493,6 @@ unsafe extern "C" fn call_callback(
     }
     UNDEFINED
 }
-
-unsafe extern "C" fn dup_value(
-    cx: *mut JsContext,
-    _this: JsValue,
-    _argc: c_int,
-    _argv: *mut JsValue,
-    _magic: c_int,
-    data: *mut JsValue,
-) -> JsValue {
-    qjs::JS_DupValue(cx, *data)
-}
-
 // --- Helpers ----------------------------------------------------------------------
 
 fn new_array(cx: *mut JsContext, items: Vec<JsValue>) -> JsValue {

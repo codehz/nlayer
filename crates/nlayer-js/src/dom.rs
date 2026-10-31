@@ -716,6 +716,7 @@ pub(crate) fn bind_prop_with(
     unsafe { qjs::JS_FreeValue(cx, r) };
     Ok(())
 }
+
 /// `spread(node, props)`: every prop of `props` (an object, possibly with
 /// getters), followed.
 unsafe extern "C" fn spread(
