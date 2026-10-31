@@ -862,7 +862,16 @@ impl<M: TextEngine> Session<M> {
             let mut events = Vec::new();
             self.core.take_events(&mut events);
             for (id, event) in &events {
-                self.host.dispatch_event(*id, *event, &EventPayload::None);
+                let payload = if *event == EventKind::ViewableItemsChange {
+                    if let Some((first, last)) = self.core.viewable_range(*id) {
+                        EventPayload::ViewableItemsChange { first, last }
+                    } else {
+                        EventPayload::None
+                    }
+                } else {
+                    EventPayload::None
+                };
+                self.host.dispatch_event(*id, *event, &payload);
             }
             // The window's own binds: the next round renders them.
             let mut binds: Vec<ListBind> = Vec::new();

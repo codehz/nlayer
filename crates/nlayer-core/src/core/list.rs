@@ -279,7 +279,23 @@ impl ListState {
         }
         self.items_changed = true;
         self.pin = None;
-        let anchor = (self.count > 0 && self.viewport > 0.0).then(|| {
+        
+        // Check if we should autoscroll to bottom after inserting
+        let was_near_bottom = self.maintain_position.as_ref().and_then(|m| {
+            m.autoscroll_to_bottom_threshold.and_then(|threshold| {
+                let content_len = self.content_len();
+                let bottom_edge = self.offset + self.viewport;
+                (content_len - bottom_edge <= threshold).then_some(threshold)
+            })
+        });
+        
+        // Only maintain position if splice is at/before min_index_for_visible
+        let should_maintain = self.maintain_position.as_ref().map_or(
+            true, // Default: always maintain (backwards compat)
+            |m| at <= m.min_index_for_visible
+        );
+        
+        let anchor = (should_maintain && self.count > 0 && self.viewport > 0.0).then(|| {
             let row = self
                 .rows
                 .find((self.offset - self.blocks().body).max(0.0) as f64)
@@ -338,7 +354,13 @@ impl ListState {
         if self.load_more_at.is_some() {
             self.load_more_at = None;
         }
-        if let Some((index, from_top)) = anchor
+        
+        // Auto-scroll to bottom if we were near bottom and items were inserted
+        if was_near_bottom.is_some() && inserted > 0 {
+            let content_len = self.content_len();
+            self.offset = (content_len - self.viewport).max(0.0);
+            self.splice_anchor = 0.0;
+        } else if let Some((index, from_top)) = anchor
             && index >= at + removed
         {
             let moved_to = index - removed + inserted;
@@ -670,6 +692,81 @@ impl ListState {
             return true;
         }
         false
+    }
+
+    /// Computes the viewable item range based on viewability config.
+    /// Returns `Some((first, last))` if the range changed, `None` otherwise.
+    pub(super) fn check_viewable_items(&mut self) -> Option<(u32, u32)> {
+        let config = self.viewability?;
+        if self.count == 0 || self.viewport <= 0.0 {
+            let changed = self.viewable_range.take().is_some();
+            return if changed { Some((0, 0)) } else { None };
+        }
+
+        let viewport_start = self.offset;
+        let viewport_end = self.offset + self.viewport;
+
+        let mut first = None;
+        let mut last = None;
+
+        for i in 0..self.count {
+            let item_start = self.item_at(i);
+            let item_size = self.row_size(self.row_of(i));
+            let item_end = item_start + item_size;
+
+            // Skip items entirely outside viewport
+            if item_end <= viewport_start || item_start >= viewport_end {
+                continue;
+            }
+
+            // Calculate visible portion
+            let visible_start = item_start.max(viewport_start);
+            let visible_end = item_end.min(viewport_end);
+            let visible_size = visible_end - visible_start;
+
+            let mut is_viewable = false;
+
+            // Check view_area_coverage_threshold: how much of viewport item covers
+            if let Some(threshold) = config.view_area_coverage_threshold {
+                let coverage = visible_size / self.viewport;
+                is_viewable = coverage >= threshold;
+            }
+
+            // Check item_visible_threshold: how much of item is visible
+            if let Some(threshold) = config.item_visible_threshold {
+                if item_size > 0.0 {
+                    let visibility = visible_size / item_size;
+                    if config.view_area_coverage_threshold.is_some() {
+                        // Both thresholds: item must satisfy both (AND)
+                        is_viewable = is_viewable && visibility >= threshold;
+                    } else {
+                        // Only item_visible_threshold
+                        is_viewable = visibility >= threshold;
+                    }
+                }
+            }
+
+            // If neither threshold is set, any visibility counts
+            if config.view_area_coverage_threshold.is_none() && config.item_visible_threshold.is_none() {
+                is_viewable = true;
+            }
+
+            if is_viewable {
+                if first.is_none() {
+                    first = Some(i);
+                }
+                last = Some(i);
+            }
+        }
+
+        let new_range = first.and_then(|f| last.map(|l| (f, l)));
+
+        if new_range != self.viewable_range {
+            self.viewable_range = new_range;
+            new_range
+        } else {
+            None
+        }
     }
 
     /// The span (content coordinates) whose cells bind with the window: the

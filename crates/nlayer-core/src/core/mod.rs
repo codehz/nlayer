@@ -824,6 +824,12 @@ impl<M: TextEngine> Core<M> {
         out.append(&mut self.events);
     }
 
+    /// Gets the viewable item range for a list (for ViewableItemsChange event payload).
+    pub fn viewable_range(&self, id: NodeId) -> Option<(u32, u32)> {
+        let key = self.key(id).ok()?;
+        self.nodes[key as usize].list.as_ref()?.viewable_range
+    }
+
     /// The user edited input `id` (before JS sees the edit): keeps the text
     /// for layout and for stale-value detection.
     pub fn input_changed(&mut self, id: NodeId, text: &str, count: u32) {
@@ -3612,6 +3618,16 @@ impl<M: TextEngine> Core<M> {
             };
             if load_more {
                 self.events.push((id, EventKind::LoadMore));
+            }
+            // Check viewable items range
+            if self.nodes[key as usize]
+                .list
+                .as_mut()
+                .expect("list")
+                .check_viewable_items()
+                .is_some()
+            {
+                self.events.push((id, EventKind::ViewableItemsChange));
             }
             if !binds.is_empty() {
                 self.list_binds.push(ListBind { list: id, binds });
