@@ -958,20 +958,17 @@ final class Mounter {
   }
 
   private void finishNavigation() {
-    // Reconcile dirty stacks and mark their screens dirty
+    // Mark screens of dirty stacks as dirty
     for (int stackId : dirtyStacks) {
       View v = views.get(stackId);
       if (v instanceof StackBox) {
         StackBox stack = (StackBox) v;
-        stack.reconcile();
         for (int screenId : stack.screens) {
           dirtyScreens.add(screenId);
         }
       }
     }
-
-    dirtyStacks.clear();
-    // Configure dirty screens
+    // Configure dirty screens BEFORE reconciling (so animation fields are fresh)
     for (int screenId : dirtyScreens) {
       View v = views.get(screenId);
       if (!(v instanceof StackBox.ScreenBox)) continue;
@@ -1007,6 +1004,16 @@ final class Mounter {
           opts.headerHeight,
           canGoBack);
     }
+    dirtyScreens.clear();
+    // Reconcile dirty stacks AFTER screen configs are applied
+    for (int stackId : dirtyStacks) {
+      View v = views.get(stackId);
+      if (v instanceof StackBox) {
+        StackBox stack = (StackBox) v;
+        stack.reconcile();
+      }
+    }
+    dirtyStacks.clear();
     // Handle dirty modals
     for (int modalId : dirtyModals) {
       ModalHost modal = modals.get(modalId);
@@ -1027,7 +1034,6 @@ final class Mounter {
       }
     }
     dirtyModals.clear();
-    dirtyScreens.clear();
   }
 
   StackBox backStack() {
