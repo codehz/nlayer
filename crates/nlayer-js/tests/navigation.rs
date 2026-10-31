@@ -407,6 +407,39 @@ fn dialog_request_close_calls_cancel_and_reports_reason() {
 }
 
 #[test]
+fn dialog_request_close_uses_the_native_reason() {
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r#"
+        import { Dialog } from "@nlayer/ui";
+        import { mount } from "@nlayer/runtime";
+        globalThis.cancelCalls = "0";
+        globalThis.change = "";
+        globalThis.dispose = mount(() => Dialog({
+          open: true,
+          closeOnSwipe: false,
+          onCancel: () => { cancelCalls = String(Number(cancelCalls) + 1); },
+          onOpenChange: event => { change = `${event.open}:${event.reason}`; },
+          children: "content"
+        }));
+        "#,
+    )
+    .unwrap();
+    let mut ops = Vec::new();
+    host.take_ops(&mut ops);
+    let id = create_id(&ops, Tag::Modal).expect("open Dialog creates a modal");
+
+    // A native sheet swipe reports "swipe": `closeOnSwipe` false keeps it open.
+    host.dispatch_event(
+        id,
+        EventKind::RequestClose,
+        &EventPayload::CloseReason("swipe".into()),
+    );
+    assert_eq!(host.global_string("cancelCalls").as_deref(), Some("1"));
+    assert_eq!(host.global_string("change").as_deref(), Some(""));
+}
+
+#[test]
 fn dialog_close_flag_blocks_open_change_but_still_calls_cancel() {
     let host = Host::new().unwrap();
     host.eval_source(
@@ -825,4 +858,39 @@ fn dialog_does_not_spread_on_insets_to_modal() {
         .unwrap();
     let called = host.global_string("callStatus").unwrap();
     assert_eq!(called, "0", "onInsets should not be spread to Modal");
+}
+
+#[test]
+fn insets_event_dispatches_to_handler() {
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r#"
+        import { View } from "@nlayer/ui";
+        import { mount } from "@nlayer/runtime";
+        globalThis.insets = null;
+        globalThis.dispose = mount(() => View({
+          onInsets: (data) => { insets = JSON.stringify(data); },
+          children: "content"
+        }));
+        "#,
+    )
+    .unwrap();
+    let mut ops = Vec::new();
+    host.take_ops(&mut ops);
+    let id = create_id(&ops, Tag::View).expect("View creates a view node");
+
+    host.dispatch_event(
+        id,
+        EventKind::Insets,
+        &EventPayload::Insets {
+            top: 1.0,
+            right: 2.0,
+            bottom: 3.0,
+            left: 4.0,
+        },
+    );
+    assert_eq!(
+        host.global_string("insets").as_deref(),
+        Some(r#"{"top":1,"right":2,"bottom":3,"left":4}"#)
+    );
 }

@@ -120,6 +120,46 @@ impl Bridge for Runtime {
                 }
                 object
             }
+            EventPayload::Insets {
+                top,
+                right,
+                bottom,
+                left,
+            } => {
+                let object = match Value::object() {
+                    Ok(object) => object,
+                    Err(_) => return,
+                };
+                let (Ok(top), Ok(right), Ok(bottom), Ok(left)) = (
+                    Value::number(f64::from(*top)),
+                    Value::number(f64::from(*right)),
+                    Value::number(f64::from(*bottom)),
+                    Value::number(f64::from(*left)),
+                ) else {
+                    return;
+                };
+                if object.set("top", top).is_err()
+                    || object.set("right", right).is_err()
+                    || object.set("bottom", bottom).is_err()
+                    || object.set("left", left).is_err()
+                {
+                    return;
+                }
+                object
+            }
+            EventPayload::CloseReason(reason) => {
+                let object = match Value::object() {
+                    Ok(object) => object,
+                    Err(_) => return,
+                };
+                let Ok(reason) = Value::string(reason) else {
+                    return;
+                };
+                if object.set("reason", reason).is_err() {
+                    return;
+                }
+                object
+            }
             EventPayload::Scroll {
                 x,
                 y,

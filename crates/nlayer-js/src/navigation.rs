@@ -677,7 +677,9 @@ unsafe extern "C" fn on_insets_handler(
 ) -> JsValue {
     // SAFETY: data points to valid signal value owned by the function data
     let signal = unsafe { *data };
-    let payload = reactive::arg(argc, argv, 0);
+    // `set_signal` takes the value; the dispatcher frees the argument it
+    // passed us, so hand it a duplicate.
+    let payload = unsafe { qjs::JS_DupValue(cx, reactive::arg(argc, argv, 0)) };
     reactive::set_signal(cx, signal, payload);
     UNDEFINED
 }

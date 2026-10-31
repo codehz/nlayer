@@ -2073,6 +2073,49 @@ pub(crate) fn dispatch(
             );
             object
         },
+        crate::EventPayload::Insets {
+            top,
+            right,
+            bottom,
+            left,
+        } => unsafe {
+            let object = qjs::JS_NewObject(cx);
+            qjs::JS_SetPropertyStr(
+                cx,
+                object,
+                c"top".as_ptr(),
+                qjs::JS_NewFloat64(f64::from(*top)),
+            );
+            qjs::JS_SetPropertyStr(
+                cx,
+                object,
+                c"right".as_ptr(),
+                qjs::JS_NewFloat64(f64::from(*right)),
+            );
+            qjs::JS_SetPropertyStr(
+                cx,
+                object,
+                c"bottom".as_ptr(),
+                qjs::JS_NewFloat64(f64::from(*bottom)),
+            );
+            qjs::JS_SetPropertyStr(
+                cx,
+                object,
+                c"left".as_ptr(),
+                qjs::JS_NewFloat64(f64::from(*left)),
+            );
+            object
+        },
+        crate::EventPayload::CloseReason(reason) => unsafe {
+            let object = qjs::JS_NewObject(cx);
+            qjs::JS_SetPropertyStr(
+                cx,
+                object,
+                c"reason".as_ptr(),
+                qjs::JS_NewStringLen(cx, reason.as_ptr().cast(), reason.len() as _),
+            );
+            object
+        },
         crate::EventPayload::Scroll {
             x,
             y,

@@ -57,6 +57,21 @@ pub enum EventPayload {
         /// The composed text, empty once the composition ended.
         text: String,
     },
+    /// Safe-area insets in points reported by the platform for a screen or
+    /// modal (`onInsets`).
+    Insets {
+        /// Top inset.
+        top: f32,
+        /// Right inset.
+        right: f32,
+        /// Bottom inset.
+        bottom: f32,
+        /// Left inset.
+        left: f32,
+    },
+    /// Why the user asked a modal to close (`onRequestClose`): `"cancel"`,
+    /// `"swipe"` or `"backdropPress"`.
+    CloseReason(String),
     /// Where a scroll view is, in points. `x` and `y` are the content
     /// offset (negative while iOS bounces). `content_w` and `content_h` are
     /// the content size. `width` and `height` are the visible size.
