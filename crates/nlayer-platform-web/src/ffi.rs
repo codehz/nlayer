@@ -280,3 +280,15 @@ pub extern "C" fn nlayer_insets(top: f32, right: f32, bottom: f32, left: f32, ke
         -1.0
     });
 }
+
+/// The browser's back button was pressed (popstate event). The browser has
+/// already navigated back. Queues the back event for processing at the next
+/// pump.
+#[unsafe(no_mangle)]
+pub extern "C" fn nlayer_back() {
+    RUNNING.with_borrow(|session| {
+        if let Some(s) = session {
+            s.back();
+        }
+    });
+}
