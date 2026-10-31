@@ -14,8 +14,9 @@ class Box extends ViewGroup {
   boolean clip;
   int pressMask;
   boolean disabled;
-  GestureBox gestures;
+  Gestures gestures;
   int pointerEvents; // 0 auto, 1 none, 2 box-only, 3 box-none
+  int panAxis; // 0 free, 1 horizontal, 2 vertical (nsh convention)
 
   Box(Context c, Mounter m, int id) {
     super(c);
@@ -103,18 +104,21 @@ class Box extends ViewGroup {
     decor.drawBorders(canvas);
   }
 
+  @Override
+  public boolean onInterceptTouchEvent(android.view.MotionEvent e) {
+    if (gestures != null) {
+      return gestures.onInterceptTouchEvent(e);
+    }
+    return super.onInterceptTouchEvent(e);
+  }
+
+  @Override
   public boolean onTouchEvent(android.view.MotionEvent e) {
     if (disabled || pointerEvents == 1) return false;
     
-    // Gestures first - request to disallow parent interception when gesture active
-    if (gestures != null) {
-      int action = e.getActionMasked();
-      boolean handled = gestures.onTouchEvent(e);
-      if (handled && action == android.view.MotionEvent.ACTION_MOVE) {
-        // Gesture is active, prevent parent scroll from stealing
-        getParent().requestDisallowInterceptTouchEvent(true);
-      }
-      if (handled) return true;
+    // Gestures handled by Gestures class (nsh transplant)
+    if (gestures != null && gestures.onTouchEvent(e)) {
+      return true;
     }
     
     // Then press handling

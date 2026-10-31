@@ -118,8 +118,14 @@ pub fn encode(batch: MountBatch) -> Encoded {
             MountItem::PanBinding { id, x, y } => {
                 e.int(PAN_BINDING);
                 e.id(id);
-                e.bool(x.is_some());
-                e.bool(y.is_some());
+                // Encode axis: 0=none, 1=x-only, 2=y-only, 3=both
+                let axis = match (x.is_some(), y.is_some()) {
+                    (false, false) => 0,
+                    (true, false) => 1,
+                    (false, true) => 2,
+                    (true, true) => 3,
+                };
+                e.int(axis);
             }
             MountItem::PinchBinding { id, scale } => {
                 e.int(PINCH_BINDING);

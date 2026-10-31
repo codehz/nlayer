@@ -227,23 +227,17 @@ final class Mounter {
 
   private void panBinding(ByteBuffer b) {
     int id = b.getInt();
-    boolean hasX = b.get() != 0, hasY = b.get() != 0;
-    boolean hasPan = hasX || hasY;
-    if (hasPan) {
-      panBindings.put(id, true);
-    } else {
+    int axis = b.getInt(); // 0=none, 1=x-only, 2=y-only, 3=both
+    if (axis == 0) {
       panBindings.remove(id);
-    }
-    updateGestureBox(id);
-  }
-
-  private void pinchBinding(ByteBuffer b) {
-    int id = b.getInt();
-    boolean hasScale = b.get() != 0;
-    if (hasScale) {
-      pinchBindings.put(id, true);
     } else {
-      pinchBindings.remove(id);
+      panBindings.put(id, true);
+    }
+    // Set panAxis on Box: 0=free, 1=horizontal, 2=vertical
+    View v = views.get(id);
+    if (v instanceof Box) {
+      Box box = (Box) v;
+      box.panAxis = (axis == 1) ? 1 : (axis == 2) ? 2 : 0;
     }
     updateGestureBox(id);
   }
@@ -272,8 +266,9 @@ final class Mounter {
         || rotationBindings.get(id, false);
     
     if ((hasEvents || hasBindings) && box.gestures == null) {
-      box.gestures = new GestureBox(box, id, this);
+      box.gestures = new Gestures(box, id, this);
     } else if (!hasEvents && !hasBindings && box.gestures != null) {
+      box.gestures.reset();
       box.gestures = null;
     }
   }
