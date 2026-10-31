@@ -280,6 +280,23 @@ export async function startPage(root, options = {}) {
         if (!wasm) return;
         enter(() => wasm.nlayer_transform_gesture(id, rotation, phase, amount, value));
       },
+      snap(offset, velocity, viewport, content, paging, snapInterval, snapOffsets, snapAlignment, disableIntervalMomentum, deceleration) {
+        if (!wasm) return -1.0;
+        if (!snapOffsets || snapOffsets.length === 0) {
+          return wasm.nlayer_snap(offset, velocity, viewport, content, paging, snapInterval, 0, 0, snapAlignment, disableIntervalMomentum, deceleration);
+        }
+        // Copy offsets to wasm memory temporarily
+        const bytes = snapOffsets.length * 4;
+        const ptr = wasm.malloc?.(bytes) ?? 0;
+        if (ptr === 0) {
+          return wasm.nlayer_snap(offset, velocity, viewport, content, paging, snapInterval, 0, 0, snapAlignment, disableIntervalMomentum, deceleration);
+        }
+        const view = new Float32Array(wasm.memory.buffer, ptr, snapOffsets.length);
+        view.set(snapOffsets);
+        const result = wasm.nlayer_snap(offset, velocity, viewport, content, paging, snapInterval, ptr, snapOffsets.length, snapAlignment, disableIntervalMomentum, deceleration);
+        wasm.free?.(ptr);
+        return result;
+      },
       change(id, value) {
         enter(() =>
           withBytes([encoder.encode(value)], (p, l) => {

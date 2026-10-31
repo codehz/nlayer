@@ -11,7 +11,7 @@ use std::cell::RefCell;
 
 use nlayer_core::{
     EventKind, NodeId,
-    geometry::{Edges, Point, Size, px},
+    geometry::{Edges, Size, px},
 };
 use nlayer_engine::EventPayload;
 

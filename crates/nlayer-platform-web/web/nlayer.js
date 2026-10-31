@@ -797,6 +797,40 @@ export class Player {
       return;
     }
     if (el._settled) return;
+    
+    // Check for snap target before settling
+    if (el._snapConfig && this.host.snap) {
+      const horizontal = el._horizontal ?? false;
+      const offset = horizontal ? el.scrollLeft : el.scrollTop;
+      const viewport = horizontal ? el.clientWidth : el.clientHeight;
+      const content = horizontal ? el.scrollWidth : el.scrollHeight;
+      const velocity = 0; // scrollend means already stopped
+      
+      const cfg = el._snapConfig;
+      const target = this.host.snap(
+        offset,
+        velocity,
+        viewport,
+        content,
+        cfg.paging,
+        cfg.snapInterval,
+        cfg.snapOffsets,
+        cfg.snapAlignment,
+        cfg.disableIntervalMomentum,
+        cfg.deceleration
+      );
+      
+      if (target >= 0 && Math.abs(target - offset) > 0.5) {
+        // Snap to target
+        this.noteInstant(el);
+        el.scrollTo({
+          [horizontal ? 'left' : 'top']: target,
+          behavior: 'smooth'
+        });
+        return; // Don't fire onScrollEnd yet, wait for snap to complete
+      }
+    }
+    
     el._settled = true;
     el._released = 0;
     if (el._momentum) {
@@ -843,11 +877,20 @@ export class Player {
     swapClass(el, "_overflow", horizontal ? "nl-ox" : "nl-oy");
   }
 
-  op_scs([, id, w, h]) {
+  op_scs([, id, w, h, refreshIndicator, paging, snapInterval, snapOffsets, snapAlignment, disableIntervalMomentum, deceleration]) {
     const el = this.view(id);
     if (!el?._spacer) return;
     el._spacer.style.width = `${w}px`;
     el._spacer.style.height = `${h}px`;
+    // Store snap configuration
+    el._snapConfig = {
+      paging: paging ?? false,
+      snapInterval: snapInterval ?? 0,
+      snapOffsets: snapOffsets ?? null,
+      snapAlignment: snapAlignment ?? 0,
+      disableIntervalMomentum: disableIntervalMomentum ?? false,
+      deceleration: deceleration ?? 0,
+    };
   }
 
   op_sb([, id, dx, dy]) {

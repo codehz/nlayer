@@ -616,3 +616,57 @@ test("Single-axis horizontal pan activates on horizontal drag", () => {
   const startCall = panCalls.find(args => args[1] === 0);
   assert.ok(startCall, "Should have pan start event");
 });
+
+test("Scroll view with snapToOffsets calls host.snap on scrollEnded", () => {
+  const { player, doc } = createTestEnv();
+  let snapCalls = [];
+  player.host.snap = (...args) => {
+    snapCalls.push(args);
+    return 100; // Return snap target
+  };
+  
+  // Create scroll view
+  player.apply([
+    ["c", 2, "scroll"],
+    ["i", 1, 2, null],
+    ["op_sc", 2, false, false, 0], // vertical scroll
+  ]);
+  
+  const el = player.view(2);
+  assert.ok(el, "Element should exist");
+  
+  // Manually set snap config (simulating what op_scs would do)
+  el._snapConfig = {
+    paging: false,
+    snapInterval: 0,
+    snapOffsets: [0, 100, 200, 300],
+    snapAlignment: 0,
+    disableIntervalMomentum: false,
+    deceleration: 0.998,
+  };
+  el._horizontal = false;
+  
+  // Simulate scroll ending at offset 50
+  Object.defineProperty(el, 'scrollTop', { value: 50, writable: true });
+  Object.defineProperty(el, 'clientHeight', { value: 400, writable: true });
+  Object.defineProperty(el, 'scrollHeight', { value: 1000, writable: true });
+  let scrollToCalled = false;
+  let scrollToOpts = null;
+  el.scrollTo = function(opts) {
+    scrollToCalled = true;
+    scrollToOpts = opts;
+  };
+  
+  player.scrollEnded(el);
+  
+  assert.ok(snapCalls.length > 0, "Should call host.snap");
+  const [offset, velocity, viewport, content, paging, snapInterval, snapOffsets] = snapCalls[0];
+  assert.equal(offset, 50);
+  assert.equal(velocity, 0);
+  assert.deepEqual(snapOffsets, [0, 100, 200, 300]);
+  assert.ok(scrollToCalled, "Should call scrollTo with snap target");
+  if (scrollToCalled) {
+    assert.equal(scrollToOpts.top, 100);
+    assert.equal(scrollToOpts.behavior, "smooth");
+  }
+});
