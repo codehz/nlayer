@@ -3695,6 +3695,8 @@ impl<M: TextEngine> Core<M> {
                     
                     
                     // Apply sticky shift (only for non-inverted)
+                    eprintln!("Check sticky: index={}, sticky_indices={:?}, inverted={}", 
+                        index, list.sticky_indices, list.inverted);
                     if !list.sticky_indices.is_empty() && !list.inverted {
                         if let Some(_sticky_pos) = list.sticky_indices.iter().position(|&i| i == index) {
                             let offset = list.offset;
@@ -3705,6 +3707,8 @@ impl<M: TextEngine> Core<M> {
                                 .map(|&next_i| list.item_at(next_i))
                                 .unwrap_or_else(|| list.content_len());
                             let shift = (offset - start).clamp(0.0, (end - start).max(0.0));
+                            eprintln!("Sticky: index={}, offset={}, start={}, end={}, shift={}", 
+                                index, offset, start, end, shift);
                             base_at + shift
                         } else {
                             base_at

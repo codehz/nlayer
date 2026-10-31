@@ -1403,6 +1403,35 @@ impl Headless {
         Ok(())
     }
 
+    /// Scrolls the scroll view by setting its content offset.
+    pub fn scroll(&mut self, id: NodeId, x: f32, y: f32) {
+        self.refresh();
+        if let Some(view) = self.screen.views.get_mut(&id) {
+            view.scroll_x = x;
+            view.scroll_y = y;
+        }
+        self.control().update_scroll_position(
+            id,
+            nlayer_core::geometry::Point::new(nlayer_core::geometry::Points(x), nlayer_core::geometry::Points(y))
+        );
+        
+        // Dispatch scroll events to trigger frame recomputation
+        let view = self.screen.view(id).expect("scroll view");
+        let content = view.scroll_content.unwrap_or(view.frame.size);
+        let payload = EventPayload::Scroll {
+            x,
+            y,
+            content_w: content.width.0,
+            content_h: content.height.0,
+            width: view.frame.size.width.0,
+            height: view.frame.size.height.0,
+        };
+        for event in [EventKind::Scroll, EventKind::ScrollEnd] {
+            self.engine.control().dispatch_event(id, event, payload.clone());
+        }
+        self.refresh();
+    }
+
     /// Waits until `selector` names one view that is on screen.
     pub fn wait_selector(&mut self, selector: &str, timeout: Duration) -> Result<(), String> {
         let deadline = Instant::now() + timeout;
