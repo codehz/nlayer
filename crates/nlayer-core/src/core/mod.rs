@@ -1388,42 +1388,15 @@ impl<M: TextEngine> Core<M> {
                 }
             }
             Prop::Pan { x, y } => {
-                // Add gesture bindings to animated properties
-                let node = &mut self.nodes[key as usize];
-                node.animated.retain(|(prop, _)| {
-                    !matches!(prop, crate::animation::AnimationProp::Transform(_))
-                });
-                if let Some(x_node) = x {
-                    node.animated
-                        .push((crate::animation::AnimationProp::Transform(0), x_node));
-                }
-                if let Some(y_node) = y {
-                    node.animated
-                        .push((crate::animation::AnimationProp::Transform(1), y_node));
-                }
-                self.nodes[key as usize].dirty |= dirty::ANIMATION;
+                self.mount.push(crate::MountItem::PanBinding { id, x, y });
             }
             Prop::Pinch { scale } => {
-                let node = &mut self.nodes[key as usize];
-                if let Some(scale_node) = scale {
-                    node.animated.retain(|(prop, _)| {
-                        !matches!(prop, crate::animation::AnimationProp::Transform(_))
-                    });
-                    node.animated
-                        .push((crate::animation::AnimationProp::Transform(0), scale_node));
-                }
-                self.nodes[key as usize].dirty |= dirty::ANIMATION;
+                self.mount
+                    .push(crate::MountItem::PinchBinding { id, scale });
             }
             Prop::Rotation { angle } => {
-                let node = &mut self.nodes[key as usize];
-                if let Some(angle_node) = angle {
-                    node.animated.retain(|(prop, _)| {
-                        !matches!(prop, crate::animation::AnimationProp::Transform(_))
-                    });
-                    node.animated
-                        .push((crate::animation::AnimationProp::Transform(0), angle_node));
-                }
-                self.nodes[key as usize].dirty |= dirty::ANIMATION;
+                self.mount
+                    .push(crate::MountItem::RotationBinding { id, angle });
             }
             Prop::HeaderSlot(slot) => {
                 if let Some(root) = self.nodes[key as usize].root.as_mut() {
@@ -7369,5 +7342,183 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].0, 2);
         assert_eq!(events[0].1, EventKind::RequestClose);
+    }
+
+    #[test]
+    fn gesture_bindings_emit_mount_items() {
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::View,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+
+        // Pan with both axes
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Pan {
+                x: Some(10),
+                y: Some(11),
+            },
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        assert!(
+            batch.items.iter().any(|item| matches!(
+                item,
+                MountItem::PanBinding {
+                    id: 2,
+                    x: Some(10),
+                    y: Some(11)
+                }
+            )),
+            "PanBinding should be emitted with both axes"
+        );
+
+        // Pan with only x
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Pan {
+                x: Some(12),
+                y: None,
+            },
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        assert!(
+            batch.items.iter().any(|item| matches!(
+                item,
+                MountItem::PanBinding {
+                    id: 2,
+                    x: Some(12),
+                    y: None
+                }
+            )),
+            "PanBinding should emit with only x"
+        );
+
+        // Clear pan
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Pan { x: None, y: None },
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        assert!(
+            batch.items.iter().any(|item| matches!(
+                item,
+                MountItem::PanBinding {
+                    id: 2,
+                    x: None,
+                    y: None
+                }
+            )),
+            "PanBinding should clear both axes"
+        );
+
+        // Pinch
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Pinch { scale: Some(20) },
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        assert!(
+            batch.items.iter().any(|item| matches!(
+                item,
+                MountItem::PinchBinding {
+                    id: 2,
+                    scale: Some(20)
+                }
+            )),
+            "PinchBinding should be emitted"
+        );
+
+        // Rotation
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Rotation { angle: Some(30) },
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        assert!(
+            batch.items.iter().any(|item| matches!(
+                item,
+                MountItem::RotationBinding {
+                    id: 2,
+                    angle: Some(30)
+                }
+            )),
+            "RotationBinding should be emitted"
+        );
+
+        // All three coexisting
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Pan {
+                x: Some(40),
+                y: Some(41),
+            },
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Pinch { scale: Some(42) },
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Rotation { angle: Some(43) },
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        let has_pan = batch.items.iter().any(|item| {
+            matches!(
+                item,
+                MountItem::PanBinding {
+                    id: 2,
+                    x: Some(40),
+                    y: Some(41)
+                }
+            )
+        });
+        let has_pinch = batch.items.iter().any(|item| {
+            matches!(
+                item,
+                MountItem::PinchBinding {
+                    id: 2,
+                    scale: Some(42)
+                }
+            )
+        });
+        let has_rotation = batch.items.iter().any(|item| {
+            matches!(
+                item,
+                MountItem::RotationBinding {
+                    id: 2,
+                    angle: Some(43)
+                }
+            )
+        });
+        assert!(
+            has_pan && has_pinch && has_rotation,
+            "all three gesture bindings should coexist"
+        );
+    }
+
+    #[test]
+    fn gesture_event_kinds_have_correct_discriminants() {
+        assert_eq!(EventKind::PanStart as u8, 17);
+        assert_eq!(EventKind::PanEnd as u8, 18);
+        assert_eq!(EventKind::PinchStart as u8, 19);
+        assert_eq!(EventKind::PinchEnd as u8, 20);
+        assert_eq!(EventKind::RotationStart as u8, 21);
+        assert_eq!(EventKind::RotationEnd as u8, 22);
     }
 }

@@ -350,6 +350,29 @@ pub enum MountItem {
         /// The options.
         config: Box<ScreenConfig>,
     },
+    /// Pan gesture binding: which animated values the platform drives.
+    PanBinding {
+        /// View.
+        id: NodeId,
+        /// X-axis animated value.
+        x: Option<crate::animation::NodeId>,
+        /// Y-axis animated value.
+        y: Option<crate::animation::NodeId>,
+    },
+    /// Pinch gesture binding.
+    PinchBinding {
+        /// View.
+        id: NodeId,
+        /// Scale animated value.
+        scale: Option<crate::animation::NodeId>,
+    },
+    /// Rotation gesture binding.
+    RotationBinding {
+        /// View.
+        id: NodeId,
+        /// Angle animated value.
+        angle: Option<crate::animation::NodeId>,
+    },
     /// Configure a modal (sent before it is presented, and on changes).
     ModalConfig {
         /// Modal root view.

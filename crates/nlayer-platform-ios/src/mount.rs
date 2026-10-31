@@ -81,11 +81,17 @@ struct Slot {
     link_press: bool,
     hover: Option<Retained<UIHoverGestureRecognizer>>,
     /// Pan gesture recognizer.
-    pan: Option<Retained<UIPanGestureRecognizer>>,
+    pan_recognizer: Option<Retained<UIPanGestureRecognizer>>,
     /// Pinch gesture recognizer.
-    pinch: Option<Retained<UIPinchGestureRecognizer>>,
+    pinch_recognizer: Option<Retained<UIPinchGestureRecognizer>>,
     /// Rotation gesture recognizer.
-    rotation: Option<Retained<UIRotationGestureRecognizer>>,
+    rotation_recognizer: Option<Retained<UIRotationGestureRecognizer>>,
+    /// Pan binding: x and y animation nodes from `pan={{ x, y }}`.
+    pan_nodes: (Option<u32>, Option<u32>),
+    /// Pinch binding: scale animation node from `pinch={{ scale }}`.
+    pinch_node: Option<u32>,
+    /// Rotation binding: angle animation node from `rotation={{ angle }}`.
+    rotation_node: Option<u32>,
     /// Gesture start values: [pan_x, pan_y, pinch_scale, rotation_angle].
     gesture_start: [f32; 4],
     /// A dashed or dotted uniform border, above the children.
@@ -1370,6 +1376,24 @@ impl Mounter {
                 let view = slot.native.view().retain();
                 apply_accessibility(&view, &slot.accessibility, mtm);
             }
+            MountItem::PanBinding { id, x, y } => {
+                if let Some(slot) = self.slot_mut(id) {
+                    slot.pan_nodes = (x, y);
+                }
+                self.sync_gestures(id);
+            }
+            MountItem::PinchBinding { id, scale } => {
+                if let Some(slot) = self.slot_mut(id) {
+                    slot.pinch_node = scale;
+                }
+                self.sync_gestures(id);
+            }
+            MountItem::RotationBinding { id, angle } => {
+                if let Some(slot) = self.slot_mut(id) {
+                    slot.rotation_node = angle;
+                }
+                self.sync_gestures(id);
+            }
         }
     }
 
@@ -1634,11 +1658,17 @@ impl Mounter {
             return;
         };
         let events = slot.events;
+        let (pan_x, pan_y) = slot.pan_nodes;
+        let pinch_node = slot.pinch_node;
+        let rotation_node = slot.rotation_node;
         let view = slot.native.view().retain();
         let delegate = ProtocolObject::from_ref(&*relay);
 
-        let want_pan = events.contains(EventKind::PanStart) || events.contains(EventKind::PanEnd);
-        match (&slot.pan, want_pan) {
+        let want_pan = pan_x.is_some()
+            || pan_y.is_some()
+            || events.contains(EventKind::PanStart)
+            || events.contains(EventKind::PanEnd);
+        match (&slot.pan_recognizer, want_pan) {
             (None, true) => {
                 // SAFETY: the relay implements `handlePan:`.
                 let gesture = unsafe {
@@ -1650,18 +1680,19 @@ impl Mounter {
                 };
                 gesture.setDelegate(Some(delegate));
                 view.addGestureRecognizer(&gesture);
-                slot.pan = Some(gesture);
+                slot.pan_recognizer = Some(gesture);
             }
             (Some(gesture), false) => {
                 view.removeGestureRecognizer(gesture);
-                slot.pan = None;
+                slot.pan_recognizer = None;
             }
             _ => {}
         }
 
-        let want_pinch =
-            events.contains(EventKind::PinchStart) || events.contains(EventKind::PinchEnd);
-        match (&slot.pinch, want_pinch) {
+        let want_pinch = pinch_node.is_some()
+            || events.contains(EventKind::PinchStart)
+            || events.contains(EventKind::PinchEnd);
+        match (&slot.pinch_recognizer, want_pinch) {
             (None, true) => {
                 // SAFETY: the relay implements `handlePinch:`.
                 let gesture = unsafe {
@@ -1673,18 +1704,19 @@ impl Mounter {
                 };
                 gesture.setDelegate(Some(delegate));
                 view.addGestureRecognizer(&gesture);
-                slot.pinch = Some(gesture);
+                slot.pinch_recognizer = Some(gesture);
             }
             (Some(gesture), false) => {
                 view.removeGestureRecognizer(gesture);
-                slot.pinch = None;
+                slot.pinch_recognizer = None;
             }
             _ => {}
         }
 
-        let want_rotation =
-            events.contains(EventKind::RotationStart) || events.contains(EventKind::RotationEnd);
-        match (&slot.rotation, want_rotation) {
+        let want_rotation = rotation_node.is_some()
+            || events.contains(EventKind::RotationStart)
+            || events.contains(EventKind::RotationEnd);
+        match (&slot.rotation_recognizer, want_rotation) {
             (None, true) => {
                 // SAFETY: the relay implements `handleRotation:`.
                 let gesture = unsafe {
@@ -1696,11 +1728,11 @@ impl Mounter {
                 };
                 gesture.setDelegate(Some(delegate));
                 view.addGestureRecognizer(&gesture);
-                slot.rotation = Some(gesture);
+                slot.rotation_recognizer = Some(gesture);
             }
             (Some(gesture), false) => {
                 view.removeGestureRecognizer(gesture);
-                slot.rotation = None;
+                slot.rotation_recognizer = None;
             }
             _ => {}
         }
@@ -2891,9 +2923,12 @@ impl Slot {
             events: EventMask::default(),
             link_press: false,
             hover: None,
-            pan: None,
-            pinch: None,
-            rotation: None,
+            pan_recognizer: None,
+            pinch_recognizer: None,
+            rotation_recognizer: None,
+            pan_nodes: (None, None),
+            pinch_node: None,
+            rotation_node: None,
             gesture_start: [0.0; 4],
             dash: None,
             mask: None,
