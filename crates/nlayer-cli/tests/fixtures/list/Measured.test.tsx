@@ -10,11 +10,14 @@ function matches(node: Node, name: string, cell: Node | null, out: Hit[]): void 
   for (const child of node.children ?? []) matches(child, name, node, out);
 }
 
-/** The match that is showing `name`, if any. */
+/** The match that is showing `name`, if any. A cell the list never placed
+ * has no size; its last content still names the row. */
 function find(app: App, name: string): Hit | null {
   const hits: Hit[] = [];
   matches(app.tree(), name, null, hits);
-  return hits.find((hit) => Math.abs(hit.cell.frame.y) < HIDDEN) ?? null;
+  return (
+    hits.find((hit) => Math.abs(hit.cell.frame.y) < HIDDEN && hit.cell.frame.height > 0) ?? null
+  );
 }
 
 /** The cell that holds `name`: the list's direct child, at its natural size. */

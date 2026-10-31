@@ -255,3 +255,41 @@ mount(App);
     assert_eq!(texts(&frame(&rx)), ["android"]);
     engine.stop();
 }
+
+/// `List`: the viewport's cells bind in the frame that shows them; the
+/// overscan follows in later turns, within a turn's budget.
+#[test]
+fn a_list_binds_its_viewport_before_its_overscan() {
+    const APP: &str = r#"
+import { mount } from "@nlayer/runtime";
+import { List, Text, View } from "@nlayer/ui";
+const rows = Array.from({ length: 200 }, (_, i) => i);
+mount(() => List({
+    each: rows,
+    estimatedItemSize: 50,
+    style: { flex: 1 },
+    children: (item) => View({ style: { height: 50 }, children: Text({ children: "row " + item() }) }),
+}));
+"#;
+    let (tx, rx) = unbounded();
+    let engine = Engine::start(
+        EngineConfig::new(APP, Size::new(px(390.0), px(844.0))),
+        || ApproxTextEngine,
+        Arc::new(Sink { tx }),
+    )
+    .unwrap();
+    // 844 points of viewport at 50 per row: the visible rows bind with
+    // the frame, not the window's overscan (another two screens).
+    let first = frame(&rx);
+    let shown = texts(&first);
+    assert!(shown.iter().any(|t| t == "row 16"), "{shown:?}");
+    assert!(shown.len() <= 40, "{} rows in the first frame", shown.len());
+    let mut total = shown.len();
+    while let Ok(batch) = rx.recv_timeout(Duration::from_millis(500)) {
+        total += texts(&batch).len();
+    }
+    assert!(total > shown.len(), "{} first, {total} in all", shown.len());
+    // The window keeps a viewport of overscan on either side.
+    assert!(total <= 60, "{total} rows in all");
+    engine.stop();
+}

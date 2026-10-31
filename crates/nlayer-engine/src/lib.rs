@@ -560,14 +560,24 @@ struct Session<M: TextEngine> {
     notify: Wake,
     /// Cells a list asked for that this frame's budget did not reach.
     pending_binds: Vec<ListBind>,
+    /// JS ops the last round's paced binds queued; the next turn applies
+    /// them, so none are lost when the rounds end.
+    queued_ops: Vec<nlayer_core::Op>,
+    /// [`keep_last_sets`]'s buffer, reused across turns.
+    sets_seen: HashMap<(u8, NodeId), usize>,
 }
 
 /// Rounds of "list asks for items -> JS renders them -> layout" folded into
 /// one frame. Bounded so a list that never settles cannot stall the engine.
 const MAX_LIST_ROUNDS: usize = 8;
-/// Cells rendered per frame. A frame with a huge viewport leaves the rest
-/// pending; the engine wakes at once for the next.
-const MAX_LIST_BINDS_PER_FRAME: usize = 64;
+/// The overscan a turn binds: cells until their ops reach this many or their
+/// JS takes [`PACED_BIND_TIME`], at least one. A fast scroll or a jump asks
+/// for a screen of cells at once and each bind rebuilds a cell's subtree;
+/// what shows (the viewport, the leading edge, cells whose item moved) binds
+/// regardless, the rest in later turns.
+const PACED_BIND_OPS: usize = 150;
+/// See [`PACED_BIND_OPS`].
+const PACED_BIND_TIME: Duration = Duration::from_millis(2);
 
 impl<M: TextEngine> Session<M> {
     fn open(
@@ -605,11 +615,16 @@ impl<M: TextEngine> Session<M> {
             #[cfg(not(target_arch = "wasm32"))]
             notify,
             pending_binds: Vec::new(),
+            queued_ops: Vec::new(),
+            sets_seen: HashMap::new(),
         })
     }
 
     fn next_timer(&self) -> Option<Duration> {
-        if !self.pending_binds.is_empty() {
+        if !self.pending_binds.is_empty()
+            || !self.queued_ops.is_empty()
+            || self.core.has_paced_list_binds()
+        {
             return Some(Duration::ZERO);
         }
         self.host.next_timer()
@@ -710,12 +725,20 @@ impl<M: TextEngine> Session<M> {
     /// Applies what JS queued, lays out, and hands the frame to the platform.
     /// A list's cells are rendered across rounds (up to
     /// [`MAX_LIST_ROUNDS`]); every round's mount items go into one batch.
+    /// What the viewport shows binds in the round that assigns it; a list's
+    /// overscan waits in the core and binds within this turn's budget
+    /// ([`PACED_BIND_OPS`]), the rest in later turns.
     fn commit(&mut self) {
         let mut merged: Vec<nlayer_core::MountItem> = Vec::new();
-        let mut budget = MAX_LIST_BINDS_PER_FRAME;
+        let mut paced = PacedBinds::default();
+        let mut commits = 0;
         let mut failed = false;
         for _ in 0..MAX_LIST_ROUNDS {
-            let mut ops = Vec::new();
+            // Requests from the previous round first: they must show.
+            for bind in std::mem::take(&mut self.pending_binds) {
+                self.bind_list(bind.list, &bind.binds);
+            }
+            let mut ops = std::mem::take(&mut self.queued_ops);
             self.host.take_ops(&mut ops);
             for op in ops {
                 if let Err(error) = self.core.apply(op) {
@@ -731,45 +754,45 @@ impl<M: TextEngine> Session<M> {
                 break;
             }
             if let Some(batch) = self.core.commit() {
-                merged.extend(batch.items);
+                commits += 1;
+                extend_frame(&mut merged, batch.items);
             }
             let mut events = Vec::new();
             self.core.take_events(&mut events);
             for (id, event) in &events {
                 self.host.dispatch_event(*id, *event, &EventPayload::None);
             }
+            // The window's own binds: the next round renders them.
             let mut binds: Vec<ListBind> = Vec::new();
             self.core.take_list_binds(&mut binds);
-            let asked = !binds.is_empty();
             self.pending_binds.extend(binds);
-            let mut bound = 0;
-            while budget > 0 && !self.pending_binds.is_empty() {
-                let mut bind = self.pending_binds.remove(0);
-                let n = bind.binds.len().min(budget);
-                let rest = bind.binds.split_off(n);
-                if n > 0 {
+            // The overscan, this turn's budget allowing.
+            let mut one: Vec<ListBind> = Vec::new();
+            while paced.left() && self.core.has_paced_list_binds() {
+                let start = std::time::Instant::now();
+                let ops = self.queued_ops.len();
+                one.clear();
+                self.core.take_paced_list_binds(1, &mut one);
+                for bind in &one {
+                    paced.cells += bind.binds.len();
                     self.bind_list(bind.list, &bind.binds);
-                    budget -= n;
-                    bound += n;
                 }
-                if !rest.is_empty() {
-                    self.pending_binds.insert(
-                        0,
-                        ListBind {
-                            list: bind.list,
-                            binds: rest,
-                        },
-                    );
-                }
+                self.host.take_ops(&mut self.queued_ops);
+                paced.ops += self.queued_ops.len() - ops;
+                paced.time += start.elapsed();
             }
             // New cells queued JS ops; another round applies them. With the
-            // budget spent, the rest waits for the next frame.
-            if !asked && events.is_empty() && bound == 0 {
+            // budget spent, the rest waits for the next turn.
+            if self.pending_binds.is_empty()
+                && events.is_empty()
+                && self.queued_ops.is_empty()
+                && !(paced.left() && self.core.has_paced_list_binds())
+            {
                 break;
             }
-            if budget == 0 && !self.pending_binds.is_empty() {
-                break;
-            }
+        }
+        if commits > 1 {
+            keep_last_sets(&mut merged, &mut self.sets_seen);
         }
         if !merged.is_empty() {
             self.sink.submit(MountBatch { items: merged });
@@ -807,6 +830,86 @@ impl<M: TextEngine> Session<M> {
             self.host.bind_list(id, binds);
         }
     }
+}
+
+/// What a turn spent binding overscan cells.
+#[derive(Default)]
+struct PacedBinds {
+    cells: usize,
+    ops: usize,
+    time: Duration,
+}
+
+impl PacedBinds {
+    /// Whether the turn may bind another: at least one, then within the
+    /// budget.
+    fn left(&self) -> bool {
+        self.cells == 0 || (self.ops < PACED_BIND_OPS && self.time < PACED_BIND_TIME)
+    }
+}
+
+/// Appends a commit's items to the frame's. A scroll view's content size
+/// that the frame already sets is updated to the later size (unless the
+/// view scrolls in between): a row relaid over two commits must not send
+/// the platform a transient size, which clamps the offset before the
+/// content grows back (a list jumping when a row expands).
+fn extend_frame(frame: &mut Vec<nlayer_core::MountItem>, items: Vec<nlayer_core::MountItem>) {
+    use nlayer_core::MountItem;
+    let start = frame.len();
+    frame.extend(items);
+    for k in start..frame.len() {
+        let MountItem::ScrollContent { id, size } = frame[k] else {
+            continue;
+        };
+        let earlier = frame[..k].iter().rposition(|m| {
+            matches!(m, MountItem::ScrollContent { id: e, .. } | MountItem::ScrollBy { id: e, .. } if *e == id)
+        });
+        if let Some(j) = earlier
+            && let MountItem::ScrollContent { size: s, .. } = &mut frame[j]
+        {
+            *s = size;
+        }
+    }
+}
+
+/// Of the items of a frame merged from several commits that set one part
+/// of a view whole (its frame, style, text, ...), keeps the last: the
+/// platform would apply each in one pass, and a list's rounds (binds, then
+/// the paced ones) relay and restyle the same cells. Once per turn, with
+/// `last` the reused buffer.
+fn keep_last_sets(
+    frame: &mut Vec<nlayer_core::MountItem>,
+    last: &mut HashMap<(u8, NodeId), usize>,
+) {
+    last.clear();
+    let mut repeated = false;
+    for (k, item) in frame.iter().enumerate() {
+        if let Some(key) = sets_whole(item) {
+            repeated |= last.insert(key, k).is_some();
+        }
+    }
+    if !repeated {
+        return;
+    }
+    let mut k = 0;
+    frame.retain(|item| {
+        k += 1;
+        sets_whole(item).is_none_or(|key| last[&key] == k - 1)
+    });
+}
+
+/// The part of a view an item sets whole, and the view: of two such items
+/// the later is all the view ends up with.
+fn sets_whole(item: &nlayer_core::MountItem) -> Option<(u8, NodeId)> {
+    use nlayer_core::MountItem;
+    Some(match *item {
+        MountItem::Frame { id, .. } => (0, id),
+        MountItem::ViewStyle { id, .. } => (1, id),
+        MountItem::Text { id, .. } => (2, id),
+        MountItem::Events { id, .. } => (3, id),
+        MountItem::Image { id, .. } => (4, id),
+        _ => return None,
+    })
 }
 
 /// Hands JS the responses that arrived.

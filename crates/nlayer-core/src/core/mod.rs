@@ -299,7 +299,13 @@ impl Node {
             object_fit: None,
             image: matches!(kind, Kind::Image).then_some(None),
             scroll: matches!(kind, Kind::Scroll | Kind::List).then(Box::default),
-            list: matches!(kind, Kind::List).then(|| Box::new(list::ListState::new())),
+            list: matches!(kind, Kind::List).then(|| {
+                let mut list = Box::new(list::ListState::new());
+                // The runtime's lists pace their overscan; nlayer has no
+                // components whose lists would bind in the core.
+                list.paced = true;
+                list
+            }),
             slot: None,
             input: matches!(kind, Kind::Input).then(Box::default),
             z_index: 0,
@@ -401,6 +407,11 @@ pub struct Core<M: TextEngine> {
     commands: Vec<(NodeId, Command)>,
     /// What the runtime must bind before the frame shows.
     list_binds: Vec<ListBind>,
+    /// The lists with overscan cells waiting to bind
+    /// ([`Core::take_paced_list_binds`]), in the order they asked.
+    paced_lists: Vec<NodeId>,
+    /// [`Core::take_paced_list_binds`]'s buffer, reused.
+    paced_scratch: Vec<(u32, u32)>,
     /// Events the core raises for JS (a list's end came near).
     events: Vec<(NodeId, EventKind)>,
 }
@@ -440,6 +451,8 @@ impl<M: TextEngine> Core<M> {
             lists: Vec::new(),
             commands: Vec::new(),
             list_binds: Vec::new(),
+            paced_lists: Vec::new(),
+            paced_scratch: Vec::new(),
             events: Vec::new(),
         }
     }
@@ -506,6 +519,50 @@ impl<M: TextEngine> Core<M> {
     /// Moves the cells the runtime must render before the frame shows.
     pub fn take_list_binds(&mut self, out: &mut Vec<ListBind>) {
         out.append(&mut self.list_binds);
+    }
+
+    /// Whether lists have overscan cells waiting to bind.
+    pub fn has_paced_list_binds(&self) -> bool {
+        !self.paced_lists.is_empty()
+    }
+
+    /// Hands out up to `cells` of the overscan cells waiting to bind, one
+    /// per list in turn (a list is not starved by the one before it), each
+    /// list's nearest its leading edge first. What a list assigns now is
+    /// what waits: cells it left or whose items went are never handed out.
+    pub fn take_paced_list_binds(&mut self, cells: usize, out: &mut Vec<ListBind>) {
+        let mut left = cells;
+        let mut lists = std::mem::take(&mut self.paced_lists);
+        let mut one = std::mem::take(&mut self.paced_scratch);
+        let start = out.len();
+        while left > 0 && !lists.is_empty() {
+            lists.retain(|&id| {
+                if left == 0 {
+                    return true;
+                }
+                let Some(list) = self
+                    .key(id)
+                    .ok()
+                    .and_then(|key| self.nodes[key as usize].list.as_mut())
+                else {
+                    return false;
+                };
+                one.clear();
+                left -= list.take_paced(1, &mut one);
+                if let Some((slot, index)) = one.pop() {
+                    match out[start..].iter_mut().find(|b| b.list == id) {
+                        Some(bind) => bind.binds.push((slot, index)),
+                        None => out.push(ListBind {
+                            list: id,
+                            binds: vec![(slot, index)],
+                        }),
+                    }
+                }
+                list.has_paced()
+            });
+        }
+        self.paced_lists = lists;
+        self.paced_scratch = one;
     }
 
     /// The events the core raised for JS.
@@ -2767,6 +2824,12 @@ impl<M: TextEngine> Core<M> {
             if !binds.is_empty() {
                 self.list_binds.push(ListBind { list: id, binds });
             }
+            {
+                let list = self.nodes[key as usize].list.as_mut().expect("list");
+                if list.paced && list.has_paced() && !self.paced_lists.contains(&id) {
+                    self.paced_lists.push(id);
+                }
+            }
 
             ready.clear();
             ready.extend(
@@ -3276,22 +3339,30 @@ mod tests {
         let mut binds = Vec::new();
         c.take_list_binds(&mut binds);
         assert_eq!(binds.len(), 1);
+        // The viewport's cells bind with the list; the overscan follows.
+        let now: Vec<u32> = binds[0].binds.iter().map(|b| b.1).collect();
+        assert_eq!(now, vec![0, 1, 2, 3]);
         let (slot, index) = binds[0].binds[0];
         assert_eq!(index, 0);
+        let mut paced = Vec::new();
+        c.take_paced_list_binds(usize::MAX, &mut paced);
         cell_in_list(&mut c, slot, index, 3);
         let batch = c.commit().expect("cell");
         let placed = frame(&batch, 3);
         assert_eq!(placed.origin.x, Points(0.0));
         assert_eq!(placed.origin.y, Points(0.0));
         assert_eq!(placed.size.height, Points(20.0));
+        let mut binds = Vec::new();
+        c.take_list_binds(&mut binds);
+        c.take_paced_list_binds(usize::MAX, &mut binds);
         // Scrolling moves the window; the same cell slot takes item 50.
         c.set_scroll_offset(2, Point::new(Points(0.0), Points(2500.0)));
         let _ = c.commit();
         let mut binds = Vec::new();
         c.take_list_binds(&mut binds);
-        assert_eq!(binds[0].binds[0].1, 46);
+        assert_eq!(binds[0].binds[0].1, 50);
         assert_eq!(binds[0].list, 2);
-        assert!(binds[0].binds.iter().all(|b| b.1 >= 46));
+        assert!(binds[0].binds.iter().all(|b| b.1 >= 50));
     }
 
     #[test]
@@ -3316,7 +3387,7 @@ mod tests {
         assert_eq!(command, Some((2500.0, false)));
         let mut binds = Vec::new();
         c.take_list_binds(&mut binds);
-        assert_eq!(binds[0].binds[0].1, 46);
+        assert_eq!(binds[0].binds[0].1, 50);
     }
 
     #[test]
