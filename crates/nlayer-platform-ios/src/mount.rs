@@ -127,6 +127,13 @@ struct Slot {
     accessibility: nlayer_core::Accessibility,
     /// Visual properties driven by animation nodes.
     bindings: Vec<(nlayer_core::animation::AnimationProp, u32)>,
+    /// Snap configuration for scroll views (from ScrollContent).
+    snap_paging: bool,
+    snap_interval: Option<f32>,
+    snap_offsets: Option<Box<[f32]>>,
+    snap_alignment: u8,
+    snap_one_step: bool,
+    snap_deceleration: f32,
 }
 
 struct Paint {
@@ -419,6 +426,85 @@ define_class!(
         #[unsafe(method(scrollViewDidEndScrollingAnimation:))]
         fn scroll_view_did_end_scrolling_animation(&self, scroll: &UIScrollView) {
             self.scroll_event(scroll, EventKind::ScrollEnd);
+        }
+
+        #[unsafe(method(scrollViewWillEndDragging:withVelocity:targetContentOffset:))]
+        fn scroll_view_will_end_dragging(
+            &self,
+            scroll: &UIScrollView,
+            velocity: CGPoint,
+            target_offset: *mut CGPoint,
+        ) {
+            let id = scroll.tag() as NodeId;
+            let Some(shared) = self.ivars().mounter.borrow().upgrade() else {
+                return;
+            };
+            let Ok(mounter) = shared.try_borrow() else {
+                return;
+            };
+            let Some(slot) = mounter.slot(id) else {
+                return;
+            };
+
+            // Build snap behavior from stored configuration
+            let behavior = nlayer_core::snap::SnapBehavior {
+                paging: slot.snap_paging,
+                snap_interval: Points(slot.snap_interval.unwrap_or(0.0)),
+                snap_offsets: slot
+                    .snap_offsets
+                    .as_ref()
+                    .map(|offsets| offsets.iter().map(|&x| Points(x)).collect())
+                    .unwrap_or_default(),
+                snap_alignment: match slot.snap_alignment {
+                    1 => nlayer_core::snap::SnapAlignment::Center,
+                    2 => nlayer_core::snap::SnapAlignment::End,
+                    _ => nlayer_core::snap::SnapAlignment::Start,
+                },
+                deceleration: slot.snap_deceleration,
+                one_step: slot.snap_one_step,
+            };
+
+            // Get current state
+            let current_offset = scroll.contentOffset();
+            let bounds = scroll.bounds();
+            let content_size = scroll.contentSize();
+            let horizontal = scroll.alwaysBounceHorizontal();
+
+            // SAFETY: targetContentOffset is a valid mutable pointer from UIKit
+            let target = unsafe { &*target_offset };
+
+            // Determine which axis to snap
+            let (offset, projected, vel, viewport, content) = if horizontal {
+                (
+                    Points(current_offset.x as f32),
+                    Points(target.x as f32),
+                    velocity.x as f32 / 1000.0, // Convert points/second to points/millisecond
+                    Points(bounds.size.width as f32),
+                    Points(content_size.width as f32),
+                )
+            } else {
+                (
+                    Points(current_offset.y as f32),
+                    Points(target.y as f32),
+                    velocity.y as f32 / 1000.0,
+                    Points(bounds.size.height as f32),
+                    Points(content_size.height as f32),
+                )
+            };
+
+            // Compute snap target
+            if let Some(snap_offset) =
+                nlayer_core::snap::snap_target(&behavior, offset, projected, vel, viewport, content)
+            {
+                // SAFETY: targetContentOffset is a valid mutable pointer from UIKit
+                unsafe {
+                    if horizontal {
+                        (*target_offset).x = snap_offset.0 as CGFloat;
+                    } else {
+                        (*target_offset).y = snap_offset.0 as CGFloat;
+                    }
+                }
+            }
         }
     }
 
@@ -1305,7 +1391,17 @@ impl Mounter {
                     slot.dismiss = dismiss;
                 }
             }
-            MountItem::ScrollContent { id, size } => {
+            MountItem::ScrollContent {
+                id,
+                size,
+                refresh_indicator: _,
+                paging,
+                snap_interval,
+                snap_offsets,
+                snap_alignment,
+                disable_interval_momentum,
+                deceleration,
+            } => {
                 let Some(Native::Scroll(scroll)) = self.native(id) else {
                     return;
                 };
@@ -1320,6 +1416,35 @@ impl Mounter {
                 if crate::scroll_extent::still_judged(scroll.alwaysBounceHorizontal()) {
                     self.content_sizes.push((id, height as CGFloat));
                 }
+
+                // Store snap configuration in the slot
+                if let Some(slot) = self.slot_mut(id) {
+                    slot.snap_paging = paging;
+                    slot.snap_interval = snap_interval;
+                    slot.snap_offsets = snap_offsets;
+                    slot.snap_alignment = snap_alignment;
+                    slot.snap_one_step = disable_interval_momentum;
+                    slot.snap_deceleration = deceleration;
+                }
+
+                // Calculate and set deceleration rate
+                let behavior = nlayer_core::snap::SnapBehavior {
+                    paging,
+                    snap_interval: Points(snap_interval.unwrap_or(0.0)),
+                    snap_offsets: snap_offsets
+                        .as_ref()
+                        .map(|offsets| offsets.iter().map(|&x| Points(x)).collect())
+                        .unwrap_or_default(),
+                    snap_alignment: match snap_alignment {
+                        1 => nlayer_core::snap::SnapAlignment::Center,
+                        2 => nlayer_core::snap::SnapAlignment::End,
+                        _ => nlayer_core::snap::SnapAlignment::Start,
+                    },
+                    deceleration,
+                    one_step: disable_interval_momentum,
+                };
+                let rate = nlayer_core::snap::rate(&behavior);
+                scroll.setDecelerationRate(rate as CGFloat);
             }
             MountItem::ScrollBy { id, dx, dy } => {
                 let Some(Native::Scroll(scroll)) = self.native(id) else {
@@ -3042,6 +3167,12 @@ impl Slot {
             keyboard_tap: None,
             accessibility: nlayer_core::Accessibility::default(),
             bindings: Vec::new(),
+            snap_paging: false,
+            snap_interval: None,
+            snap_offsets: None,
+            snap_alignment: 0,
+            snap_one_step: false,
+            snap_deceleration: 0.0,
         }
     }
 }
