@@ -1114,37 +1114,23 @@ fn create_popup(cx: *mut JsContext, props: JsValue, insets_signal: JsValue) -> J
             return popup;
         }
 
-        let class_prop = qjs::JS_GetPropertyStr(cx, props, c"class".as_ptr());
-        if !qjs::JS_IsUndefined(class_prop) && !qjs::JS_IsNull(class_prop) {
-            let class_fn = {
-                let mut fdata = [class_prop];
-                native(cx, dup_value, 1, &mut fdata)
-            };
-            if let Err(e) = dom::set_prop_value(cx, popup, "class", class_fn) {
-                free(cx, class_fn);
-                free(cx, class_prop);
-                free(cx, popup);
-                return e;
-            }
-            free(cx, class_fn);
+        // Bind class from props.class
+        let class_reader = dom::prop_reader(cx, props, "class");
+        if let Err(e) = dom::bind_prop_with(cx, popup, "class", class_reader) {
+            free(cx, class_reader);
+            free(cx, popup);
+            return e;
         }
-        free(cx, class_prop);
+        free(cx, class_reader);
 
-        let style_prop = qjs::JS_GetPropertyStr(cx, props, c"style".as_ptr());
-        if !qjs::JS_IsUndefined(style_prop) && !qjs::JS_IsNull(style_prop) {
-            let style_fn = {
-                let mut fdata = [style_prop];
-                native(cx, dup_value, 1, &mut fdata)
-            };
-            if let Err(e) = dom::set_prop_value(cx, popup, "style", style_fn) {
-                free(cx, style_fn);
-                free(cx, style_prop);
-                free(cx, popup);
-                return e;
-            }
-            free(cx, style_fn);
+        // Bind style from props.style
+        let style_reader = dom::prop_reader(cx, props, "style");
+        if let Err(e) = dom::bind_prop_with(cx, popup, "style", style_reader) {
+            free(cx, style_reader);
+            free(cx, popup);
+            return e;
         }
-        free(cx, style_prop);
+        free(cx, style_reader);
 
         // Wrap children with insets context
         let children = qjs::JS_GetPropertyStr(cx, props, c"children".as_ptr());
@@ -1318,54 +1304,35 @@ unsafe extern "C" fn create_backdrop(
             return view;
         }
 
-        // Set class with absolute inset-0 prefix
-        let backdrop_class = qjs::JS_GetPropertyStr(cx, props, c"backdropClass".as_ptr());
-        let class_fn = {
-            let mut fdata = [backdrop_class];
-            native(cx, backdrop_class_fn, 1, &mut fdata)
-        };
-        if let Err(e) = dom::set_prop_value(cx, view, "class", class_fn) {
-            free(cx, class_fn);
-            free(cx, backdrop_class);
+        // Bind class from props.backdropClass (no longer prefixing "absolute inset-0")
+        let class_reader = dom::prop_reader(cx, props, "backdropClass");
+        if let Err(e) = dom::bind_prop_with(cx, view, "class", class_reader) {
+            free(cx, class_reader);
             free(cx, view);
             return e;
         }
-        free(cx, class_fn);
-        free(cx, backdrop_class);
+        free(cx, class_reader);
 
-        // Set style
-        let backdrop_style = qjs::JS_GetPropertyStr(cx, props, c"backdropStyle".as_ptr());
-        if !qjs::JS_IsUndefined(backdrop_style) && !qjs::JS_IsNull(backdrop_style) {
-            let style_fn = {
-                let mut fdata = [backdrop_style];
-                native(cx, dup_value, 1, &mut fdata)
-            };
-            if let Err(e) = dom::set_prop_value(cx, view, "style", style_fn) {
-                free(cx, style_fn);
-                free(cx, backdrop_style);
-                free(cx, view);
-                return e;
-            }
-            free(cx, style_fn);
+        // Bind style: merge base absolute positioning with app's backdropStyle
+        let style_getter = {
+            let mut fdata = [props];
+            native(cx, backdrop_style_getter, 1, &mut fdata)
+        };
+        if let Err(e) = dom::bind_prop_with(cx, view, "style", style_getter) {
+            free(cx, style_getter);
+            free(cx, view);
+            return e;
         }
-        free(cx, backdrop_style);
+        free(cx, style_getter);
 
-        // Set testID
-        let test_id = qjs::JS_GetPropertyStr(cx, props, c"backdropTestID".as_ptr());
-        if !qjs::JS_IsUndefined(test_id) && !qjs::JS_IsNull(test_id) {
-            let test_fn = {
-                let mut fdata = [test_id];
-                native(cx, dup_value, 1, &mut fdata)
-            };
-            if let Err(e) = dom::set_prop_value(cx, view, "testID", test_fn) {
-                free(cx, test_fn);
-                free(cx, test_id);
-                free(cx, view);
-                return e;
-            }
-            free(cx, test_fn);
+        // Bind testID from props.backdropTestID
+        let testid_reader = dom::prop_reader(cx, props, "backdropTestID");
+        if let Err(e) = dom::bind_prop_with(cx, view, "testID", testid_reader) {
+            free(cx, testid_reader);
+            free(cx, view);
+            return e;
         }
-        free(cx, test_id);
+        free(cx, testid_reader);
 
         // Set onPress handler with state
         let press_handler = {
@@ -1383,7 +1350,7 @@ unsafe extern "C" fn create_backdrop(
     })
 }
 
-unsafe extern "C" fn backdrop_class_fn(
+unsafe extern "C" fn backdrop_style_getter(
     cx: *mut JsContext,
     _this: JsValue,
     _argc: c_int,
@@ -1391,28 +1358,52 @@ unsafe extern "C" fn backdrop_class_fn(
     _magic: c_int,
     data: *mut JsValue,
 ) -> JsValue {
-    // SAFETY: data points to valid class value
-    let class_val = unsafe { *data };
+    let props = unsafe { *data };
 
-    // SAFETY: cx and class_val are valid
-    if unsafe { qjs::JS_IsString(class_val) } {
-        // SAFETY: cx and class_val are valid
-        let class_str = unsafe { qjs::JS_ToCString(cx, class_val) };
-        if !class_str.is_null() {
-            // SAFETY: class_str is a valid C string
-            let combined = unsafe {
-                format!(
-                    "absolute inset-0 {}",
-                    CStr::from_ptr(class_str).to_string_lossy()
-                )
-            };
-            // SAFETY: cx and class_str are valid
-            unsafe { qjs::JS_FreeCString(cx, class_str) };
-            return new_string(cx, &combined);
+    // Build base style: absolute positioning covering the screen
+    let base_style = unsafe { qjs::JS_NewObject(cx) };
+    let position = new_string(cx, "absolute");
+    unsafe { qjs::JS_SetPropertyStr(cx, base_style, c"position".as_ptr(), position) };
+    let zero = qjs::JS_NewFloat64(0.0);
+    unsafe {
+        qjs::JS_SetPropertyStr(cx, base_style, c"top".as_ptr(), qjs::JS_DupValue(cx, zero));
+        qjs::JS_SetPropertyStr(
+            cx,
+            base_style,
+            c"right".as_ptr(),
+            qjs::JS_DupValue(cx, zero),
+        );
+        qjs::JS_SetPropertyStr(
+            cx,
+            base_style,
+            c"bottom".as_ptr(),
+            qjs::JS_DupValue(cx, zero),
+        );
+        qjs::JS_SetPropertyStr(cx, base_style, c"left".as_ptr(), zero);
+    }
+
+    // Get app's backdropStyle and resolve if it's a function (reactive style)
+    let backdrop_style = qjs::JS_GetPropertyStr(cx, props, c"backdropStyle".as_ptr());
+    let app_style = if unsafe { qjs::JS_IsFunction(cx, backdrop_style) } {
+        let mut args = [];
+        unsafe { qjs::JS_Call(cx, backdrop_style, UNDEFINED, 0, args.as_mut_ptr()) }
+    } else {
+        unsafe { qjs::JS_DupValue(cx, backdrop_style) }
+    };
+    free(cx, backdrop_style);
+
+    // Merge styles: [base, app] - later entries win (decode_style merges arrays left-to-right)
+    let style_array = unsafe { qjs::JS_NewArray(cx) };
+    unsafe {
+        qjs::JS_SetPropertyUint32(cx, style_array, 0, base_style);
+        if !qjs::JS_IsUndefined(app_style) && !qjs::JS_IsNull(app_style) {
+            qjs::JS_SetPropertyUint32(cx, style_array, 1, app_style);
+        } else {
+            free(cx, app_style);
         }
     }
 
-    new_string(cx, "absolute inset-0")
+    style_array
 }
 
 unsafe extern "C" fn on_backdrop_press(

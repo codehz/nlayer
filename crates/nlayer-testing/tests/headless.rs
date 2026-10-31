@@ -387,3 +387,108 @@ mount(App);
     );
     app.stop();
 }
+
+#[test]
+fn dialog_backdrop_press_closes_and_fires_onclose() {
+    let source = r##"
+import { mount, signal } from "@nlayer/runtime";
+import { Dialog, Text, View } from "@nlayer/ui";
+
+function App() {
+    const open = signal(true);
+    const closed = signal(false);
+    return (
+        <View style={{ flex: 1 }}>
+            <Text testID="status">{closed() ? "closed" : "open"}</Text>
+            <Dialog
+                open={open()}
+                backdropStyle={{ backgroundColor: "#00000066" }}
+                backdropTestID="modal-backdrop"
+                onOpenChange={(e) => open.set(e.open)}
+                onClose={() => closed.set(true)}
+            >
+                <View style={{ width: 200, height: 100 }}>
+                    <Text>Modal content</Text>
+                </View>
+            </Dialog>
+        </View>
+    );
+}
+mount(App);
+"##;
+    let mut app = app(source);
+    assert_eq!(app.texts(), ["open", "Modal content"]);
+    
+    // Wait for modal and backdrop to render
+    app.next_frame(Duration::from_millis(100));
+    
+    // Check that backdrop exists with correct testID and covers the screen
+    let screen = app.screen();
+    let backdrop_view = screen.views().find(|(_, view)| {
+        view.test_id.as_deref() == Some("modal-backdrop")
+    });
+    assert!(backdrop_view.is_some(), "backdrop should exist with testID");
+    let (_, backdrop) = backdrop_view.unwrap();
+    assert!(
+        backdrop.frame.size.width.0 > 0.0 && backdrop.frame.size.height.0 > 0.0,
+        "backdrop should have nonzero size covering the screen, got {:?}",
+        backdrop.frame
+    );
+    
+    // Press backdrop to close
+    app.press_selector("id:modal-backdrop").unwrap();
+    assert!(
+        app.wait_for("closed", Duration::from_secs(1)),
+        "onClose should fire on backdrop press, texts: {:?}",
+        app.texts()
+    );
+    assert_eq!(app.texts(), ["closed"], "modal should unmount after backdrop press");
+    app.stop();
+}
+
+#[test]
+fn dialog_backdrop_press_with_close_on_backdrop_press_false() {
+    let source = r##"
+import { mount, signal } from "@nlayer/runtime";
+import { Dialog, Text, View } from "@nlayer/ui";
+
+function App() {
+    const open = signal(true);
+    const closed = signal(false);
+    return (
+        <View style={{ flex: 1 }}>
+            <Text testID="status">{closed() ? "closed" : "open"}</Text>
+            <Dialog
+                open={open()}
+                closeOnBackdropPress={false}
+                backdropStyle={{ backgroundColor: "#00000066" }}
+                backdropTestID="modal-backdrop"
+                onOpenChange={(e) => open.set(e.open)}
+                onClose={() => closed.set(true)}
+            >
+                <View style={{ width: 200, height: 100 }}>
+                    <Text>Modal content</Text>
+                </View>
+            </Dialog>
+        </View>
+    );
+}
+mount(App);
+"##;
+    let mut app = app(source);
+    assert_eq!(app.texts(), ["open", "Modal content"]);
+    
+    // Wait for modal and backdrop to render
+    app.next_frame(Duration::from_millis(100));
+    
+    app.press_selector("id:modal-backdrop").unwrap();
+    app.next_frame(Duration::from_secs(1));
+    
+    // Modal should stay mounted, onClose should not fire
+    assert_eq!(
+        app.texts(),
+        ["open", "Modal content"],
+        "modal should stay open when closeOnBackdropPress=false"
+    );
+    app.stop();
+}

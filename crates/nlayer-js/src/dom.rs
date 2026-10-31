@@ -693,6 +693,28 @@ unsafe extern "C" fn bind_prop_run(
     }
 }
 
+/// Rust-callable wrapper for bind_prop: binds a node prop to a getter function.
+/// The getter is called on each render and the result is set as the prop value.
+pub(crate) fn bind_prop_with(
+    cx: *mut JsContext,
+    node: JsValue,
+    name: &str,
+    get: JsValue,
+) -> Result<(), JsValue> {
+    let name_str = new_string(cx, name);
+    let mut data = [node, name_str, get];
+    // SAFETY: the function keeps dups of `data`.
+    let func =
+        unsafe { qjs::JS_NewCFunctionData(cx, Some(bind_prop_run), 1, 0, 3, data.as_mut_ptr()) };
+    unsafe { qjs::JS_FreeValue(cx, name_str) };
+    let r = reactive::render_effect(cx, func);
+    unsafe { qjs::JS_FreeValue(cx, r) };
+    if unsafe { qjs::JS_IsException(r) } {
+        Err(r)
+    } else {
+        Ok(())
+    }
+}
 /// `spread(node, props)`: every prop of `props` (an object, possibly with
 /// getters), followed.
 unsafe extern "C" fn spread(
@@ -2254,7 +2276,7 @@ fn tag_name(tag: Tag) -> &'static str {
 }
 
 /// A function returning `props[key]` when called (owned).
-fn prop_reader(cx: *mut JsContext, props: JsValue, key: &str) -> JsValue {
+pub(crate) fn prop_reader(cx: *mut JsContext, props: JsValue, key: &str) -> JsValue {
     let k = new_string(cx, key);
     let mut data = [props, k];
     // SAFETY: the function keeps dups of `data`; ours is freed.
