@@ -117,6 +117,24 @@ export interface ViewProps extends AccessibilityProps {
   /** How long the pointer stays down before `onLongPress`, in milliseconds
    * (default 500). */
   delayLongPress?: number;
+  /** Pan gesture: drag gestures drive these animated values (points) on the host thread. */
+  pan?: { x?: AnimatedValue; y?: AnimatedValue };
+  /** Pinch gesture: two-finger pinches drive scale natively. */
+  pinch?: { scale?: AnimatedValue };
+  /** Rotation gesture: two-finger rotations drive angle (degrees) natively. */
+  rotation?: { angle?: AnimatedValue };
+  /** Pan gesture started. */
+  onPanStart?: (event: { translation: { x: number; y: number }; velocity: { x: number; y: number }; values: { x: number; y: number } }) => void;
+  /** Pan gesture ended. */
+  onPanEnd?: (event: { translation: { x: number; y: number }; velocity: { x: number; y: number }; values: { x: number; y: number } }) => void;
+  /** Pinch gesture started. */
+  onPinchStart?: (event: { scale: number; velocity: number; value: number }) => void;
+  /** Pinch gesture ended. Velocity in scale/second. */
+  onPinchEnd?: (event: { scale: number; velocity: number; value: number }) => void;
+  /** Rotation gesture started. */
+  onRotationStart?: (event: { angle: number; velocity: number; value: number }) => void;
+  /** Rotation gesture ended. Angle and velocity in degrees, velocity in degrees/second. */
+  onRotationEnd?: (event: { angle: number; velocity: number; value: number }) => void;
 }
 
 export interface TextProps extends AccessibilityProps {

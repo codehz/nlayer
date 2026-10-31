@@ -23,23 +23,23 @@
     },
     "packages/globals": {
       "name": "@nlayer/globals",
-      "version": "0.1.0",
+      "version": "0.2.2",
     },
     "packages/jsx-runtime": {
       "name": "@nlayer/jsx-runtime",
-      "version": "0.1.0",
+      "version": "0.2.2",
     },
     "packages/runtime": {
       "name": "@nlayer/runtime",
-      "version": "0.1.0",
+      "version": "0.2.2",
     },
     "packages/test": {
       "name": "@nlayer/test",
-      "version": "0.1.0",
+      "version": "0.2.2",
     },
     "packages/ui": {
       "name": "@nlayer/ui",
-      "version": "0.1.0",
+      "version": "0.2.2",
     },
   },
   "packages": {
