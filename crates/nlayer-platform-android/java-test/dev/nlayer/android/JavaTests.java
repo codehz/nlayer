@@ -7,10 +7,12 @@ import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.view.View.MeasureSpec;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ScrollView;
@@ -60,6 +62,7 @@ public final class JavaTests extends Instrumentation {
     "testPushAnimationUsesScreenConfig",
     "testKeyboardHeightCalculation",
     "testSafeAreaUpdatesWithUnchangedKeyboard",
+    "testModalImeUpdatesKeyboardInset",
   };
 
   @Override
@@ -1540,6 +1543,93 @@ public final class JavaTests extends Instrumentation {
       waitForIdleSync();
       equal(150, host.lastPublishedTop, "second safe-area change published");
       equal(0, host.lastPublishedKeyboard, "keyboard still 0");
+    } finally {
+      main(
+          () -> {
+            activity.finish();
+            return null;
+          });
+      waitForIdleSync();
+    }
+  }
+
+  void testModalImeUpdatesKeyboardInset() {
+    // Only on API 30+ (WindowInsets.Builder and Type.ime() are API 30)
+    if (Build.VERSION.SDK_INT < 30) return;
+    Activity activity =
+        startActivitySync(
+            new Intent(context(), HostActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    try {
+      HostView host = main(() -> new HostView(activity));
+      main(
+          () -> {
+            activity.setContentView(host);
+            return null;
+          });
+      waitForIdleSync();
+      Batch b = batch();
+      int modalId = 10;
+      int contentId = 11;
+      // Create modal with animation=2 (none)
+      b.word(0).word(modalId).word(7); // create modal
+      b.word(0).word(contentId).word(0); // create content Box
+      b.word(1).word(1).word(modalId).word(-1); // insert modal into root
+      b.word(1).word(modalId).word(contentId).word(-1); // insert content into modal
+      b.word(4).word(modalId).real(0).real(0).real(200).real(300); // frame the modal
+      b.word(4).word(contentId).real(10).real(10).real(100).real(100); // frame content
+      b.word(21).word(modalId).word(2).word(0).word(1).word(1).word(1); // MODAL_CONFIG
+      main(
+          () -> {
+            host.mounter.apply(b.bytes(), b.objects());
+            return null;
+          });
+      waitForIdleSync();
+
+      ModalHost modal = main(() -> host.mounter.modals.get(modalId));
+      check(modal != null, "modal created");
+      check(modal.shown(), "modal is shown");
+
+      // Dispatch fake IME insets to the modal's container
+      ViewGroup container = main(() -> (ViewGroup) modal.root.getParent());
+      check(container != null, "modal container exists");
+
+      // Build fake insets: IME 500px, system bars 100px
+      int[] results =
+          main(
+              () -> {
+                WindowInsets insets =
+                    new WindowInsets.Builder()
+                        .setInsets(
+                            WindowInsets.Type.ime(), android.graphics.Insets.of(0, 0, 0, 500))
+                        .setInsets(
+                            WindowInsets.Type.systemBars(),
+                            android.graphics.Insets.of(0, 100, 0, 100))
+                        .build();
+                container.dispatchApplyWindowInsets(insets);
+                // Read immediately; real framework may re-dispatch later
+                return new int[] {modal.keyboardInset, host.keyboard, host.lastPublishedKeyboard};
+              });
+      equal(500, results[0], "modal.keyboardInset == 500px after IME dispatch");
+      equal(500, results[1], "host.keyboard == 500px (effective from modal)");
+      check(
+          results[2] > 0 && results[2] == Math.round(500 / host.density),
+          "host.lastPublishedKeyboard == 500/density (published to engine): "
+              + results[2]
+              + " == "
+              + Math.round(500 / host.density));
+
+      // Remove the modal
+      Batch remove = batch();
+      remove.word(2).word(modalId); // REMOVE
+      main(
+          () -> {
+            host.mounter.apply(remove.bytes(), remove.objects());
+            return null;
+          });
+      waitForIdleSync();
+
+      equal(0, host.keyboard, "host.keyboard == 0 after modal removed (restored to activity)");
+      equal(0, host.lastPublishedKeyboard, "lastPublishedKeyboard == 0 after modal removed");
     } finally {
       main(
           () -> {

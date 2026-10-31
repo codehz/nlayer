@@ -242,7 +242,7 @@ public final class HostView extends FrameLayout {
     keyboard = effectiveKeyboard();
     if (handle != 0) {
       lastPublishedTop = safeTop;
-      lastPublishedKeyboard = keyboard;
+      lastPublishedKeyboard = Math.round(keyboard / density);
       Native.insets(
           handle,
           safeTop / density,
