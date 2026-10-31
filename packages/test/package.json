@@ -1,6 +1,6 @@
 {
   "name": "@nlayer/test",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "TypeScript types for nlayer's test runner (@nlayer/test). nlayer test provides the values. No JavaScript.",
   "license": "Apache-2.0",
   "type": "module",
