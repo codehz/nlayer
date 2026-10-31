@@ -43,6 +43,18 @@ pub enum Tag {
     Cell,
     /// A text field, one line or several (`<input>`).
     Input,
+    /// A navigation stack (`<stack>`). Its children are screens, pushed
+    /// and popped natively.
+    Stack,
+    /// A screen of a stack (`<screen>`): its root view, above which the
+    /// platform also makes its header.
+    Screen,
+    /// The root view of a modal (`<modal>`). Inserting it presents the
+    /// modal, removing it dismisses it.
+    Modal,
+    /// A view shown in a screen's header (`<headerItem>`): its slot is
+    /// in the screen's config.
+    HeaderItem,
 }
 impl Tag {
     /// Parses a host element's name (what `nlayer:rt`'s `element` takes).
@@ -56,6 +68,10 @@ impl Tag {
             "list" => Some(Tag::List),
             "cell" => Some(Tag::Cell),
             "input" => Some(Tag::Input),
+            "stack" => Some(Tag::Stack),
+            "screen" => Some(Tag::Screen),
+            "modal" => Some(Tag::Modal),
+            "headerItem" => Some(Tag::HeaderItem),
             _ => None,
         }
     }
@@ -93,6 +109,17 @@ pub enum EventKind {
     LoadMore,
     /// The pointer stayed down for `delayLongPress` (`onLongPress`).
     LongPress,
+    /// The back button was pressed (`onBackPress`). Sent to screens and modals
+    /// before they pop/dismiss.
+    BackRequest,
+    /// The screen or modal was dismissed (`onDismiss`).
+    Dismiss,
+    /// Platform insets changed (`onInsets`).
+    Insets,
+    /// Modal finished appearing (`onShow`).
+    Show,
+    /// User tried to close modal (`onRequestClose`), before `closeOn*` flags.
+    RequestClose,
 }
 
 impl EventKind {
@@ -112,6 +139,11 @@ impl EventKind {
             "onCompositionChange" => Some(EventKind::CompositionChange),
             "onLoadMore" => Some(EventKind::LoadMore),
             "onLongPress" => Some(EventKind::LongPress),
+            "onBackPress" => Some(EventKind::BackRequest),
+            "onDismiss" => Some(EventKind::Dismiss),
+            "onInsets" => Some(EventKind::Insets),
+            "onShow" => Some(EventKind::Show),
+            "onRequestClose" => Some(EventKind::RequestClose),
             _ => None,
         }
     }
@@ -133,6 +165,11 @@ impl EventKind {
             9 => Some(EventKind::CompositionChange),
             10 => Some(EventKind::LoadMore),
             11 => Some(EventKind::LongPress),
+            12 => Some(EventKind::BackRequest),
+            13 => Some(EventKind::Dismiss),
+            14 => Some(EventKind::Insets),
+            15 => Some(EventKind::Show),
+            16 => Some(EventKind::RequestClose),
             _ => None,
         }
     }
@@ -153,10 +190,14 @@ impl EventKind {
             EventKind::CompositionChange => "onCompositionChange",
             EventKind::LoadMore => "onLoadMore",
             EventKind::LongPress => "onLongPress",
+            EventKind::BackRequest => "onBackPress",
+            EventKind::Dismiss => "onDismiss",
+            EventKind::Insets => "onInsets",
+            EventKind::Show => "onShow",
+            EventKind::RequestClose => "onRequestClose",
         }
     }
 }
-
 /// A set of event kinds: one bit per kind, room for 128.
 ///
 /// Two words, not a `u128`: views keep it in Objective-C ivars, which take
@@ -817,6 +858,116 @@ pub enum CellSlot {
     Empty,
 }
 
+/// How a screen appears (`animation`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScreenAnimation {
+    /// The platform's push / pop transition (also `"slide"`, which shares
+    /// the prop with a dialog's default).
+    #[default]
+    Default,
+    /// Cross-fade.
+    Fade,
+    /// No animation.
+    None,
+}
+
+/// How a modal appears (`animation`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ModalAnimation {
+    /// Slides up from the bottom (default).
+    #[default]
+    Slide,
+    /// Fades in.
+    Fade,
+    /// Appears at once.
+    None,
+}
+
+/// How a modal covers the screen (`presentation`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ModalPresentation {
+    /// Covers the whole screen (default).
+    #[default]
+    FullScreen,
+    /// A sheet that leaves the presenting content visible behind it.
+    PageSheet,
+    /// A smaller centered sheet on large screens.
+    FormSheet,
+}
+
+/// Where a header item goes in the screen's header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HeaderSlot {
+    /// `headerLeft`.
+    Left,
+    /// `headerRight`.
+    Right,
+    /// `headerTitle` (a custom title view).
+    Title,
+    /// `header`: without a native header ([`crate::mount::NO_NATIVE_HEADER`]),
+    /// a view at the top of the screen, above the content.
+    #[default]
+    Header,
+}
+
+/// A screen option (`<NavPage ...>`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ScreenProp {
+    /// `title`: the header's title (iOS and Android: the system header;
+    /// ignored on platforms without one, which show the app's `header`).
+    Title(Option<Arc<str>>),
+    /// `headerVisible`: the system header shows (default true; iOS and
+    /// Android).
+    HeaderVisible(bool),
+    /// `headerTransparent`: the content extends under the system header
+    /// (iOS and Android).
+    HeaderTransparent(bool),
+    /// `headerBackVisible`: the system header's back button shows (default
+    /// true; iOS and Android).
+    HeaderBackVisible(bool),
+    /// `popOnSwipe`: the interactive back gesture pops (iOS swipe back,
+    /// Android predictive back following the finger); the back buttons pop
+    /// either way (default true).
+    PopOnSwipe(bool),
+    /// `popOnBack`: the user leaves the page with the back buttons (header,
+    /// Android back, the browser's back) and the swipe back (default true).
+    /// False keeps it, e.g. to confirm discarding changes in `onBackPress`
+    /// (called on every back press) and then `pop()`. Decided natively when
+    /// the system asks, so set it before the user acts.
+    PopOnBack(bool),
+    /// `animation`: how the page enters and leaves.
+    Animation(ScreenAnimation),
+    /// `headerStyle`: `{ backgroundColor, color, tintColor }`.
+    HeaderStyle {
+        /// Header background.
+        background_color: Option<crate::Color>,
+        /// Title color.
+        title_color: Option<crate::Color>,
+        /// Color of the back button and bar buttons.
+        tint_color: Option<crate::Color>,
+    },
+}
+
+/// A modal option (`<Dialog ...>`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ModalProp {
+    /// `animation`: how the dialog appears.
+    Animation(ModalAnimation),
+    /// `presentation`: `"pageSheet"` / `"formSheet"` keep what is behind
+    /// visible (iOS; ignored on Android and the web, where a dialog is a
+    /// transparent layer).
+    Presentation(ModalPresentation),
+    /// `closeOnEscape`: Escape and the Android back button close it natively
+    /// (default true); either way they call `onCancel`.
+    CloseOnEscape(bool),
+    /// `closeOnBackdropPress`: a press on the backdrop part closes it
+    /// (default true); either way it calls `onCancel`.
+    CloseOnBackdropPress(bool),
+    /// `closeOnSwipe`: swiping a sheet down (iOS, phone browsers) closes it
+    /// natively (default true); either way it calls `onCancel`.
+    CloseOnSwipe(bool),
+}
+
 /// A non-style property of a host node.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Prop {
@@ -886,6 +1037,12 @@ pub enum Prop {
         /// The view and text paint. `None` clears the state.
         paint: Option<Box<(crate::style::ViewStyle, crate::style::TextStyle)>>,
     },
+    /// A screen option (`NavPage`).
+    Screen(ScreenProp),
+    /// A modal option (`Dialog`).
+    Modal(ModalProp),
+    /// Where a header item goes (`headerLeft`, `headerRight`, `headerTitle`, `header`).
+    HeaderSlot(HeaderSlot),
 }
 
 /// A mutation produced by the JS renderer.
@@ -1006,4 +1163,10 @@ pub enum Command {
         /// End.
         end: u32,
     },
+    /// What the back button does when none of the app's listeners took
+    /// it: the innermost stack pops (or asks, with `popOnBack` false); with
+    /// none, the app leaves on Android (on the root).
+    Back,
+    /// Go back in a web view's history.
+    GoBack,
 }

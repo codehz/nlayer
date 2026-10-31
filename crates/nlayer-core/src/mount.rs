@@ -29,6 +29,130 @@ pub enum ViewKind {
     Scroll,
     /// A text field, one line or several ([`MountItem::Input`]).
     Input,
+    /// A navigation stack: its children are screens, pushed and popped
+    /// natively.
+    Stack,
+    /// A screen of a stack (its root view; the platform also makes its
+    /// header).
+    Screen,
+    /// The root view of a modal: inserting it presents the modal, removing
+    /// it dismisses it.
+    Modal,
+    /// A view shown in a screen's header (its slot is in the screen's
+    /// [`ScreenConfig`]).
+    HeaderItem,
+}
+
+/// The header heights a platform without a native header gives the core
+/// (the web): nlayer draws no header there. A page's `header` slot
+/// is placed at its top instead, as wide as the page and as tall as it lays
+/// out, and the content starts below it; the native header's options
+/// (`title`, `headerLeft`, `headerStyle`, ...) are ignored.
+pub const NO_NATIVE_HEADER: (Points, Points) = (Points::ZERO, Points::ZERO);
+
+/// Options of a screen: its header and transitions.
+///
+/// The header options are the native header's (iOS, Android); a platform
+/// without one ([`NO_NATIVE_HEADER`]) reads only `header_view`,
+/// `header_height`, `prevent_back`, `gesture_enabled` and `animation`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScreenConfig {
+    /// Title in the header.
+    pub title: Option<Arc<str>>,
+    /// Show the native header.
+    pub header_visible: bool,
+    /// The content extends under the header.
+    pub header_transparent: bool,
+    /// Color of the back button and bar buttons.
+    pub tint_color: Option<crate::Color>,
+    /// Header background.
+    pub background_color: Option<crate::Color>,
+    /// Title color.
+    pub title_color: Option<crate::Color>,
+    /// Show the back button.
+    pub back_visible: bool,
+    /// The interactive back gesture (iOS swipe back, Android predictive back
+    /// following the finger) is on; the back button pops either way
+    /// (`popOnSwipe`).
+    pub gesture_enabled: bool,
+    /// The user cannot leave the screen (`popOnBack` false: no swipe, the
+    /// back buttons do not pop): answered by the platform when the system
+    /// asks, without JS. Every back press sends `onBackPress` either way.
+    pub prevent_back: bool,
+    /// Push / pop transition.
+    pub animation: crate::ops::ScreenAnimation,
+    /// Leading header item view.
+    pub left: Option<NodeId>,
+    /// Trailing header item view.
+    pub right: Option<NodeId>,
+    /// Custom title view.
+    pub title_view: Option<NodeId>,
+    /// The app's header (`header`): on a platform without a native header
+    /// ([`NO_NATIVE_HEADER`]), a view at the top of the screen whose frame
+    /// the core sets (as wide as the screen, as tall as it lays out),
+    /// above the content.
+    pub header_view: Option<NodeId>,
+    /// Height of the header area at the top of the screen, as the core laid
+    /// the content out below it: the native header's (status bar included),
+    /// or the `header` view's without a native header.
+    pub header_height: Points,
+}
+
+impl Default for ScreenConfig {
+    fn default() -> Self {
+        Self {
+            title: None,
+            header_visible: true,
+            header_transparent: false,
+            tint_color: None,
+            background_color: None,
+            title_color: None,
+            back_visible: true,
+            gesture_enabled: true,
+            prevent_back: false,
+            animation: crate::ops::ScreenAnimation::Default,
+            left: None,
+            right: None,
+            title_view: None,
+            header_view: None,
+            header_height: Points::ZERO,
+        }
+    }
+}
+
+/// Options of a modal (`Dialog`).
+///
+/// The modal itself has no look: on the web it is a transparent layer over
+/// the whole window (no card, scrim, shadow or background; `presentation` is
+/// ignored), and what shows is the app's popup and backdrop, which the
+/// runtime renders inside it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ModalConfig {
+    /// How it appears.
+    pub animation: crate::ops::ModalAnimation,
+    /// How it covers the screen (iOS).
+    pub presentation: crate::ops::ModalPresentation,
+    /// Escape and the Android back button close it natively
+    /// (`closeOnEscape`); either way they report `onCancel`.
+    pub close_on_escape: bool,
+    /// A press on the backdrop closes it (`closeOnBackdropPress`): the
+    /// runtime handles presses on the app's backdrop part; a platform
+    /// reads it only for a backdrop of its own (a native sheet's).
+    pub close_on_backdrop_press: bool,
+    /// Swiping a sheet down closes it natively (`closeOnSwipe`).
+    pub close_on_swipe: bool,
+}
+
+impl Default for ModalConfig {
+    fn default() -> Self {
+        Self {
+            animation: crate::ops::ModalAnimation::default(),
+            presentation: crate::ops::ModalPresentation::default(),
+            close_on_escape: true,
+            close_on_backdrop_press: true,
+            close_on_swipe: true,
+        }
+    }
 }
 
 /// One instruction for the platform backend.
@@ -217,6 +341,21 @@ pub enum MountItem {
         id: NodeId,
         /// The call.
         command: Command,
+    },
+    /// Configure a screen (sent before the screen is inserted into its
+    /// stack, and on every change).
+    ScreenConfig {
+        /// Screen.
+        id: NodeId,
+        /// The options.
+        config: Box<ScreenConfig>,
+    },
+    /// Configure a modal (sent before it is presented, and on changes).
+    ModalConfig {
+        /// Modal root view.
+        id: NodeId,
+        /// The options.
+        config: ModalConfig,
     },
 }
 

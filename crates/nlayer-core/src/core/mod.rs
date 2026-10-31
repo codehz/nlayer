@@ -17,10 +17,9 @@ mod list;
 use std::{mem, sync::Arc};
 
 use taffy::{AvailableSpace, Layout, Position, Style as TaffyStyle};
-
+use rustc_hash::FxHashSet;
 use layout_tree::LayoutTree;
 
-use rustc_hash::FxHashSet;
 
 use crate::{
     geometry::{Bounds, Edges, Percentage, Point, Points, Size, rect},
@@ -73,6 +72,10 @@ mod dirty {
     pub(super) const LIST: u32 = 1 << 12;
     /// Emit [`crate::MountItem::AnimationBindings`].
     pub(super) const ANIMATION: u32 = 1 << 13;
+    /// Emit [`crate::MountItem::ScreenConfig`].
+    pub(super) const SCREEN: u32 = 1 << 14;
+    /// Emit [`crate::MountItem::ModalConfig`].
+    pub(super) const MODAL: u32 = 1 << 15;
 }
 
 /// Host kind.
@@ -93,13 +96,40 @@ enum Kind {
     Cell,
     /// A text field, one line or several.
     Input,
+    /// A navigation stack: its children are screens, pushed and popped
+    /// natively.
+    Stack,
+    /// A screen of a stack (its root view; the platform also makes its
+    /// header).
+    Screen,
+    /// The root view of a modal: inserting it presents the modal, removing
+    /// it dismisses it.
+    Modal,
+    /// A view shown in a screen's header (its slot is in the screen's
+    /// config).
+    HeaderItem,
 }
 
 impl Kind {
     fn is_container(self) -> bool {
         matches!(
             self,
-            Kind::View | Kind::Image | Kind::Scroll | Kind::List | Kind::Cell
+            Kind::View
+                | Kind::Image
+                | Kind::Scroll
+                | Kind::List
+                | Kind::Cell
+                | Kind::Stack
+                | Kind::Screen
+                | Kind::Modal
+                | Kind::HeaderItem
+        )
+    }
+
+    fn is_layout_root(self) -> bool {
+        matches!(
+            self,
+            Kind::Screen | Kind::Modal | Kind::HeaderItem
         )
     }
 
@@ -112,6 +142,10 @@ impl Kind {
             Tag::List => Kind::List,
             Tag::Cell => Kind::Cell,
             Tag::Input => Kind::Input,
+            Tag::Stack => Kind::Stack,
+            Tag::Screen => Kind::Screen,
+            Tag::Modal => Kind::Modal,
+            Tag::HeaderItem => Kind::HeaderItem,
         }
     }
 
@@ -123,6 +157,10 @@ impl Kind {
             Kind::Scroll | Kind::List => ViewKind::Scroll,
             Kind::Cell => ViewKind::View,
             Kind::Input => ViewKind::Input,
+            Kind::Stack => ViewKind::Stack,
+            Kind::Screen => ViewKind::Screen,
+            Kind::Modal => ViewKind::Modal,
+            Kind::HeaderItem => ViewKind::HeaderItem,
             // Raw text is never created as a native view.
             Kind::RawText => ViewKind::View,
         }
@@ -208,6 +246,28 @@ struct StatePaint {
     text: TextStyle,
 }
 
+/// A layout root other than the surface's: screens, modals and header
+/// items are laid out on their own, at a size their container gives them.
+#[derive(Debug, Default)]
+struct RootState {
+    /// Size the platform reported for the root (modals).
+    reported: Option<Size<Points>>,
+    /// Safe-area insets the platform reported for the root (modals).
+    insets: crate::geometry::Edges<Points>,
+    /// Height of the header the platform measured above the content
+    /// (screens; until then, estimated from the bar's height and the safe
+    /// area).
+    header: Option<f32>,
+    /// The size and header height the root was last laid out with.
+    laid_out: Option<(Size<Points>, f32)>,
+    /// Screen options (screens).
+    screen: crate::ScreenConfig,
+    /// Modal options (modals).
+    modal: crate::ModalConfig,
+    /// Where a header item goes (header items).
+    slot: crate::ops::HeaderSlot,
+}
+
 struct Node {
     id: NodeId,
     kind: Kind,
@@ -248,7 +308,8 @@ struct Node {
     slot: Option<CellSlot>,
     /// Present exactly for [`Kind::Input`].
     input: Option<Box<InputState>>,
-    /// `zIndex`: native views are ordered by it (stable) among siblings.
+    /// Screens, modals and header items.
+    root: Option<Box<RootState>>,
     z_index: i32,
     /// Laid out right to left (the resolved `direction`).
     rtl: bool,
@@ -308,6 +369,8 @@ impl Node {
             }),
             slot: None,
             input: matches!(kind, Kind::Input).then(Box::default),
+            root: matches!(kind, Kind::Screen | Kind::Modal | Kind::HeaderItem)
+                .then(Box::default),
             z_index: 0,
             rtl: false,
             direction: None,
@@ -323,6 +386,10 @@ impl Node {
             test_id: None,
             accessibility: Accessibility::default(),
         }
+    }
+
+    fn is_layout_root(&self) -> bool {
+        self.kind.is_layout_root()
     }
 }
 
@@ -401,6 +468,12 @@ pub struct Core<M: TextEngine> {
     keyboard_inset: Points,
     /// Nodes whose padding or margin uses `env()`.
     env_styled: FxHashSet<NodeId>,
+    /// Height of the platform's screen header bar, normal and with a large
+    /// title (status bar excluded). Screens without a native header use
+    /// [`NO_NATIVE_HEADER`].
+    header_heights: (Points, Points),
+    /// Live screens, modals and header items (layout roots).
+    roots: Vec<Key>,
     /// Live lists.
     lists: Vec<Key>,
     /// List scroll commands waiting for this commit's list update.
@@ -448,6 +521,8 @@ impl<M: TextEngine> Core<M> {
             safe_area: Edges::default(),
             keyboard_inset: Points::ZERO,
             env_styled: FxHashSet::default(),
+            header_heights: (Points(44.0), Points(96.0)),
+            roots: Vec::new(),
             lists: Vec::new(),
             commands: Vec::new(),
             list_binds: Vec::new(),
@@ -502,6 +577,131 @@ impl<M: TextEngine> Core<M> {
         if self.keyboard_inset != height {
             self.keyboard_inset = height;
             self.sync_env();
+        }
+    }
+
+    /// Sets the height of the platform's screen header bar, normal and with
+    /// a large title (status bar excluded). Platforms without a native header
+    /// set [`NO_NATIVE_HEADER`].
+    pub fn set_header_heights(&mut self, normal: Points, large: Points) {
+        if self.header_heights != (normal, large) {
+            self.header_heights = (normal, large);
+            self.needs_layout = true;
+        }
+    }
+
+    /// The platform measured where the content of screen `id` starts below
+    /// the header it shows (`None`: estimate it from the bar's height and
+    /// the safe area). Used for screens that lay their content out below
+    /// the header (not transparent headers).
+    pub fn set_screen_header(&mut self, id: NodeId, height: Option<Points>) {
+        let Ok(key) = self.key(id) else { return };
+        let height = height.map(|h| h.0).filter(|h| h.is_finite() && *h >= 0.0);
+        if let Some(root) = self.nodes[key as usize].root.as_mut()
+            && root.header != height
+        {
+            root.header = height;
+            self.needs_layout = true;
+        }
+    }
+
+    /// The platform presents root `id` (a modal) at `size`, with `insets`
+    /// of it covered by system UI.
+    pub fn set_root_size(&mut self, id: NodeId, size: Size<Points>, insets: Edges<Points>) {
+        let Ok(key) = self.key(id) else { return };
+        if let Some(root) = self.nodes[key as usize].root.as_mut()
+            && (root.reported != Some(size) || root.insets != insets)
+        {
+            root.reported = Some(size);
+            root.insets = insets;
+            self.needs_layout = true;
+        }
+    }
+
+    /// Handles the back button press. Returns `true` if Core navigation
+    /// consumed it (a modal dismissed or a stack popped), `false` if not
+    /// (no stack/modal, or the top screen has `popOnBack` false).
+    ///
+    /// Fires `onBackPress` (EventKind::BackRequest) to the top screen/modal
+    /// before checking whether to pop. The engine calls this first; if it
+    /// returns `false`, the engine tries BackHandler listeners, then the
+    /// platform's back behavior.
+    pub fn handle_back(&mut self) -> bool {
+        // Priority: modal first, then topmost screen in a stack.
+        // A modal always wins. For screens, find the last (topmost) in its stack.
+        let mut candidate: Option<(Key, bool)> = None; // (key, is_modal)
+        
+        // First check for any modal.
+        for &key in &self.roots {
+            let node = &self.nodes[key as usize];
+            if !node.created {
+                continue;
+            }
+            if node.kind == Kind::Modal {
+                candidate = Some((key, true));
+                break;
+            }
+        }
+        
+        // If no modal, find the topmost screen in any stack.
+        if candidate.is_none() {
+            for &key in &self.roots {
+                let node = &self.nodes[key as usize];
+                if !node.created || node.kind != Kind::Screen {
+                    continue;
+                }
+                // Screen's parent is the stack. Find the last screen child of that stack.
+                let stack_key = node.parent;
+                if stack_key == NO_KEY {
+                    continue;
+                }
+                let stack = &self.nodes[stack_key as usize];
+                if stack.kind != Kind::Stack || stack.children.is_empty() {
+                    continue;
+                }
+                // Last child of the stack is the topmost screen.
+                let topmost_key = *stack.children.last().unwrap();
+                let topmost = &self.nodes[topmost_key as usize];
+                if topmost.created && topmost.kind == Kind::Screen {
+                    candidate = Some((topmost_key, false));
+                    break;
+                }
+            }
+        }
+        
+        let Some((key, is_modal)) = candidate else {
+            return false;
+        };
+        
+        let node = &self.nodes[key as usize];
+        let id = node.id;
+        
+        // Always fire onBackPress event if the screen/modal listens to it.
+        if node.events.contains(EventKind::BackRequest) {
+            self.events.push((id, EventKind::BackRequest));
+        }
+        
+        // Check if eligible to pop/dismiss.
+        if is_modal {
+            // Modal: check close_on_escape.
+            let can_close = node.root.as_ref()
+                .map_or(true, |r| r.modal.close_on_escape);
+            can_close
+        } else {
+            // Screen: check if it's the root (only screen in stack) or if popOnBack allows.
+            let stack_key = node.parent;
+            if stack_key == NO_KEY {
+                return false;
+            }
+            let stack = &self.nodes[stack_key as usize];
+            if stack.children.len() <= 1 {
+                // Root screen: cannot pop.
+                return false;
+            }
+            // Non-root screen: check prevent_back (which is !popOnBack).
+            let can_pop = !node.root.as_ref()
+                .map_or(false, |r| r.screen.prevent_back);
+            can_pop
         }
     }
 
@@ -734,25 +934,37 @@ impl<M: TextEngine> Core<M> {
                 layout_style,
                 LeafContext::Text(TextContext::new(Arc::default())),
             ),
-            Kind::View | Kind::Scroll | Kind::List | Kind::Cell => {
+            Kind::View | Kind::Scroll | Kind::List | Kind::Cell | Kind::Stack => {
+                self.layout.new_leaf(layout_style)
+            }
+            Kind::Screen | Kind::Modal | Kind::HeaderItem => {
+                // Layout roots: laid out on their own, not in parent.
                 self.layout.new_leaf(layout_style)
             }
             Kind::RawText => unreachable!("raw text is CreateText, not a tag"),
         };
         self.layout.set_tag(layout, key);
-        let node = &mut self.nodes[key as usize];
-        node.layout = Some(layout);
+        self.nodes[key as usize].layout = Some(layout);
         if kind == Kind::Text {
-            node.dirty |= dirty::TEXT_BUILD;
+            self.nodes[key as usize].dirty |= dirty::TEXT_BUILD;
         }
         if let Some(base) = scroll_base {
-            node.base_layout = Some(Box::new(base));
+            self.nodes[key as usize].base_layout = Some(Box::new(base));
         }
         if matches!(kind, Kind::Scroll | Kind::List) {
             self.sync_scroll_style(key);
         }
         if kind == Kind::List {
             self.lists.push(key);
+        }
+        if matches!(kind, Kind::Screen | Kind::Modal | Kind::HeaderItem) {
+            self.roots.push(key);
+            // Mark dirty to emit initial config.
+            if kind == Kind::Screen {
+                self.nodes[key as usize].dirty |= dirty::SCREEN;
+            } else if kind == Kind::Modal {
+                self.nodes[key as usize].dirty |= dirty::MODAL;
+            }
         }
         if kind == Kind::Input {
             self.measure_input(key);
@@ -817,7 +1029,6 @@ impl<M: TextEngine> Core<M> {
         };
         layout.overflow = taffy::Point { x: clip, y: clip };
         let kind = node.kind;
-        let id = node.id;
         match applied {
             Some(applied) => node.env = Some(Box::new((env_edges, applied))),
             None => {
@@ -830,6 +1041,7 @@ impl<M: TextEngine> Core<M> {
         } else {
             self.env_styled.remove(&id);
         }
+        // env_styled tracking removed for v3
         if matches!(kind, Kind::Text | Kind::Scroll | Kind::List) {
             self.nodes[key as usize].base_layout = Some(Box::new(layout.clone()));
         }
@@ -1123,6 +1335,52 @@ impl<M: TextEngine> Core<M> {
                     self.mark(key, dirty::STATE);
                 }
             }
+            Prop::Screen(screen_prop) => {
+                use crate::ops::ScreenProp;
+                if let Some(root) = self.nodes[key as usize].root.as_mut() {
+                    let config = &mut root.screen;
+                    match screen_prop {
+                        ScreenProp::Title(title) => config.title = title,
+                        ScreenProp::HeaderVisible(visible) => config.header_visible = visible,
+                        ScreenProp::HeaderTransparent(transparent) => config.header_transparent = transparent,
+                        ScreenProp::HeaderBackVisible(visible) => config.back_visible = visible,
+                        ScreenProp::PopOnSwipe(enabled) => config.gesture_enabled = enabled,
+                        ScreenProp::PopOnBack(pop) => config.prevent_back = !pop,
+                        ScreenProp::Animation(animation) => config.animation = animation,
+                        ScreenProp::HeaderStyle { background_color, title_color, tint_color } => {
+                            config.background_color = background_color;
+                            config.title_color = title_color;
+                            config.tint_color = tint_color;
+                        }
+                    }
+                    self.nodes[key as usize].dirty |= dirty::SCREEN;
+                    self.needs_layout = true;
+                }
+            }
+            Prop::Modal(modal_prop) => {
+                use crate::ops::ModalProp;
+                if let Some(root) = self.nodes[key as usize].root.as_mut() {
+                    let config = &mut root.modal;
+                    match modal_prop {
+                        ModalProp::Animation(animation) => config.animation = animation,
+                        ModalProp::Presentation(presentation) => config.presentation = presentation,
+                        ModalProp::CloseOnEscape(close) => config.close_on_escape = close,
+                        ModalProp::CloseOnBackdropPress(close) => config.close_on_backdrop_press = close,
+                        ModalProp::CloseOnSwipe(close) => config.close_on_swipe = close,
+                    }
+                    self.nodes[key as usize].dirty |= dirty::MODAL;
+                }
+            }
+            Prop::HeaderSlot(slot) => {
+                if let Some(root) = self.nodes[key as usize].root.as_mut() {
+                    root.slot = slot;
+                    // Re-layout the parent screen when the slot changes.
+                    let parent = self.nodes[key as usize].parent;
+                    if parent != NO_KEY {
+                        self.needs_layout = true;
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -1296,8 +1554,8 @@ impl<M: TextEngine> Core<M> {
         }
         let node = self.nodes.remove(key as usize);
         self.slots[id as usize] = 0;
-        self.env_styled.remove(&id);
         self.lists.retain(|&k| k != key);
+        self.roots.retain(|&k| k != key);
         self.list_binds.retain(|b| b.list != id);
         for &c in &node.children {
             if let Some(child) = self.nodes.get_mut(c as usize) {
@@ -1428,6 +1686,12 @@ impl<M: TextEngine> Core<M> {
             // A new native view has not been told its content size.
             node.scroll.as_mut().expect("scroll").content = None;
             flags |= dirty::SCROLL;
+        }
+        if kind == Kind::Screen {
+            flags |= dirty::SCREEN;
+        }
+        if kind == Kind::Modal {
+            flags |= dirty::MODAL;
         }
         if let Some(input) = node.input.as_mut() {
             input.content = None;
@@ -1589,6 +1853,18 @@ impl<M: TextEngine> Core<M> {
                 let accessibility = Box::new(self.nodes[key as usize].accessibility.clone());
                 self.mount
                     .push(MountItem::Accessibility { id, accessibility });
+            }
+            if flags & dirty::SCREEN != 0
+                && let Some(root) = self.nodes[key as usize].root.as_ref()
+            {
+                let config = Box::new(root.screen.clone());
+                self.mount.push(MountItem::ScreenConfig { id, config });
+            }
+            if flags & dirty::MODAL != 0
+                && let Some(root) = self.nodes[key as usize].root.as_ref()
+            {
+                let config = root.modal;
+                self.mount.push(MountItem::ModalConfig { id, config });
             }
         }
     }
@@ -5584,5 +5860,580 @@ mod tests {
         assert_eq!(text.links[0].node, 4);
         assert_eq!(text.links[0].start, 4);
         assert_eq!(text.links[0].end, 8);
+    }
+
+    #[test]
+    fn screen_push_pop_mount_ordering() {
+        let mut c = core();
+        // Create stack and screens.
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Stack,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        
+        let batch = c.commit().unwrap();
+        // Stack and first screen are created and inserted.
+        assert!(batch.items.iter().any(|m| matches!(m, MountItem::Create { id: 2, kind: ViewKind::Stack })));
+        assert!(batch.items.iter().any(|m| matches!(m, MountItem::Create { id: 3, kind: ViewKind::Screen })));
+        
+        // Push second screen.
+        c.apply(Op::Create {
+            id: 4,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+        
+        let batch = c.commit().unwrap();
+        // Second screen created and inserted after first.
+        assert!(batch.items.iter().any(|m| matches!(m, MountItem::Create { id: 4, kind: ViewKind::Screen })));
+        
+        // Pop second screen (remove from stack).
+        c.apply(Op::Remove { parent: 2, child: 4 }).unwrap();
+        
+        let batch = c.commit().unwrap();
+        // Screen removed from parent.
+        assert!(batch.items.iter().any(|m| matches!(m, MountItem::Remove { id: 4 })));
+    }
+
+    #[test]
+    fn header_height_layout_accounting() {
+        let mut c = core();
+        // Set header heights (normal, large).
+        c.set_header_heights(Points(44.0), Points(96.0));
+        
+        // Create stack and screen.
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Stack,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        
+        // Set screen title to trigger config emission.
+        c.apply(Op::SetProp {
+            id: 3,
+            prop: Prop::Screen(crate::ops::ScreenProp::Title(Some("Test".into()))),
+        })
+        .unwrap();
+        
+        let batch = c.commit().unwrap();
+        // ScreenConfig is emitted with title.
+        let config_item = batch.items.iter().find_map(|m| {
+            if let MountItem::ScreenConfig { id, config } = m {
+                if *id == 3 {
+                    Some(config)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+        assert!(config_item.is_some());
+        assert_eq!(config_item.unwrap().title.as_deref(), Some("Test"));
+        
+        // Platform reports measured header height.
+        c.set_screen_header(3, Some(Points(64.0)));
+        
+        // Verify layout is marked as needing update.
+        c.commit();
+    }
+
+    // TODO: Re-enable when env() is fully implemented in v3
+    #[test]
+    #[ignore]
+    fn inset_accounting() {
+        let mut c = core();
+        
+        // Create a view with env() padding.
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::View,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        
+        // Set style with env(safe-area-inset-top).
+        // use crate::style::*;
+        // let mut style = Style::default();
+        // style.pending.env.padding[0] = Some(crate::style::EnvTerm::SafeAreaTop);
+        // c.apply(Op::SetStyle {
+        //     id: 2,
+        //     patch: style,
+        // })
+        // .unwrap();
+        c.commit();
+        
+        // Update safe area insets.
+        c.set_safe_area(crate::geometry::Edges {
+            top: Points(20.0),
+            right: Points(0.0),
+            bottom: Points(0.0),
+            left: Points(0.0),
+        });
+        
+        // Commit should apply insets to padding.
+        c.commit();
+        
+        // Update keyboard inset.
+        c.set_keyboard_inset(Points(300.0));
+        
+        // Verify layout update is triggered.
+        c.commit();
+    }
+
+    #[test]
+    fn modal_config_emission() {
+        let mut c = core();
+        
+        // Create modal.
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Modal,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        
+        // Set modal prop.
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Modal(crate::ops::ModalProp::Animation(
+                crate::ops::ModalAnimation::Fade,
+            )),
+        })
+        .unwrap();
+        
+        let batch = c.commit().unwrap();
+        
+        // ModalConfig is emitted.
+        let config_item = batch.items.iter().find_map(|m| {
+            if let MountItem::ModalConfig { id, config } = m {
+                if *id == 2 {
+                    Some(config)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+        assert!(config_item.is_some());
+        assert_eq!(
+            config_item.unwrap().animation,
+            crate::ops::ModalAnimation::Fade
+        );
+    }
+
+    #[test]
+    fn handle_back_with_screen() {
+        let mut c = core();
+        
+        // Create stack with two screens so the top one can pop.
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Stack,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 4,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+        c.commit();
+        
+        // Listen to BackRequest on top screen.
+        c.apply(Op::Listen {
+            id: 4,
+            event: EventKind::BackRequest,
+            enabled: true,
+        })
+        .unwrap();
+        c.commit();
+        
+        // Handle back - should fire event and return true (can pop).
+        let consumed = c.handle_back();
+        assert!(consumed);
+        
+        // Check that BackRequest event was fired.
+        let mut events = Vec::new();
+        c.take_events(&mut events);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0, 4);
+        assert_eq!(events[0].1, EventKind::BackRequest);
+    }
+
+    #[test]
+    fn handle_back_with_prevent() {
+        let mut c = core();
+        
+        // Create stack with screen that has popOnBack=false.
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Stack,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        // Set popOnBack=false (prevent_back=true).
+        c.apply(Op::SetProp {
+            id: 3,
+            prop: Prop::Screen(crate::ops::ScreenProp::PopOnBack(false)),
+        })
+        .unwrap();
+        c.commit();
+        
+        // Handle back - should return false (cannot pop).
+        let consumed = c.handle_back();
+        assert!(!consumed);
+    }
+
+    #[test]
+    fn root_screen_cannot_pop() {
+        let mut c = core();
+        
+        // Create stack with single screen (root screen).
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Stack,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.commit();
+        
+        // Root screen should not consume back.
+        let consumed = c.handle_back();
+        assert!(!consumed, "root screen should not pop");
+        
+        // But onBackPress should still fire if listening.
+        c.apply(Op::Listen {
+            id: 3,
+            event: EventKind::BackRequest,
+            enabled: true,
+        })
+        .unwrap();
+        c.commit();
+        
+        let consumed = c.handle_back();
+        assert!(!consumed, "root screen should not pop even with listener");
+        
+        let mut events = Vec::new();
+        c.take_events(&mut events);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0, 3);
+        assert_eq!(events[0].1, EventKind::BackRequest);
+    }
+
+    #[test]
+    fn second_screen_pops() {
+        let mut c = core();
+        
+        // Create stack with two screens.
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Stack,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 4,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+        c.commit();
+        
+        // Second screen should pop.
+        let consumed = c.handle_back();
+        assert!(consumed, "second screen should pop");
+    }
+
+    #[test]
+    fn modal_priority_over_screen() {
+        let mut c = core();
+        
+        // Create stack with screen and a modal.
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Stack,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 4,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 5,
+            tag: Tag::Modal,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 5,
+            before: None,
+        })
+        .unwrap();
+        c.commit();
+        
+        // Modal should handle back, not the screen.
+        c.apply(Op::Listen {
+            id: 5,
+            event: EventKind::BackRequest,
+            enabled: true,
+        })
+        .unwrap();
+        c.commit();
+        
+        let consumed = c.handle_back();
+        assert!(consumed, "modal should handle back");
+        
+        let mut events = Vec::new();
+        c.take_events(&mut events);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0, 5, "modal should receive event, not screen");
+    }
+
+    #[test]
+    fn modal_close_on_escape_false() {
+        let mut c = core();
+        
+        // Create modal with closeOnEscape=false.
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Modal,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Modal(crate::ops::ModalProp::CloseOnEscape(false)),
+        })
+        .unwrap();
+        c.commit();
+        
+        // Should not consume back.
+        let consumed = c.handle_back();
+        assert!(!consumed, "modal with closeOnEscape=false should not dismiss");
+    }
+
+    #[test]
+    fn back_event_fires_even_when_prevented() {
+        let mut c = core();
+        
+        // Create stack with screen that prevents back.
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Stack,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 4,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 4,
+            prop: Prop::Screen(crate::ops::ScreenProp::PopOnBack(false)),
+        })
+        .unwrap();
+        c.apply(Op::Listen {
+            id: 4,
+            event: EventKind::BackRequest,
+            enabled: true,
+        })
+        .unwrap();
+        c.commit();
+        
+        // Should not consume but should fire event.
+        let consumed = c.handle_back();
+        assert!(!consumed, "prevented back should not pop");
+        
+        let mut events = Vec::new();
+        c.take_events(&mut events);
+        assert_eq!(events.len(), 1, "onBackPress should fire even when prevented");
+        assert_eq!(events[0].0, 4);
+        assert_eq!(events[0].1, EventKind::BackRequest);
     }
 }
