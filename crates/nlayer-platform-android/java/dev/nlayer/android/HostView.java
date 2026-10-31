@@ -23,7 +23,7 @@ public final class HostView extends FrameLayout {
   private long handle;
   private String code, assetsDir;
   private boolean apkAssets;
-  int safeTop, safeRight, safeBottom, safeLeft, keyboard;
+  int safeTop, safeRight, safeBottom, safeLeft, activityKeyboard;
   private boolean served;
   private boolean framePosted;
   private boolean inFrame;
@@ -217,9 +217,8 @@ public final class HostView extends FrameLayout {
     safeRight = r;
     safeBottom = b;
     safeLeft = l;
-    keyboard = k;
-    if (handle != 0)
-      Native.insets(handle, t / density, r / density, b / density, l / density, k / density);
+    activityKeyboard = k;
+    updateKeyboard();
     // Notify screens of inset changes
     for (int i = 0; i < mounter.views.size(); i++) {
       android.view.View view = mounter.views.valueAt(i);
@@ -227,6 +226,36 @@ public final class HostView extends FrameLayout {
         ((StackBox.ScreenBox) view).insetsChanged();
       }
     }
+  }
+
+  /**
+   * Recomputes the effective keyboard from modals and activity. The topmost shown modal with a
+   * keyboard > 0 wins; otherwise the activity's keyboard.
+   */
+  void updateKeyboard() {
+    int effective = effectiveKeyboard();
+    if (keyboard != effective) {
+      keyboard = effective;
+      if (handle != 0)
+        Native.insets(
+            handle,
+            safeTop / density,
+            safeRight / density,
+            safeBottom / density,
+            safeLeft / density,
+            keyboard / density);
+    }
+  }
+
+  private int effectiveKeyboard() {
+    // Topmost shown modal with keyboard > 0, else activity
+    for (int i = mounter.modals.size() - 1; i >= 0; i--) {
+      ModalHost modal = mounter.modals.valueAt(i);
+      if (modal.shown() && modal.keyboardInset > 0) {
+        return modal.keyboardInset;
+      }
+    }
+    return activityKeyboard;
   }
 
   /** The system's color scheme changed (`onConfigurationChanged`). */

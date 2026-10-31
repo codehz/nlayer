@@ -58,6 +58,7 @@ public final class JavaTests extends Instrumentation {
     "testModalPresentsAndDismisses",
     "testModalConfigurationAndBackStack",
     "testPushAnimationUsesScreenConfig",
+    "testKeyboardHeightCalculation",
   };
 
   @Override
@@ -1492,5 +1493,19 @@ public final class JavaTests extends Instrumentation {
           });
       waitForIdleSync();
     }
+  }
+
+  void testKeyboardHeightCalculation() {
+    // API 28-29 keyboard overlap: navigation bar alone is not a keyboard
+    equal(0, HostActivity.keyboardHeight(2400, 2280, 120), "nav bar alone: no keyboard");
+    equal(0, HostActivity.keyboardHeight(2400, 2300, 120), "nav bar partial: no keyboard");
+    equal(121, HostActivity.keyboardHeight(2400, 2279, 120), "overlap > nav bar: keyboard present");
+    equal(840, HostActivity.keyboardHeight(2400, 1560, 120), "full keyboard with nav bar");
+    // Zero nav bar
+    equal(0, HostActivity.keyboardHeight(2400, 2400, 0), "full screen, no keyboard");
+    equal(480, HostActivity.keyboardHeight(2400, 1920, 0), "keyboard without nav bar");
+    // Unlaid-out view
+    equal(0, HostActivity.keyboardHeight(0, 0, 0), "zero height root: no keyboard");
+    equal(0, HostActivity.keyboardHeight(0, -100, 0), "negative visible: no keyboard");
   }
 }

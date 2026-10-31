@@ -35,6 +35,9 @@ final class ModalHost {
   boolean closeOnSwipe = true;
   private boolean closing;
 
+  /** The dialog window's keyboard inset (IME bottom), in pixels. */
+  int keyboardInset;
+
   ModalHost(Context context, Mounter mounter, int id) {
     this.mounter = mounter;
     this.id = id;
@@ -92,6 +95,7 @@ final class ModalHost {
               android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, () -> mounter.host.back());
     }
     dialog.show();
+    mounter.host.updateKeyboard();
     matchSystemBars(window);
     container.setAlpha(animation == 1 ? 0 : 1);
     container.post(
@@ -145,6 +149,8 @@ final class ModalHost {
   void dismiss() {
     if (dialog == null || closing) return;
     closing = true;
+    keyboardInset = 0;
+    mounter.host.updateKeyboard();
     Dialog d = dialog;
     Runnable done =
         () -> {
@@ -229,7 +235,26 @@ final class ModalHost {
     @Override
     public WindowInsets onApplyWindowInsets(WindowInsets insets) {
       report();
+      trackKeyboard(insets);
       return super.onApplyWindowInsets(insets);
+    }
+
+    /**
+     * Tracks the keyboard (IME) inset from this dialog's window. On API 30+, uses Type.ime(). On
+     * API 28-29, measures the visible frame overlap (matching HostActivity.keyboardOverlap).
+     */
+    private void trackKeyboard(WindowInsets insets) {
+      int kb = 0;
+      if (insets != null && Build.VERSION.SDK_INT >= 30) {
+        kb = insets.getInsets(WindowInsets.Type.ime()).bottom;
+      } else if (insets != null && Build.VERSION.SDK_INT >= 28) {
+        // API 28-29: use visible-frame math like HostActivity
+        kb = HostActivity.keyboardOverlap(this, insets);
+      }
+      if (kb != keyboardInset) {
+        keyboardInset = kb;
+        mounter.host.updateKeyboard();
+      }
     }
 
     private void report() {
