@@ -6,6 +6,7 @@ import {
   Image,
   Input,
   List,
+  NavPage,
   NavStack,
   Scroll,
   Text,
@@ -27,6 +28,9 @@ function quoteUrl(): string {
   if (typeof origin === "string" && origin !== "") return `${origin}/quote.json`;
   return "/quote.json";
 }
+
+const nav = createNavStack<Route>([{ name: "home" }]);
+const dismissedCount = signal(0);
 
 function Section(props: { title: string; children?: unknown }) {
   return (
@@ -656,6 +660,13 @@ function BackNav() {
   );
 }
 
+type Route =
+  | { name: "home" }
+  | { name: "detail"; id: number }
+  | { name: "dialog" }
+  | { name: "gesture" }
+  | { name: "list" };
+
 function DialogDemoPage(props: { nav: ReturnType<typeof createNavStack<Route>> }) {
   const [dialogOpen, setDialogOpen] = signal(false);
   const [dialogAnimation, setDialogAnimation] = signal<"fade" | "slide" | "scale">("fade");
@@ -734,7 +745,85 @@ function GestureCardPage(props: { nav: ReturnType<typeof createNavStack<Route>> 
   );
 }
 
-function App() {
+function DetailPage(props: { nav: ReturnType<typeof createNavStack<Route>> }) {
+  const [interceptBack, setInterceptBack] = signal(false);
+  const [backIntercepted, setBackIntercepted] = signal(false);
+  
+  effect(() => {
+    if (!interceptBack()) return;
+    const remove = BackHandler.addEventListener(() => {
+      setBackIntercepted(true);
+      setTimeout(() => setBackIntercepted(false), 1000);
+      return true;
+    });
+    cleanup(remove);
+  });
+  
+  return (
+    <Scroll testID="detail" style={{ flex: 1, backgroundColor: "#fff" }}>
+      <View style={{ padding: 16 }}>
+        <Text testID="detail-title" style={{ fontSize: 24, fontWeight: "700", marginBottom: 12 }}>Detail Screen</Text>
+        <Text style={{ marginBottom: 16 }}>This demonstrates push/pop navigation</Text>
+        <Text testID="go-back" onPress={() => props.nav.pop()}
+              style={{ color: "#3b82f6", marginBottom: 16, fontWeight: "600" }}>
+          ← Back
+        </Text>
+        <Text testID="intercept-back" onPress={() => setInterceptBack(!interceptBack())}
+              style={{ padding: 12, backgroundColor: interceptBack() ? "#10b981" : "#cbd5e1", 
+                       borderRadius: 6, textAlign: "center", marginBottom: 16 }}>
+          {interceptBack() ? "Back Interception ON" : "Enable Back Interception"}
+        </Text>
+        {backIntercepted() && (
+          <Text testID="back-intercepted" style={{ color: "#10b981", fontWeight: "600" }}>
+            Back intercepted!
+          </Text>
+        )}
+      </View>
+    </Scroll>
+  );
+}
+
+function ListDemoPage(props: { nav: ReturnType<typeof createNavStack<Route>> }) {
+  const [loaded, setLoaded] = signal(1000);
+  
+  return (
+    <View testID="list-page" style={{ flex: 1, backgroundColor: "#fff" }}>
+      <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: "#e2e8f0" }}>
+        <Text style={{ fontSize: 20, fontWeight: "700" }}>Virtual List</Text>
+        <Text testID="list-back" onPress={() => props.nav.pop()}
+              style={{ color: "#3b82f6", marginTop: 8, fontWeight: "600" }}>
+          ← Back
+        </Text>
+      </View>
+      <List
+        testID="list"
+        style={{ flex: 1 }}
+        of={Array.from({ length: loaded() }, (_, i) => i)}
+        estimated={32}
+        onLoadMore={() => {
+          if (loaded() < 5000) {
+            setLoaded(Math.min(5000, loaded() + 1000));
+          }
+        }}
+      >
+        {(index) => (
+          <View
+            style={{
+              height: 32,
+              justifyContent: "center",
+              paddingHorizontal: 16,
+              borderBottomWidth: 1,
+              borderBottomColor: "#f1f5f9",
+            }}
+          >
+            <Text testID={index() === 0 ? "first" : undefined}>Row {index()}</Text>
+          </View>
+        )}
+      </List>
+    </View>
+  );
+}
+function HomePage() {
   return (
     <Scroll testID="page" style={{ flex: 1, backgroundColor: "#f8fafc" }}>
       <View
@@ -747,9 +836,9 @@ function App() {
           paddingLeft: "calc(env(safe-area-inset-left) + 16px)",
         }}
       >
-        <Text style={{ fontSize: 28, fontWeight: "700", color: "#0f172a" }}>Gallery</Text>
+        <Text testID="home-title" style={{ fontSize: 28, fontWeight: "700", color: "#0f172a" }}>Gallery</Text>
         <Text style={{ fontSize: 14, color: "#64748b" }}>
-          View, Text, Image, Scroll, Input, List, Animations, Resource, Storage, and more.
+          v3 Navigation: Stack, Screens, Modals, Dialogs
         </Text>
         <Surface />
         <Layout />
@@ -766,8 +855,53 @@ function App() {
         <StorageDemo />
         <ColorScheme />
         <BackNav />
+        
+        <Section title="Navigation Demos">
+          <Text testID="dismissed-count" style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
+            Dismissed: {dismissedCount()}
+          </Text>
+          <Text testID="open-detail" onPress={() => nav.push({ name: "detail", id: 1 })}
+                style={{ color: "#3b82f6", fontWeight: "600", padding: 8 }}>
+            → Detail (push/pop/onDismiss/onBackPress)
+          </Text>
+          <Text testID="open-dialog" onPress={() => nav.push({ name: "dialog" })}
+                style={{ color: "#3b82f6", fontWeight: "600", padding: 8 }}>
+            → Dialog Demo
+          </Text>
+          <Text testID="open-gesture" onPress={() => nav.push({ name: "gesture" })}
+                style={{ color: "#3b82f6", fontWeight: "600", padding: 8 }}>
+            → Gesture Card (pan → translate)
+          </Text>
+          <Text testID="open-list" onPress={() => nav.push({ name: "list" })}
+                style={{ color: "#3b82f6", fontWeight: "600", padding: 8 }}>
+            → List Demo (5000 rows)
+          </Text>
+        </Section>
       </View>
     </Scroll>
+  );
+}
+
+function App() {
+  return (
+    <NavStack state={nav} style={{ flex: 1 }}>
+      {(route, index) => {
+        const r = route;
+        let content;
+        if (r.name === "home") content = <HomePage />;
+        else if (r.name === "detail") content = <DetailPage nav={nav} />;
+        else if (r.name === "dialog") content = <DialogDemoPage nav={nav} />;
+        else if (r.name === "gesture") content = <GestureCardPage nav={nav} />;
+        else if (r.name === "list") content = <ListDemoPage nav={nav} />;
+        else content = <Text>Unknown route: {r.name}</Text>;
+        
+        return (
+          <NavPage onDismiss={() => dismissedCount.set(dismissedCount() + 1)}>
+            {content}
+          </NavPage>
+        );
+      }}
+    </NavStack>
   );
 }
 
