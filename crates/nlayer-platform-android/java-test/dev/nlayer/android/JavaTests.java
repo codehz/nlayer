@@ -57,6 +57,7 @@ public final class JavaTests extends Instrumentation {
     "testScreenHeaderOptions",
     "testModalPresentsAndDismisses",
     "testModalConfigurationAndBackStack",
+    "testPushAnimationUsesScreenConfig",
   };
 
   @Override
@@ -1391,6 +1392,98 @@ public final class JavaTests extends Instrumentation {
       equal(false, main(() -> modal.closeOnEscape), "closeOnEscape is false");
       equal(true, main(() -> modal.closeOnBackdropPress), "closeOnBackdropPress is true");
       equal(true, main(() -> modal.closeOnSwipe), "closeOnSwipe is true");
+    } finally {
+      main(
+          () -> {
+            activity.finish();
+            return null;
+          });
+      waitForIdleSync();
+    }
+  }
+
+  void testPushAnimationUsesScreenConfig() {
+    Activity activity =
+        startActivitySync(
+            new Intent(context(), HostActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    try {
+      HostView host = main(() -> new HostView(activity));
+      main(
+          () -> {
+            activity.setContentView(host);
+            return null;
+          });
+      waitForIdleSync();
+
+      // Create stack with first screen
+      Batch b1 = batch();
+      b1.word(0).word(10).word(5); // create stack
+      b1.word(0).word(11).word(6); // create screen 1
+      b1.word(1).word(1).word(10).word(-1); // insert stack into root
+      b1.word(1).word(10).word(11).word(-1); // insert screen 1 into stack
+      b1.word(4).word(10).real(0).real(0).real(200).real(400); // frame stack
+      b1.word(4).word(11).real(0).real(0).real(200).real(400); // frame screen 1
+      b1.word(20).word(11); // SCREEN_CONFIG for screen 1
+      b1.string("First"); // title
+      b1.bool(true); // shown
+      b1.bool(false); // transparent
+      b1.bool(false); // tint
+      b1.bool(false); // background
+      b1.bool(false); // titleColor
+      b1.bool(true); // backVisible
+      b1.bool(true); // gesture
+      b1.bool(false); // preventBack
+      b1.word(2); // animation=none
+      b1.word(-1).word(-1).word(-1); // left, right, titleView
+      b1.real(64); // headerHeight
+      main(
+          () -> {
+            host.mounter.apply(b1.bytes(), b1.objects());
+            return null;
+          });
+
+      StackBox stack = (StackBox) host.mounter.views.get(10);
+      check(stack != null, "stack created");
+      equal(1, stack.depth(), "stack has 1 screen initially");
+
+      // Push screen 2 with animation=none in the SAME batch
+      Batch b2 = batch();
+      b2.word(0).word(12).word(6); // create screen 2
+      b2.word(1).word(10).word(12).word(-1); // insert screen 2 into stack
+      b2.word(4).word(12).real(0).real(0).real(200).real(400); // frame screen 2
+      b2.word(20).word(12); // SCREEN_CONFIG for screen 2 (in same batch as push)
+      b2.string("Second"); // title
+      b2.bool(true); // shown
+      b2.bool(false); // transparent
+      b2.bool(false); // tint
+      b2.bool(false); // background
+      b2.bool(false); // titleColor
+      b2.bool(true); // backVisible
+      b2.bool(true); // gesture
+      b2.bool(false); // preventBack
+      b2.word(2); // animation=none (not default slide)
+      b2.word(-1).word(-1).word(-1); // left, right, titleView
+      b2.real(64); // headerHeight
+      main(
+          () -> {
+            host.mounter.apply(b2.bytes(), b2.objects());
+            return null;
+          });
+
+      StackBox.ScreenBox screen1 = (StackBox.ScreenBox) host.mounter.views.get(11);
+      StackBox.ScreenBox screen2 = (StackBox.ScreenBox) host.mounter.views.get(12);
+      check(screen2 != null, "screen 2 created");
+      equal(2, stack.depth(), "stack has 2 screens after push");
+
+      // Before fix 203093b, reconcile() ran before SCREEN_CONFIG was applied,
+      // so the push used the default animation (0 = slide), translating the screen.
+      // After fix, SCREEN_CONFIG is applied first, so animation=none means no translation.
+      equal(
+          0f,
+          screen2.getTranslationX(),
+          "pushed screen has no translation when animation=none in same batch");
+      equal(0f, screen1.getTranslationX(), "previous screen not translated when animation=none");
+      equal(View.VISIBLE, screen2.getVisibility(), "pushed screen is visible");
     } finally {
       main(
           () -> {
