@@ -1514,17 +1514,22 @@ public final class JavaTests extends Instrumentation {
   }
 
   void testSafeAreaUpdatesWithUnchangedKeyboard() {
-    Intent intent = new Intent(getTargetContext(), HostActivity.class);
-    intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-    Activity activity = startActivitySync(intent);
-    waitForIdleSync();
+    Activity activity =
+        startActivitySync(
+            new Intent(context(), HostActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     try {
-      HostView host =
-          main(
-              () -> {
-                ViewGroup root = (ViewGroup) activity.findViewById(android.R.id.content);
-                return (HostView) root.getChildAt(0);
-              });
+      // Create HostView without load() so no Pin is read (hermetic)
+      HostView host = main(() -> new HostView(activity));
+      main(
+          () -> {
+            activity.setContentView(host);
+            host.start();
+            return null;
+          });
+      waitForIdleSync();
+      // Ensure handle is created
+      long handle = main(() -> host.handle());
+      check(handle != 0, "handle created after start");
       // Simulate a safe-area change (rotation/cutout) with keyboard unchanged at 0
       main(
           () -> {
