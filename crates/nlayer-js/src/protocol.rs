@@ -228,7 +228,7 @@ pub(crate) fn decode_prop<'js>(
             if let Some(obj) = value.as_object() {
                 let threshold = obj.get::<&str, f64>("autoscrollToBottomThreshold")
                     .ok()
-                    .map(|t| t.clamp(0.0, 1.0) as f32);
+                    .and_then(|t| (t >= 0.0).then_some(t as f32));
                 let min_index = obj.get::<&str, f64>("minIndexForVisible")
                     .ok()
                     .unwrap_or(0.0)

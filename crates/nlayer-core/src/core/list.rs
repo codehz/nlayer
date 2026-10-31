@@ -358,8 +358,10 @@ impl ListState {
         // Auto-scroll to bottom if we were near bottom and items were inserted
         if was_near_bottom.is_some() && inserted > 0 {
             let content_len = self.content_len();
-            self.offset = (content_len - self.viewport).max(0.0);
-            self.splice_anchor = 0.0;
+            let new_offset = (content_len - self.viewport).max(0.0);
+            let delta = new_offset - self.offset;
+            self.offset = new_offset;
+            self.splice_anchor = delta;
         } else if let Some((index, from_top)) = anchor
             && index >= at + removed
         {
