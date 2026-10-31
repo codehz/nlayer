@@ -349,6 +349,25 @@ define_class!(
     unsafe impl UIScrollViewDelegate for Relay {
         #[unsafe(method(scrollViewDidScroll:))]
         fn scroll_view_did_scroll(&self, scroll: &UIScrollView) {
+            // Check for pull-to-refresh
+            let offset = scroll.contentOffset();
+            let inset = scroll.adjustedContentInset();
+            let pull_distance = -(offset.y + inset.top);
+            if pull_distance > 0.0 {
+                // Pulling down beyond top
+                let id = scroll.tag() as NodeId;
+                if let Some(shared) = self.ivars().mounter.borrow().upgrade() {
+                    if let Ok(mounter) = shared.try_borrow() {
+                        mounter.engine.control().update_scroll_position(
+                            id,
+                            nlayer_core::Point::new(
+                                nlayer_core::Points(offset.x as f32),
+                                nlayer_core::Points(offset.y as f32),
+                            ),
+                        );
+                    }
+                }
+            }
             self.scroll_event(scroll, EventKind::Scroll);
         }
 

@@ -238,6 +238,8 @@ enum Message {
     /// The platform measured where the content of screen `id` starts below
     /// its header (`None`: let the core estimate it).
     ScreenHeader(NodeId, Option<Points>),
+    /// The platform scrolled a scroll view: checks pull-to-refresh.
+    ScrollPosition(NodeId, Point<Points>),
     /// A request finished (its result is in the engine's slot).
     NetworkDone,
     /// Native animations finished or were interrupted.
@@ -305,6 +307,12 @@ impl EngineControl {
             id,
             text: text.into(),
         });
+    }
+
+    /// The platform scrolled a scroll view to `offset`: triggers pull-to-refresh
+    /// checks and updates pullValue animation.
+    pub fn update_scroll_position(&self, id: NodeId, offset: Point<Points>) {
+        let _ = self.tx.send(Message::ScrollPosition(id, offset));
     }
 
     /// The surface changed size (points).
@@ -770,6 +778,7 @@ impl<M: TextEngine> Session<M> {
             }
             Message::Resize(size) => self.core.set_viewport(size),
             Message::SafeArea(insets) => self.core.set_safe_area(insets),
+            Message::ScrollPosition(id, offset) => self.core.update_scroll_position(id, offset),
             Message::KeyboardInset(height) => self.core.set_keyboard_inset(height),
             Message::ColorScheme(scheme) => {
                 #[cfg(feature = "js")]

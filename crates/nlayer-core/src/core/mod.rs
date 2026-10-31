@@ -733,6 +733,20 @@ impl<M: TextEngine> Core<M> {
         // Calculate pull distance (negative offset means pulling down)
         let pull_distance = if offset.y.0 < 0.0 { -offset.y.0 } else { 0.0 };
         
+        // Update pullValue animation node
+        if let Some(pull_node) = scroll.pull_value_node {
+            let value = if scroll.refreshing {
+                // When refreshing, clamp to indicator height
+                scroll.refresh_indicator.map(|h| h.0).unwrap_or(0.0)
+            } else {
+                pull_distance
+            };
+            self.mount.push(MountItem::Animation(crate::animation::AnimationOp::Set {
+                node: pull_node,
+                value,
+            }));
+        }
+        
         // Check for pull-to-refresh trigger
         if let Some(indicator_height) = scroll.refresh_indicator {
             if pull_distance >= indicator_height.0 {
@@ -1198,8 +1212,8 @@ impl<M: TextEngine> Core<M> {
                     .is_some_and(|scroll| {
                         let was_refreshing = scroll.refreshing;
                         scroll.refreshing = refreshing;
-                        // Reset reported flag when transitioning false -> true
-                        if !was_refreshing && refreshing {
+                        // Reset reported flag on transitions
+                        if was_refreshing != refreshing {
                             scroll.refresh_reported = false;
                         }
                         was_refreshing != refreshing
@@ -7823,5 +7837,135 @@ mod tests {
         let mut events = vec![];
         c.take_events(&mut events);
         assert_eq!(events.len(), 0, "refresh should not fire below threshold");
+    }
+
+    #[test]
+    fn pull_value_updates_with_pull_distance() {
+        use crate::animation::{AnimationOp, AnimationId};
+        
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Scroll,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::RefreshIndicator(Some(Points(50.0))),
+        })
+        .unwrap();
+        // Bind pullValue to animation node 100
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::PullValue(Some(100)),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.commit().unwrap();
+
+        // Pull down 30pt
+        c.update_scroll_position(2, Point::new(Points(0.0), Points(-30.0)));
+        let batch = c.commit().unwrap();
+        let anim_set = batch.items.iter().find_map(|item| match item {
+            MountItem::Animation(AnimationOp::Set { node, value }) if *node == 100 => Some(*value),
+            _ => None,
+        });
+        assert_eq!(anim_set, Some(30.0), "pullValue should be 30.0");
+
+        // Pull down 70pt
+        c.update_scroll_position(2, Point::new(Points(0.0), Points(-70.0)));
+        let batch = c.commit().unwrap();
+        let anim_set = batch.items.iter().find_map(|item| match item {
+            MountItem::Animation(AnimationOp::Set { node, value }) if *node == 100 => Some(*value),
+            _ => None,
+        });
+        assert_eq!(anim_set, Some(70.0), "pullValue should be 70.0");
+
+        // Release (scroll back to 0)
+        c.update_scroll_position(2, Point::new(Points(0.0), Points(0.0)));
+        let batch = c.commit().unwrap();
+        let anim_set = batch.items.iter().find_map(|item| match item {
+            MountItem::Animation(AnimationOp::Set { node, value }) if *node == 100 => Some(*value),
+            _ => None,
+        });
+        assert_eq!(anim_set, Some(0.0), "pullValue should be 0.0 on release");
+    }
+
+    #[test]
+    fn pull_value_clamps_to_indicator_height_when_refreshing() {
+        use crate::animation::AnimationOp;
+        
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Scroll,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::RefreshIndicator(Some(Points(50.0))),
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::PullValue(Some(100)),
+        })
+        .unwrap();
+        c.apply(Op::Listen {
+            id: 2,
+            event: EventKind::Refresh,
+            enabled: true,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.commit().unwrap();
+
+        // Pull down 60pt to trigger refresh
+        c.update_scroll_position(2, Point::new(Points(0.0), Points(-60.0)));
+        let mut events = vec![];
+        c.take_events(&mut events);
+        assert_eq!(events.len(), 1, "first refresh should fire");
+        c.commit().unwrap();
+
+        // Set refreshing to true
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Refreshing(true),
+        })
+        .unwrap();
+        c.commit().unwrap();
+
+        // Pull further while refreshing - should clamp to 50.0
+        c.update_scroll_position(2, Point::new(Points(0.0), Points(-80.0)));
+        let batch = c.commit().unwrap();
+        let anim_set = batch.items.iter().find_map(|item| match item {
+            MountItem::Animation(AnimationOp::Set { node, value }) if *node == 100 => Some(*value),
+            _ => None,
+        });
+        assert_eq!(anim_set, Some(50.0), "pullValue should clamp to indicator height (50.0) when refreshing");
+
+        // Set refreshing to false - should reset refresh_reported
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Refreshing(false),
+        })
+        .unwrap();
+        c.commit().unwrap();
+
+        // Pull again - should trigger refresh again
+        c.update_scroll_position(2, Point::new(Points(0.0), Points(-60.0)));
+        let mut events = vec![];
+        c.take_events(&mut events);
+        assert_eq!(events.len(), 1, "refresh should fire again after refreshing becomes false");
     }
 }

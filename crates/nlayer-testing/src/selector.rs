@@ -717,6 +717,13 @@ mod tests {
             MountItem::ScrollContent {
                 id: 2,
                 size: size(px(100.0), px(140.0)),
+                refresh_indicator: None,
+                paging: false,
+                snap_interval: None,
+                snap_offsets: None,
+                snap_alignment: Default::default(),
+                disable_interval_momentum: false,
+                deceleration: 0.998,
             },
         ]);
         scroll_by(&mut screen, 2, 50.0).unwrap();

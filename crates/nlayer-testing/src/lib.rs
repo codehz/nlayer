@@ -570,7 +570,7 @@ impl Screen {
                     view.scroll_y += dy.0;
                 }
             }
-            MountItem::ScrollContent { id, size } => {
+            MountItem::ScrollContent { id, size, .. } => {
                 if let Some(view) = self.views.get_mut(id) {
                     view.scroll_content = Some(*size);
                 }
@@ -660,6 +660,9 @@ impl Screen {
                 if let Some(view) = self.views.get_mut(id) {
                     view.accessibility = (**accessibility).clone();
                 }
+            }
+            MountItem::ListContent { .. } => {
+                // List content not tracked in testing
             }
         }
     }
