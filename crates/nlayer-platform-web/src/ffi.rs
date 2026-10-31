@@ -18,6 +18,85 @@ use crate::{Page, PageSession};
 
 thread_local! {
     static RUNNING: RefCell<Option<PageSession>> = const { RefCell::new(None) };
+    /// Inputs that arrive while [`nlayer_pump`] holds the session. A mount
+    /// batch can place a modal root, whose `setRootSize` calls back into this
+    /// module before the pump returns. The next pump applies them in order.
+    static PENDING: RefCell<Vec<Pending>> = const { RefCell::new(Vec::new()) };
+}
+
+enum Pending {
+    Resize {
+        width: f32,
+        height: f32,
+    },
+    Insets {
+        top: f32,
+        right: f32,
+        bottom: f32,
+        left: f32,
+        keyboard: f32,
+    },
+    RootSize {
+        id: u32,
+        width: f32,
+        height: f32,
+        top: f32,
+        right: f32,
+        bottom: f32,
+        left: f32,
+    },
+    Back,
+}
+
+fn finite(value: f32) -> f32 {
+    if value.is_finite() { value } else { 0.0 }
+}
+
+fn push(pending: Pending) {
+    PENDING.with(|queue| queue.borrow_mut().push(pending));
+}
+
+fn apply_pending(session: &mut PageSession) {
+    let pending = PENDING.with(|queue| std::mem::take(&mut *queue.borrow_mut()));
+    for item in pending {
+        match item {
+            Pending::Resize { width, height } => session.resize(Size::new(px(width), px(height))),
+            Pending::Insets {
+                top,
+                right,
+                bottom,
+                left,
+                keyboard,
+            } => session.set_insets(
+                Edges {
+                    top: px(top),
+                    right: px(right),
+                    bottom: px(bottom),
+                    left: px(left),
+                },
+                px(keyboard),
+            ),
+            Pending::RootSize {
+                id,
+                width,
+                height,
+                top,
+                right,
+                bottom,
+                left,
+            } => session.set_root_size(
+                id.into(),
+                Size::new(px(width), px(height)),
+                Edges {
+                    top: px(top),
+                    right: px(right),
+                    bottom: px(bottom),
+                    left: px(left),
+                },
+            ),
+            Pending::Back => session.back(),
+        }
+    }
 }
 
 struct HostPage;
@@ -126,13 +205,16 @@ fn delay_ms(next: Option<std::time::Duration>) -> f64 {
     }
 }
 
+/// Runs `f` against the session. A call that arrives while another one holds
+/// it is too late to apply now; it returns -1. Inputs that must survive a
+/// pump are queued in [`PENDING`] instead.
 fn with_session(f: impl FnOnce(&mut PageSession) -> f64) -> f64 {
-    RUNNING.with(|slot| {
-        let mut session = slot.borrow_mut();
-        match session.as_mut() {
+    RUNNING.with(|slot| match slot.try_borrow_mut() {
+        Ok(mut session) => match session.as_mut() {
             Some(session) => f(session),
             None => -1.0,
-        }
+        },
+        Err(_) => -1.0,
     })
 }
 
@@ -141,6 +223,7 @@ fn with_session(f: impl FnOnce(&mut PageSession) -> f64) -> f64 {
 /// [`nlayer_pump`] is due, or -1.
 #[unsafe(no_mangle)]
 pub extern "C" fn nlayer_browser_start(width: f32, height: f32) -> f64 {
+    PENDING.with(|queue| queue.borrow_mut().clear());
     install_logger();
     match PageSession::start(String::new(), Size::new(px(width), px(height)), HostPage) {
         Ok(session) => {
@@ -158,13 +241,17 @@ pub extern "C" fn nlayer_browser_start(width: f32, height: f32) -> f64 {
 /// Stops the app. A later [`nlayer_browser_start`] runs another.
 #[unsafe(no_mangle)]
 pub extern "C" fn nlayer_stop() {
+    PENDING.with(|queue| queue.borrow_mut().clear());
     RUNNING.with(|slot| *slot.borrow_mut() = None);
 }
 
 /// Runs what is due. Returns the delay (ms) until the next pump, or -1.
 #[unsafe(no_mangle)]
 pub extern "C" fn nlayer_pump() -> f64 {
-    with_session(|session| delay_ms(session.pump()))
+    with_session(|session| {
+        apply_pending(session);
+        delay_ms(session.pump())
+    })
 }
 
 /// A click on view `id`. Applied at the next [`nlayer_pump`].
@@ -257,9 +344,9 @@ pub extern "C" fn nlayer_scroll(
 /// The surface changed size (CSS pixels). Applied at the next [`nlayer_pump`].
 #[unsafe(no_mangle)]
 pub extern "C" fn nlayer_resize(width: f32, height: f32) {
-    with_session(|session| {
-        session.resize(Size::new(px(width), px(height)));
-        -1.0
+    push(Pending::Resize {
+        width: finite(width),
+        height: finite(height),
     });
 }
 
@@ -267,17 +354,12 @@ pub extern "C" fn nlayer_resize(width: f32, height: f32) {
 /// next [`nlayer_pump`].
 #[unsafe(no_mangle)]
 pub extern "C" fn nlayer_insets(top: f32, right: f32, bottom: f32, left: f32, keyboard: f32) {
-    with_session(|session| {
-        session.set_insets(
-            Edges {
-                top: px(top),
-                right: px(right),
-                bottom: px(bottom),
-                left: px(left),
-            },
-            px(keyboard),
-        );
-        -1.0
+    push(Pending::Insets {
+        top: finite(top),
+        right: finite(right),
+        bottom: finite(bottom),
+        left: finite(left),
+        keyboard: finite(keyboard),
     });
 }
 
@@ -286,11 +368,7 @@ pub extern "C" fn nlayer_insets(top: f32, right: f32, bottom: f32, left: f32, ke
 /// pump.
 #[unsafe(no_mangle)]
 pub extern "C" fn nlayer_back() {
-    RUNNING.with_borrow(|session| {
-        if let Some(s) = session {
-            s.back();
-        }
-    });
+    push(Pending::Back);
 }
 
 /// Reports a modal's root size and safe-area insets to the engine.
@@ -305,26 +383,13 @@ pub extern "C" fn nlayer_root_size(
     bottom: f32,
     left: f32,
 ) {
-    let width = if width.is_finite() { width } else { 0.0 };
-    let height = if height.is_finite() { height } else { 0.0 };
-    let top = if top.is_finite() { top } else { 0.0 };
-    let right = if right.is_finite() { right } else { 0.0 };
-    let bottom = if bottom.is_finite() { bottom } else { 0.0 };
-    let left = if left.is_finite() { left } else { 0.0 };
-
-    RUNNING.with(|slot| {
-        if let Some(session) = slot.borrow_mut().as_mut() {
-            use nlayer_core::geometry::{Edges, Size, px};
-            session.set_root_size(
-                id.into(),
-                Size::new(px(width), px(height)),
-                Edges {
-                    top: px(top),
-                    right: px(right),
-                    bottom: px(bottom),
-                    left: px(left),
-                },
-            );
-        }
+    push(Pending::RootSize {
+        id,
+        width: finite(width),
+        height: finite(height),
+        top: finite(top),
+        right: finite(right),
+        bottom: finite(bottom),
+        left: finite(left),
     });
 }

@@ -5,46 +5,7 @@ use std::{collections::BTreeMap, error::Error, fs, path::Path};
 use nlayer_bundler::{BundleOptions, bundle};
 use sha2::{Digest, Sha256};
 
-use crate::{resolve_entry, web_module};
-
-const FILES: &[(&str, &str)] = &[
-    (
-        "boot.js",
-        include_str!("../../nlayer-platform-web/web/boot.js"),
-    ),
-    (
-        "nlayer.js",
-        include_str!("../../nlayer-platform-web/web/nlayer.js"),
-    ),
-    (
-        "host.js",
-        include_str!("../../nlayer-platform-web/web/host.js"),
-    ),
-    (
-        "base.css",
-        include_str!("../../nlayer-platform-web/web/base.css"),
-    ),
-    (
-        "browser/runtime.js",
-        include_str!("../../nlayer-platform-web/web/browser/runtime.js"),
-    ),
-    (
-        "browser/list.js",
-        include_str!("../../nlayer-platform-web/web/browser/list.js"),
-    ),
-    (
-        "browser/values.js",
-        include_str!("../../nlayer-platform-web/web/browser/values.js"),
-    ),
-    (
-        "browser/storage.js",
-        include_str!("../../nlayer-platform-web/web/browser/storage.js"),
-    ),
-    (
-        "browser/animation.js",
-        include_str!("../../nlayer-platform-web/web/browser/animation.js"),
-    ),
-];
+use crate::{resolve_entry, web_assets, web_module};
 
 /// Writes a self-contained static site for an app.
 pub fn package_web(entry: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
@@ -67,7 +28,7 @@ pub fn package_web(entry: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
     })?;
     let wasm = web_module()?;
     fs::create_dir_all(out.join("browser"))?;
-    for (path, content) in FILES {
+    for (path, _, content) in web_assets::FILES {
         fs::write(out.join(path), content)?;
     }
     fs::write(out.join("nlayer.wasm"), wasm)?;

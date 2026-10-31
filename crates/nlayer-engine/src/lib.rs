@@ -862,6 +862,8 @@ impl<M: TextEngine> Session<M> {
             // The overscan, this turn's budget allowing.
             let mut one: Vec<ListBind> = Vec::new();
             while paced.left() && self.core.has_paced_list_binds() {
+                // A wasm build has no std clock; its budget is ops and cells.
+                #[cfg(not(target_arch = "wasm32"))]
                 let start = std::time::Instant::now();
                 let ops = self.queued_ops.len();
                 one.clear();
@@ -872,7 +874,10 @@ impl<M: TextEngine> Session<M> {
                 }
                 self.host.take_ops(&mut self.queued_ops);
                 paced.ops += self.queued_ops.len() - ops;
-                paced.time += start.elapsed();
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    paced.time += start.elapsed();
+                }
             }
             // New cells queued JS ops; another round applies them. With the
             // budget spent, the rest waits for the next turn.

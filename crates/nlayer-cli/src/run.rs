@@ -27,16 +27,7 @@ use nlayer_bundler::{Bundle, BundleOptions, bundle};
 
 use crate::{BuildError, resolve_entry};
 
-const BOOT_JS: &str = include_str!("../../nlayer-platform-web/web/boot.js");
-const MOUNTER_JS: &str = include_str!("../../nlayer-platform-web/web/nlayer.js");
-const BASE_CSS: &str = include_str!("../../nlayer-platform-web/web/base.css");
 const PAGE_HTML: &str = include_str!("../../nlayer-platform-web/web/index.html");
-const RUNTIME_JS: &str = include_str!("../../nlayer-platform-web/web/browser/runtime.js");
-const LIST_JS: &str = include_str!("../../nlayer-platform-web/web/browser/list.js");
-const VALUES_JS: &str = include_str!("../../nlayer-platform-web/web/browser/values.js");
-const STORAGE_JS: &str = include_str!("../../nlayer-platform-web/web/browser/storage.js");
-const ANIMATION_JS: &str = include_str!("../../nlayer-platform-web/web/browser/animation.js");
-const HOST_JS: &str = include_str!("../../nlayer-platform-web/web/host.js");
 
 /// How often the app's sources are checked. A save lands on the next poll.
 const POLL: Duration = Duration::from_millis(150);
@@ -516,20 +507,7 @@ fn read_app(app_dir: &Path, bundled: &Bundle) -> Result<HashMap<String, Vec<u8>>
 }
 
 fn reserved(path: &str) -> bool {
-    path == "index.html"
-        || path == "boot.js"
-        || path == "nlayer.js"
-        || path == "host.js"
-        || path == "base.css"
-        || path == "nlayer.wasm"
-        || path == "bundle.js"
-        || path == "bundle.js.map"
-        || path == "browser/runtime.js"
-        || path == "browser/list.js"
-        || path == "browser/values.js"
-        || path == "browser/storage.js"
-        || path == "browser/animation.js"
-        || path.starts_with("__nlayer/")
+    crate::web_assets::reserved(path)
 }
 
 pub(crate) fn watch_paths(app_dir: &Path, bundled: Option<&Bundle>) -> Vec<PathBuf> {
@@ -798,20 +776,10 @@ fn lookup(shared: &Shared, path: &str) -> Result<(&'static str, Body), u16> {
 }
 
 fn host(path: &str) -> Option<(&'static str, &'static str)> {
-    let (mime, text) = match path {
-        "" | "index.html" => ("text/html; charset=utf-8", dev_page()),
-        "boot.js" => ("text/javascript; charset=utf-8", BOOT_JS),
-        "nlayer.js" => ("text/javascript; charset=utf-8", MOUNTER_JS),
-        "host.js" => ("text/javascript; charset=utf-8", HOST_JS),
-        "base.css" => ("text/css; charset=utf-8", BASE_CSS),
-        "browser/runtime.js" => ("text/javascript; charset=utf-8", RUNTIME_JS),
-        "browser/list.js" => ("text/javascript; charset=utf-8", LIST_JS),
-        "browser/values.js" => ("text/javascript; charset=utf-8", VALUES_JS),
-        "browser/storage.js" => ("text/javascript; charset=utf-8", STORAGE_JS),
-        "browser/animation.js" => ("text/javascript; charset=utf-8", ANIMATION_JS),
-        _ => return None,
-    };
-    Some((mime, text))
+    match path {
+        "" | "index.html" => Some(("text/html; charset=utf-8", dev_page())),
+        _ => crate::web_assets::find(path),
+    }
 }
 
 fn dev_page() -> &'static str {
