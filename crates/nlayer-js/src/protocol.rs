@@ -123,6 +123,40 @@ pub(crate) fn decode_prop<'js>(
             prop: Prop::LongPressDelay(delay),
         }));
     }
+    if name == "pan" {
+        let obj = value.as_object();
+        let axis = |key: &str| {
+            obj.and_then(|o| o.get::<_, Option<Value>>(key).ok()?)
+                .and_then(|v| animated_node(&v))
+        };
+        return Ok(Some(Op::SetProp {
+            id,
+            prop: Prop::Pan {
+                x: axis("x"),
+                y: axis("y"),
+            },
+        }));
+    }
+    if name == "pinch" {
+        let scale = value
+            .as_object()
+            .and_then(|o| o.get::<_, Option<Value>>("scale").ok()?)
+            .and_then(|v| animated_node(&v));
+        return Ok(Some(Op::SetProp {
+            id,
+            prop: Prop::Pinch { scale },
+        }));
+    }
+    if name == "rotation" {
+        let angle = value
+            .as_object()
+            .and_then(|o| o.get::<_, Option<Value>>("angle").ok()?)
+            .and_then(|v| animated_node(&v));
+        return Ok(Some(Op::SetProp {
+            id,
+            prop: Prop::Rotation { angle },
+        }));
+    }
     if let Some(prop) = accessibility_prop(name, &value, warnings)? {
         return Ok(Some(Op::SetProp { id, prop }));
     }

@@ -120,6 +120,18 @@ pub enum EventKind {
     Show,
     /// User tried to close modal (`onRequestClose`), before `closeOn*` flags.
     RequestClose,
+    /// Pan gesture started (`onPanStart`).
+    PanStart,
+    /// Pan gesture ended (`onPanEnd`).
+    PanEnd,
+    /// Pinch gesture started (`onPinchStart`).
+    PinchStart,
+    /// Pinch gesture ended (`onPinchEnd`).
+    PinchEnd,
+    /// Rotation gesture started (`onRotationStart`).
+    RotationStart,
+    /// Rotation gesture ended (`onRotationEnd`).
+    RotationEnd,
 }
 
 impl EventKind {
@@ -144,6 +156,12 @@ impl EventKind {
             "onInsets" => Some(EventKind::Insets),
             "onShow" => Some(EventKind::Show),
             "onRequestClose" => Some(EventKind::RequestClose),
+            "onPanStart" => Some(EventKind::PanStart),
+            "onPanEnd" => Some(EventKind::PanEnd),
+            "onPinchStart" => Some(EventKind::PinchStart),
+            "onPinchEnd" => Some(EventKind::PinchEnd),
+            "onRotationStart" => Some(EventKind::RotationStart),
+            "onRotationEnd" => Some(EventKind::RotationEnd),
             _ => None,
         }
     }
@@ -170,6 +188,12 @@ impl EventKind {
             14 => Some(EventKind::Insets),
             15 => Some(EventKind::Show),
             16 => Some(EventKind::RequestClose),
+            17 => Some(EventKind::PanStart),
+            18 => Some(EventKind::PanEnd),
+            19 => Some(EventKind::PinchStart),
+            20 => Some(EventKind::PinchEnd),
+            21 => Some(EventKind::RotationStart),
+            22 => Some(EventKind::RotationEnd),
             _ => None,
         }
     }
@@ -195,6 +219,12 @@ impl EventKind {
             EventKind::Insets => "onInsets",
             EventKind::Show => "onShow",
             EventKind::RequestClose => "onRequestClose",
+            EventKind::PanStart => "onPanStart",
+            EventKind::PanEnd => "onPanEnd",
+            EventKind::PinchStart => "onPinchStart",
+            EventKind::PinchEnd => "onPinchEnd",
+            EventKind::RotationStart => "onRotationStart",
+            EventKind::RotationEnd => "onRotationEnd",
         }
     }
 }
@@ -1026,6 +1056,23 @@ pub enum Prop {
     /// `delayLongPress`: how long the pointer stays down before
     /// `onLongPress`, in milliseconds. `None` is the platform default (500).
     LongPressDelay(Option<f32>),
+    /// `pan`: drag gestures drive these animated values (points) on the host thread.
+    Pan {
+        /// X-axis animated value.
+        x: Option<crate::animation::NodeId>,
+        /// Y-axis animated value.
+        y: Option<crate::animation::NodeId>,
+    },
+    /// `pinch`: two-finger pinch gestures drive `scale` natively.
+    Pinch {
+        /// Scale animated value.
+        scale: Option<crate::animation::NodeId>,
+    },
+    /// `rotation`: two-finger rotation gestures drive `angle` (degrees) natively.
+    Rotation {
+        /// Angle animated value.
+        angle: Option<crate::animation::NodeId>,
+    },
     /// `testID`: a name tests use to find the view. The platform draws
     /// nothing from it. `None` clears it.
     TestId(Option<Arc<str>>),

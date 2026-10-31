@@ -1387,6 +1387,44 @@ impl<M: TextEngine> Core<M> {
                     self.nodes[key as usize].dirty |= dirty::MODAL;
                 }
             }
+            Prop::Pan { x, y } => {
+                // Add gesture bindings to animated properties
+                let node = &mut self.nodes[key as usize];
+                node.animated.retain(|(prop, _)| {
+                    !matches!(prop, crate::animation::AnimationProp::Transform(_))
+                });
+                if let Some(x_node) = x {
+                    node.animated
+                        .push((crate::animation::AnimationProp::Transform(0), x_node));
+                }
+                if let Some(y_node) = y {
+                    node.animated
+                        .push((crate::animation::AnimationProp::Transform(1), y_node));
+                }
+                self.nodes[key as usize].dirty |= dirty::ANIMATION;
+            }
+            Prop::Pinch { scale } => {
+                let node = &mut self.nodes[key as usize];
+                if let Some(scale_node) = scale {
+                    node.animated.retain(|(prop, _)| {
+                        !matches!(prop, crate::animation::AnimationProp::Transform(_))
+                    });
+                    node.animated
+                        .push((crate::animation::AnimationProp::Transform(0), scale_node));
+                }
+                self.nodes[key as usize].dirty |= dirty::ANIMATION;
+            }
+            Prop::Rotation { angle } => {
+                let node = &mut self.nodes[key as usize];
+                if let Some(angle_node) = angle {
+                    node.animated.retain(|(prop, _)| {
+                        !matches!(prop, crate::animation::AnimationProp::Transform(_))
+                    });
+                    node.animated
+                        .push((crate::animation::AnimationProp::Transform(0), angle_node));
+                }
+                self.nodes[key as usize].dirty |= dirty::ANIMATION;
+            }
             Prop::HeaderSlot(slot) => {
                 if let Some(root) = self.nodes[key as usize].root.as_mut() {
                     root.slot = slot;

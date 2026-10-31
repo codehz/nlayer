@@ -2148,6 +2148,108 @@ pub(crate) fn dispatch(
             width,
             height,
         } => scroll_payload(cx, *x, *y, *content_w, *content_h, *width, *height),
+        crate::EventPayload::Pan {
+            translation,
+            velocity,
+            values,
+        } => unsafe {
+            let object = qjs::JS_NewObject(cx);
+            let trans = qjs::JS_NewObject(cx);
+            qjs::JS_SetPropertyStr(
+                cx,
+                trans,
+                c"x".as_ptr(),
+                qjs::JS_NewFloat64(f64::from(translation.0)),
+            );
+            qjs::JS_SetPropertyStr(
+                cx,
+                trans,
+                c"y".as_ptr(),
+                qjs::JS_NewFloat64(f64::from(translation.1)),
+            );
+            qjs::JS_SetPropertyStr(cx, object, c"translation".as_ptr(), trans);
+            let vel = qjs::JS_NewObject(cx);
+            qjs::JS_SetPropertyStr(
+                cx,
+                vel,
+                c"x".as_ptr(),
+                qjs::JS_NewFloat64(f64::from(velocity.0)),
+            );
+            qjs::JS_SetPropertyStr(
+                cx,
+                vel,
+                c"y".as_ptr(),
+                qjs::JS_NewFloat64(f64::from(velocity.1)),
+            );
+            qjs::JS_SetPropertyStr(cx, object, c"velocity".as_ptr(), vel);
+            let vals = qjs::JS_NewObject(cx);
+            qjs::JS_SetPropertyStr(
+                cx,
+                vals,
+                c"x".as_ptr(),
+                qjs::JS_NewFloat64(f64::from(values.0)),
+            );
+            qjs::JS_SetPropertyStr(
+                cx,
+                vals,
+                c"y".as_ptr(),
+                qjs::JS_NewFloat64(f64::from(values.1)),
+            );
+            qjs::JS_SetPropertyStr(cx, object, c"values".as_ptr(), vals);
+            object
+        },
+        crate::EventPayload::Pinch {
+            scale,
+            velocity,
+            value,
+        } => unsafe {
+            let object = qjs::JS_NewObject(cx);
+            qjs::JS_SetPropertyStr(
+                cx,
+                object,
+                c"scale".as_ptr(),
+                qjs::JS_NewFloat64(f64::from(*scale)),
+            );
+            qjs::JS_SetPropertyStr(
+                cx,
+                object,
+                c"velocity".as_ptr(),
+                qjs::JS_NewFloat64(f64::from(*velocity)),
+            );
+            qjs::JS_SetPropertyStr(
+                cx,
+                object,
+                c"value".as_ptr(),
+                qjs::JS_NewFloat64(f64::from(*value)),
+            );
+            object
+        },
+        crate::EventPayload::Rotation {
+            angle,
+            velocity,
+            value,
+        } => unsafe {
+            let object = qjs::JS_NewObject(cx);
+            qjs::JS_SetPropertyStr(
+                cx,
+                object,
+                c"angle".as_ptr(),
+                qjs::JS_NewFloat64(f64::from(*angle)),
+            );
+            qjs::JS_SetPropertyStr(
+                cx,
+                object,
+                c"velocity".as_ptr(),
+                qjs::JS_NewFloat64(f64::from(*velocity)),
+            );
+            qjs::JS_SetPropertyStr(
+                cx,
+                object,
+                c"value".as_ptr(),
+                qjs::JS_NewFloat64(f64::from(*value)),
+            );
+            object
+        },
     };
     let mut args = [value];
     let r = unsafe { qjs::JS_Call(cx, handler, UNDEFINED, 1, args.as_mut_ptr()) };
