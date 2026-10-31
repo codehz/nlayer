@@ -266,10 +266,14 @@ pub(crate) fn transform_moved(id: NodeId, rotation: bool, amount: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    
+    // Tests share global state(), so must run serially
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     use nlayer_core::animation::NodeId as AnimationNode;
 
     #[test]
     fn test_pan_gesture_tracking() {
+        let _guard = TEST_LOCK.lock().unwrap();
         reset();
         {
             let mut s = state();
@@ -318,6 +322,7 @@ mod tests {
 
     #[test]
     fn test_pinch_gesture_multiplies() {
+        let _guard = TEST_LOCK.lock().unwrap();
         reset();
         {
             let mut s = state();
@@ -354,6 +359,7 @@ mod tests {
 
     #[test]
     fn test_rotation_gesture_adds() {
+        let _guard = TEST_LOCK.lock().unwrap();
         reset();
         {
             let mut s = state();
@@ -389,6 +395,7 @@ mod tests {
 
     #[test]
     fn test_multiple_gestures_coexist() {
+        let _guard = TEST_LOCK.lock().unwrap();
         reset();
         {
             let mut s = state();
@@ -450,6 +457,7 @@ mod tests {
 
     #[test]
     fn test_gesture_bindings_cleared() {
+        let _guard = TEST_LOCK.lock().unwrap();
         reset();
         {
             let mut s = state();
