@@ -3495,14 +3495,40 @@ impl<M: TextEngine> Core<M> {
             if !self.nodes[key as usize].created {
                 continue;
             }
-            let viewport = self.nodes[key as usize]
-                .layout
-                .map(|layout| self.rounded_layout(layout).size.height)
-                .unwrap_or(0.0);
+            let viewport = if self.nodes[key as usize]
+                .list
+                .as_ref()
+                .expect("list")
+                .viewport_parent
+            {
+                // Find parent scroll view and use its viewport
+                let mut parent_key = self.nodes[key as usize].parent;
+                let mut parent_viewport = 0.0;
+                
+                while parent_key != NO_KEY {
+                    if self.nodes[parent_key as usize].kind == Kind::Scroll {
+                        parent_viewport = self.nodes[parent_key as usize]
+                            .layout
+                            .map(|layout| self.rounded_layout(layout).size.height)
+                            .unwrap_or(0.0);
+                        break;
+                    }
+                    parent_key = self.nodes[parent_key as usize].parent;
+                }
+                
+                parent_viewport
+            } else {
+                self.nodes[key as usize]
+                    .layout
+                    .map(|layout| self.rounded_layout(layout).size.height)
+                    .unwrap_or(0.0)
+            };
+            
             let cross = self.nodes[key as usize]
                 .layout
                 .map(|layout| self.rounded_layout(layout).size.width)
                 .unwrap_or(0.0);
+            
             self.nodes[key as usize]
                 .list
                 .as_mut()
@@ -3839,29 +3865,38 @@ impl<M: TextEngine> Core<M> {
                 .as_ref()
                 .and_then(|s| s.content)
                 .map_or(0.0, |c| c.height.0);
-            if anchor != 0.0 {
-                if content_len >= old_len {
-                    self.set_scroll_content(key, content);
-                    self.mount.push(MountItem::ScrollBy {
-                        id,
-                        dx: Points::ZERO,
-                        dy: Points(anchor),
-                    });
+            let viewport_parent = self.nodes[key as usize]
+                .list
+                .as_ref()
+                .expect("list")
+                .viewport_parent;
+            
+            if !viewport_parent {
+                // Only set scroll content if list has its own scroll view
+                if anchor != 0.0 {
+                    if content_len >= old_len {
+                        self.set_scroll_content(key, content);
+                        self.mount.push(MountItem::ScrollBy {
+                            id,
+                            dx: Points::ZERO,
+                            dy: Points(anchor),
+                        });
+                    } else {
+                        self.mount.push(MountItem::ScrollBy {
+                            id,
+                            dx: Points::ZERO,
+                            dy: Points(anchor),
+                        });
+                        self.set_scroll_content(key, content);
+                    }
+                    self.nodes[key as usize]
+                        .list
+                        .as_mut()
+                        .expect("list")
+                        .issue_scroll_by(anchor);
                 } else {
-                    self.mount.push(MountItem::ScrollBy {
-                        id,
-                        dx: Points::ZERO,
-                        dy: Points(anchor),
-                    });
                     self.set_scroll_content(key, content);
                 }
-                self.nodes[key as usize]
-                    .list
-                    .as_mut()
-                    .expect("list")
-                    .issue_scroll_by(anchor);
-            } else {
-                self.set_scroll_content(key, content);
             }
             // The content is final before a scroll command: platforms
             // clamp an offset to the content they know.
