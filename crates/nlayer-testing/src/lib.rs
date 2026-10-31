@@ -1206,6 +1206,81 @@ impl Headless {
         }
     }
 
+    /// Drags `selector` by (`x`, `y`) points: down at center, move, up.
+    /// Time advances in 60fps frames. Velocity is calculated from the last segment.
+    pub fn drag(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String> {
+        self.refresh();
+        let target = selector::resolve(&self.screen, selector)?;
+        self.require_visible(selector, target)?;
+        
+        let view_id = target.view();
+        let bounds = self.screen.view(view_id)
+            .ok_or_else(|| format!("`{selector}` view not found"))?
+            .frame;
+        let center = bounds.center();
+        
+        // Start gesture
+        let start_time = self.now;
+        self.pointer_down(center.x.0, center.y.0, start_time);
+        
+        // Move in steps (60fps), at least 3 frames for smooth velocity
+        let frames = 5;
+        for i in 1..=frames {
+            let t = i as f32 / frames as f32;
+            let curr_x = center.x.0 + x * t;
+            let curr_y = center.y.0 + y * t;
+            let curr_time = start_time + (t * frames as f32 * FRAME as f32) as f64;
+            self.pointer_move(curr_x, curr_y, curr_time);
+            self.now = curr_time;
+        }
+        
+        // End gesture
+        self.now = start_time + (frames as f32 * FRAME as f32) as f64;
+        self.pointer_up(self.now);
+        
+        Ok(())
+    }
+
+    /// Drags `selector` by (`x`, `y`) but doesn't release. Call `drop` to finish.
+    pub fn drag_and_hold(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String> {
+        self.refresh();
+        let target = selector::resolve(&self.screen, selector)?;
+        self.require_visible(selector, target)?;
+        
+        let view_id = target.view();
+        let bounds = self.screen.view(view_id)
+            .ok_or_else(|| format!("`{selector}` view not found"))?
+            .frame;
+        let center = bounds.center();
+        
+        // Start gesture
+        let start_time = self.now;
+        self.pointer_down(center.x.0, center.y.0, start_time);
+        
+        // Move in steps
+        let frames = 5;
+        for i in 1..=frames {
+            let t = i as f32 / frames as f32;
+            let curr_x = center.x.0 + x * t;
+            let curr_y = center.y.0 + y * t;
+            let curr_time = start_time + (t * frames as f32 * FRAME as f32) as f64;
+            self.pointer_move(curr_x, curr_y, curr_time);
+            self.now = curr_time;
+        }
+        
+        // Don't call pointer_up - leave gesture active
+        Ok(())
+    }
+
+    /// Releases the held pointer from `drag_and_hold`.
+    pub fn drop(&mut self) -> Result<(), String> {
+        if self.screen.active_gesture.is_none() {
+            return Err("no pointer is held (call drag_and_hold first)".into());
+        }
+        self.pointer_up(self.now);
+        Ok(())
+    }
+
     /// Types `text` into the single-line input `selector` names. Focuses
     /// that field first (and no other), then appends one change per
     /// character to the value it already shows.
