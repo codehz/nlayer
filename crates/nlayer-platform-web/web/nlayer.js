@@ -145,6 +145,19 @@ export class Player {
       view.addEventListener("touchcancel", this.onTouchEnd);
     }
     if (options.baseCSS != null) installBase(this.doc, options.baseCSS);
+    this.historyDepth = 0;
+    this.historySync = 0;
+    this.window = this.doc.defaultView ?? globalThis;
+    this.history = this.window.history;
+    if (this.history && typeof this.history.pushState === "function") {
+      this.history.replaceState({ nlayer: 0 }, "");
+      this.window.addEventListener?.("popstate", (e) => {
+        const depth = e.state?.nlayer ?? 0;
+        if (depth > this.historyDepth) return;
+        this.historyDepth = depth;
+        this.host.back?.();
+      });
+    }
   }
 
   /** `env(keyboard-inset-height)`. A pin of 0 leaves taps alone. */
@@ -197,12 +210,23 @@ export class Player {
     el._kind = kind;
     el._events = new Set();
     el._disabled = false;
-    el.className = kind === "scroll" ? "nl-v nl-scroll" : "nl-v";
+    if (kind === "scroll") {
+      el.className = "nl-v nl-scroll";
+    } else if (kind === "stack") {
+      el.className = "nl-v nl-stack";
+    } else if (kind === "screen") {
+      el.className = "nl-v nl-screen";
+    } else if (kind === "modal") {
+      el.className = "nl-v nl-modal";
+    } else if (kind === "headeritem") {
+      el.className = "nl-v nl-headeritem";
+    } else {
+      el.className = "nl-v";
+    }
     if (kind === "image") {
       const img = this.doc.createElement("img");
       img.draggable = false;
       img.className = "nl-fill nl-fit-cover";
-      // Inherit, not a copied length: a state rule can change the view's radius.
       img.style.borderRadius = "inherit";
       img.style.overflow = "clip";
       el.append(img);
@@ -218,6 +242,19 @@ export class Player {
       }
     });
     if (kind === "scroll") this.wireScroll(el);
+    if (kind === "screen") {
+      el.addEventListener("nlayer:dismiss", () => this.host.dismiss?.(id));
+      el.addEventListener("nlayer:backpress", () => this.host.backPress?.(id));
+      el.addEventListener("nlayer:insets", (e) => this.host.insets?.(id, e.detail));
+    }
+    if (kind === "modal") {
+      el.addEventListener("nlayer:show", () => this.host.show?.(id));
+      el.addEventListener("nlayer:dismiss", () => this.host.dismiss?.(id));
+      el.addEventListener("nlayer:requestclose", (e) =>
+        this.host.requestClose?.(id, e.detail?.reason),
+      );
+      el.addEventListener("nlayer:insets", (e) => this.host.insets?.(id, e.detail));
+    }
     el.addEventListener("click", (event) => {
       for (let node = el; node; node = node.parentNode) {
         if (node._disabled) {
@@ -896,6 +933,54 @@ export class Player {
       el.scrollLeft = x;
       el.scrollTop = y;
     }
+  }
+
+  op_scr([, id, config]) {
+    const el = this.view(id);
+    if (!el) return;
+    el._screenConfig = config;
+    this.syncHistorySoon();
+  }
+
+  op_mc([, id, config]) {
+    const el = this.view(id);
+    if (!el) return;
+    el._modalConfig = config;
+    this.syncHistorySoon();
+  }
+
+  syncHistorySoon() {
+    if (this.historySync) return;
+    this.historySync = setTimeout(() => {
+      this.historySync = 0;
+      this.syncHistory();
+    }, 0);
+  }
+
+  syncHistory() {
+    const depth = this.backDepth();
+    const have = this.historyDepth || 0;
+    for (let i = have + 1; i <= depth; i++) {
+      this.history.pushState({ nlayer: i }, "");
+    }
+    if (depth < have) {
+      this.history.go(depth - have);
+    }
+    this.historyDepth = depth;
+  }
+
+  backDepth() {
+    let depth = 0;
+    for (const el of this.root.children) {
+      if (el._kind === "modal") depth++;
+    }
+    for (const el of this.views.values()) {
+      if (el._kind === "stack" && el.isConnected) {
+        const screens = [...el.children].filter((c) => c._kind === "screen");
+        depth += Math.max(0, screens.length - 1);
+      }
+    }
+    return depth;
   }
 
   blurField() {

@@ -82,7 +82,7 @@ test("the page graph and a text mount do not need QuickJS", async () => {
   mediaListener({ matches: true });
   assert.equal(scheme, "dark");
 
-  // `BackHandler` runs newest first; `true` stops the walk.
+  // The engine invokes BackHandler after Core declines navigation back.
   let back = "";
   const removeOlder = facade.ui.BackHandler.addEventListener(() => {
     back += "older";
@@ -92,10 +92,10 @@ test("the page graph and a text mount do not need QuickJS", async () => {
     back += "newer";
     return true;
   });
-  pageListeners.get("popstate")();
+  assert.equal(facade.dispatchBack(), true);
   assert.equal(back, "newer");
   removeNewer();
-  pageListeners.get("popstate")();
+  assert.equal(facade.dispatchBack(), true);
   assert.equal(back, "newerolder");
   removeOlder();
 

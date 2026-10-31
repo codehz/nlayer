@@ -155,6 +155,26 @@ fn keyboard(cx: *mut JsContext) -> JsValue {
     }
 }
 
+/// `createNavStack`: the navigation state constructor.
+fn create_nav_stack(cx: *mut JsContext) -> JsValue {
+    crate::navigation::EXPORTS[0].1(cx)
+}
+
+/// `NavStack`: the navigation stack component.
+fn nav_stack(cx: *mut JsContext) -> JsValue {
+    crate::navigation::EXPORTS[1].1(cx)
+}
+
+/// `NavPage`: the navigation page component.
+fn nav_page(cx: *mut JsContext) -> JsValue {
+    crate::navigation::EXPORTS[2].1(cx)
+}
+
+/// `Dialog`: the modal dialog component.
+fn dialog(cx: *mut JsContext) -> JsValue {
+    crate::navigation::EXPORTS[3].1(cx)
+}
+
 /// `@nlayer/runtime`: the reactive graph and the tree entry an app mounts.
 const RUNTIME: &[Item] = &[
     ("signal", Export::Function(reactive::signal, 2)),
@@ -183,6 +203,10 @@ const UI: &[Item] = &[
     ("platform", Export::Value(platform)),
     ("BackHandler", Export::Value(back_handler)),
     ("Keyboard", Export::Value(keyboard)),
+    ("createNavStack", Export::Value(create_nav_stack)),
+    ("NavStack", Export::Value(nav_stack)),
+    ("NavPage", Export::Value(nav_page)),
+    ("Dialog", Export::Value(dialog)),
 ];
 
 pub(crate) const MODULES: &[NativeModule] = &[

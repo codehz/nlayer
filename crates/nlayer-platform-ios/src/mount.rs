@@ -1187,9 +1187,9 @@ impl Mounter {
                     }
                 }
                 nlayer_core::Command::ScrollToIndex { .. }
-                | nlayer_core::Command::ScrollToEnd { .. } => {
-                    // The core resolves list commands to a `ScrollTo`.
-                }
+                | nlayer_core::Command::ScrollToEnd { .. }
+                | nlayer_core::Command::Back
+                | nlayer_core::Command::GoBack => {}
             },
             MountItem::Image {
                 id,
@@ -1220,6 +1220,7 @@ impl Mounter {
                     _ => {}
                 }
             }
+            MountItem::ScreenConfig { .. } | MountItem::ModalConfig { .. } => {}
             MountItem::Animation(op) => {
                 self.animator.apply(op.clone());
                 self.update_link();
@@ -1337,6 +1338,9 @@ impl Mounter {
                 Native::Input(Field::new(self.mtm, ProtocolObject::from_ref(&*self.relay))),
                 None,
             ),
+            ViewKind::Stack | ViewKind::Screen | ViewKind::Modal | ViewKind::HeaderItem => {
+                (Native::View(UIView::new(self.mtm)), None)
+            }
         };
         let view = native.view().retain();
         view.setTag(id as isize);

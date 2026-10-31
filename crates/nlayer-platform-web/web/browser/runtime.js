@@ -3,6 +3,7 @@
 // `@nlayer/ui` and `nlayer:rt` share.
 import { Values } from "./values.js";
 import { createStorage, storagePrefix } from "./storage.js";
+import { createNavigation } from "./navigation.js";
 import { createLists } from "./list.js";
 import { createAnimation } from "./animation.js";
 
@@ -115,8 +116,11 @@ export function createFacade(wasm, requestPump, options = {}) {
   function installBoundary() {
     installColorScheme();
     boundaryProvide = call(116);
+    safeAreaSignal = signal({ top: 0, right: 0, bottom: 0, left: 0 });
+    reduceMotionSignal = signal(false);
     call(400, event);
     call(401, lists.bind);
+    call(402, dispatchBack);
   }
   let boundaryProvide = boundaryKey;
   const provideBoundary = (failed) => call(113, boundaryProvide, failed);
@@ -282,15 +286,15 @@ export function createFacade(wasm, requestPump, options = {}) {
   };
   media?.addEventListener?.("change", onScheme);
 
-  // `BackHandler`: history back. A listener that returns `true` handled it;
-  // without one the browser's back stands.
+  // Player owns popstate so navigation gets first refusal. The engine calls
+  // this only after Core reports that no modal or stack consumed back.
   const backListeners = [];
-  const onPopState = () => {
+  function dispatchBack() {
     for (let i = backListeners.length - 1; i >= 0; i--) {
-      if (backListeners[i].handler()) return;
+      if (backListeners[i].handler()) return true;
     }
-  };
-  globalThis.addEventListener?.("popstate", onPopState);
+    return false;
+  }
   const BackHandler = {
     addEventListener(handler) {
       if (typeof handler !== "function") {
@@ -423,6 +427,24 @@ export function createFacade(wasm, requestPump, options = {}) {
     lists: new Map(),
     wake: requestPump,
   });
+  let safeAreaSignal;
+  let reduceMotionSignal;
+  const navigation = createNavigation(
+    { signal, computed, untracked, batch, context },
+    {
+      rt,
+      listen: (node, event, handler) => {
+        const id = values.nodeIds.get(node);
+        if (id === undefined) return;
+        let table = handlers.get(id);
+        if (!table) handlers.set(id, (table = new Map()));
+        table.set(event, handler);
+      },
+    },
+    animation.api,
+    () => safeAreaSignal(),
+    () => reduceMotionSignal(),
+  );
 
   const runtime = {
     signal,
@@ -446,6 +468,10 @@ export function createFacade(wasm, requestPump, options = {}) {
     List: (props) => lists.render(props),
     createAnimatedValue: animation.api.createAnimatedValue,
     Animated: animation.api.Animated,
+    createNavStack: navigation.createNavStack,
+    NavStack: navigation.NavStack,
+    NavPage: navigation.NavPage,
+    Dialog: navigation.Dialog,
     platform: {
       os: "web",
       colorScheme: () => {
@@ -460,8 +486,23 @@ export function createFacade(wasm, requestPump, options = {}) {
         if (active && active.classList?.contains("nl-field")) active.blur();
       },
     },
+    env: (name) => {
+      if (name === "insets") return navigation.insetsContext();
+      const insets = safeAreaSignal();
+      if (name === "safe-area-inset-top") return insets.top;
+      if (name === "safe-area-inset-right") return insets.right;
+      if (name === "safe-area-inset-bottom") return insets.bottom;
+      if (name === "safe-area-inset-left") return insets.left;
+      if (name === "keyboard-inset-height") return 0;
+      return undefined;
+    },
+    setSafeArea(insets) {
+      safeAreaSignal.set(insets);
+    },
+    setReduceMotion(reduce) {
+      reduceMotionSignal.set(!!reduce);
+    },
   };
-
   function host(tag, props) {
     return untracked(() => {
       const el = rt.element(tag);
@@ -498,14 +539,14 @@ export function createFacade(wasm, requestPump, options = {}) {
     runtime,
     ui,
     rt,
+    installBoundary,
     animation,
     event,
-    installBoundary,
+    dispatchBack,
     dispose() {
       live = false;
       values.closed = true;
       media?.removeEventListener?.("change", onScheme);
-      globalThis.removeEventListener?.("popstate", onPopState);
       animation.dispose();
     },
   };

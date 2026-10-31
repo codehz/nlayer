@@ -207,6 +207,12 @@ enum Message {
     ColorScheme(ColorScheme),
     /// The platform's back button, or history back.
     Back,
+    /// The platform presents root `id` (a modal) at `size`, with `insets`
+    /// of it covered by system UI.
+    RootSize(NodeId, Size<Points>, Edges<Points>),
+    /// The platform measured where the content of screen `id` starts below
+    /// its header (`None`: let the core estimate it).
+    ScreenHeader(NodeId, Option<Points>),
     /// A request finished (its result is in the engine's slot).
     NetworkDone,
     /// Native animations finished or were interrupted.
@@ -303,6 +309,18 @@ impl EngineControl {
     /// none handles it, [`MountSink::back_unhandled`] runs.
     pub fn back(&self) {
         let _ = self.tx.send(Message::Back);
+    }
+
+    /// The platform presents root `id` (a modal) at `size`, with `insets`
+    /// of it covered by system UI.
+    pub fn set_root_size(&self, id: NodeId, size: Size<Points>, insets: Edges<Points>) {
+        let _ = self.tx.send(Message::RootSize(id, size, insets));
+    }
+
+    /// The platform measured where the content of screen `id` starts below
+    /// its header (`None`: let the core estimate it).
+    pub fn set_screen_header(&self, id: NodeId, height: Option<Points>) {
+        let _ = self.tx.send(Message::ScreenHeader(id, height));
     }
 
     /// Reports native animations that finished or were interrupted, so
@@ -725,20 +743,24 @@ impl<M: TextEngine> Session<M> {
                 let _ = scheme;
             }
             Message::Back => {
-                let handled = {
-                    #[cfg(feature = "js")]
-                    {
-                        self.host.dispatch_back()
-                    }
-                    #[cfg(feature = "browser")]
-                    {
-                        false
-                    }
-                };
+                let handled = self.core.handle_back();
+                let mut events = Vec::new();
+                self.core.take_events(&mut events);
+                for (id, event) in events {
+                    self.host.dispatch_event(id, event, &EventPayload::None);
+                }
                 if !handled {
-                    self.sink.back_unhandled();
+                    #[cfg(feature = "js")]
+                    let handled = self.host.dispatch_back();
+                    #[cfg(feature = "browser")]
+                    let handled = self.host.dispatch_back();
+                    if !handled {
+                        self.sink.back_unhandled();
+                    }
                 }
             }
+            Message::RootSize(id, size, insets) => self.core.set_root_size(id, size, insets),
+            Message::ScreenHeader(id, height) => self.core.set_screen_header(id, height),
             Message::AnimationFinished(finished) => {
                 self.host.animations_finished(&finished);
             }

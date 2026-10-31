@@ -1083,6 +1083,28 @@ fn node_json(node: &TreeNode, screen: &Screen) -> serde_json::Value {
             map.insert("src".into(), source.uri.as_ref().into());
             map.insert("fit".into(), fit_name(view.resize_mode).into());
         }
+        if let Some(config) = &view.screen {
+            map.insert(
+                "screen".into(),
+                serde_json::json!({
+                    "title": config.title.as_deref(),
+                    "headerVisible": config.header_visible,
+                    "headerTransparent": config.header_transparent,
+                    "popOnBack": !config.prevent_back,
+                    "headerHeight": config.header_height.0,
+                }),
+            );
+        }
+        if let Some(config) = view.modal {
+            map.insert(
+                "modal".into(),
+                serde_json::json!({
+                    "closeOnEscape": config.close_on_escape,
+                    "closeOnBackdropPress": config.close_on_backdrop_press,
+                    "closeOnSwipe": config.close_on_swipe,
+                }),
+            );
+        }
         if node.kind == ViewKind::Scroll {
             map.insert(
                 "horizontal".into(),
@@ -1151,6 +1173,10 @@ fn kind_name(kind: ViewKind) -> &'static str {
         ViewKind::Image => "image",
         ViewKind::Scroll => "scroll",
         ViewKind::Input => "input",
+        ViewKind::Stack => "stack",
+        ViewKind::Screen => "screen",
+        ViewKind::Modal => "modal",
+        ViewKind::HeaderItem => "headeritem",
     }
 }
 

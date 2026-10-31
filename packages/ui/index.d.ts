@@ -2,6 +2,7 @@
 
 import type { ImageAsset } from "./assets";
 import type { ImageStyle, InputStyle, TextStyle, ViewStyle } from "./styles";
+import type { Accessor } from "@nlayer/runtime";
 
 export type { ImageAsset, ImageStyle, InputStyle, TextStyle, ViewStyle };
 
@@ -10,6 +11,9 @@ export type StyleProp<T> = T | StyleList<T> | false | null | undefined;
 export type StyleList<T> = readonly (T | StyleList<T> | false | null | undefined)[];
 
 export type Children = unknown;
+
+/** A color value (CSS color string). */
+export type ColorValue = string;
 
 /** What an element is, for assistive technologies. */
 export type AccessibilityRole =
@@ -95,7 +99,7 @@ export interface ViewProps extends AccessibilityProps {
   style?: StyleProp<ViewStyle>;
   /** Painted while pressed. The platform applies it; layout does not change. */
   activeStyle?: StyleProp<ViewStyle>;
-  /** Painted while a pointer is over it. The platform applies it; layout does not change. */
+  /** Painted while a pointer is over it. The platform does not change. */
   hoverStyle?: StyleProp<ViewStyle>;
   /** Painted while it has focus. The platform applies it; layout does not change. */
   focusStyle?: StyleProp<ViewStyle>;
@@ -268,12 +272,122 @@ export interface ListProps<T> extends Omit<ScrollProps, "children"> {
   ref?: ((handle: ListHandle) => void) | { current?: ListHandle };
 }
 
-export function List<T>(props: ListProps<T>): unknown;
+/** The routes of a `<NavStack>`: the app's values; each push is a page of its own, the same route pushed twice included. */
+export interface NavStackState<R> {
+  /** The routes, bottom to top (reactive). */
+  routes: Accessor<readonly R[]>;
+  /** Pushes a page. */
+  push(route: R): void;
+  /** Pops `count` pages (default 1; at least one stays). */
+  pop(count?: number): void;
+  /** Pops back to the first page. */
+  popToRoot(): void;
+  /** Replaces the top page. */
+  replace(route: R): void;
+  /** Replaces the pages with `routes`; a route that stays (the same value)
+   * keeps its page and its state. */
+  setRoutes(routes: R[]): void;
+  /** Removes the topmost page of `route`, wherever it is. */
+  remove(route: R): void;
+}
+
+export interface NavStackProps<R> {
+  state: NavStackState<R>;
+  testID?: string;
+  style?: StyleProp<ViewStyle>;
+  class?: string;
+  /** Renders a route; return a `<NavPage>` for options. */
+  children: (route: R, index: Accessor<number>) => JSX.Element;
+}
+
+export interface NavPageProps {
+  testID?: string;
+  /** The page's title. */
+  title?: string;
+  /** The app's header (desktops and web). */
+  header?: JSX.Element;
+  /** Whether the header is visible (default true). */
+  headerVisible?: boolean;
+  /** Whether the back button is visible (default true). */
+  headerBackVisible?: boolean;
+  /** Custom left header content. */
+  headerLeft?: JSX.Element;
+  /** Custom right header content. */
+  headerRight?: JSX.Element;
+  /** Custom title header content. */
+  headerTitle?: JSX.Element;
+  /** Header style properties. */
+  headerStyle?: {
+    backgroundColor?: ColorValue;
+    color?: ColorValue;
+    tintColor?: ColorValue;
+  };
+  /** Whether the header is transparent. */
+  headerTransparent?: boolean;
+  /** The page transition animation. */
+  animation?: "default" | "fade" | "none";
+  /** Whether swiping can pop the page (default true). */
+  popOnSwipe?: boolean;
+  /** Whether the back button pops the page (default true). */
+  popOnBack?: boolean;
+  /** The user pressed back on the page, whether or not it popped. */
+  onBackPress?: () => void;
+  /** The user popped the page (back button, swipe); its route is gone. */
+  onDismiss?: () => void;
+  /** Platform insets changed (safe area). */
+  onInsets?: (insets: { top: number; right: number; bottom: number; left: number }) => void;
+  style?: StyleProp<ViewStyle>;
+  class?: string;
+  children?: JSX.Element;
+}
+
+/** What closed a dialog: Escape or the back button (`"cancel"`), a press
+ * on its backdrop, a swipe down. */
+export type DialogChangeReason = "cancel" | "backdropPress" | "swipe";
+
+export interface DialogProps {
+  testID?: string;
+  /** Shown while true (default). */
+  open?: boolean;
+  /** How it comes in and goes (default `"slide"`). */
+  animation?: "slide" | "fade" | "none";
+  /** It finished appearing. */
+  onShow?: () => void;
+  /** It went away: the user closed it, or the app removed it. */
+  onClose?: () => void;
+  /** The user tried to close it, whether or not a `closeOn*` flag let it close. */
+  onRequestClose?: (event: { reason: DialogChangeReason }) => void;
+  /** The user closed it (the `closeOn*` flag of what they did let it
+   * close): it closes whatever `open` says, so keep `open` in sync (set it
+   * to false here); while `open` stays true it stays closed, and it opens
+   * again when `open` goes from false to true. */
+  onOpenChange?: (event: { open: boolean; reason: DialogChangeReason }) => void;
+  /** Platform insets changed (safe area). */
+  onInsets?: (insets: { top: number; right: number; bottom: number; left: number }) => void;
+  style?: StyleProp<ViewStyle>;
+  class?: string;
+  backdropStyle?: StyleProp<ViewStyle>;
+  backdropClass?: string;
+  backdropTestID?: string;
+  closeOnBackdropPress?: boolean;
+  closeOnSwipe?: boolean;
+  closeOnEscape?: boolean;
+  children?: JSX.Element;
+}
+
+/** Creates a navigation stack state. */
+export function createNavStack<R>(routes: readonly R[]): NavStackState<R>;
+export function NavStack<R>(props: NavStackProps<R>): unknown;
+export function NavPage(props: NavPageProps): unknown;
+export function Dialog(props: DialogProps): unknown;
+
+
 export function View(props: ViewProps): unknown;
 export function Text(props: TextProps): unknown;
 export function Image(props: ImageProps): unknown;
 export function Scroll(props: ScrollProps): unknown;
 export function Input(props: InputProps): unknown;
+export function List<T>(props: ListProps<T>): unknown;
 
 /** An easing curve for `timing`: a name, cubic-Bézier control points, or
  * CSS `steps()` (a count and where it jumps). */

@@ -301,11 +301,15 @@ pub fn encode(batch: MountBatch) -> Encoded {
                         e.int(start as i32);
                         e.int(end as i32);
                     }
-                    Command::ScrollToIndex { .. } | Command::ScrollToEnd { .. } => {
-                        // The core resolves list commands to a `ScrollTo`.
+                    Command::ScrollToIndex { .. }
+                    | Command::ScrollToEnd { .. }
+                    | Command::Back
+                    | Command::GoBack => {
+                        // The engine handles navigation commands.
                     }
                 }
             }
+            MountItem::ScreenConfig { .. } | MountItem::ModalConfig { .. } => {}
         }
     }
     e
@@ -318,6 +322,7 @@ fn kind_code(kind: ViewKind) -> i32 {
         ViewKind::Image => 2,
         ViewKind::Scroll => 3,
         ViewKind::Input => 4,
+        ViewKind::Stack | ViewKind::Screen | ViewKind::Modal | ViewKind::HeaderItem => 0,
     }
 }
 

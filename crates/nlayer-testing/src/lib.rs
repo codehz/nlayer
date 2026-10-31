@@ -27,8 +27,8 @@ use std::{
 
 use crossbeam_channel::{Receiver, unbounded};
 use nlayer_core::{
-    Accessibility, Command, EventKind, EventMask, ImageSource, InputConfig, MountBatch, MountItem,
-    NodeId, ResizeMode, ViewKind,
+    Accessibility, Command, EventKind, EventMask, ImageSource, InputConfig, ModalConfig,
+    MountBatch, MountItem, NodeId, ResizeMode, ScreenConfig, ViewKind,
     animation::{AnimationProp, Finished, Graph, NodeId as AnimationNode},
     geometry::{Bounds, Points, Size},
     style::{Color, ViewStyle},
@@ -59,6 +59,10 @@ pub struct View {
     pub source: Option<ImageSource>,
     /// How an image fits its box.
     pub resize_mode: ResizeMode,
+    /// Native or web screen header and back options.
+    pub screen: Option<Box<ScreenConfig>>,
+    /// Modal presentation and close options.
+    pub modal: Option<ModalConfig>,
     /// A single-line input's configuration and text.
     pub input: Option<InputView>,
     /// The scrollable size of a scroll view.
@@ -307,6 +311,8 @@ impl Screen {
                     base_style: None,
                     source: None,
                     resize_mode: ResizeMode::default(),
+                    screen: None,
+                    modal: None,
                     input: None,
                     scroll_content: None,
                     scroll_horizontal: None,
@@ -426,6 +432,14 @@ impl Screen {
                     input.value = text.clone();
                 }
             }
+            MountItem::ScreenConfig { id, config } => {
+                self.ensure(*id, ViewKind::Screen);
+                self.views.get_mut(id).expect("a screen").screen = Some(config.clone());
+            }
+            MountItem::ModalConfig { id, config } => {
+                self.ensure(*id, ViewKind::Modal);
+                self.views.get_mut(id).expect("a modal").modal = Some(*config);
+            }
             MountItem::InputContent { .. } | MountItem::StateStyle { .. } => {}
             MountItem::Command { id, command } => match command {
                 Command::ScrollTo { x, y, .. } => self.set_scroll(*id, x.0, y.0),
@@ -437,7 +451,8 @@ impl Screen {
                         input.selection = Some((*start, *end));
                     }
                 }
-                Command::ScrollToIndex { .. } | Command::ScrollToEnd { .. } => {}
+                Command::ScrollToIndex { .. } | Command::ScrollToEnd { .. } | Command::GoBack => {}
+                Command::Back => {}
             },
             MountItem::LongPressDelay { .. } => {}
             MountItem::Animation(op) => {
@@ -540,6 +555,8 @@ impl Screen {
             base_style: None,
             source: None,
             resize_mode: ResizeMode::default(),
+            screen: None,
+            modal: None,
             input: None,
             scroll_content: None,
             scroll_horizontal: None,
@@ -744,6 +761,10 @@ impl Headless {
         }
     }
 
+    /// Sends a back request through the engine's navigation precedence.
+    pub fn back(&mut self) {
+        self.engine.control().back();
+    }
     /// Calls node `id`'s press handler.
     pub fn press(&mut self, id: NodeId) {
         self.engine

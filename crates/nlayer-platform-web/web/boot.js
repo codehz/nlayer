@@ -301,6 +301,12 @@ export async function startPage(root, options = {}) {
           return wasm.nlayer_pump();
         });
       },
+      back() {
+        enter(() => {
+          wasm.nlayer_back();
+          return wasm.nlayer_pump();
+        });
+      },
     },
     { assetBase: options.assetBase ?? "", assetMap: options.assetMap, baseCSS: options.baseCSS },
   );

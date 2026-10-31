@@ -21,6 +21,11 @@ pub trait Bridge {
     /// Native animations finished or were interrupted. The page resolves
     /// its own animation promises, so it usually has nothing to do.
     fn animations_finished(&self, _finished: &[nlayer_core::animation::Finished]) {}
+    /// Delivers the platform's back button (or history back): whether a
+    /// `BackHandler` listener handled it. Returns true if consumed.
+    fn dispatch_back(&self) -> bool {
+        false
+    }
 }
 
 thread_local! {
@@ -71,6 +76,10 @@ impl Script {
 
     pub(crate) fn animations_finished(&self, finished: &[nlayer_core::animation::Finished]) {
         self.0.animations_finished(finished);
+    }
+
+    pub(crate) fn dispatch_back(&self) -> bool {
+        self.0.dispatch_back()
     }
 
     pub(crate) fn next_timer(&self) -> Option<std::time::Duration> {

@@ -2196,6 +2196,10 @@ fn tag_name(tag: Tag) -> &'static str {
         Tag::List => "list",
         Tag::Cell => "cell",
         Tag::Input => "input",
+        Tag::Stack => "stack",
+        Tag::Screen => "screen",
+        Tag::Modal => "modal",
+        Tag::HeaderItem => "headerItem",
     }
 }
 

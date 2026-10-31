@@ -307,7 +307,116 @@ impl Encoder {
                         .bool(*animated)
                         .end();
                 }
+                Command::Back | Command::GoBack => {
+                    // Back routing handled by engine/page layer
+                }
             },
+            MountItem::ScreenConfig { id, config } => {
+                out.item("scr").num(*id);
+                out.s.push_str(",{");
+                out.s.push_str("\"headerHeight\":");
+                out.num(config.header_height.0);
+                out.s.push_str(",\"headerVisible\":");
+                out.s.push_str(if config.header_visible {
+                    "true"
+                } else {
+                    "false"
+                });
+                out.s.push_str(",\"headerTransparent\":");
+                out.s.push_str(if config.header_transparent {
+                    "true"
+                } else {
+                    "false"
+                });
+                out.s.push_str(",\"preventBack\":");
+                out.s
+                    .push_str(if config.prevent_back { "true" } else { "false" });
+                out.s.push_str(",\"gestureEnabled\":");
+                out.s.push_str(if config.gesture_enabled {
+                    "true"
+                } else {
+                    "false"
+                });
+                out.s.push_str(",\"backVisible\":");
+                out.s
+                    .push_str(if config.back_visible { "true" } else { "false" });
+                out.s.push_str(",\"animation\":");
+                out.str(match config.animation {
+                    nlayer_core::ScreenAnimation::Default => "default",
+                    nlayer_core::ScreenAnimation::Fade => "fade",
+                    nlayer_core::ScreenAnimation::None => "none",
+                });
+                if let Some(title) = &config.title {
+                    out.s.push_str(",\"title\":");
+                    push_str(&mut out.s, title);
+                }
+                if let Some(color) = config.tint_color {
+                    out.s.push_str(",\"tintColor\":");
+                    push_str(&mut out.s, &css_color(color));
+                }
+                if let Some(color) = config.background_color {
+                    out.s.push_str(",\"backgroundColor\":");
+                    push_str(&mut out.s, &css_color(color));
+                }
+                if let Some(color) = config.title_color {
+                    out.s.push_str(",\"titleColor\":");
+                    push_str(&mut out.s, &css_color(color));
+                }
+                if let Some(node) = config.left {
+                    out.s.push_str(",\"left\":");
+                    out.num(node);
+                }
+                if let Some(node) = config.right {
+                    out.s.push_str(",\"right\":");
+                    out.num(node);
+                }
+                if let Some(node) = config.title_view {
+                    out.s.push_str(",\"titleView\":");
+                    out.num(node);
+                }
+                if let Some(node) = config.header_view {
+                    out.s.push_str(",\"headerView\":");
+                    out.num(node);
+                }
+                out.s.push('}');
+                out.end();
+            }
+            MountItem::ModalConfig { id, config } => {
+                out.item("mc").num(*id);
+                out.s.push_str(",{");
+                out.s.push_str("\"animation\":");
+                out.str(match config.animation {
+                    nlayer_core::ModalAnimation::Slide => "slide",
+                    nlayer_core::ModalAnimation::Fade => "fade",
+                    nlayer_core::ModalAnimation::None => "none",
+                });
+                out.s.push_str(",\"presentation\":");
+                out.str(match config.presentation {
+                    nlayer_core::ModalPresentation::FullScreen => "fullscreen",
+                    nlayer_core::ModalPresentation::PageSheet => "pagesheet",
+                    nlayer_core::ModalPresentation::FormSheet => "formsheet",
+                });
+                out.s.push_str(",\"closeOnEscape\":");
+                out.s.push_str(if config.close_on_escape {
+                    "true"
+                } else {
+                    "false"
+                });
+                out.s.push_str(",\"closeOnBackdropPress\":");
+                out.s.push_str(if config.close_on_backdrop_press {
+                    "true"
+                } else {
+                    "false"
+                });
+                out.s.push_str(",\"closeOnSwipe\":");
+                out.s.push_str(if config.close_on_swipe {
+                    "true"
+                } else {
+                    "false"
+                });
+                out.s.push('}');
+                out.end();
+            }
             MountItem::TestId { id, test_id } => {
                 out.item("tid").num(*id).opt_str(test_id.as_deref()).end();
             }
@@ -614,6 +723,10 @@ fn kind_name(kind: ViewKind) -> &'static str {
         ViewKind::Image => "image",
         ViewKind::Scroll => "scroll",
         ViewKind::Input => "input",
+        ViewKind::Stack => "stack",
+        ViewKind::Screen => "screen",
+        ViewKind::Modal => "modal",
+        ViewKind::HeaderItem => "headeritem",
     }
 }
 

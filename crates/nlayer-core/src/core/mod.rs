@@ -16,10 +16,9 @@ mod list;
 
 use std::{mem, sync::Arc};
 
-use taffy::{AvailableSpace, Layout, Position, Style as TaffyStyle};
-use rustc_hash::FxHashSet;
 use layout_tree::LayoutTree;
-
+use rustc_hash::FxHashSet;
+use taffy::{AvailableSpace, Layout, Position, Style as TaffyStyle};
 
 use crate::{
     geometry::{Bounds, Edges, Percentage, Point, Points, Size, rect},
@@ -127,10 +126,7 @@ impl Kind {
     }
 
     fn is_layout_root(self) -> bool {
-        matches!(
-            self,
-            Kind::Screen | Kind::Modal | Kind::HeaderItem
-        )
+        matches!(self, Kind::Screen | Kind::Modal | Kind::HeaderItem)
     }
 
     fn of(tag: Tag) -> Self {
@@ -369,8 +365,7 @@ impl Node {
             }),
             slot: None,
             input: matches!(kind, Kind::Input).then(Box::default),
-            root: matches!(kind, Kind::Screen | Kind::Modal | Kind::HeaderItem)
-                .then(Box::default),
+            root: matches!(kind, Kind::Screen | Kind::Modal | Kind::HeaderItem).then(Box::default),
             z_index: 0,
             rtl: false,
             direction: None,
@@ -618,19 +613,16 @@ impl<M: TextEngine> Core<M> {
         }
     }
 
-    /// Handles the back button press. Returns `true` if Core navigation
-    /// consumed it (a modal dismissed or a stack popped), `false` if not
-    /// (no stack/modal, or the top screen has `popOnBack` false).
-    ///
-    /// Fires `onBackPress` (EventKind::BackRequest) to the top screen/modal
-    /// before checking whether to pop. The engine calls this first; if it
-    /// returns `false`, the engine tries BackHandler listeners, then the
-    /// platform's back behavior.
+    /// Handles back navigation. Returns `true` when a modal receives a close
+    /// request or a stack can pop. Emits `onBackPress` first, then
+    /// `onRequestClose` for modals or `onDismiss` for a popped screen.
+    /// The engine tries `BackHandler` and platform behavior only when this
+    /// returns `false`.
     pub fn handle_back(&mut self) -> bool {
         // Priority: modal first, then topmost screen in a stack.
         // A modal always wins. For screens, find the last (topmost) in its stack.
         let mut candidate: Option<(Key, bool)> = None; // (key, is_modal)
-        
+
         // First check for any modal.
         for &key in &self.roots {
             let node = &self.nodes[key as usize];
@@ -642,7 +634,7 @@ impl<M: TextEngine> Core<M> {
                 break;
             }
         }
-        
+
         // If no modal, find the topmost screen in any stack.
         if candidate.is_none() {
             for &key in &self.roots {
@@ -668,40 +660,42 @@ impl<M: TextEngine> Core<M> {
                 }
             }
         }
-        
+
         let Some((key, is_modal)) = candidate else {
             return false;
         };
-        
+
         let node = &self.nodes[key as usize];
         let id = node.id;
-        
-        // Always fire onBackPress event if the screen/modal listens to it.
-        if node.events.contains(EventKind::BackRequest) {
-            self.events.push((id, EventKind::BackRequest));
-        }
-        
-        // Check if eligible to pop/dismiss.
-        if is_modal {
-            // Modal: check close_on_escape.
-            let can_close = node.root.as_ref()
-                .map_or(true, |r| r.modal.close_on_escape);
-            can_close
+        let back_listens = node.events.contains(EventKind::BackRequest);
+        let can_act = if is_modal {
+            node.root.as_ref().is_none_or(|r| r.modal.close_on_escape)
         } else {
-            // Screen: check if it's the root (only screen in stack) or if popOnBack allows.
             let stack_key = node.parent;
             if stack_key == NO_KEY {
-                return false;
+                false
+            } else {
+                let stack = &self.nodes[stack_key as usize];
+                stack.children.len() > 1
+                    && !node.root.as_ref().is_some_and(|r| r.screen.prevent_back)
             }
-            let stack = &self.nodes[stack_key as usize];
-            if stack.children.len() <= 1 {
-                // Root screen: cannot pop.
-                return false;
+        };
+        if back_listens {
+            self.events.push((id, EventKind::BackRequest));
+        }
+        if is_modal {
+            if node.events.contains(EventKind::RequestClose) {
+                self.events.push((id, EventKind::RequestClose));
             }
-            // Non-root screen: check prevent_back (which is !popOnBack).
-            let can_pop = !node.root.as_ref()
-                .map_or(false, |r| r.screen.prevent_back);
-            can_pop
+            can_act
+        } else if can_act {
+            if node.events.contains(EventKind::Dismiss) {
+                self.events.push((id, EventKind::Dismiss));
+            }
+            true
+        } else {
+            let stack_key = node.parent;
+            stack_key != NO_KEY && self.nodes[stack_key as usize].children.len() > 1
         }
     }
 
@@ -1342,12 +1336,18 @@ impl<M: TextEngine> Core<M> {
                     match screen_prop {
                         ScreenProp::Title(title) => config.title = title,
                         ScreenProp::HeaderVisible(visible) => config.header_visible = visible,
-                        ScreenProp::HeaderTransparent(transparent) => config.header_transparent = transparent,
+                        ScreenProp::HeaderTransparent(transparent) => {
+                            config.header_transparent = transparent
+                        }
                         ScreenProp::HeaderBackVisible(visible) => config.back_visible = visible,
                         ScreenProp::PopOnSwipe(enabled) => config.gesture_enabled = enabled,
                         ScreenProp::PopOnBack(pop) => config.prevent_back = !pop,
                         ScreenProp::Animation(animation) => config.animation = animation,
-                        ScreenProp::HeaderStyle { background_color, title_color, tint_color } => {
+                        ScreenProp::HeaderStyle {
+                            background_color,
+                            title_color,
+                            tint_color,
+                        } => {
                             config.background_color = background_color;
                             config.title_color = title_color;
                             config.tint_color = tint_color;
@@ -1365,7 +1365,9 @@ impl<M: TextEngine> Core<M> {
                         ModalProp::Animation(animation) => config.animation = animation,
                         ModalProp::Presentation(presentation) => config.presentation = presentation,
                         ModalProp::CloseOnEscape(close) => config.close_on_escape = close,
-                        ModalProp::CloseOnBackdropPress(close) => config.close_on_backdrop_press = close,
+                        ModalProp::CloseOnBackdropPress(close) => {
+                            config.close_on_backdrop_press = close
+                        }
                         ModalProp::CloseOnSwipe(close) => config.close_on_swipe = close,
                     }
                     self.nodes[key as usize].dirty |= dirty::MODAL;
@@ -5888,12 +5890,24 @@ mod tests {
             before: None,
         })
         .unwrap();
-        
+
         let batch = c.commit().unwrap();
         // Stack and first screen are created and inserted.
-        assert!(batch.items.iter().any(|m| matches!(m, MountItem::Create { id: 2, kind: ViewKind::Stack })));
-        assert!(batch.items.iter().any(|m| matches!(m, MountItem::Create { id: 3, kind: ViewKind::Screen })));
-        
+        assert!(batch.items.iter().any(|m| matches!(
+            m,
+            MountItem::Create {
+                id: 2,
+                kind: ViewKind::Stack
+            }
+        )));
+        assert!(batch.items.iter().any(|m| matches!(
+            m,
+            MountItem::Create {
+                id: 3,
+                kind: ViewKind::Screen
+            }
+        )));
+
         // Push second screen.
         c.apply(Op::Create {
             id: 4,
@@ -5906,17 +5920,32 @@ mod tests {
             before: None,
         })
         .unwrap();
-        
+
         let batch = c.commit().unwrap();
         // Second screen created and inserted after first.
-        assert!(batch.items.iter().any(|m| matches!(m, MountItem::Create { id: 4, kind: ViewKind::Screen })));
-        
+        assert!(batch.items.iter().any(|m| matches!(
+            m,
+            MountItem::Create {
+                id: 4,
+                kind: ViewKind::Screen
+            }
+        )));
+
         // Pop second screen (remove from stack).
-        c.apply(Op::Remove { parent: 2, child: 4 }).unwrap();
-        
+        c.apply(Op::Remove {
+            parent: 2,
+            child: 4,
+        })
+        .unwrap();
+
         let batch = c.commit().unwrap();
         // Screen removed from parent.
-        assert!(batch.items.iter().any(|m| matches!(m, MountItem::Remove { id: 4 })));
+        assert!(
+            batch
+                .items
+                .iter()
+                .any(|m| matches!(m, MountItem::Remove { id: 4 }))
+        );
     }
 
     #[test]
@@ -5924,7 +5953,7 @@ mod tests {
         let mut c = core();
         // Set header heights (normal, large).
         c.set_header_heights(Points(44.0), Points(96.0));
-        
+
         // Create stack and screen.
         c.apply(Op::Create {
             id: 2,
@@ -5948,33 +5977,29 @@ mod tests {
             before: None,
         })
         .unwrap();
-        
+
         // Set screen title to trigger config emission.
         c.apply(Op::SetProp {
             id: 3,
             prop: Prop::Screen(crate::ops::ScreenProp::Title(Some("Test".into()))),
         })
         .unwrap();
-        
+
         let batch = c.commit().unwrap();
         // ScreenConfig is emitted with title.
         let config_item = batch.items.iter().find_map(|m| {
             if let MountItem::ScreenConfig { id, config } = m {
-                if *id == 3 {
-                    Some(config)
-                } else {
-                    None
-                }
+                if *id == 3 { Some(config) } else { None }
             } else {
                 None
             }
         });
         assert!(config_item.is_some());
         assert_eq!(config_item.unwrap().title.as_deref(), Some("Test"));
-        
+
         // Platform reports measured header height.
         c.set_screen_header(3, Some(Points(64.0)));
-        
+
         // Verify layout is marked as needing update.
         c.commit();
     }
@@ -5984,7 +6009,7 @@ mod tests {
     #[ignore]
     fn inset_accounting() {
         let mut c = core();
-        
+
         // Create a view with env() padding.
         c.apply(Op::Create {
             id: 2,
@@ -5997,7 +6022,7 @@ mod tests {
             before: None,
         })
         .unwrap();
-        
+
         // Set style with env(safe-area-inset-top).
         // use crate::style::*;
         // let mut style = Style::default();
@@ -6008,7 +6033,7 @@ mod tests {
         // })
         // .unwrap();
         c.commit();
-        
+
         // Update safe area insets.
         c.set_safe_area(crate::geometry::Edges {
             top: Points(20.0),
@@ -6016,13 +6041,13 @@ mod tests {
             bottom: Points(0.0),
             left: Points(0.0),
         });
-        
+
         // Commit should apply insets to padding.
         c.commit();
-        
+
         // Update keyboard inset.
         c.set_keyboard_inset(Points(300.0));
-        
+
         // Verify layout update is triggered.
         c.commit();
     }
@@ -6030,7 +6055,7 @@ mod tests {
     #[test]
     fn modal_config_emission() {
         let mut c = core();
-        
+
         // Create modal.
         c.apply(Op::Create {
             id: 2,
@@ -6043,7 +6068,7 @@ mod tests {
             before: None,
         })
         .unwrap();
-        
+
         // Set modal prop.
         c.apply(Op::SetProp {
             id: 2,
@@ -6052,17 +6077,13 @@ mod tests {
             )),
         })
         .unwrap();
-        
+
         let batch = c.commit().unwrap();
-        
+
         // ModalConfig is emitted.
         let config_item = batch.items.iter().find_map(|m| {
             if let MountItem::ModalConfig { id, config } = m {
-                if *id == 2 {
-                    Some(config)
-                } else {
-                    None
-                }
+                if *id == 2 { Some(config) } else { None }
             } else {
                 None
             }
@@ -6077,7 +6098,7 @@ mod tests {
     #[test]
     fn handle_back_with_screen() {
         let mut c = core();
-        
+
         // Create stack with two screens so the top one can pop.
         c.apply(Op::Create {
             id: 2,
@@ -6113,7 +6134,7 @@ mod tests {
         })
         .unwrap();
         c.commit();
-        
+
         // Listen to BackRequest on top screen.
         c.apply(Op::Listen {
             id: 4,
@@ -6122,11 +6143,11 @@ mod tests {
         })
         .unwrap();
         c.commit();
-        
+
         // Handle back - should fire event and return true (can pop).
         let consumed = c.handle_back();
         assert!(consumed);
-        
+
         // Check that BackRequest event was fired.
         let mut events = Vec::new();
         c.take_events(&mut events);
@@ -6138,7 +6159,7 @@ mod tests {
     #[test]
     fn handle_back_with_prevent() {
         let mut c = core();
-        
+
         // Create stack with screen that has popOnBack=false.
         c.apply(Op::Create {
             id: 2,
@@ -6175,7 +6196,7 @@ mod tests {
         })
         .unwrap();
         c.commit();
-        
+
         // Handle back - should return false (cannot pop).
         let consumed = c.handle_back();
         assert!(!consumed);
@@ -6184,7 +6205,7 @@ mod tests {
     #[test]
     fn root_screen_cannot_pop() {
         let mut c = core();
-        
+
         // Create stack with single screen (root screen).
         c.apply(Op::Create {
             id: 2,
@@ -6209,11 +6230,11 @@ mod tests {
         })
         .unwrap();
         c.commit();
-        
+
         // Root screen should not consume back.
         let consumed = c.handle_back();
         assert!(!consumed, "root screen should not pop");
-        
+
         // But onBackPress should still fire if listening.
         c.apply(Op::Listen {
             id: 3,
@@ -6222,10 +6243,10 @@ mod tests {
         })
         .unwrap();
         c.commit();
-        
+
         let consumed = c.handle_back();
         assert!(!consumed, "root screen should not pop even with listener");
-        
+
         let mut events = Vec::new();
         c.take_events(&mut events);
         assert_eq!(events.len(), 1);
@@ -6236,7 +6257,7 @@ mod tests {
     #[test]
     fn second_screen_pops() {
         let mut c = core();
-        
+
         // Create stack with two screens.
         c.apply(Op::Create {
             id: 2,
@@ -6272,7 +6293,7 @@ mod tests {
         })
         .unwrap();
         c.commit();
-        
+
         // Second screen should pop.
         let consumed = c.handle_back();
         assert!(consumed, "second screen should pop");
@@ -6281,7 +6302,7 @@ mod tests {
     #[test]
     fn modal_priority_over_screen() {
         let mut c = core();
-        
+
         // Create stack with screen and a modal.
         c.apply(Op::Create {
             id: 2,
@@ -6328,7 +6349,7 @@ mod tests {
         })
         .unwrap();
         c.commit();
-        
+
         // Modal should handle back, not the screen.
         c.apply(Op::Listen {
             id: 5,
@@ -6337,10 +6358,10 @@ mod tests {
         })
         .unwrap();
         c.commit();
-        
+
         let consumed = c.handle_back();
         assert!(consumed, "modal should handle back");
-        
+
         let mut events = Vec::new();
         c.take_events(&mut events);
         assert_eq!(events.len(), 1);
@@ -6350,7 +6371,7 @@ mod tests {
     #[test]
     fn modal_close_on_escape_false() {
         let mut c = core();
-        
+
         // Create modal with closeOnEscape=false.
         c.apply(Op::Create {
             id: 2,
@@ -6369,16 +6390,19 @@ mod tests {
         })
         .unwrap();
         c.commit();
-        
+
         // Should not consume back.
         let consumed = c.handle_back();
-        assert!(!consumed, "modal with closeOnEscape=false should not dismiss");
+        assert!(
+            !consumed,
+            "modal with closeOnEscape=false should not dismiss"
+        );
     }
 
     #[test]
     fn back_event_fires_even_when_prevented() {
         let mut c = core();
-        
+
         // Create stack with screen that prevents back.
         c.apply(Op::Create {
             id: 2,
@@ -6425,14 +6449,22 @@ mod tests {
         })
         .unwrap();
         c.commit();
-        
-        // Should not consume but should fire event.
+
+        // The stack owns back while it has a non-root screen, even if that
+        // screen prevents automatic popping.
         let consumed = c.handle_back();
-        assert!(!consumed, "prevented back should not pop");
-        
+        assert!(
+            consumed,
+            "prevented back must not fall through to BackHandler"
+        );
+
         let mut events = Vec::new();
         c.take_events(&mut events);
-        assert_eq!(events.len(), 1, "onBackPress should fire even when prevented");
+        assert_eq!(
+            events.len(),
+            1,
+            "onBackPress should fire even when prevented"
+        );
         assert_eq!(events[0].0, 4);
         assert_eq!(events[0].1, EventKind::BackRequest);
     }

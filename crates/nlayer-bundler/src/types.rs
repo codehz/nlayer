@@ -388,6 +388,7 @@ fn ui() -> &'static str {
 
 import type { ImageAsset } from "./assets";
 import type { ImageStyle, InputStyle, TextStyle, ViewStyle } from "./styles";
+import type { Accessor } from "@nlayer/runtime";
 
 export type { ImageAsset, ImageStyle, InputStyle, TextStyle, ViewStyle };
 
@@ -396,6 +397,9 @@ export type StyleProp<T> = T | StyleList<T> | false | null | undefined;
 export type StyleList<T> = readonly (T | StyleList<T> | false | null | undefined)[];
 
 export type Children = unknown;
+
+/** A color value (CSS color string). */
+export type ColorValue = string;
 
 /** What an element is, for assistive technologies. */
 export type AccessibilityRole =
@@ -481,7 +485,7 @@ export interface ViewProps extends AccessibilityProps {
   style?: StyleProp<ViewStyle>;
   /** Painted while pressed. The platform applies it; layout does not change. */
   activeStyle?: StyleProp<ViewStyle>;
-  /** Painted while a pointer is over it. The platform applies it; layout does not change. */
+  /** Painted while a pointer is over it. The platform does not change. */
   hoverStyle?: StyleProp<ViewStyle>;
   /** Painted while it has focus. The platform applies it; layout does not change. */
   focusStyle?: StyleProp<ViewStyle>;
@@ -654,12 +658,122 @@ export interface ListProps<T> extends Omit<ScrollProps, "children"> {
   ref?: ((handle: ListHandle) => void) | { current?: ListHandle };
 }
 
-export function List<T>(props: ListProps<T>): unknown;
+/** The routes of a `<NavStack>`: the app's values; each push is a page of its own, the same route pushed twice included. */
+export interface NavStackState<R> {
+  /** The routes, bottom to top (reactive). */
+  routes: Accessor<readonly R[]>;
+  /** Pushes a page. */
+  push(route: R): void;
+  /** Pops `count` pages (default 1; at least one stays). */
+  pop(count?: number): void;
+  /** Pops back to the first page. */
+  popToRoot(): void;
+  /** Replaces the top page. */
+  replace(route: R): void;
+  /** Replaces the pages with `routes`; a route that stays (the same value)
+   * keeps its page and its state. */
+  setRoutes(routes: R[]): void;
+  /** Removes the topmost page of `route`, wherever it is. */
+  remove(route: R): void;
+}
+
+export interface NavStackProps<R> {
+  state: NavStackState<R>;
+  testID?: string;
+  style?: StyleProp<ViewStyle>;
+  class?: string;
+  /** Renders a route; return a `<NavPage>` for options. */
+  children: (route: R, index: Accessor<number>) => JSX.Element;
+}
+
+export interface NavPageProps {
+  testID?: string;
+  /** The page's title. */
+  title?: string;
+  /** The app's header (desktops and web). */
+  header?: JSX.Element;
+  /** Whether the header is visible (default true). */
+  headerVisible?: boolean;
+  /** Whether the back button is visible (default true). */
+  headerBackVisible?: boolean;
+  /** Custom left header content. */
+  headerLeft?: JSX.Element;
+  /** Custom right header content. */
+  headerRight?: JSX.Element;
+  /** Custom title header content. */
+  headerTitle?: JSX.Element;
+  /** Header style properties. */
+  headerStyle?: {
+    backgroundColor?: ColorValue;
+    color?: ColorValue;
+    tintColor?: ColorValue;
+  };
+  /** Whether the header is transparent. */
+  headerTransparent?: boolean;
+  /** The page transition animation. */
+  animation?: "default" | "fade" | "none";
+  /** Whether swiping can pop the page (default true). */
+  popOnSwipe?: boolean;
+  /** Whether the back button pops the page (default true). */
+  popOnBack?: boolean;
+  /** The user pressed back on the page, whether or not it popped. */
+  onBackPress?: () => void;
+  /** The user popped the page (back button, swipe); its route is gone. */
+  onDismiss?: () => void;
+  /** Platform insets changed (safe area). */
+  onInsets?: (insets: { top: number; right: number; bottom: number; left: number }) => void;
+  style?: StyleProp<ViewStyle>;
+  class?: string;
+  children?: JSX.Element;
+}
+
+/** What closed a dialog: Escape or the back button (`"cancel"`), a press
+ * on its backdrop, a swipe down. */
+export type DialogChangeReason = "cancel" | "backdropPress" | "swipe";
+
+export interface DialogProps {
+  testID?: string;
+  /** Shown while true (default). */
+  open?: boolean;
+  /** How it comes in and goes (default `"slide"`). */
+  animation?: "slide" | "fade" | "none";
+  /** It finished appearing. */
+  onShow?: () => void;
+  /** It went away: the user closed it, or the app removed it. */
+  onClose?: () => void;
+  /** The user tried to close it, whether or not a `closeOn*` flag let it close. */
+  onRequestClose?: (event: { reason: DialogChangeReason }) => void;
+  /** The user closed it (the `closeOn*` flag of what they did let it
+   * close): it closes whatever `open` says, so keep `open` in sync (set it
+   * to false here); while `open` stays true it stays closed, and it opens
+   * again when `open` goes from false to true. */
+  onOpenChange?: (event: { open: boolean; reason: DialogChangeReason }) => void;
+  /** Platform insets changed (safe area). */
+  onInsets?: (insets: { top: number; right: number; bottom: number; left: number }) => void;
+  style?: StyleProp<ViewStyle>;
+  class?: string;
+  backdropStyle?: StyleProp<ViewStyle>;
+  backdropClass?: string;
+  backdropTestID?: string;
+  closeOnBackdropPress?: boolean;
+  closeOnSwipe?: boolean;
+  closeOnEscape?: boolean;
+  children?: JSX.Element;
+}
+
+/** Creates a navigation stack state. */
+export function createNavStack<R>(routes: readonly R[]): NavStackState<R>;
+export function NavStack<R>(props: NavStackProps<R>): unknown;
+export function NavPage(props: NavPageProps): unknown;
+export function Dialog(props: DialogProps): unknown;
+
+
 export function View(props: ViewProps): unknown;
 export function Text(props: TextProps): unknown;
 export function Image(props: ImageProps): unknown;
 export function Scroll(props: ScrollProps): unknown;
 export function Input(props: InputProps): unknown;
+export function List<T>(props: ListProps<T>): unknown;
 
 /** An easing curve for `timing`: a name, cubic-Bézier control points, or
  * CSS `steps()` (a count and where it jumps). */
@@ -1021,6 +1135,147 @@ mod tests {
         assert!(text("ui/styles.d.ts").contains("export interface ImageStyle"));
         assert!(ui.contains("class?:"));
         assert!(ui.contains("classList?:"));
+        assert!(ui.contains("export interface NavStackState<R>"));
+        assert!(ui.contains("export interface NavStackProps<R>"));
+        assert!(ui.contains("export interface NavPageProps"));
+        assert!(ui.contains("export interface DialogProps"));
+        assert!(ui.contains("export type DialogChangeReason"));
+        assert!(ui.contains("export function createNavStack<R>"));
+        assert!(ui.contains("export function NavStack<R>"));
+        assert!(ui.contains("export function NavPage"));
+        assert!(ui.contains("export function Dialog"));
+        // NavStackState contract
+        assert!(
+            ui.contains("routes: Accessor<readonly R[]>"),
+            "routes should be an Accessor, not a function"
+        );
+        assert!(
+            !ui.contains("routes(): readonly R[]"),
+            "routes should not be a function"
+        );
+        assert!(ui.contains("push(route: R): void"));
+        assert!(
+            ui.contains("pop(count?: number): void"),
+            "pop should accept optional count parameter"
+        );
+        assert!(
+            !ui.contains("pop(): void") || ui.contains("pop(count?: number)"),
+            "pop signature must include optional count"
+        );
+        assert!(ui.contains("popToRoot(): void"));
+        assert!(ui.contains("replace(route: R): void"));
+        assert!(ui.contains("setRoutes(routes: R[]): void"));
+        assert!(ui.contains("remove(route: R): void"));
+
+        // NavStack children signature: route value, index accessor
+        assert!(
+            ui.contains("children: (route: R, index: Accessor<number>) => JSX.Element"),
+            "NavStack children should take route value and index Accessor"
+        );
+
+        // Accessor import
+        assert!(
+            ui.contains("import type { Accessor } from \"@nlayer/runtime\""),
+            "Must import Accessor from @nlayer/runtime"
+        );
+
+        // ColorValue type
+        assert!(
+            ui.contains("export type ColorValue"),
+            "ColorValue type must be exported"
+        );
+
+        // NavPageProps contract
+        assert!(ui.contains("headerStyle?:"));
+        assert!(
+            ui.contains("backgroundColor?: ColorValue"),
+            "headerStyle should use ColorValue"
+        );
+        assert!(
+            ui.contains("color?: ColorValue"),
+            "headerStyle should use ColorValue"
+        );
+        assert!(
+            ui.contains("tintColor?: ColorValue"),
+            "headerStyle should use ColorValue"
+        );
+        assert!(ui.contains("headerVisible?:"));
+        assert!(
+            ui.contains("popOnSwipe?:"),
+            "NavPage should have popOnSwipe"
+        );
+        assert!(ui.contains("popOnBack?:"), "NavPage should have popOnBack");
+        assert!(ui.contains("onBackPress?:"));
+        assert!(ui.contains("onDismiss?:"));
+        assert!(ui.contains("NavPageProps") && ui.contains("onInsets?: (insets: { top: number; right: number; bottom: number; left: number }) => void"), 
+            "NavPageProps should have onInsets");
+
+        // v3 non-goals - these should NOT be present
+        assert!(!ui.contains("headerClass"), "headerClass is not in v3");
+        assert!(
+            !ui.contains("headerLargeTitle"),
+            "headerLargeTitle is not in v3"
+        );
+        assert!(
+            !ui.contains("headerBackTitle"),
+            "headerBackTitle is not in v3"
+        );
+        assert!(
+            !ui.contains("headerRightSystemItem"),
+            "headerRightSystemItem is not in v3"
+        );
+        assert!(!ui.contains("statusBar"), "statusBar is not in v3");
+
+        // DialogChangeReason exact type
+        assert!(
+            ui.contains(
+                "export type DialogChangeReason = \"cancel\" | \"backdropPress\" | \"swipe\""
+            ),
+            "DialogChangeReason must be exactly 'cancel' | 'backdropPress' | 'swipe'"
+        );
+        assert!(
+            !ui.contains("DialogChangeReason = \"open\""),
+            "DialogChangeReason should not include 'open'"
+        );
+        assert!(
+            !ui.contains("DialogChangeReason = \"close\""),
+            "DialogChangeReason should not include 'close'"
+        );
+
+        // DialogProps contract
+        assert!(ui.contains("animation?:"));
+        assert!(ui.contains("onShow?:"), "Dialog should have onShow");
+        assert!(ui.contains("onClose?:"), "Dialog should have onClose");
+        assert!(
+            ui.contains("onRequestClose?: (event: { reason: DialogChangeReason }) => void"),
+            "Dialog should have onRequestClose with reason"
+        );
+        assert!(
+            ui.contains(
+                "onOpenChange?: (event: { open: boolean; reason: DialogChangeReason }) => void"
+            ),
+            "Dialog should have onOpenChange with open and reason"
+        );
+        assert!(ui.contains("DialogProps") && ui.contains("onInsets?: (insets: { top: number; right: number; bottom: number; left: number }) => void"), 
+            "DialogProps should have onInsets");
+        assert!(ui.contains("backdropStyle?:"));
+        assert!(
+            ui.contains("backdropClass?:"),
+            "Dialog should have backdropClass"
+        );
+        assert!(
+            ui.contains("backdropTestID?:"),
+            "Dialog should have backdropTestID"
+        );
+        assert!(ui.contains("closeOnBackdropPress?:"));
+        assert!(
+            ui.contains("closeOnSwipe?:"),
+            "Dialog should have closeOnSwipe"
+        );
+        assert!(
+            ui.contains("closeOnEscape?:"),
+            "Dialog should have closeOnEscape"
+        );
         let assets = text("ui/assets.d.ts");
         assert!(assets.contains("export interface ImageAsset"));
         assert!(

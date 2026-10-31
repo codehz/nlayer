@@ -5,12 +5,13 @@ use std::sync::Arc;
 
 use nlayer_core::{
     AccessibilityProp, AccessibilityRole, AccessibilityState, AccessibilityValue, CellSlot,
-    Checked, ImageScales, ImageSource, Interaction, KeyboardDismiss, KeyboardTaps, KeyboardType,
-    NodeId, Op, Prop, Tag,
+    Checked, HeaderSlot, ImageScales, ImageSource, Interaction, KeyboardDismiss, KeyboardTaps,
+    KeyboardType, ModalAnimation, ModalPresentation, ModalProp, NodeId, Op, Prop, ScreenAnimation,
+    ScreenProp, Tag,
     animation::{AnimationOp, AnimationProp, Driver, Easing, Extrapolate, StepPosition},
     geometry::{Points, Size},
     style::{
-        Style, StyleDecl, StyleError, StylePatch, StyleValue, TextStyle, TransformProperty,
+        Color, Style, StyleDecl, StyleError, StylePatch, StyleValue, TextStyle, TransformProperty,
         ViewStyle,
     },
     transform::TransformKind,
@@ -125,6 +126,9 @@ pub(crate) fn decode_prop<'js>(
     if let Some(prop) = accessibility_prop(name, &value, warnings)? {
         return Ok(Some(Op::SetProp { id, prop }));
     }
+    if let Some(prop) = navigation_prop(tag, name, &value, warnings)? {
+        return Ok(Some(Op::SetProp { id, prop }));
+    }
     let prop = match (tag, name) {
         (Some(Tag::Image), "src") => Prop::Source(image_source(value)?),
         (Some(Tag::Scroll), "horizontal") => Prop::Horizontal(value.as_bool().unwrap_or(false)),
@@ -210,6 +214,110 @@ pub(crate) fn decode_prop<'js>(
         }
     };
     Ok(Some(Op::SetProp { id, prop }))
+}
+
+fn navigation_prop(
+    tag: Option<Tag>,
+    name: &str,
+    value: &Value<'_>,
+    warnings: &mut Warnings,
+) -> rquickjs::Result<Option<Prop>> {
+    let Some(tag) = tag else {
+        return Ok(None);
+    };
+    let prop = match (tag, name) {
+        (Tag::Screen, "title") => Some(Prop::Screen(ScreenProp::Title(optional_string(value)?))),
+        (Tag::Screen, "headerVisible") => Some(Prop::Screen(ScreenProp::HeaderVisible(
+            value.as_bool().unwrap_or(true),
+        ))),
+        (Tag::Screen, "headerTransparent") => Some(Prop::Screen(ScreenProp::HeaderTransparent(
+            value.as_bool().unwrap_or(false),
+        ))),
+        (Tag::Screen, "headerBackVisible") => Some(Prop::Screen(ScreenProp::HeaderBackVisible(
+            value.as_bool().unwrap_or(true),
+        ))),
+        (Tag::Screen, "popOnSwipe") => Some(Prop::Screen(ScreenProp::PopOnSwipe(
+            value.as_bool().unwrap_or(true),
+        ))),
+        (Tag::Screen, "popOnBack") => Some(Prop::Screen(ScreenProp::PopOnBack(
+            value.as_bool().unwrap_or(true),
+        ))),
+        (Tag::Screen, "animation") => {
+            let animation = match string(value)?.as_str() {
+                "fade" => ScreenAnimation::Fade,
+                "none" => ScreenAnimation::None,
+                "default" | "slide" => ScreenAnimation::Default,
+                other => {
+                    warnings.warn(format!("unknown screen animation `{other}`"));
+                    return Ok(None);
+                }
+            };
+            Some(Prop::Screen(ScreenProp::Animation(animation)))
+        }
+        (Tag::Screen, "headerStyle") => {
+            let object = value.as_object();
+            let color = |key: &str| -> rquickjs::Result<Option<Color>> {
+                let Some(object) = object else {
+                    return Ok(None);
+                };
+                let value = object.get::<_, Option<String>>(key)?;
+                Ok(value.and_then(|text| Color::parse(&text)))
+            };
+            Some(Prop::Screen(ScreenProp::HeaderStyle {
+                background_color: color("backgroundColor")?,
+                title_color: color("color")?,
+                tint_color: color("tintColor")?,
+            }))
+        }
+        (Tag::Modal, "animation") => {
+            let animation = match string(value)?.as_str() {
+                "slide" => ModalAnimation::Slide,
+                "fade" => ModalAnimation::Fade,
+                "none" => ModalAnimation::None,
+                other => {
+                    warnings.warn(format!("unknown modal animation `{other}`"));
+                    return Ok(None);
+                }
+            };
+            Some(Prop::Modal(ModalProp::Animation(animation)))
+        }
+        (Tag::Modal, "presentation") => {
+            let presentation = match string(value)?.as_str() {
+                "fullScreen" | "fullscreen" => ModalPresentation::FullScreen,
+                "pageSheet" | "pagesheet" => ModalPresentation::PageSheet,
+                "formSheet" | "formsheet" => ModalPresentation::FormSheet,
+                other => {
+                    warnings.warn(format!("unknown modal presentation `{other}`"));
+                    return Ok(None);
+                }
+            };
+            Some(Prop::Modal(ModalProp::Presentation(presentation)))
+        }
+        (Tag::Modal, "closeOnEscape") => Some(Prop::Modal(ModalProp::CloseOnEscape(
+            value.as_bool().unwrap_or(true),
+        ))),
+        (Tag::Modal, "closeOnBackdropPress") => Some(Prop::Modal(ModalProp::CloseOnBackdropPress(
+            value.as_bool().unwrap_or(true),
+        ))),
+        (Tag::Modal, "closeOnSwipe") => Some(Prop::Modal(ModalProp::CloseOnSwipe(
+            value.as_bool().unwrap_or(true),
+        ))),
+        (Tag::HeaderItem, "headerSlot") => {
+            let slot = match string(value)?.as_str() {
+                "left" => HeaderSlot::Left,
+                "right" => HeaderSlot::Right,
+                "title" => HeaderSlot::Title,
+                "header" => HeaderSlot::Header,
+                other => {
+                    warnings.warn(format!("unknown header slot `{other}`"));
+                    return Ok(None);
+                }
+            };
+            Some(Prop::HeaderSlot(slot))
+        }
+        _ => None,
+    };
+    Ok(prop)
 }
 
 /// An accessibility prop, when `name` is one. `Role` warns and sets

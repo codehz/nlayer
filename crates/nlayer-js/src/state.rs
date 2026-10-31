@@ -34,6 +34,8 @@ pub(crate) struct State {
     pub(crate) storage: Option<nlayer_core::storage::Store>,
     /// The live lists, by node id.
     pub(crate) lists: crate::list::Lists,
+    /// The signal `reduceMotion()` reads internally (owned; not exported).
+    pub(crate) reduce_motion: std::cell::Cell<qjs::JSValue>,
 }
 /// Timers, by the id JS gave them and the instant they are due.
 #[derive(Default)]
@@ -115,6 +117,7 @@ pub(crate) fn install(cx: &Ctx<'_>) {
             url_classes: crate::url::Classes::default(),
             storage: None,
             lists: crate::list::Lists::default(),
+            reduce_motion: std::cell::Cell::new(qjs::JS_UNDEFINED),
         }));
         qjs::JS_SetContextOpaque(raw, state as *mut c_void);
         STATES.with(|m| m.borrow_mut().insert(rt as usize, state as usize));
@@ -134,6 +137,8 @@ pub(crate) fn install(cx: &Ctx<'_>) {
         );
         qjs::JS_FreeValue(raw, global);
         (*state).color_scheme.set(color_scheme);
+        let reduce_motion_signal = crate::reactive::new_signal(raw, qjs::JS_FALSE);
+        (*state).reduce_motion.set(reduce_motion_signal);
     }
 }
 
@@ -156,6 +161,7 @@ pub(crate) fn uninstall(cx: &Ctx<'_>) {
         state.lists.free_all(raw);
         state.dom.free_all(raw);
         qjs::JS_FreeValue(raw, state.color_scheme.replace(qjs::JS_UNDEFINED));
+        qjs::JS_FreeValue(raw, state.reduce_motion.replace(qjs::JS_UNDEFINED));
         crate::reactive::free_all(&mut state.graph, raw);
     }
 }

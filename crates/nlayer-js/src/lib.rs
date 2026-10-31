@@ -12,6 +12,7 @@ mod dom;
 mod error;
 mod list;
 mod modules;
+mod navigation;
 mod net;
 mod protocol;
 #[cfg(all(target_arch = "wasm32", getrandom_backend = "custom"))]

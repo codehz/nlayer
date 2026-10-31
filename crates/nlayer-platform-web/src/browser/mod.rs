@@ -43,6 +43,7 @@ pub(super) struct Runtime {
     dom: dom::Dom,
     event: RefCell<Option<Value>>,
     binder: RefCell<Option<Value>>,
+    back_dispatch: RefCell<Option<Value>>,
     os: Cell<Os>,
 }
 
@@ -58,6 +59,10 @@ impl Runtime {
         }
         if op == 401 {
             *self.binder.borrow_mut() = Some(args.index(0)?);
+            return Ok(Value::unit());
+        }
+        if op == 402 {
+            *self.back_dispatch.borrow_mut() = Some(args.index(0)?);
             return Ok(Value::unit());
         }
         if op >= 300 {
@@ -162,6 +167,18 @@ impl Bridge for Runtime {
         let _ = callback.call(&Value::unit(), &args);
     }
 
+    fn dispatch_back(&self) -> bool {
+        let Some(callback) = self.back_dispatch.borrow().clone() else {
+            return false;
+        };
+        let Ok(args) = Value::array([]) else {
+            return false;
+        };
+        callback
+            .call(&Value::unit(), &args)
+            .is_ok_and(|handled| handled.truthy())
+    }
+
     fn set_os(&self, os: Os) {
         self.os.set(os);
     }
@@ -214,6 +231,7 @@ pub extern "C" fn nlayer_browser_initialize() {
         dom: dom::Dom::new(),
         event: RefCell::new(None),
         binder: RefCell::new(None),
+        back_dispatch: RefCell::new(None),
         os: Cell::new(Os::Web),
     });
     if nlayer_engine::register(Rc::clone(&runtime) as Rc<dyn Bridge>).is_err() {

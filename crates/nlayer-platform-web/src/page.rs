@@ -166,6 +166,13 @@ impl PageSession {
         );
     }
 
+    /// The browser's back button was pressed (popstate event). The browser has
+    /// already navigated. Queues the back event for engine processing at the
+    /// next pump: modals dismiss, stacks pop, then BackHandler listeners run.
+    pub fn back(&self) {
+        self.engine.control().back();
+    }
+
     /// The surface changed size (CSS pixels, one point each).
     pub fn resize(&self, size: Size<Points>) {
         self.engine.control().resize(size);
