@@ -1,4 +1,5 @@
-//! The process's `UIApplication` and the one window it owns.
+//! The process's `UIApplication` and the one window it owns. The window root
+//! hosts the surface controller, which hosts navigation.
 
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol};
@@ -6,8 +7,9 @@ use objc2::{ClassType, MainThreadMarker, MainThreadOnly, define_class, msg_send}
 use objc2_foundation::NSString;
 use objc2_ui_kit::{
     UIApplication, UIApplicationDelegate, UIColor, UIResponder, UIScene, UISceneConfiguration,
-    UISceneConnectionOptions, UISceneDelegate, UISceneSession, UIViewController, UIWindow,
-    UIWindowScene, UIWindowSceneDelegate, UIWindowSceneSessionRoleApplication,
+    UISceneConnectionOptions, UISceneDelegate, UISceneSession, UIViewAutoresizing,
+    UIViewController, UIWindow, UIWindowScene, UIWindowSceneDelegate,
+    UIWindowSceneSessionRoleApplication,
 };
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -95,6 +97,21 @@ define_class!(
     unsafe impl NSObjectProtocol for RootController {}
 );
 
+define_class!(
+    #[unsafe(super(UIViewController, UIResponder, NSObject))]
+    #[thread_kind = MainThreadOnly]
+    struct SurfaceController;
+
+    unsafe impl NSObjectProtocol for SurfaceController {}
+);
+
+impl SurfaceController {
+    fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        // SAFETY: UIViewController's designated initializer.
+        unsafe { msg_send![Self::alloc(mtm), init] }
+    }
+}
+
 impl RootController {
     fn new(mtm: MainThreadMarker) -> Retained<Self> {
         // SAFETY: UIViewController's designated initializer.
@@ -115,7 +132,20 @@ fn connect(mtm: MainThreadMarker, scene: &UIWindowScene) {
     root.setBackgroundColor(Some(&UIColor::systemBackgroundColor()));
     window.setRootViewController(Some(&controller));
     window.makeKeyAndVisible();
-    let session = host::start(mtm, &root, &bundle, assets);
+
+    // Add surface controller as a child of the root controller.
+    let surface = SurfaceController::new(mtm);
+    controller.addChildViewController(&surface);
+    let surface_view = surface.view().expect("view controller has a view");
+    surface_view.setBackgroundColor(Some(&UIColor::systemBackgroundColor()));
+    surface_view.setFrame(root.bounds());
+    surface_view.setAutoresizingMask(
+        UIViewAutoresizing::FlexibleWidth | UIViewAutoresizing::FlexibleHeight,
+    );
+    root.addSubview(&surface_view);
+    surface.didMoveToParentViewController(Some(&controller));
+
+    let session = host::start(mtm, &surface_view, &bundle, assets);
     APP.with(|app| {
         *app.borrow_mut() = Some(AppState {
             _window: window,

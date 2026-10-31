@@ -10,10 +10,11 @@
 //! `tree()` reports.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock};
+
+use rustc_hash::FxHashMap as HashMap;
 
 use dispatch2::{DispatchQueue, DispatchTime};
 use nlayer_core::geometry::{Bounds, Point, Points, Size};
@@ -46,6 +47,7 @@ use objc2_ui_kit::{
     UILongPressGestureRecognizer, UIScreen, UIScrollView,
     UIScrollViewContentInsetAdjustmentBehavior, UIScrollViewDelegate, UITapGestureRecognizer,
     UITextField, UITextFieldDelegate, UITextView, UITextViewDelegate, UITouch, UIView,
+    UIViewControllerTransitionCoordinator,
 };
 
 use crate::input::{AreaInput, Field};
@@ -114,16 +116,23 @@ enum Native {
     Scroll(Retained<UIScrollView>),
     Input(Retained<Field>),
     Area(AreaInput),
+    Stack(Box<crate::navigation::StackHost>),
+    Screen(Box<crate::navigation::ScreenHost>),
+    Modal(Box<crate::navigation::ModalHost>),
+    HeaderItem(Retained<UIView>),
 }
 
 impl Native {
     fn view(&self) -> &UIView {
         match self {
-            Native::View(view) | Native::Image(view) => view,
+            Native::View(view) | Native::Image(view) | Native::HeaderItem(view) => view,
             Native::Text(view) => view,
             Native::Scroll(view) => view,
             Native::Input(view) => view,
             Native::Area(area) => area.view(),
+            Native::Stack(stack) => &stack.container,
+            Native::Screen(screen) => &screen.view,
+            Native::Modal(modal) => &modal.view,
         }
     }
 }
@@ -359,7 +368,7 @@ impl Relay {
     fn new(mtm: MainThreadMarker) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(RelayIvars {
             mounter: std::cell::RefCell::new(std::rc::Weak::new()),
-            content: RefCell::new(HashMap::new()),
+            content: RefCell::new(Default::default()),
             link: RefCell::new(None),
         });
         // SAFETY: NSObject's designated initializer.
@@ -596,6 +605,16 @@ pub(crate) struct Mounter {
     animator: crate::animation::Animator,
     /// Whether the engine requested a frame via `request_frame`.
     frame_pending: bool,
+    /// Navigation: screens hosted by stacks, modals and header items by screens.
+    hosts: std::collections::HashMap<NodeId, NodeId>,
+    /// Stacks whose screens changed.
+    dirty_stacks: Vec<NodeId>,
+    /// Screens whose header changed.
+    dirty_headers: Vec<NodeId>,
+    /// Modals to present or dismiss.
+    dirty_modals: Vec<NodeId>,
+    /// Stacks deferred while a transition runs.
+    deferred_stacks: Vec<NodeId>,
 }
 
 impl Mounter {
@@ -626,6 +645,11 @@ impl Mounter {
             frames_applied: false,
             animator: crate::animation::Animator::default(),
             frame_pending: false,
+            hosts: std::collections::HashMap::new(),
+            dirty_stacks: Vec::new(),
+            dirty_headers: Vec::new(),
+            dirty_modals: Vec::new(),
+            deferred_stacks: Vec::new(),
         }));
         CURRENT.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&mounter)));
         relay.bind(Rc::downgrade(&mounter));
@@ -884,6 +908,7 @@ impl Mounter {
             scroll.setContentOffset_animated(CGPoint::new(x.0 as CGFloat, y.0 as CGFloat), true);
         }
         self.settle_content_sizes();
+        self.finish_navigation();
         self.apply_animations();
         self.report_finished();
     }
@@ -1045,6 +1070,9 @@ impl Mounter {
                 before,
             } => self.insert(parent, child, before),
             MountItem::Remove { id } => {
+                if self.remove_hosted(id) {
+                    return;
+                }
                 if let Some(view) = self.view(id) {
                     view.removeFromSuperview();
                 }
@@ -1054,6 +1082,7 @@ impl Mounter {
                 if self.focused == Some(id) {
                     self.end_focus(id);
                 }
+                self.remove_hosted(id);
                 if let Some(slot) = self.take(id) {
                     slot.native.view().removeFromSuperview();
                 }
@@ -1061,6 +1090,29 @@ impl Mounter {
             MountItem::Frame { id, frame } => {
                 self.frames_applied = true;
                 if id == ROOT_ID {
+                    return;
+                }
+                if let Some(Slot {
+                    native: Native::Stack(stack),
+                    ..
+                }) = self.slot(id)
+                {
+                    stack.layout();
+                }
+                if let Some(Slot {
+                    native: Native::HeaderItem(view),
+                    ..
+                }) = self.slot(id)
+                {
+                    // The header bar positions it; only its size is ours.
+                    let origin = view.frame().origin;
+                    view.setFrame(CGRect::new(
+                        origin,
+                        CGSize::new(
+                            frame.size.width.0 as CGFloat,
+                            frame.size.height.0 as CGFloat,
+                        ),
+                    ));
                     return;
                 }
                 // Corners, borders and the image frame depend on the size,
@@ -1220,7 +1272,28 @@ impl Mounter {
                     _ => {}
                 }
             }
-            MountItem::ScreenConfig { .. } | MountItem::ModalConfig { .. } => {}
+            MountItem::ScreenConfig { id, config } => {
+                if let Some(Slot {
+                    native: Native::Screen(screen),
+                    ..
+                }) = self.slot_mut(id)
+                {
+                    screen.config = *config;
+                    self.dirty_headers.push(id);
+                    if let Some(&parent) = self.hosts.get(&id) {
+                        self.dirty_stacks.push(parent);
+                    }
+                }
+            }
+            MountItem::ModalConfig { id, config } => {
+                if let Some(Slot {
+                    native: Native::Modal(modal),
+                    ..
+                }) = self.slot_mut(id)
+                {
+                    modal.configure(config);
+                }
+            }
             MountItem::Animation(op) => {
                 self.animator.apply(op.clone());
                 self.update_link();
@@ -1338,9 +1411,21 @@ impl Mounter {
                 Native::Input(Field::new(self.mtm, ProtocolObject::from_ref(&*self.relay))),
                 None,
             ),
-            ViewKind::Stack | ViewKind::Screen | ViewKind::Modal | ViewKind::HeaderItem => {
-                (Native::View(UIView::new(self.mtm)), None)
+            ViewKind::Stack => {
+                let stack = crate::navigation::StackHost::new(self.mtm, id);
+                (Native::Stack(Box::new(stack)), None)
             }
+            ViewKind::Screen => {
+                let control = self.control.clone();
+                let screen = crate::navigation::ScreenHost::new(self.mtm, id, control);
+                (Native::Screen(Box::new(screen)), None)
+            }
+            ViewKind::Modal => {
+                let control = self.control.clone();
+                let modal = crate::navigation::ModalHost::new(self.mtm, id, control);
+                (Native::Modal(Box::new(modal)), None)
+            }
+            ViewKind::HeaderItem => (Native::HeaderItem(UIView::new(self.mtm)), None),
         };
         let view = native.view().retain();
         view.setTag(id as isize);
@@ -1356,6 +1441,9 @@ impl Mounter {
     }
 
     fn insert(&mut self, parent: NodeId, child: NodeId, before: Option<NodeId>) {
+        if self.insert_hosted(parent, child, before) {
+            return;
+        }
         let Some(child_view) = self.view(child).map(|v| v.retain()) else {
             return;
         };
@@ -1830,6 +1918,30 @@ impl Mounter {
         }
     }
 
+    #[cfg(feature = "host-tests")]
+    pub(crate) fn stack(&self, id: NodeId) -> Option<&crate::navigation::StackHost> {
+        match self.native(id)? {
+            Native::Stack(stack) => Some(stack),
+            _ => None,
+        }
+    }
+
+    #[cfg(feature = "host-tests")]
+    pub(crate) fn screen(&self, id: NodeId) -> Option<&crate::navigation::ScreenHost> {
+        match self.native(id)? {
+            Native::Screen(screen) => Some(screen),
+            _ => None,
+        }
+    }
+
+    #[cfg(feature = "host-tests")]
+    pub(crate) fn modal(&self, id: NodeId) -> Option<&crate::navigation::ModalHost> {
+        match self.native(id)? {
+            Native::Modal(modal) => Some(modal),
+            _ => None,
+        }
+    }
+
     pub(crate) fn scene(&self) -> crate::scene::Scene {
         use crate::scene::{ImageSnap, InputSnap, Kind, Node, Rect, ScrollSnap};
 
@@ -1840,7 +1952,14 @@ impl Mounter {
             let frame = view.frame();
             let mut node = Node {
                 id,
-                parent: self.parent_id(view),
+                // Screens, header items and modals are hosted by their
+                // parent without being its subviews: the test tree follows
+                // the app's tree, not UIKit's.
+                parent: self
+                    .hosts
+                    .get(&id)
+                    .copied()
+                    .or_else(|| self.parent_id(view)),
                 children: Vec::new(),
                 kind: match slot.native {
                     Native::View(_) => Kind::View,
@@ -1848,6 +1967,10 @@ impl Mounter {
                     Native::Image(_) => Kind::Image,
                     Native::Scroll(_) => Kind::Scroll,
                     Native::Input(_) | Native::Area(_) => Kind::Input,
+                    Native::Stack(_)
+                    | Native::Screen(_)
+                    | Native::Modal(_)
+                    | Native::HeaderItem(_) => Kind::View,
                 },
                 test_id: slot.test_id.as_ref().map(|id| id.to_string()),
                 accessibility: slot.accessibility.clone(),
@@ -1938,6 +2061,27 @@ impl Mounter {
             }
             nodes.push(node);
         }
+        // Hosted children are not subviews of their parent (a screen is
+        // inside its navigation controller), so link them by the app's
+        // order for selectors and presses.
+        let mut index = vec![None; nodes.len().max(self.slots.len())];
+        for (at, node) in nodes.iter().enumerate() {
+            index[node.id as usize] = Some(at);
+        }
+        let mut hosted: Vec<(u32, u32)> = self
+            .hosts
+            .iter()
+            .map(|(&child, &parent)| (parent, child))
+            .collect();
+        hosted.sort_unstable();
+        for (parent, child) in hosted {
+            if let (Some(&p), Some(_)) = (index.get(parent as usize), index.get(child as usize))
+                && let Some(p) = p
+                && !nodes[p].children.contains(&child)
+            {
+                nodes[p].children.push(child);
+            }
+        }
         let (width, height) = self
             .view(ROOT_ID)
             .map(|view| {
@@ -1953,6 +2097,364 @@ impl Mounter {
         let id = parent.tag() as u32;
         let ours = self.view(id)?;
         std::ptr::eq(ours, &*parent).then_some(id)
+    }
+
+    /// Screens, header items and modals are not subviews of their parent:
+    /// records them for [`Mounter::finish_navigation`]. Returns true if
+    /// `child` is one of them.
+    fn insert_hosted(&mut self, parent: NodeId, child: NodeId, before: Option<NodeId>) -> bool {
+        let Some(c) = self.slot(child) else {
+            return false;
+        };
+        match &c.native {
+            Native::Screen(_) => {
+                if let Some(Slot {
+                    native: Native::Stack(stack),
+                    ..
+                }) = self.slot_mut(parent)
+                {
+                    stack.screens.retain(|&s| s != child);
+                    let pos = before
+                        .and_then(|b| stack.screens.iter().position(|&s| s == b))
+                        .unwrap_or(stack.screens.len());
+                    stack.screens.insert(pos, child);
+                    self.dirty_stacks.push(parent);
+                }
+            }
+            Native::HeaderItem(_) => self.dirty_headers.push(parent),
+            Native::Modal(_) => self.dirty_modals.push(child),
+            _ => return false,
+        }
+        self.hosts.insert(child, parent);
+        true
+    }
+
+    /// The counterpart of [`Mounter::insert_hosted`] for removals.
+    fn remove_hosted(&mut self, id: NodeId) -> bool {
+        let Some(parent) = self.hosts.remove(&id) else {
+            return false;
+        };
+        match self.slot(id).map(|s| &s.native) {
+            Some(Native::Screen(_)) => {
+                if let Some(Slot {
+                    native: Native::Stack(stack),
+                    ..
+                }) = self.slot_mut(parent)
+                {
+                    stack.screens.retain(|&s| s != id);
+                    stack.popped.retain(|&s| s != id);
+                    self.dirty_stacks.push(parent);
+                }
+            }
+            Some(Native::HeaderItem(view)) => {
+                view.removeFromSuperview();
+                self.dirty_headers.push(parent);
+            }
+            Some(Native::Modal(modal)) => {
+                if modal.presented {
+                    let control = self.control.clone();
+                    if let Some(Slot {
+                        native: Native::Modal(modal),
+                        ..
+                    }) = self.slot_mut(id)
+                    {
+                        modal.dismiss(move || {
+                            if let Some(control) = control.as_ref() {
+                                control.dispatch_event(id, EventKind::Dismiss, EventPayload::None);
+                            }
+                        });
+                    }
+                }
+                self.dirty_modals.push(id);
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// Applies the navigation changes of a batch once all its views exist
+    /// and are laid out: pushes and pops screens, updates headers, presents
+    /// and dismisses modals.
+    fn finish_navigation(&mut self) {
+        let mut stacks = std::mem::take(&mut self.dirty_stacks);
+        stacks.sort_unstable();
+        stacks.dedup();
+        for id in stacks {
+            let Some(Slot {
+                native: Native::Stack(stack),
+                ..
+            }) = self.slot(id)
+            else {
+                continue;
+            };
+            if let Some(coordinator) = stack.nav.transitionCoordinator() {
+                if !self.deferred_stacks.contains(&id) {
+                    self.deferred_stacks.push(id);
+                    let done = block2::RcBlock::new(
+                        move |_: std::ptr::NonNull<
+                            objc2::runtime::ProtocolObject<
+                                dyn objc2_ui_kit::UIViewControllerTransitionCoordinatorContext,
+                            >,
+                        >| {
+                            Self::finish_deferred(id);
+                        },
+                    );
+                    // Refused when the transition is already ending.
+                    if !coordinator.animateAlongsideTransition_completion(None, Some(&done)) {
+                        Self::finish_deferred(id);
+                    }
+                }
+                continue;
+            }
+            let screens: Vec<_> = stack
+                .screens
+                .iter()
+                .filter(|s| !stack.popped.contains(s))
+                .filter_map(|&s| match self.slot(s).map(|s| &s.native) {
+                    Some(Native::Screen(screen)) => {
+                        Some((s, screen.controller.clone(), screen.config.animation))
+                    }
+                    _ => None,
+                })
+                .collect();
+            let leaving = stack
+                .nav
+                .topViewController()
+                .and_then(|c| c.downcast::<crate::navigation::ScreenController>().ok())
+                .and_then(|c| match self.slot(c.screen_id()).map(|s| &s.native) {
+                    Some(Native::Screen(screen)) => Some(screen.config.animation),
+                    _ => None,
+                });
+            stack.layout();
+            stack.reconcile(&screens, leaving);
+            // A screen shown without its `willShow` callback (the delegate
+            // can arrive while this batch holds the mounter) or one whose
+            // header options changed while it was on top still gets the bar
+            // the config asks for.
+            if let Some(&top) = stack
+                .screens
+                .iter()
+                .rev()
+                .find(|s| !stack.popped.contains(s))
+                && let Some(Native::Screen(screen)) = self.slot(top).map(|s| &s.native)
+                && stack.nav.isNavigationBarHidden() != !screen.config.header_visible
+            {
+                stack
+                    .nav
+                    .setNavigationBarHidden_animated(!screen.config.header_visible, false);
+            }
+            if let Some(Slot {
+                native: Native::Stack(stack),
+                ..
+            }) = self.slot_mut(id)
+            {
+                stack.contain();
+            }
+        }
+        let mut headers = std::mem::take(&mut self.dirty_headers);
+        headers.sort_unstable();
+        headers.dedup();
+        for id in headers {
+            let Some(Slot {
+                native: Native::Screen(screen),
+                ..
+            }) = self.slot(id)
+            else {
+                continue;
+            };
+            screen.apply_header(
+                |item| match self.slot(item).map(|s| &s.native) {
+                    Some(Native::HeaderItem(v)) => Some(v.retain()),
+                    _ => None,
+                },
+                self.mtm,
+            );
+        }
+        let modals = std::mem::take(&mut self.dirty_modals);
+        let root = self
+            .slot(nlayer_core::ROOT_ID)
+            .map(|s| s.native.view().retain());
+        for id in modals {
+            let shown = self.hosts.contains_key(&id);
+            let control = self.control.clone();
+            let Some(Slot {
+                native: Native::Modal(modal),
+                ..
+            }) = self.slot_mut(id)
+            else {
+                continue;
+            };
+            if shown {
+                if let Some(root) = &root {
+                    modal.present(root);
+                }
+            } else {
+                modal.dismiss(move || {
+                    if let Some(control) = control.as_ref() {
+                        control.dispatch_event(id, EventKind::Dismiss, EventPayload::None);
+                    }
+                });
+            }
+        }
+    }
+
+    /// A stack is about to show a screen: its header options apply.
+    pub(crate) fn stack_will_show(
+        &mut self,
+        nav: &objc2_ui_kit::UINavigationController,
+        controller: &objc2_ui_kit::UIViewController,
+        animated: bool,
+    ) {
+        let Some(screen) = controller.downcast_ref::<crate::navigation::ScreenController>() else {
+            return;
+        };
+        let Some(Slot {
+            native: Native::Screen(screen),
+            ..
+        }) = self.slot(screen.screen_id())
+        else {
+            return;
+        };
+        let c = &screen.config;
+        nav.setNavigationBarHidden_animated(!c.header_visible, animated);
+        crate::navigation::style_bar(&nav.navigationBar(), c);
+    }
+
+    /// A stack finished a transition: screens the user popped (back button,
+    /// swipe) are reported so the app removes them.
+    pub(crate) fn stack_did_show(&mut self, id: NodeId) {
+        self.report_popped(id);
+        if self.deferred_stacks.contains(&id) {
+            Self::finish_deferred(id);
+        }
+    }
+
+    /// Applies the changes stack `id` deferred during a transition, on the
+    /// next main-queue turn (the transition coordinator outlives the
+    /// callbacks that end it), unless another callback already did.
+    fn finish_deferred(id: NodeId) {
+        dispatch2::DispatchQueue::main().exec_async(move || {
+            if let Some(m) = current()
+                && let Ok(mut m) = m.try_borrow_mut()
+                && let Some(i) = m.deferred_stacks.iter().position(|&s| s == id)
+            {
+                m.deferred_stacks.swap_remove(i);
+                m.dirty_stacks.push(id);
+                m.finish_navigation();
+            }
+        });
+    }
+
+    /// Reports the screens of stack `id` that the user popped natively.
+    fn report_popped(&mut self, id: NodeId) {
+        let Some(Slot {
+            native: Native::Stack(stack),
+            ..
+        }) = self.slot(id)
+        else {
+            return;
+        };
+        let shown = stack.nav.viewControllers();
+        // Screens the controller had and lost; not those still waiting for
+        // a transition to end.
+        let gone: Vec<NodeId> = stack
+            .applied
+            .borrow()
+            .iter()
+            .copied()
+            .filter(|s| stack.screens.contains(s))
+            .filter(|s| !stack.popped.contains(s))
+            .filter(|&s| match self.slot(s).map(|s| &s.native) {
+                Some(Native::Screen(screen)) => !shown.to_vec().iter().any(|c| {
+                    std::ptr::eq::<objc2_ui_kit::UIViewController>(&**c, &**screen.controller)
+                }),
+                _ => false,
+            })
+            .collect();
+        if gone.is_empty() {
+            return;
+        }
+        if let Some(Slot {
+            native: Native::Stack(stack),
+            ..
+        }) = self.slot_mut(id)
+        {
+            stack.popped.extend(&gone);
+        }
+        for screen in gone {
+            if let Some(control) = &self.control {
+                control.dispatch_event(screen, EventKind::Dismiss, EventPayload::None);
+            }
+        }
+    }
+
+    /// The top screen of stack `id`, whether it listens to `onBackPress`
+    /// and whether it keeps the user (`prevent_back`).
+    pub(crate) fn stack_back_press(&self, id: NodeId) -> Option<(NodeId, bool, bool)> {
+        let Some(Slot {
+            native: Native::Stack(stack),
+            ..
+        }) = self.slot(id)
+        else {
+            return None;
+        };
+        let top = *stack
+            .screens
+            .iter()
+            .rev()
+            .find(|s| !stack.popped.contains(s))?;
+        match self.slot(top) {
+            Some(Slot {
+                native: Native::Screen(screen),
+                events,
+                ..
+            }) => Some((
+                top,
+                events.contains(EventKind::BackRequest),
+                screen.config.prevent_back,
+            )),
+            _ => None,
+        }
+    }
+
+    /// Sends a payload-less event to the engine.
+    pub(crate) fn dispatch(&self, id: NodeId, kind: EventKind) {
+        if let Some(control) = &self.control {
+            control.dispatch_event(id, kind, EventPayload::None);
+        }
+    }
+
+    /// Whether the user may pop the top screen of stack `id`.
+    pub(crate) fn stack_can_pop(&self, id: NodeId) -> bool {
+        let Some(Slot {
+            native: Native::Stack(stack),
+            ..
+        }) = self.slot(id)
+        else {
+            return false;
+        };
+        let visible = stack
+            .screens
+            .iter()
+            .filter(|s| !stack.popped.contains(s))
+            .count();
+        let top = stack
+            .screens
+            .iter()
+            .rev()
+            .find(|s| !stack.popped.contains(s))
+            .and_then(|&s| match self.slot(s).map(|s| &s.native) {
+                Some(Native::Screen(screen)) if visible > 1 => {
+                    Some((screen.config.gesture_enabled, screen.config.prevent_back))
+                }
+                _ => None,
+            });
+        match top {
+            Some((gesture, prevent)) => {
+                gesture && !prevent && stack.nav.transitionCoordinator().is_none()
+            }
+            None => false,
+        }
     }
 }
 
@@ -2542,7 +3044,7 @@ struct Waiter {
 
 fn inflight() -> &'static Mutex<HashMap<Arc<str>, Vec<Waiter>>> {
     static INFLIGHT: OnceLock<Mutex<HashMap<Arc<str>, Vec<Waiter>>>> = OnceLock::new();
-    INFLIGHT.get_or_init(|| Mutex::new(HashMap::new()))
+    INFLIGHT.get_or_init(|| Mutex::new(Default::default()))
 }
 
 /// Starts a decode of `uri`, or joins one already running. A cached bitmap
@@ -2610,7 +3112,7 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-fn current() -> Option<Rc<std::cell::RefCell<Mounter>>> {
+pub(crate) fn current() -> Option<Rc<std::cell::RefCell<Mounter>>> {
     CURRENT.with(|slot| slot.borrow().clone())
 }
 
@@ -2861,6 +3363,18 @@ pub(crate) mod tests {
             (
                 "mount::a_text_block_carries_its_layout_and_runs",
                 a_text_block_carries_its_layout_and_runs as fn(),
+            ),
+            (
+                "mount::a_stack_pushes_and_pops_screens_natively",
+                a_stack_pushes_and_pops_screens_natively as fn(),
+            ),
+            (
+                "mount::a_screen_header_and_back_policy_reach_uikit",
+                a_screen_header_and_back_policy_reach_uikit as fn(),
+            ),
+            (
+                "mount::the_modal_presents_over_the_root",
+                the_modal_presents_over_the_root as fn(),
             ),
         ]
     }
@@ -3410,5 +3924,322 @@ pub(crate) mod tests {
         assert_eq!(tree["children"][0]["spans"][0]["text"], "Hello");
         assert_eq!(tree["children"][0]["spans"][0]["fontSize"], 14.0);
         assert_eq!(tree["children"][0]["spans"][0]["fontWeight"], 400);
+    }
+
+    fn a_stack_pushes_and_pops_screens_natively() {
+        let mounter = mounter();
+
+        // Create stack
+        apply(
+            &mounter,
+            vec![
+                MountItem::Create {
+                    id: 2,
+                    kind: ViewKind::Stack,
+                },
+                MountItem::Insert {
+                    parent: ROOT_ID,
+                    child: 2,
+                    before: None,
+                },
+                MountItem::Frame {
+                    id: 2,
+                    frame: frame(0.0, 0.0, 320.0, 640.0),
+                },
+            ],
+        );
+
+        // Create first screen
+        let mut config1 = nlayer_core::ScreenConfig::default();
+        config1.title = Some("One".into());
+        apply(
+            &mounter,
+            vec![
+                MountItem::Create {
+                    id: 3,
+                    kind: ViewKind::Screen,
+                },
+                MountItem::ScreenConfig {
+                    id: 3,
+                    config: Box::new(config1),
+                },
+                MountItem::Insert {
+                    parent: 2,
+                    child: 3,
+                    before: None,
+                },
+            ],
+        );
+
+        // Assert first screen is in the stack
+        {
+            let borrowed = mounter.borrow();
+            let stack = borrowed.stack(2).unwrap();
+            assert_eq!(stack.nav.viewControllers().count(), 1);
+
+            let top = stack.nav.topViewController().expect("top controller");
+            let screen_controller = top
+                .downcast_ref::<crate::navigation::ScreenController>()
+                .expect("top should be a ScreenController");
+            assert_eq!(screen_controller.screen_id(), 3);
+        }
+
+        // Create second screen
+        let mut config2 = nlayer_core::ScreenConfig::default();
+        config2.title = Some("Two".into());
+        // A push animates by default, and UIKit applies an animated push on
+        // the next run-loop turn; the test asserts the resulting stack now.
+        config2.animation = nlayer_core::ScreenAnimation::None;
+        apply(
+            &mounter,
+            vec![
+                MountItem::Create {
+                    id: 4,
+                    kind: ViewKind::Screen,
+                },
+                MountItem::ScreenConfig {
+                    id: 4,
+                    config: Box::new(config2),
+                },
+                MountItem::Insert {
+                    parent: 2,
+                    child: 4,
+                    before: None,
+                },
+            ],
+        );
+
+        // Assert both screens are in the stack in order
+        {
+            let borrowed = mounter.borrow();
+            let stack = borrowed.stack(2).unwrap();
+            assert_eq!(stack.nav.viewControllers().count(), 2);
+
+            let controllers = stack.nav.viewControllers();
+            let first = controllers.objectAtIndex(0);
+            let second = controllers.objectAtIndex(1);
+
+            let first_screen = first
+                .downcast_ref::<crate::navigation::ScreenController>()
+                .expect("first should be a ScreenController");
+            let second_screen = second
+                .downcast_ref::<crate::navigation::ScreenController>()
+                .expect("second should be a ScreenController");
+
+            assert_eq!(first_screen.screen_id(), 3);
+            assert_eq!(second_screen.screen_id(), 4);
+        }
+
+        // The user pops natively (back button or a swipe): the delegate's
+        // did-show reports the screen until the app removes its route.
+        let (nav, delegate, top) = {
+            let borrowed = mounter.borrow();
+            let stack = borrowed.stack(2).unwrap();
+            stack.nav.popViewControllerAnimated(false);
+            assert_eq!(stack.nav.viewControllers().count(), 1);
+            (
+                stack.nav.clone(),
+                stack.nav.delegate().expect("delegate"),
+                stack.nav.topViewController().expect("top"),
+            )
+        };
+        // SAFETY: `StackDelegate` implements the did-show callback. The
+        // mounter must not be borrowed: the callback takes it.
+        let _: () = unsafe {
+            objc2::msg_send![
+                &*delegate,
+                navigationController: &*nav,
+                didShowViewController: &*top,
+                animated: false
+            ]
+        };
+        {
+            let borrowed = mounter.borrow();
+            let stack = borrowed.stack(2).unwrap();
+            assert_eq!(stack.popped, vec![4]);
+        }
+        apply(&mounter, vec![MountItem::Remove { id: 4 }]);
+
+        // Assert only first screen remains
+        {
+            let borrowed = mounter.borrow();
+            let stack = borrowed.stack(2).unwrap();
+            assert_eq!(stack.nav.viewControllers().count(), 1);
+
+            let top = stack.nav.topViewController().expect("top controller");
+            let screen_controller = top
+                .downcast_ref::<crate::navigation::ScreenController>()
+                .expect("top should be a ScreenController");
+            assert_eq!(screen_controller.screen_id(), 3);
+            assert_eq!(stack.screens, vec![3]);
+        }
+    }
+
+    fn a_screen_header_and_back_policy_reach_uikit() {
+        let mounter = mounter();
+
+        // Create stack
+        apply(
+            &mounter,
+            vec![
+                MountItem::Create {
+                    id: 2,
+                    kind: ViewKind::Stack,
+                },
+                MountItem::Insert {
+                    parent: ROOT_ID,
+                    child: 2,
+                    before: None,
+                },
+                MountItem::Frame {
+                    id: 2,
+                    frame: frame(0.0, 0.0, 320.0, 640.0),
+                },
+            ],
+        );
+
+        // Create first screen with back disabled
+        let mut config = nlayer_core::ScreenConfig::default();
+        config.title = Some("Inbox".into());
+        config.back_visible = false;
+        config.prevent_back = true;
+        config.gesture_enabled = false;
+
+        apply(
+            &mounter,
+            vec![
+                MountItem::Create {
+                    id: 3,
+                    kind: ViewKind::Screen,
+                },
+                MountItem::ScreenConfig {
+                    id: 3,
+                    config: Box::new(config),
+                },
+                MountItem::Insert {
+                    parent: 2,
+                    child: 3,
+                    before: None,
+                },
+            ],
+        );
+
+        // Assert screen configuration reached UIKit
+        {
+            let borrowed = mounter.borrow();
+            let screen = borrowed.screen(3).unwrap();
+            let nav_item = screen.controller.navigationItem();
+
+            assert_eq!(
+                nav_item.title().map(|t| t.to_string()),
+                Some("Inbox".to_string())
+            );
+            assert!(nav_item.hidesBackButton());
+
+            assert!(!borrowed.stack_can_pop(2));
+            assert_eq!(borrowed.stack_back_press(2), Some((3, false, true)));
+        }
+
+        // Add second screen with back enabled
+        let mut config2 = nlayer_core::ScreenConfig::default();
+        config2.prevent_back = false;
+        config2.gesture_enabled = true;
+
+        apply(
+            &mounter,
+            vec![
+                MountItem::Create {
+                    id: 4,
+                    kind: ViewKind::Screen,
+                },
+                MountItem::ScreenConfig {
+                    id: 4,
+                    config: Box::new(config2),
+                },
+                MountItem::Insert {
+                    parent: 2,
+                    child: 4,
+                    before: None,
+                },
+            ],
+        );
+
+        {
+            let borrowed = mounter.borrow();
+            assert!(borrowed.stack_can_pop(2));
+            assert_eq!(borrowed.stack_back_press(2), Some((4, false, false)));
+        }
+    }
+
+    fn the_modal_presents_over_the_root() {
+        use objc2_ui_kit::{UIViewController, UIWindow};
+
+        let mounter = mounter();
+        let mtm =
+            MainThreadMarker::new().expect("the iOS host test runner runs on the main thread");
+
+        // Create window and root controller
+        let window = UIWindow::initWithFrame(
+            UIWindow::alloc(mtm),
+            CGRect::new(CGPoint::ZERO, CGSize::new(320.0, 640.0)),
+        );
+
+        let controller = UIViewController::new(mtm);
+        let root_view = mounter.borrow().view_of(ROOT_ID).unwrap();
+        controller.view().unwrap().addSubview(&root_view);
+
+        window.setRootViewController(Some(&controller));
+        window.makeKeyAndVisible();
+        controller.view().unwrap().layoutIfNeeded();
+
+        // Create modal
+        let config = nlayer_core::ModalConfig {
+            animation: nlayer_core::ModalAnimation::None,
+            presentation: nlayer_core::ModalPresentation::PageSheet,
+            close_on_swipe: false,
+            close_on_escape: false,
+            close_on_backdrop_press: false,
+        };
+
+        apply(
+            &mounter,
+            vec![
+                MountItem::Create {
+                    id: 5,
+                    kind: ViewKind::Modal,
+                },
+                MountItem::ModalConfig { id: 5, config },
+                MountItem::Insert {
+                    parent: ROOT_ID,
+                    child: 5,
+                    before: None,
+                },
+            ],
+        );
+
+        // Assert modal configuration
+        {
+            let borrowed = mounter.borrow();
+            let modal = borrowed.modal(5).unwrap();
+            assert!(modal.controller.isModalInPresentation());
+
+            // Note: UIKit presentation may be asynchronous. The `presented` flag is set immediately,
+            // but `controller.presentedViewController()` might not return the modal controller
+            // until the presentation animation completes (even with ModalAnimation::None).
+            // We only assert the `presented` flag here.
+            assert!(modal.presented, "modal should be marked as presented");
+        }
+
+        // Remove modal
+        apply(&mounter, vec![MountItem::Remove { id: 5 }]);
+
+        {
+            let borrowed = mounter.borrow();
+            let modal = borrowed.modal(5).unwrap();
+            assert!(
+                !modal.presented,
+                "modal should no longer be presented after removal"
+            );
+        }
     }
 }

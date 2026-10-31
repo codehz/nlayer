@@ -37,6 +37,8 @@ mod keyboard;
 #[cfg(target_os = "ios")]
 mod mount;
 #[cfg(target_os = "ios")]
+mod navigation;
+#[cfg(target_os = "ios")]
 mod pin;
 #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
 mod scene;
@@ -90,6 +92,8 @@ pub fn run_host_tests() -> std::process::ExitCode {
     tests.extend(driver::tests::tests());
     tests.extend(mount::tests::tests());
     tests.extend(text::tests::tests());
+    #[cfg(target_os = "ios")]
+    tests.extend(navigation::tests::tests());
     println!("running {} tests", tests.len());
     let mut passed = 0;
     let mut failures = Vec::new();
