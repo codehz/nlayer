@@ -1,5 +1,16 @@
 import { cleanup, effect, mount, resource, signal, storage } from "@nlayer/runtime";
-import { Animated, BackHandler, Image, Input, List, Scroll, Text, View, createAnimatedValue, platform } from "@nlayer/ui";
+import {
+  Animated,
+  BackHandler,
+  Image,
+  Input,
+  List,
+  Scroll,
+  Text,
+  View,
+  createAnimatedValue,
+  platform,
+} from "@nlayer/ui";
 import mark from "./mark.png";
 
 declare global {
@@ -395,7 +406,12 @@ function Surface() {
 function VirtualList() {
   const items = Array.from({ length: 5000 }, (_, i) => ({ id: i, title: `Item ${i}` }));
   const count = signal(items.length);
-  let listRef: { scrollToIndex: (index: number, options?: { animated?: boolean }) => void; scrollToEnd: (options?: { animated?: boolean }) => void } | undefined;
+  let listRef:
+    | {
+        scrollToIndex: (index: number, options?: { animated?: boolean }) => void;
+        scrollToEnd: (options?: { animated?: boolean }) => void;
+      }
+    | undefined;
 
   return (
     <Section title="List">
@@ -406,8 +422,16 @@ function VirtualList() {
         <List
           each={items.slice(0, count())}
           estimatedItemSize={44}
-          header={<View style={{ padding: 12, backgroundColor: "#f1f5f9" }}><Text style={{ fontWeight: "600" }}>Header</Text></View>}
-          footer={<View style={{ padding: 12, backgroundColor: "#f1f5f9" }}><Text style={{ fontWeight: "600" }}>Footer</Text></View>}
+          header={
+            <View style={{ padding: 12, backgroundColor: "#f1f5f9" }}>
+              <Text style={{ fontWeight: "600" }}>Header</Text>
+            </View>
+          }
+          footer={
+            <View style={{ padding: 12, backgroundColor: "#f1f5f9" }}>
+              <Text style={{ fontWeight: "600" }}>Footer</Text>
+            </View>
+          }
           separator={<View style={{ height: 1, backgroundColor: "#e2e8f0" }} />}
           onLoadMore={() => {
             if (count() < items.length) {
@@ -483,9 +507,7 @@ function Animations() {
         delayLongPress={500}
       />
       {longPressed() && (
-        <Text style={{ fontSize: 14, color: "#10b981", marginTop: 8 }}>
-          Long pressed!
-        </Text>
+        <Text style={{ fontSize: 14, color: "#10b981", marginTop: 8 }}>Long pressed!</Text>
       )}
     </Section>
   );
@@ -499,7 +521,7 @@ function DataFetch() {
       const response = await fetch(quoteUrl(), { signal });
       if (!response.ok) throw new Error("Failed to fetch");
       return response.json();
-    }
+    },
   );
 
   return (
@@ -508,14 +530,10 @@ function DataFetch() {
         State: {data.state()} {data.loading() && "(loading)"}
       </Text>
       {data.error() && (
-        <Text style={{ fontSize: 14, color: "#ef4444" }}>
-          Error: {String(data.error())}
-        </Text>
+        <Text style={{ fontSize: 14, color: "#ef4444" }}>Error: {String(data.error())}</Text>
       )}
       {data() && (
-        <Text style={{ fontSize: 14, color: "#0f172a" }}>
-          {JSON.stringify(data(), null, 2)}
-        </Text>
+        <Text style={{ fontSize: 14, color: "#0f172a" }}>{JSON.stringify(data(), null, 2)}</Text>
       )}
       <View
         testID="refetch"
@@ -629,9 +647,7 @@ function BackNav() {
         Press back button (Android) or browser back to trigger.
       </Text>
       {handled() && (
-        <Text style={{ fontSize: 14, color: "#10b981", marginTop: 8 }}>
-          Back handled!
-        </Text>
+        <Text style={{ fontSize: 14, color: "#10b981", marginTop: 8 }}>Back handled!</Text>
       )}
     </Section>
   );

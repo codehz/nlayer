@@ -885,12 +885,12 @@ export class Player {
     }
     if (name !== "scrollTo") return;
     if (!animated) this.noteInstant(el);
-    
+
     // For virtual lists, use instant scroll for large distances to avoid interruption
     // Smooth scroll can be interrupted by content changes during scroll
     const distance = Math.abs((el.scrollTop || 0) - y) + Math.abs((el.scrollLeft || 0) - x);
     const useInstant = !animated || distance > 5000;
-    
+
     el.scrollTo?.({ left: x, top: y, behavior: useInstant ? "instant" : "smooth" });
     if (!el.scrollTo) {
       el.scrollLeft = x;
