@@ -212,6 +212,8 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_load(
     });
     let mut config = EngineConfig::new(bundle, viewport)
         .with_os(Os::Android)
+        // Android's toolbar is 56dp; it has no large titles.
+        .with_header_heights((Points(56.0), Points(56.0)))
         .with_color_scheme(nlayer_core::ColorScheme::from_dark(dark != 0));
     if let Ok(dir) = env.get_string(&data_dir) {
         config = config.with_data_dir(String::from(dir));
