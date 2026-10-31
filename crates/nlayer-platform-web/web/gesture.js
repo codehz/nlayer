@@ -27,6 +27,7 @@ export class GestureGate {
       gateState: 0,
       mode: null,
     });
+
     // Start two-finger transform (only if both pointers target same view)
     if (this.pointers.size === 2 && !this.twoFinger) {
       const [p1, p2] = [...this.pointers.values()];
@@ -264,4 +265,101 @@ export class GestureGate {
     const p = this.pointers.get(pointerId);
     return p?.mode === "pan";
   }
+}
+
+/**
+ * Attach gesture-aware pointer methods to a Player instance.
+ */
+export function attachGestures(player) {
+  player.pointerDown = function(event) {
+    this.swallowTarget = null;
+    this.noteKeyboardTap(event);
+    if (event.pointerType === "mouse" || event.button > 0) return;
+    
+    let pan = null, pinch = null, rotation = null;
+    for (let el = event.target; el && el._id != null; el = el.parentNode) {
+      if (!pan && el._panNodes) pan = { id: el._id, panNodes: el._panNodes };
+      if (!pinch && el._pinchNode) pinch = { id: el._id };
+      if (!rotation && el._rotationNode) rotation = { id: el._id };
+    }
+    
+    const scrolls = this.scrollChain(event.target);
+    const scroll = scrolls[0] ? { id: scrolls[0]._id, horizontal: !!scrolls[0]._horizontal } : null;
+    
+    if (!scrolls.length && !pan && !pinch && !rotation) return;
+    if (event.pointerType !== "mouse" && scrolls.length) this.holding++;
+    
+    this.pointers.set(event.pointerId ?? 0, {
+      x: event.clientX || 0,
+      y: event.clientY || 0,
+      startX: event.clientX || 0,
+      startY: event.clientY || 0,
+      scrolls,
+    });
+    
+    this.gestures.begin(event.pointerId ?? 0, {
+      x: event.clientX || 0,
+      y: event.clientY || 0,
+      pan,
+      scroll,
+      pinch,
+      rotation,
+    });
+  };
+  
+  player.pointerMove = function(event) {
+    const result = this.gestures.move(
+      event.pointerId ?? 0,
+      event.clientX || 0,
+      event.clientY || 0,
+      performance.now()
+    );
+    
+    if (!result || !result.consumed) return;
+    
+    if (result.preventDefault) event.preventDefault();
+    
+    if (Array.isArray(result)) {
+      for (const r of result) {
+        this.host.transformGesture?.(r.targetId, r.rotation ? 1 : 0, r.phase, r.amount);
+      }
+    } else {
+      this.host.pan?.(result.panId, result.phase, result.tx, result.ty, result.vx, result.vy);
+    }
+  };
+  
+  player.pointerUp = function(event) {
+    const result = this.gestures.end(event.pointerId ?? 0, performance.now());
+    
+    if (!result) return;
+    
+    if (Array.isArray(result)) {
+      for (const r of result) {
+        this.host.transformGesture?.(r.targetId, r.rotation ? 1 : 0, r.phase, r.amount);
+      }
+    } else if (result.panId) {
+      this.host.pan?.(result.panId, result.phase, result.tx, result.ty, result.vx, result.vy);
+    }
+  };
+  
+  player.pointerCancel = function(event) {
+    if (event.pointerType === "mouse") return;
+    
+    const id = event.pointerId ?? 0;
+    const tracked = this.pointers.get(id);
+    this.pointers.delete(id);
+    
+    const result = this.gestures.cancel(id);
+    if (result && result.panId) {
+      this.host.pan?.(result.panId, result.phase, result.tx, result.ty, result.vx, result.vy);
+    }
+    
+    const scrolls = tracked?.scrolls ?? this.scrollChain(event.target);
+    if (!scrolls.length) return;
+    const dx = (event.clientX || 0) - (tracked?.x || 0);
+    const dy = (event.clientY || 0) - (tracked?.y || 0);
+    const horizontal = Math.abs(dx) > Math.abs(dy);
+    const el = scrolls.find((view) => !!view._horizontal === horizontal) ?? scrolls[0];
+    this.beginDrag(el);
+  };
 }
