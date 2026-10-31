@@ -344,3 +344,30 @@ fn packages_build_for_each_target() {
 
     let _ = fs::remove_dir_all(&out);
 }
+
+#[test]
+fn the_browser_handles_pan_gestures() {
+    let _guard = lock();
+    let dir = app_fixture("gesture");
+    let report = run(&dir.join("App.test.tsx"), Some(TestTarget::Web));
+    let _ = fs::remove_dir_all(&dir);
+    assert!(report.ok(), "web: {report}");
+}
+
+#[test]
+fn the_simulator_handles_pan_gestures() {
+    let _guard = lock();
+    let dir = app_fixture("gesture");
+    let report = run(&dir.join("App.test.tsx"), Some(TestTarget::Ios));
+    let _ = fs::remove_dir_all(&dir);
+    assert!(report.ok(), "ios: {report}");
+}
+
+#[test]
+fn the_emulator_handles_pan_gestures() {
+    let _guard = lock();
+    let dir = app_fixture("gesture");
+    let report = run(&dir.join("App.test.tsx"), Some(TestTarget::Android));
+    let _ = fs::remove_dir_all(&dir);
+    assert!(report.ok(), "android: {report}");
+}
