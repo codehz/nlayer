@@ -7722,4 +7722,101 @@ mod tests {
         assert_eq!(EventKind::RotationStart as u8, 21);
         assert_eq!(EventKind::RotationEnd as u8, 22);
     }
+
+    #[test]
+    fn refresh_event_fires_once_per_cycle() {
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Scroll,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::RefreshIndicator(Some(Points(50.0))),
+        })
+        .unwrap();
+        c.apply(Op::Listen {
+            id: 2,
+            event: EventKind::Refresh,
+            enabled: true,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.commit().unwrap();
+
+        // Pull down beyond threshold
+        c.update_scroll_position(2, Point::new(Points(0.0), Points(-60.0)));
+        let mut events = vec![];
+        c.take_events(&mut events);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0, 2);
+        assert_eq!(events[0].1, EventKind::Refresh);
+
+        // Pull again - should not fire again
+        c.update_scroll_position(2, Point::new(Points(0.0), Points(-70.0)));
+        events.clear();
+        c.take_events(&mut events);
+        assert_eq!(events.len(), 0, "refresh should not fire twice in same cycle");
+
+        // Set refreshing to true then false - resets the cycle
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Refreshing(true),
+        })
+        .unwrap();
+        c.commit().unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Refreshing(false),
+        })
+        .unwrap();
+        c.commit().unwrap();
+
+        // Now pull again - should fire
+        c.update_scroll_position(2, Point::new(Points(0.0), Points(-60.0)));
+        events.clear();
+        c.take_events(&mut events);
+        assert_eq!(events.len(), 1, "refresh should fire again after cycle reset");
+        assert_eq!(events[0].1, EventKind::Refresh);
+    }
+
+    #[test]
+    fn refresh_does_not_fire_below_threshold() {
+        let mut c = core();
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Scroll,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::RefreshIndicator(Some(Points(50.0))),
+        })
+        .unwrap();
+        c.apply(Op::Listen {
+            id: 2,
+            event: EventKind::Refresh,
+            enabled: true,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.commit().unwrap();
+
+        // Pull down but not beyond threshold
+        c.update_scroll_position(2, Point::new(Points(0.0), Points(-40.0)));
+        let mut events = vec![];
+        c.take_events(&mut events);
+        assert_eq!(events.len(), 0, "refresh should not fire below threshold");
+    }
 }
