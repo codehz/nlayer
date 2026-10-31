@@ -695,6 +695,8 @@ unsafe extern "C" fn bind_prop_run(
 
 /// Rust-callable wrapper for bind_prop: binds a node prop to a getter function.
 /// The getter is called on each render and the result is set as the prop value.
+/// The getter is owned by the render effect (data is duped); on error, the
+/// exception is owned by the caller.
 pub(crate) fn bind_prop_with(
     cx: *mut JsContext,
     node: JsValue,
@@ -708,12 +710,11 @@ pub(crate) fn bind_prop_with(
         unsafe { qjs::JS_NewCFunctionData(cx, Some(bind_prop_run), 1, 0, 3, data.as_mut_ptr()) };
     unsafe { qjs::JS_FreeValue(cx, name_str) };
     let r = reactive::render_effect(cx, func);
-    unsafe { qjs::JS_FreeValue(cx, r) };
     if unsafe { qjs::JS_IsException(r) } {
-        Err(r)
-    } else {
-        Ok(())
+        return Err(r); // owned by the caller
     }
+    unsafe { qjs::JS_FreeValue(cx, r) };
+    Ok(())
 }
 /// `spread(node, props)`: every prop of `props` (an object, possibly with
 /// getters), followed.

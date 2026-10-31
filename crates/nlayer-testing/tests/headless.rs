@@ -200,14 +200,14 @@ import { Dialog, Text, View } from "@nlayer/ui";
 
 function App() {
     const open = signal(true);
-    const closed = signal(false);
+    const closeCount = signal(0);
     return (
         <View style={{ flex: 1 }}>
-            <Text testID="status">{closed() ? "closed" : "open"}</Text>
+            <Text testID="status">closed:{closeCount()}</Text>
             <Dialog
                 open={open()}
                 onOpenChange={(e) => open.set(e.open)}
-                onClose={() => closed.set(true)}
+                onClose={() => closeCount.set(closeCount() + 1)}
             >
                 <View style={{ width: 200, height: 100 }}>
                     <Text>Modal content</Text>
@@ -219,17 +219,20 @@ function App() {
 mount(App);
 "#;
     let mut app = app(source);
-    assert_eq!(app.texts(), ["open", "Modal content"]);
+    assert_eq!(app.texts(), ["closed:0", "Modal content"]);
 
     app.back();
     app.next_frame(Duration::from_secs(1));
-
     assert!(
-        app.wait_for("closed", Duration::from_secs(1)),
-        "onClose should fire and set closed=true, texts: {:?}",
+        app.wait_for("closed:1", Duration::from_secs(1)),
+        "onClose should fire exactly once, texts: {:?}",
         app.texts()
     );
-    assert_eq!(app.texts(), ["closed"], "modal should unmount after back");
+    assert_eq!(
+        app.texts(),
+        ["closed:1"],
+        "modal should unmount after back, onClose called once"
+    );
     app.stop();
 }
 
@@ -396,16 +399,16 @@ import { Dialog, Text, View } from "@nlayer/ui";
 
 function App() {
     const open = signal(true);
-    const closed = signal(false);
+    const closeCount = signal(0);
     return (
         <View style={{ flex: 1 }}>
-            <Text testID="status">{closed() ? "closed" : "open"}</Text>
+            <Text testID="status">closed:{closeCount()}</Text>
             <Dialog
                 open={open()}
                 backdropStyle={{ backgroundColor: "#00000066" }}
                 backdropTestID="modal-backdrop"
                 onOpenChange={(e) => open.set(e.open)}
-                onClose={() => closed.set(true)}
+                onClose={() => closeCount.set(closeCount() + 1)}
             >
                 <View style={{ width: 200, height: 100 }}>
                     <Text>Modal content</Text>
@@ -417,32 +420,47 @@ function App() {
 mount(App);
 "##;
     let mut app = app(source);
-    assert_eq!(app.texts(), ["open", "Modal content"]);
-    
+    assert_eq!(app.texts(), ["closed:0", "Modal content"]);
+
     // Wait for modal and backdrop to render
     app.next_frame(Duration::from_millis(100));
-    
-    // Check that backdrop exists with correct testID and covers the screen
+
+    // Check that backdrop exists with correct testID and covers the modal root
     let screen = app.screen();
-    let backdrop_view = screen.views().find(|(_, view)| {
-        view.test_id.as_deref() == Some("modal-backdrop")
-    });
+
+    // Find the Modal node
+    let modal_view = screen
+        .views()
+        .find(|(_, view)| view.kind == nlayer_core::ViewKind::Modal);
+    assert!(modal_view.is_some(), "Modal node should exist");
+    let (_, modal) = modal_view.unwrap();
+
+    // Find the backdrop
+    let backdrop_view = screen
+        .views()
+        .find(|(_, view)| view.test_id.as_deref() == Some("modal-backdrop"));
     assert!(backdrop_view.is_some(), "backdrop should exist with testID");
     let (_, backdrop) = backdrop_view.unwrap();
-    assert!(
-        backdrop.frame.size.width.0 > 0.0 && backdrop.frame.size.height.0 > 0.0,
-        "backdrop should have nonzero size covering the screen, got {:?}",
-        backdrop.frame
+
+    // Backdrop should cover the modal root exactly (full-window hit area)
+    assert_eq!(
+        backdrop.frame.size, modal.frame.size,
+        "backdrop should cover modal root exactly, backdrop={:?} modal={:?}",
+        backdrop.frame, modal.frame
     );
-    
+
     // Press backdrop to close
     app.press_selector("id:modal-backdrop").unwrap();
     assert!(
-        app.wait_for("closed", Duration::from_secs(1)),
-        "onClose should fire on backdrop press, texts: {:?}",
+        app.wait_for("closed:1", Duration::from_secs(1)),
+        "onClose should fire exactly once on backdrop press, texts: {:?}",
         app.texts()
     );
-    assert_eq!(app.texts(), ["closed"], "modal should unmount after backdrop press");
+    assert_eq!(
+        app.texts(),
+        ["closed:1"],
+        "modal should unmount after backdrop press, onClose called once"
+    );
     app.stop();
 }
 
@@ -477,18 +495,55 @@ mount(App);
 "##;
     let mut app = app(source);
     assert_eq!(app.texts(), ["open", "Modal content"]);
-    
+
     // Wait for modal and backdrop to render
     app.next_frame(Duration::from_millis(100));
-    
+
     app.press_selector("id:modal-backdrop").unwrap();
     app.next_frame(Duration::from_secs(1));
-    
+
     // Modal should stay mounted, onClose should not fire
     assert_eq!(
         app.texts(),
         ["open", "Modal content"],
         "modal should stay open when closeOnBackdropPress=false"
+    );
+    app.stop();
+}
+
+#[test]
+fn dialog_popup_style_applies() {
+    let source = r#"
+import { mount, signal } from "@nlayer/runtime";
+import { Dialog, Text, View } from "@nlayer/ui";
+
+function App() {
+    const open = signal(true);
+    return (
+        <View style={{ flex: 1 }}>
+            <Text>App content</Text>
+            <Dialog
+                open={open()}
+                style={{ width: 123, height: 77 }}
+            >
+                <Text>Modal content</Text>
+            </Dialog>
+        </View>
+    );
+}
+mount(App);
+"#;
+    let mut app = app(source);
+    app.next_frame(Duration::from_millis(100));
+
+    // Find the popup view with the exact style dimensions (unique numbers pin the fix)
+    let screen = app.screen();
+    let popup_found = screen
+        .views()
+        .any(|(_, view)| view.frame.size.width.0 == 123.0 && view.frame.size.height.0 == 77.0);
+    assert!(
+        popup_found,
+        "Dialog style={{width: 123, height: 77}} should apply to popup; before 0418a8f it was silently dropped"
     );
     app.stop();
 }
