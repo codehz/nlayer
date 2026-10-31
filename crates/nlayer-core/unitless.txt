@@ -82,3 +82,13 @@ animation::graph::Graph::set(value)                                 # an animate
 transform::Transform::set(value)                                # a transform operand (any of its kinds' units)
 ops::Prop::LongPressDelay.0                                    # time in milliseconds
 mount::MountItem::LongPressDelay.delay                         # time in milliseconds
+ops::DecelerationRate::Custom.0                                  # scroll deceleration rate (0=instant stop, 1=no deceleration)
+ops::DecelerationRate::value ->                                  # scroll deceleration rate (0=instant stop, 1=no deceleration)
+ops::MaintainPosition.autoscroll_to_bottom_threshold            # threshold ratio for autoscroll (0..1)
+ops::Prop::SnapToInterval.0                                     # snap interval in points (scrollable distance)
+ops::Prop::SnapToOffsets.0                                      # snap offsets in points (scrollable distance)
+ops::Viewability.item_visible_threshold                         # viewability threshold ratio (0..1)
+ops::Viewability.view_area_coverage_threshold                   # viewability coverage ratio (0..1)
+mount::MountItem::ScrollContent.deceleration                    # scroll deceleration rate (0=instant stop, 1=no deceleration)
+mount::MountItem::ScrollContent.snap_interval                   # snap interval in points (scrollable distance)
+mount::MountItem::ScrollContent.snap_offsets                    # snap offsets in points (scrollable distance)

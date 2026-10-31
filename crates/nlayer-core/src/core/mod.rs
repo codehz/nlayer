@@ -5041,7 +5041,7 @@ mod tests {
             .iter()
             .rev()
             .find_map(|item| match item {
-                MountItem::ScrollContent { id: i, size } if *i == id => Some(*size),
+                MountItem::ScrollContent { id: i, size, .. } if *i == id => Some(*size),
                 _ => None,
             })
             .unwrap_or_else(|| panic!("no scroll content for {id}"))

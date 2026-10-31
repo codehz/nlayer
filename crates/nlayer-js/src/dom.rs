@@ -2250,6 +2250,22 @@ pub(crate) fn dispatch(
             );
             object
         },
+        crate::EventPayload::ViewableItemsChange { first, last } => unsafe {
+            let object = qjs::JS_NewObject(cx);
+            qjs::JS_SetPropertyStr(
+                cx,
+                object,
+                c"first".as_ptr(),
+                qjs::JS_NewFloat64(f64::from(*first)),
+            );
+            qjs::JS_SetPropertyStr(
+                cx,
+                object,
+                c"last".as_ptr(),
+                qjs::JS_NewFloat64(f64::from(*last)),
+            );
+            object
+        },
     };
     let mut args = [value];
     let r = unsafe { qjs::JS_Call(cx, handler, UNDEFINED, 1, args.as_mut_ptr()) };

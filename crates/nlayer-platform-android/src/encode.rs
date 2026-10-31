@@ -46,6 +46,7 @@ const MODAL_CONFIG: i32 = 21;
 const PAN_BINDING: i32 = 22;
 const PINCH_BINDING: i32 = 23;
 const ROTATION_BINDING: i32 = 24;
+const LIST_CONTENT: i32 = 25;
 /// A `StaticLayout` measured on the engine thread and drawn on the UI thread.
 #[cfg(target_os = "android")]
 pub(crate) struct AndroidLayout(pub(crate) jni::objects::GlobalRef);
@@ -229,11 +230,35 @@ pub fn encode(batch: MountBatch) -> Encoded {
                     KeyboardDismiss::Interactive => 2,
                 });
             }
-            MountItem::ScrollContent { id, size } => {
+            MountItem::ScrollContent {
+                id,
+                size,
+                refresh_indicator,
+                paging,
+                snap_interval,
+                snap_offsets,
+                snap_alignment,
+                disable_interval_momentum,
+                deceleration,
+            } => {
                 e.int(SCROLL_CONTENT);
                 e.id(id);
                 e.float(size.width.0);
                 e.float(size.height.0);
+                e.float(refresh_indicator.map(|h| h.0).unwrap_or(-1.0));
+                e.bool(paging);
+                e.float(snap_interval.unwrap_or(-1.0));
+                if let Some(offsets) = snap_offsets {
+                    e.int(offsets.len() as i32);
+                    for off in offsets.iter() {
+                        e.float(*off);
+                    }
+                } else {
+                    e.int(-1);
+                }
+                e.int(snap_alignment as i32);
+                e.bool(disable_interval_momentum);
+                e.float(deceleration);
             }
             MountItem::ScrollBy { id, dx, dy } => {
                 e.int(SCROLL_BY);
@@ -365,6 +390,41 @@ pub fn encode(batch: MountBatch) -> Encoded {
                 e.bool(config.close_on_escape);
                 e.bool(config.close_on_backdrop_press);
                 e.bool(config.close_on_swipe);
+            }
+            MountItem::ListContent {
+                id,
+                sticky_indices,
+                inverted,
+                viewport_parent,
+                viewability,
+                maintain_position,
+            } => {
+                e.int(LIST_CONTENT);
+                e.id(id);
+                e.int(sticky_indices.len() as i32);
+                for idx in sticky_indices.iter() {
+                    e.int(*idx as i32);
+                }
+                e.bool(inverted);
+                e.bool(viewport_parent);
+                if let Some(v) = viewability {
+                    e.bool(true);
+                    e.float(v.view_area_coverage_threshold.unwrap_or(-1.0));
+                    e.float(v.item_visible_threshold.unwrap_or(-1.0));
+                } else {
+                    e.bool(false);
+                    e.float(-1.0);
+                    e.float(-1.0);
+                }
+                if let Some(m) = maintain_position {
+                    e.bool(true);
+                    e.int(m.min_index_for_visible as i32);
+                    e.float(m.autoscroll_to_bottom_threshold.unwrap_or(-1.0));
+                } else {
+                    e.bool(false);
+                    e.int(-1);
+                    e.float(-1.0);
+                }
             }
         }
     }
