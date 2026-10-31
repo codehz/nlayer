@@ -92,3 +92,8 @@ ops::Viewability.view_area_coverage_threshold                   # viewability co
 mount::MountItem::ScrollContent.deceleration                    # scroll deceleration rate (0=instant stop, 1=no deceleration)
 mount::MountItem::ScrollContent.snap_interval                   # snap interval in points (scrollable distance)
 mount::MountItem::ScrollContent.snap_offsets                    # snap offsets in points (scrollable distance)
+snap::SnapBehavior.deceleration                                  # velocity decay rate per ms (0-1 ratio)
+snap::rate ->                                                     # velocity decay rate per ms (0-1 ratio)
+snap::projected(rate)                                            # velocity decay rate per ms (0-1 ratio)
+snap::projected(velocity)                                        # points per millisecond
+snap::snap_target(velocity)                                      # points per millisecond
