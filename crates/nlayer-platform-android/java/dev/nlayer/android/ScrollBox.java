@@ -26,8 +26,6 @@ final class ScrollBox extends FrameLayout {
   private static final int MOMENTUM_END = 6;
   private static final int REFRESH = 7;
   private static final int REST_MS = 120;
-  private static final float REFRESH_THRESHOLD = 64f;
-  private static final float REFRESH_INSET = 56f;
 
   final int id;
   final Decor decor = new Decor();
@@ -51,8 +49,8 @@ final class ScrollBox extends FrameLayout {
   private boolean pulling;
   private float startY;
   private boolean refreshIndicator = true;
-  private float refreshThreshold = REFRESH_THRESHOLD;
-  private float refreshInset = REFRESH_INSET;
+  private float refreshThreshold = 64f;
+  private float refreshInset = 56f;
   private ProgressBar spinner;
 
   private final float density;
@@ -303,10 +301,10 @@ final class ScrollBox extends FrameLayout {
 
   /** Pull to refresh: whether the spinner shows, where (dp) a pull refreshes and the room kept while refreshing. */
   void setRefresh(boolean own, float height) {
-    float inset = own ? height : REFRESH_INSET;
+    float inset = own ? height : 56f;
     boolean changed = refreshIndicator == own || inset != refreshInset;
     refreshIndicator = !own;
-    refreshThreshold = own ? height : REFRESH_THRESHOLD;
+    refreshThreshold = own ? height : 64f;
     refreshInset = inset;
     if (changed && spinner != null) {
       spinner.setVisibility(refreshIndicator && pull > 0 ? VISIBLE : GONE);
@@ -358,8 +356,13 @@ final class ScrollBox extends FrameLayout {
     float d = density;
     switch (e.getActionMasked()) {
       case MotionEvent.ACTION_MOVE:
-        // Resistance like a rubber band.
-        setPull(Math.max(0, (e.getY() - startY) * 0.5f));
+        // Apply rubber band resistance (nsh formula: (1-1/(over*0.55/dim+1))*dim)
+        float rawPull = Math.max(0, e.getY() - startY);
+        float viewport = getHeight();
+        float resistedPull = viewport > 0 
+            ? (1.0f - 1.0f / (rawPull * 0.55f / viewport + 1.0f)) * viewport
+            : rawPull * 0.5f;
+        setPull(resistedPull);
         if (refreshIndicator && spinner != null) {
           spinner.setVisibility(VISIBLE);
           spinner.setAlpha(Math.min(1, pull / (refreshThreshold * d)));
@@ -370,7 +373,7 @@ final class ScrollBox extends FrameLayout {
         pulling = false;
         if (pull >= refreshThreshold * d) {
           setRefreshing(true);
-          emit(REFRESH);
+          // Core fires REFRESH via update_scroll_position, don't emit here
         } else {
           animatePull(0, () -> {
             if (spinner != null) spinner.setVisibility(GONE);

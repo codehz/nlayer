@@ -624,17 +624,21 @@ export class Player {
   }
   
   dragPull(el, distance) {
-    const pull = Math.max(0, distance * 0.5);
-    this.setPull(el, pull);
+    // Apply rubber band resistance: (1 - 1/(over*0.55/dim + 1)) * dim
+    const viewport = el.clientHeight;
+    const resistedPull = viewport > 0
+        ? (1 - 1 / (distance * 0.55 / viewport + 1)) * viewport
+        : distance * 0.5;
+    this.setPull(el, resistedPull);
   }
   
   releasePull(el) {
-    const threshold = el._refreshThreshold || REFRESH_PULL;
+    const threshold = el._behavior?.refreshIndicator?.height ?? 64;
     if (!el._refreshing && el._pull >= threshold) {
       el._refreshing = true;
       this.scrollEvent(el, "onRefresh");
     }
-    const target = el._refreshing ? (el._refreshSpace || REFRESH_SPACE) : 0;
+    const target = el._refreshing ? (el._behavior?.refreshIndicator?.height ?? 56) : 0;
     this.animatePull(el, target);
   }
   

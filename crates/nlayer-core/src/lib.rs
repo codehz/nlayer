@@ -18,6 +18,7 @@ mod ops;
 pub mod platform;
 pub mod reactive;
 pub mod resource;
+pub mod scroll;
 pub mod storage;
 pub mod style;
 mod tailwind;
