@@ -721,6 +721,26 @@ impl<M: TextEngine> Core<M> {
         self.mark(key, dirty::LIST);
     }
 
+    /// The platform scrolled a scroll view to `offset`. Checks for pull-to-refresh.
+    pub fn update_scroll_position(&mut self, id: NodeId, offset: Point<Points>) {
+        let Ok(key) = self.key(id) else { return };
+        let Some(scroll) = self.nodes[key as usize].scroll.as_mut() else {
+            return;
+        };
+        
+        // Check for pull-to-refresh trigger
+        if let Some(indicator_height) = scroll.refresh_indicator {
+            // Negative offset means pulling down beyond top
+            if offset.y.0 < 0.0 && offset.y.0.abs() >= indicator_height.0 {
+                // Fire refresh event only once per cycle
+                if !scroll.refresh_reported && !scroll.refreshing {
+                    scroll.refresh_reported = true;
+                    self.events.push((id, EventKind::Refresh));
+                }
+            }
+        }
+    }
+
     /// Moves the cells the runtime must render before the frame shows.
     pub fn take_list_binds(&mut self, out: &mut Vec<ListBind>) {
         out.append(&mut self.list_binds);
