@@ -175,6 +175,11 @@ impl PageSession {
         self.engine.control().back();
     }
 
+    /// A platform gesture event with a payload (`onPanStart`, `onPinchStart`, ...).
+    pub fn gesture(&self, id: NodeId, kind: EventKind, payload: EventPayload) {
+        self.engine.control().dispatch_event(id, kind, payload);
+    }
+
     /// The surface changed size (CSS pixels, one point each).
     pub fn resize(&self, size: Size<Points>) {
         self.engine.control().resize(size);

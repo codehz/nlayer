@@ -13,6 +13,7 @@ use nlayer_core::{
     EventKind, NodeId,
     geometry::{Edges, Point, Size, px},
 };
+use nlayer_engine::EventPayload;
 
 use crate::{Page, PageSession};
 
@@ -130,11 +131,11 @@ fn apply_pending(session: &mut PageSession) {
                     _ => return,
                 };
                 let payload = EventPayload::Pan {
-                    translation: Point::new(px(tx), px(ty)),
-                    velocity: Point::new(px(vx * 1000.0), px(vy * 1000.0)),
+                    translation: (tx, ty),
+                    velocity: (vx * 1000.0, vy * 1000.0),
                     values: (value_x, value_y),
                 };
-                session.event(id.into(), kind, payload);
+                session.gesture(id.into(), kind, payload);
             }
             Pending::Transform {
                 id,
@@ -168,7 +169,7 @@ fn apply_pending(session: &mut PageSession) {
                         value,
                     }
                 };
-                session.event(id.into(), kind, payload);
+                session.gesture(id.into(), kind, payload);
             }
         }
     }

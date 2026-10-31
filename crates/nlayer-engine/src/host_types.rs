@@ -58,6 +58,33 @@ pub enum EventPayload {
         /// Visible height.
         height: f32,
     },
+    /// Pan gesture (`onPanStart`, `onPanEnd`).
+    Pan {
+        /// Translation in points.
+        translation: (f32, f32),
+        /// Velocity in points per second.
+        velocity: (f32, f32),
+        /// Current animation values.
+        values: (f32, f32),
+    },
+    /// Pinch gesture (`onPinchStart`, `onPinchEnd`).
+    Pinch {
+        /// Scale factor.
+        scale: f32,
+        /// Velocity in scale units per second.
+        velocity: f32,
+        /// Current animation value.
+        value: f32,
+    },
+    /// Rotation gesture (`onRotationStart`, `onRotationEnd`).
+    Rotation {
+        /// Angle in degrees.
+        angle: f32,
+        /// Velocity in degrees per second.
+        velocity: f32,
+        /// Current animation value.
+        value: f32,
+    },
 }
 
 /// The operating system a surface runs on (`platform.os`).
