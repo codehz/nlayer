@@ -9,6 +9,8 @@
 // edit count. `activeStyle`, `hoverStyle` and `focusStyle` are rules the
 // page applies (`rule`) while the pointer state holds (`st`).
 
+import { GestureGate, attachGestures } from "./gesture.js";
+
 /**
  * The style classes of the document. A class named after its CSS
  * (`nl-` and 8 hex digits, from the engine or `cssClass`) is one rule;
@@ -132,6 +134,8 @@ export class Player {
     this.swallowTarget = null;
     this.onTouchEnd = (event) => this.touchEnded(event);
     root._id = 1;
+    this.gestures = new GestureGate();
+    attachGestures(this);
     root._kind = "view";
     root.classList.add("nl-v", "nl-root");
     this.views.set(1, root);
