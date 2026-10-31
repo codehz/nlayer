@@ -54,6 +54,13 @@ use objc2_ui_kit::{
 use crate::input::{AreaInput, Field};
 use crate::text_view::TextView;
 
+/// The scroll view touched inside a cooperating pan. Its starting offset
+/// is consumed before the panel moves.
+struct PanScroll {
+    view: Retained<UIScrollView>,
+    offset: f32,
+}
+
 /// One native view and the paint the engine last set on it.
 struct Slot {
     native: Native,
@@ -94,6 +101,9 @@ struct Slot {
     rotation_node: Option<u32>,
     /// Gesture start values: [pan_x, pan_y, pinch_scale, rotation_angle].
     gesture_start: [f32; 4],
+    /// Scroll view cooperation: a cooperating pan sees only scrolls between
+    /// its view and the touch.
+    pan_scroll: Option<PanScroll>,
     /// A dashed or dotted uniform border, above the children.
     dash: Option<Retained<CAShapeLayer>>,
     /// Clip shape when the four radii differ. Reused across paints.
@@ -198,6 +208,19 @@ define_class!(
             let velocity = gesture.velocityInView(Some(&superview));
             let id = view.tag() as NodeId;
             let state = gesture.state();
+            // On began, record any scroll view that was touched
+            if state == UIGestureRecognizerState::Began {
+                if let Some(touch) = gesture.touches().first() {
+                    if let Some(touched) = touch.downcast_ref::<UITouch>() {
+                        let touched_view = touched.view();
+                        with_mounter(move |m| {
+                            if let Some(v) = touched_view {
+                                m.pan_touch(id, &v);
+                            }
+                        });
+                    }
+                }
+            }
             with_mounter(move |m| {
                 m.handle_pan(id, state, translation, velocity);
             });
@@ -2614,6 +2637,77 @@ impl Mounter {
         }
     }
 
+    fn pan_should_begin(&self, id: NodeId, velocity: CGPoint) -> bool {
+        let Some(slot) = self.slot(id) else {
+            return true;
+        };
+        match slot.pan_nodes {
+            (Some(_), None) => velocity.x.abs() > velocity.y.abs(),
+            (None, Some(_)) => velocity.y.abs() > velocity.x.abs(),
+            _ => true,
+        }
+    }
+
+    fn pan_touch(&mut self, id: NodeId, touched: &UIView) {
+        let Some(slot) = self.slot_mut(id) else {
+            return;
+        };
+        slot.pan_scroll = None;
+        let (pan_x, pan_y) = slot.pan_nodes;
+        // Only cooperate if we have a single-axis pan
+        if !(pan_x.is_some() ^ pan_y.is_some()) {
+            return;
+        }
+        let panel = slot.native.view();
+        let mut current = Some(touched.retain());
+        while let Some(view) = current {
+            if &*view == panel {
+                break;
+            }
+            if let Some(scroll) = view.downcast_ref::<UIScrollView>() {
+                let offset = scroll.contentOffset();
+                if let Some(slot) = self.slot_mut(id) {
+                    slot.pan_scroll = Some(PanScroll {
+                        view: scroll.retain(),
+                        offset: offset.y as f32,
+                    });
+                }
+                break;
+            }
+            current = view.superview();
+        }
+    }
+
+    fn pan_scroll_offset(&self, scroll: &UIScrollView, offset: CGPoint) -> CGPoint {
+        let mut current = scroll.superview();
+        while let Some(view) = current {
+            if let Some(slot) = self.slot(view.tag() as NodeId) {
+                if let Some(pan_scroll) = &slot.pan_scroll {
+                    if &*pan_scroll.view == scroll {
+                        if let Some(pan) = &slot.pan_recognizer {
+                            if matches!(
+                                pan.state(),
+                                UIGestureRecognizerState::Began | UIGestureRecognizerState::Changed
+                            ) || pan.state() == UIGestureRecognizerState::Ended
+                                && scroll.isDragging()
+                            {
+                                let t = pan.translationInView(view.superview().as_deref());
+                                if slot.gesture_start[1] + t.y as f32 > pan_scroll.offset {
+                                    return CGPoint::new(
+                                        offset.x,
+                                        -scroll.adjustedContentInset().top,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            current = view.superview();
+        }
+        offset
+    }
+
     fn handle_pan(
         &mut self,
         id: NodeId,
@@ -2656,7 +2750,21 @@ impl Mounter {
                 self.animator.set(n, start[0] + translation.x as f32);
             }
             if let Some(n) = pan_y {
-                self.animator.set(n, start[1] + translation.y as f32);
+                let y = self
+                    .slot(id)
+                    .and_then(|s| s.pan_scroll.as_ref())
+                    .map_or(start[1] + translation.y as f32, |scroll| {
+                        (start[1] + translation.y as f32 - scroll.offset).max(0.0)
+                    });
+                self.animator.set(n, y);
+                // Clamp scroll offset to keep it at top while panel consumes drag
+                if let Some(scroll) = self.slot(id).and_then(|s| s.pan_scroll.as_ref()) {
+                    let offset = scroll.view.contentOffset();
+                    let clamped = self.pan_scroll_offset(&scroll.view, offset);
+                    if clamped != offset {
+                        scroll.view.setContentOffset(clamped);
+                    }
+                }
             }
             self.apply_animations();
         }
@@ -2903,6 +3011,7 @@ impl Slot {
             pinch_node: None,
             rotation_node: None,
             gesture_start: [0.0; 4],
+            pan_scroll: None,
             dash: None,
             mask: None,
             sides: [None, None, None, None],
