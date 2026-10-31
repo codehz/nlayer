@@ -857,11 +857,15 @@ unsafe extern "C" fn modal_render(
     free(cx, _tick_value);
     free(cx, tick_signal);
 
-    // Check if open
+    // Check if open (default true if undefined or non-boolean)
     // SAFETY: cx and props are valid, c-string is valid
     let open = unsafe { qjs::JS_GetPropertyStr(cx, props, c"open".as_ptr()) };
     // SAFETY: cx and open are valid, calling a signal or reading a boolean
-    let is_open = unsafe { qjs::JS_ToBool(cx, open) == 1 };
+    let is_open = if unsafe { qjs::JS_IsBool(open) } {
+        unsafe { qjs::JS_ToBool(cx, open) == 1 }
+    } else {
+        true // undefined or non-boolean means open
+    };
     free(cx, open);
 
     // Check closedByUser flag
@@ -897,6 +901,16 @@ unsafe extern "C" fn modal_render(
             }
             free(cx, on_close);
         }
+
+        // If controlled dialog accepted the close (is_open became false),
+        // reset the flags so it can reopen later
+        if !is_open {
+            unsafe {
+                qjs::JS_SetPropertyStr(cx, state, c"closedByUser".as_ptr(), qjs::JS_FALSE);
+                qjs::JS_SetPropertyStr(cx, state, c"closeReported".as_ptr(), qjs::JS_FALSE);
+            }
+        }
+        // Either way (controlled closed or uncontrolled staying open), unmount
         return UNDEFINED;
     }
 

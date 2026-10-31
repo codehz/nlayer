@@ -234,6 +234,70 @@ mount(App);
 }
 
 #[test]
+fn dialog_reopens_after_user_close() {
+    let source = r#"
+import { mount, signal } from "@nlayer/runtime";
+import { Dialog, Text, View } from "@nlayer/ui";
+
+function App() {
+    const open = signal(true);
+    const closed = signal(false);
+    return (
+        <View style={{ flex: 1 }}>
+            <Text testID="status">{closed() ? "closed" : "open"}</Text>
+            <View
+                testID="reopen-button"
+                style={{ width: 100, height: 40 }}
+                onPress={() => { open.set(true); closed.set(false); }}
+            >
+                <Text>Reopen</Text>
+            </View>
+            <Dialog
+                open={open()}
+                onOpenChange={(e) => open.set(e.open)}
+                onClose={() => closed.set(true)}
+            >
+                <View style={{ width: 200, height: 100 }}>
+                    <Text>Modal content</Text>
+                </View>
+            </Dialog>
+        </View>
+    );
+}
+mount(App);
+"#;
+    let mut app = app(source);
+    assert_eq!(app.texts(), ["open", "Reopen", "Modal content"]);
+
+    // Close via back button
+    app.back();
+    app.next_frame(Duration::from_secs(1));
+    assert!(
+        app.wait_for("closed", Duration::from_secs(1)),
+        "onClose should fire, texts: {:?}",
+        app.texts()
+    );
+    assert_eq!(app.texts(), ["closed", "Reopen"], "modal should close");
+
+    // Reopen by pressing the button (regression test: closedByUser must be reset)
+    app.press_selector("reopen-button").unwrap();
+    app.next_frame(Duration::from_secs(1));
+
+    // Modal should reopen
+    assert!(
+        app.wait_for("Modal content", Duration::from_secs(1)),
+        "modal should reopen after user close, texts: {:?}",
+        app.texts()
+    );
+    assert_eq!(
+        app.texts(),
+        ["open", "Reopen", "Modal content"],
+        "modal reopened"
+    );
+    app.stop();
+}
+
+#[test]
 fn dialog_onclose_not_fired_with_close_on_escape_false() {
     let source = r#"
 import { mount, signal } from "@nlayer/runtime";
