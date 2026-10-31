@@ -8,6 +8,26 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 final class Mounter {
+  static final class ScreenOptions {
+    String title;
+    boolean shown;
+    boolean transparent;
+    boolean tintPresent;
+    int tint;
+    boolean backgroundPresent;
+    int background;
+    boolean titleColorPresent;
+    int titleColor;
+    boolean backVisible;
+    boolean gesture;
+    boolean preventBack;
+    int animation;
+    int left;
+    int right;
+    int titleView;
+    float headerHeight;
+  }
+
   private static final int CREATE = 0,
       INSERT = 1,
       REMOVE = 2,
@@ -27,7 +47,8 @@ final class Mounter {
       TEST_ID = 16,
       COMMAND = 17,
       ACCESSIBILITY = 18,
-      LONG_PRESS_DELAY = 19;
+      LONG_PRESS_DELAY = 19,
+      SCREEN_CONFIG = 20;
   final HostView host;
   final float density;
   final SparseArray<View> views = new SparseArray<>();
@@ -45,6 +66,13 @@ final class Mounter {
   final SparseArray<Boolean> longDown = new SparseArray<>();
   final SparseArray<Boolean> longFired = new SparseArray<>();
   final SparseArray<Runnable> longRuns = new SparseArray<>();
+  final SparseArray<ScreenOptions> screenOptions = new SparseArray<>();
+  final SparseArray<int[]> headerSizes = new SparseArray<>();
+  final java.util.LinkedHashSet<Integer> dirtyStacks = new java.util.LinkedHashSet<>();
+  final java.util.LinkedHashSet<Integer> dirtyScreens = new java.util.LinkedHashSet<>();
+  final android.util.SparseIntArray hosts = new android.util.SparseIntArray();
+  final java.util.ArrayList<Integer> stacks = new java.util.ArrayList<>();
+  final java.util.HashSet<Integer> headerItems = new java.util.HashSet<>();
 
   Mounter(HostView h) {
     host = h;
@@ -119,10 +147,14 @@ final class Mounter {
         case LONG_PRESS_DELAY:
           longDelay(b.getInt(), b.getFloat());
           break;
+        case SCREEN_CONFIG:
+          screenConfig(b, objects);
+          break;
         default:
           throw new IllegalArgumentException("Unknown nlayer opcode");
       }
     }
+    finishNavigation();
   }
 
   private void events(ByteBuffer b) {
@@ -274,6 +306,17 @@ final class Mounter {
       case 4:
         v = new InputBox(host.getContext(), id);
         break;
+      case 5:
+        v = new StackBox(host.getContext(), this, id);
+        stacks.add(id);
+        break;
+      case 6:
+        v = new StackBox.ScreenBox(host.getContext(), this, id);
+        break;
+      case 8:
+        v = new Box(host.getContext(), this, id);
+        headerItems.add(id);
+        break;
       default:
         throw new IllegalArgumentException("Unknown kind");
     }
@@ -305,6 +348,33 @@ final class Mounter {
 
   private void insert(int parent, int child, int before) {
     View p = views.get(parent), c = views.get(child);
+    // ScreenBox into StackBox
+    if (c instanceof StackBox.ScreenBox && p instanceof StackBox) {
+      StackBox stack = (StackBox) p;
+      if (before >= 0) {
+        int index = stack.screens.indexOf(before);
+        if (index >= 0) {
+          stack.screens.remove((Integer) child);
+          stack.screens.add(index, child);
+        } else {
+          stack.screens.remove((Integer) child);
+          stack.screens.add(child);
+        }
+      } else {
+        stack.screens.remove((Integer) child);
+        stack.screens.add(child);
+      }
+      hosts.put(child, parent);
+      dirtyStacks.add(parent);
+      return;
+    }
+    // Header item into ScreenBox
+    if (headerItems.contains(child) && p instanceof StackBox.ScreenBox) {
+      hosts.put(child, parent);
+      dirtyScreens.add(parent);
+      return;
+    }
+    // Generic view insertion
     if (p instanceof ScrollBox) p = ((ScrollBox) p).content;
     if (!(p instanceof ViewGroup) || c == null || c == host) return;
     ViewGroup g = (ViewGroup) p;
@@ -322,6 +392,26 @@ final class Mounter {
   }
 
   private void remove(int id) {
+    // Handle hosted children (screens in stacks, header items in screens)
+    if (hosts.indexOfKey(id) >= 0) {
+      int parentId = hosts.get(id);
+      View parent = views.get(parentId);
+      if (parent instanceof StackBox) {
+        StackBox stack = (StackBox) parent;
+        stack.screens.remove((Integer) id);
+        dirtyStacks.add(parentId);
+      }
+      if (headerItems.contains(id)) {
+        View v = views.get(id);
+        if (v != null && v.getParent() instanceof ViewGroup) {
+          ((ViewGroup) v.getParent()).removeView(v);
+        }
+        dirtyScreens.add(parentId);
+      }
+      hosts.delete(id);
+      return;
+    }
+    // Generic view removal
     View v = views.get(id);
     if (v != null && v.getParent() instanceof ViewGroup) ((ViewGroup) v.getParent()).removeView(v);
   }
@@ -344,6 +434,10 @@ final class Mounter {
     longDown.remove(id);
     longFired.remove(id);
     cancelRun(id);
+    screenOptions.remove(id);
+    headerSizes.remove(id);
+    headerItems.remove(id);
+    stacks.remove((Integer) id);
   }
 
   private void frame(int id, float x, float y, float w, float h) {
@@ -354,6 +448,11 @@ final class Mounter {
         py = Math.round(y * density),
         pw = Math.round(w * density),
         ph = Math.round(h * density);
+    // Header items: store size but don't set margins/layout
+    if (headerItems.contains(id)) {
+      headerSizes.put(id, new int[] {pw, ph});
+      return;
+    }
     ViewGroup.LayoutParams lp = v.getLayoutParams();
     if (!(lp instanceof ViewGroup.MarginLayoutParams))
       lp = new ViewGroup.MarginLayoutParams(pw, ph);
@@ -413,6 +512,7 @@ final class Mounter {
   }
 
   private Decor decor(View v) {
+    if (v instanceof StackBox) return ((StackBox) v).decor;
     if (v instanceof Box) return ((Box) v).decor;
     if (v instanceof TextBox) return ((TextBox) v).decor;
     if (v instanceof ImageBox) return ((ImageBox) v).decor;
@@ -771,5 +871,99 @@ final class Mounter {
     b.getInt();
     View v = views.get(id);
     if (cmd == 0 && v instanceof ScrollBox) ((ScrollBox) v).scrollToPoints(x, y, density);
+  }
+
+  private void screenConfig(ByteBuffer b, Object[] objects) {
+    int id = b.getInt();
+    ScreenOptions opts = new ScreenOptions();
+    int titleIndex = b.getInt();
+    opts.title = titleIndex < 0 ? null : (String) objects[titleIndex];
+    opts.shown = b.getInt() != 0;
+    opts.transparent = b.getInt() != 0;
+    opts.tintPresent = b.getInt() != 0;
+    if (opts.tintPresent) opts.tint = b.getInt();
+    opts.backgroundPresent = b.getInt() != 0;
+    if (opts.backgroundPresent) opts.background = b.getInt();
+    opts.titleColorPresent = b.getInt() != 0;
+    if (opts.titleColorPresent) opts.titleColor = b.getInt();
+    opts.backVisible = b.getInt() != 0;
+    opts.gesture = b.getInt() != 0;
+    opts.preventBack = b.getInt() != 0;
+    opts.animation = b.getInt();
+    opts.left = b.getInt();
+    opts.right = b.getInt();
+    opts.titleView = b.getInt();
+    opts.headerHeight = b.getFloat();
+    screenOptions.put(id, opts);
+    dirtyScreens.add(id);
+    int parentId = hosts.get(id, -1);
+    if (parentId >= 0) {
+      dirtyStacks.add(parentId);
+    }
+  }
+
+  private void finishNavigation() {
+    // Reconcile dirty stacks and mark their screens dirty
+    for (int stackId : dirtyStacks) {
+      View v = views.get(stackId);
+      if (v instanceof StackBox) {
+        StackBox stack = (StackBox) v;
+        stack.reconcile();
+        for (int screenId : stack.screens) {
+          dirtyScreens.add(screenId);
+        }
+      }
+    }
+    dirtyStacks.clear();
+    // Configure dirty screens
+    for (int screenId : dirtyScreens) {
+      View v = views.get(screenId);
+      if (!(v instanceof StackBox.ScreenBox)) continue;
+      StackBox.ScreenBox screen = (StackBox.ScreenBox) v;
+      ScreenOptions opts = screenOptions.get(screenId);
+      if (opts == null) continue;
+      // Find the screen's index in its stack to determine canGoBack
+      int parentId = hosts.get(screenId, -1);
+      boolean canGoBack = false;
+      if (parentId >= 0) {
+        View parent = views.get(parentId);
+        if (parent instanceof StackBox) {
+          StackBox stack = (StackBox) parent;
+          int index = stack.screens.indexOf(screenId);
+          canGoBack = index > 0;
+        }
+      }
+      screen.configure(
+          this,
+          opts.title,
+          opts.shown,
+          opts.transparent,
+          opts.tintPresent ? opts.tint : 0,
+          opts.backgroundPresent ? opts.background : 0,
+          opts.titleColorPresent ? opts.titleColor : 0,
+          opts.backVisible,
+          opts.gesture,
+          opts.preventBack,
+          opts.animation,
+          opts.left,
+          opts.right,
+          opts.titleView,
+          opts.headerHeight,
+          canGoBack);
+    }
+    dirtyScreens.clear();
+  }
+
+  StackBox backStack() {
+    for (int i = stacks.size() - 1; i >= 0; i--) {
+      View v = views.get(stacks.get(i));
+      if (v instanceof StackBox) {
+        StackBox stack = (StackBox) v;
+        if (stack.canSwipe()) {
+          return stack;
+        }
+      }
+    }
+    return null;
   }
 }

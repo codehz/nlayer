@@ -56,6 +56,11 @@ final class Native {
 
   static native void composition(long handle, int id, boolean composing, String text);
 
+  static native void screenHeader(long handle, int id, float height);
+
+  static native void rootInsets(
+      long handle, int id, float top, float right, float bottom, float left);
+
   private Native() {}
 
   static void sendPress(android.view.View view, int id) {

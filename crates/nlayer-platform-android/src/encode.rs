@@ -9,7 +9,8 @@
 //!
 //! Copied from `nsh-platform-android/src/encode.rs`. Animation, gestures,
 //! refresh, zoom, paging, shadows, gradients and the other residual style
-//! fields are not encoded.
+//! fields are not encoded. Navigation containers (Stack, Screen, Modal,
+//! HeaderItem) and their configurations are encoded.
 
 use nlayer_core::geometry::{DefiniteLength, Points, REM_SIZE};
 use nlayer_core::style::{BorderStyle, Color, PositionAxis, TextAlign, TextStyle, ViewStyle};
@@ -40,6 +41,8 @@ const TEST_ID: i32 = 16;
 const COMMAND: i32 = 17;
 const ACCESSIBILITY: i32 = 18;
 const LONG_PRESS_DELAY: i32 = 19;
+const SCREEN_CONFIG: i32 = 20;
+const MODAL_CONFIG: i32 = 21;
 
 /// A `StaticLayout` measured on the engine thread and drawn on the UI thread.
 #[cfg(target_os = "android")]
@@ -309,7 +312,36 @@ pub fn encode(batch: MountBatch) -> Encoded {
                     }
                 }
             }
-            MountItem::ScreenConfig { .. } | MountItem::ModalConfig { .. } => {}
+            MountItem::ScreenConfig { id, config } => {
+                e.int(SCREEN_CONFIG);
+                e.id(id);
+                match &config.title {
+                    Some(title) => e.string(title.to_string()),
+                    None => e.int(-1),
+                }
+                e.bool(config.header_visible);
+                e.bool(config.header_transparent);
+                opt_color(&mut e, config.tint_color);
+                opt_color(&mut e, config.background_color);
+                opt_color(&mut e, config.title_color);
+                e.bool(config.back_visible);
+                e.bool(config.gesture_enabled);
+                e.bool(config.prevent_back);
+                e.int(screen_animation_code(config.animation));
+                e.int(config.left.map_or(-1, |id| id as i32));
+                e.int(config.right.map_or(-1, |id| id as i32));
+                e.int(config.title_view.map_or(-1, |id| id as i32));
+                e.float(config.header_height.0);
+            }
+            MountItem::ModalConfig { id, config } => {
+                e.int(MODAL_CONFIG);
+                e.id(id);
+                e.int(modal_animation_code(config.animation));
+                e.int(modal_presentation_code(config.presentation));
+                e.bool(config.close_on_escape);
+                e.bool(config.close_on_backdrop_press);
+                e.bool(config.close_on_swipe);
+            }
         }
     }
     e
@@ -322,7 +354,34 @@ fn kind_code(kind: ViewKind) -> i32 {
         ViewKind::Image => 2,
         ViewKind::Scroll => 3,
         ViewKind::Input => 4,
-        ViewKind::Stack | ViewKind::Screen | ViewKind::Modal | ViewKind::HeaderItem => 0,
+        ViewKind::Stack => 5,
+        ViewKind::Screen => 6,
+        ViewKind::Modal => 7,
+        ViewKind::HeaderItem => 8,
+    }
+}
+
+fn screen_animation_code(animation: nlayer_core::ScreenAnimation) -> i32 {
+    match animation {
+        nlayer_core::ScreenAnimation::Default => 0,
+        nlayer_core::ScreenAnimation::Fade => 1,
+        nlayer_core::ScreenAnimation::None => 2,
+    }
+}
+
+fn modal_animation_code(animation: nlayer_core::ModalAnimation) -> i32 {
+    match animation {
+        nlayer_core::ModalAnimation::Slide => 0,
+        nlayer_core::ModalAnimation::Fade => 1,
+        nlayer_core::ModalAnimation::None => 2,
+    }
+}
+
+fn modal_presentation_code(presentation: nlayer_core::ModalPresentation) -> i32 {
+    match presentation {
+        nlayer_core::ModalPresentation::FullScreen => 0,
+        nlayer_core::ModalPresentation::PageSheet => 1,
+        nlayer_core::ModalPresentation::FormSheet => 2,
     }
 }
 
@@ -980,6 +1039,149 @@ mod tests {
         assert_eq!((words.int(), words.int()), (1, 2));
         assert_eq!(object(&encoded, words.int()), "span");
         assert_eq!(words.int(), 0);
+        assert!(words.done());
+    }
+
+    #[test]
+    fn navigation_containers_encode_with_correct_kind_codes() {
+        let encoded = super::encode(MountBatch {
+            items: vec![
+                MountItem::Create {
+                    id: 10,
+                    kind: ViewKind::Stack,
+                },
+                MountItem::Create {
+                    id: 11,
+                    kind: ViewKind::Screen,
+                },
+                MountItem::Create {
+                    id: 12,
+                    kind: ViewKind::Modal,
+                },
+                MountItem::Create {
+                    id: 13,
+                    kind: ViewKind::HeaderItem,
+                },
+            ],
+        });
+        let mut words = read(&encoded);
+        assert_eq!(words.int(), CREATE);
+        assert_eq!(words.int(), 10);
+        assert_eq!(words.int(), 5); // Stack
+        assert_eq!(words.int(), CREATE);
+        assert_eq!(words.int(), 11);
+        assert_eq!(words.int(), 6); // Screen
+        assert_eq!(words.int(), CREATE);
+        assert_eq!(words.int(), 12);
+        assert_eq!(words.int(), 7); // Modal
+        assert_eq!(words.int(), CREATE);
+        assert_eq!(words.int(), 13);
+        assert_eq!(words.int(), 8); // HeaderItem
+        assert!(words.done());
+    }
+
+    #[test]
+    fn screen_config_encodes_all_fields() {
+        use nlayer_core::ScreenConfig;
+        let encoded = super::encode(MountBatch {
+            items: vec![MountItem::ScreenConfig {
+                id: 20,
+                config: Box::new(ScreenConfig {
+                    title: Some(Arc::from("Test Screen")),
+                    header_visible: true,
+                    header_transparent: false,
+                    tint_color: Some(Color::rgba(255, 0, 0, 255)),
+                    background_color: None,
+                    title_color: Some(Color::rgba(0, 0, 255, 255)),
+                    back_visible: false,
+                    gesture_enabled: true,
+                    prevent_back: false,
+                    animation: nlayer_core::ScreenAnimation::Fade,
+                    left: Some(100),
+                    right: None,
+                    title_view: Some(101),
+                    header_view: None,
+                    header_height: nlayer_core::geometry::Points(44.0),
+                }),
+            }],
+        });
+        let mut words = read(&encoded);
+        assert_eq!(words.int(), super::SCREEN_CONFIG);
+        assert_eq!(words.int(), 20);
+        assert_eq!(object(&encoded, words.int()), "Test Screen");
+        assert_eq!(words.int(), 1); // header_visible true
+        assert_eq!(words.int(), 0); // header_transparent false
+        assert_eq!(words.int(), 1); // tint_color present
+        assert_eq!(words.int(), 0xFFFF0000u32 as i32); // tint_color ARGB
+        assert_eq!(words.int(), 0); // background_color absent
+        assert_eq!(words.int(), 1); // title_color present
+        assert_eq!(words.int(), 0xFF0000FFu32 as i32); // title_color ARGB
+        assert_eq!(words.int(), 0); // back_visible false
+        assert_eq!(words.int(), 1); // gesture_enabled true
+        assert_eq!(words.int(), 0); // prevent_back false
+        assert_eq!(words.int(), 1); // animation Fade
+        assert_eq!(words.int(), 100); // left id
+        assert_eq!(words.int(), -1); // right id (None)
+        assert_eq!(words.int(), 101); // title_view id
+        assert_eq!(words.float(), 44.0); // header_height
+        assert!(words.done());
+    }
+
+    #[test]
+    fn screen_config_with_absent_title() {
+        use nlayer_core::ScreenConfig;
+        let encoded = super::encode(MountBatch {
+            items: vec![MountItem::ScreenConfig {
+                id: 21,
+                config: Box::new(ScreenConfig {
+                    title: None,
+                    ..ScreenConfig::default()
+                }),
+            }],
+        });
+        let mut words = read(&encoded);
+        assert_eq!(words.int(), super::SCREEN_CONFIG);
+        assert_eq!(words.int(), 21);
+        assert_eq!(words.int(), -1); // title absent
+        assert_eq!(words.int(), 1); // header_visible (default true)
+        assert_eq!(words.int(), 0); // header_transparent (default false)
+        assert_eq!(words.int(), 0); // tint_color absent
+        assert_eq!(words.int(), 0); // background_color absent
+        assert_eq!(words.int(), 0); // title_color absent
+        assert_eq!(words.int(), 1); // back_visible (default true)
+        assert_eq!(words.int(), 1); // gesture_enabled (default true)
+        assert_eq!(words.int(), 0); // prevent_back (default false)
+        assert_eq!(words.int(), 0); // animation Default
+        assert_eq!(words.int(), -1); // left absent
+        assert_eq!(words.int(), -1); // right absent
+        assert_eq!(words.int(), -1); // title_view absent
+        assert_eq!(words.float(), 0.0); // header_height (default 0)
+        assert!(words.done());
+    }
+
+    #[test]
+    fn modal_config_encodes_all_fields() {
+        use nlayer_core::ModalConfig;
+        let encoded = super::encode(MountBatch {
+            items: vec![MountItem::ModalConfig {
+                id: 30,
+                config: ModalConfig {
+                    animation: nlayer_core::ModalAnimation::Fade,
+                    presentation: nlayer_core::ModalPresentation::PageSheet,
+                    close_on_escape: false,
+                    close_on_backdrop_press: true,
+                    close_on_swipe: false,
+                },
+            }],
+        });
+        let mut words = read(&encoded);
+        assert_eq!(words.int(), super::MODAL_CONFIG);
+        assert_eq!(words.int(), 30);
+        assert_eq!(words.int(), 1); // animation Fade
+        assert_eq!(words.int(), 1); // presentation PageSheet
+        assert_eq!(words.int(), 0); // close_on_escape false
+        assert_eq!(words.int(), 1); // close_on_backdrop_press true
+        assert_eq!(words.int(), 0); // close_on_swipe false
         assert!(words.done());
     }
 }

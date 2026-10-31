@@ -279,6 +279,7 @@ final class Tree {
 
   private static int idOf(View v) {
     if (v instanceof HostView) return 1;
+    if (v instanceof StackBox) return ((StackBox) v).id;
     if (v instanceof Box) return ((Box) v).id;
     if (v instanceof TextBox) return ((TextBox) v).id;
     if (v instanceof ImageBox) return ((ImageBox) v).id;

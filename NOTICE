@@ -293,3 +293,8 @@ Copied files:
   permission, header appearance, modal presentation and delegates; cut to v3:
   large titles, back titles, system bar items, orientation arrays, status bar
   props and tab bar handling are not copied)
+- `crates/nlayer-platform-android/java/dev/nlayer/android/StackBox.java` from
+  `crates/nsh-platform-android/java/com/longbridge/nsh/StackBox.java` (screen
+  stack, toolbar header, push/pop transitions and predictive-back frames;
+  nsh's native pop and dismiss reporting are replaced by the v3 engine back
+  path, and tab/status-bar handling is not copied)

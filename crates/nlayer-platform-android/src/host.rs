@@ -604,3 +604,55 @@ fn dispatch(handle: jlong, id: jint, event: EventKind, payload: EventPayload) {
         control.dispatch_event(id as NodeId, event, payload);
     }
 }
+
+/// # Safety
+///
+/// `handle` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_screenHeader(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    id: jint,
+    height: jfloat,
+) {
+    if handle == 0 {
+        return;
+    }
+    let host = unsafe { host(handle) };
+    if let Some(control) = host
+        .control
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .as_ref()
+    {
+        control.set_screen_header(id as NodeId, Some(Points(height)));
+    }
+}
+
+/// # Safety
+///
+/// `handle` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_rootInsets(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    id: jint,
+    top: jfloat,
+    right: jfloat,
+    bottom: jfloat,
+    left: jfloat,
+) {
+    dispatch(
+        handle,
+        id,
+        EventKind::Insets,
+        EventPayload::Insets {
+            top,
+            right,
+            bottom,
+            left,
+        },
+    );
+}

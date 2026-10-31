@@ -23,7 +23,7 @@ public final class HostView extends FrameLayout {
   private long handle;
   private String code, assetsDir;
   private boolean apkAssets;
-  private int safeTop, safeRight, safeBottom, safeLeft, keyboard;
+  int safeTop, safeRight, safeBottom, safeLeft, keyboard;
   private boolean served;
   private boolean framePosted;
   private boolean inFrame;

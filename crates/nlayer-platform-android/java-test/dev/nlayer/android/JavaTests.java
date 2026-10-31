@@ -52,6 +52,9 @@ public final class JavaTests extends Instrumentation {
     "testImageObjectPosition",
     "testImageRadiusClips",
     "testImageAssetLoads",
+    "testStackMountsScreensAndHeaders",
+    "testStackPopsAndRunsPredictiveBack",
+    "testScreenHeaderOptions",
   };
 
   @Override
@@ -891,5 +894,312 @@ public final class JavaTests extends Instrumentation {
   private static void position(Batch b, boolean end, float fraction) {
     b.bool(end);
     length(b, fraction);
+  }
+
+  // --- StackBox ------------------------------------------------------------
+
+  void testStackMountsScreensAndHeaders() {
+    Activity activity =
+        startActivitySync(
+            new Intent(context(), HostActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    try {
+      HostView host = main(() -> new HostView(activity));
+      main(
+          () -> {
+            activity.setContentView(host);
+            return null;
+          });
+      waitForIdleSync();
+
+      // First batch: stack with only screen 1 (root)
+      Batch b = batch();
+      b.word(0).word(10).word(5); // create stack
+      b.word(0).word(11).word(6); // create screen 1
+      b.word(1).word(1).word(10).word(-1); // insert stack into root
+      b.word(1).word(10).word(11).word(-1); // insert screen 1 into stack
+      b.word(4).word(10).real(0).real(0).real(200).real(400); // frame stack
+      b.word(4).word(11).real(0).real(0).real(200).real(400); // frame screen 1
+      b.word(20).word(11); // SCREEN_CONFIG for screen 1
+      b.string("Screen 1"); // title
+      b.bool(true); // shown
+      b.bool(false); // transparent
+      b.bool(false); // tint
+      b.bool(false); // background
+      b.bool(false); // titleColor
+      b.bool(true); // backVisible
+      b.bool(true); // gesture
+      b.bool(false); // preventBack
+      b.word(2); // animation=none
+      b.word(-1).word(-1).word(-1); // left, right, titleView
+      b.real(64); // headerHeight
+      main(
+          () -> {
+            host.mounter.apply(b.bytes(), b.objects());
+            return null;
+          });
+
+      StackBox stack = (StackBox) host.mounter.views.get(10);
+      StackBox.ScreenBox screen1 = (StackBox.ScreenBox) host.mounter.views.get(11);
+      check(stack != null && screen1 != null, "views were created");
+      equal(1, stack.screens.size(), "stack has one screen");
+      equal("Screen 1", screen1.toolbar.getTitle(), "root toolbar title");
+      check(screen1.toolbar.getNavigationIcon() == null, "no back arrow on root screen");
+
+      // Second batch: push screen 2 with header item
+      Batch b2 = batch();
+      b2.word(0).word(12).word(6); // create screen 2
+      b2.word(0).word(13).word(8); // create header item (Box)
+      b2.word(0).word(14).word(0); // create content box inside header item
+      b2.word(1).word(10).word(12).word(-1); // insert screen 2 into stack
+      b2.word(1).word(12).word(13).word(-1); // insert header item into screen 2
+      b2.word(1).word(13).word(14).word(-1); // insert content box into header item
+      b2.word(4).word(12).real(0).real(0).real(200).real(400); // frame screen 2
+      b2.word(4).word(13).real(50).real(10).real(40).real(20); // frame header item
+      b2.word(20).word(12); // SCREEN_CONFIG for screen 2
+      b2.string("Title"); // title
+      b2.bool(true); // shown
+      b2.bool(false); // transparent
+      b2.bool(true).word(0xffff0000); // tint
+      b2.bool(false); // background
+      b2.bool(false); // titleColor
+      b2.bool(true); // backVisible
+      b2.bool(true); // gesture
+      b2.bool(false); // preventBack
+      b2.word(2); // animation=none
+      b2.word(-1).word(-1).word(13); // left, right, titleView=13
+      b2.real(64); // headerHeight
+      main(
+          () -> {
+            host.mounter.apply(b2.bytes(), b2.objects());
+            return null;
+          });
+
+      StackBox.ScreenBox screen2 = (StackBox.ScreenBox) host.mounter.views.get(12);
+      Box headerItem = (Box) host.mounter.views.get(13);
+      check(screen2 != null, "screen 2 created");
+      equal(2, stack.screens.size(), "stack has two screens");
+      equal(null, screen2.toolbar.getTitle(), "a custom title view replaces the title text");
+      equal(View.VISIBLE, screen2.toolbar.getVisibility(), "toolbar visible");
+      check(screen2.toolbar.getNavigationIcon() != null, "back arrow shown on pushed screen");
+      check(headerItem.getParent() == screen2.toolbar, "header item parent is toolbar");
+      int[] sizes = host.mounter.headerSizes.get(13);
+      check(
+          sizes != null && sizes[0] == Math.round(40 * host.density),
+          "header item size from frame op");
+    } finally {
+      main(
+          () -> {
+            activity.finish();
+            return null;
+          });
+      waitForIdleSync();
+    }
+  }
+
+  void testStackPopsAndRunsPredictiveBack() {
+    Activity activity =
+        startActivitySync(
+            new Intent(context(), HostActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    try {
+      HostView host = main(() -> new HostView(activity));
+      main(
+          () -> {
+            activity.setContentView(host);
+            return null;
+          });
+      waitForIdleSync();
+
+      Batch b = batch();
+      b.word(0).word(10).word(5); // create stack
+      b.word(0).word(11).word(6); // create screen 1
+      b.word(0).word(12).word(6); // create screen 2
+      b.word(0).word(13).word(6); // create screen 3
+      b.word(1).word(1).word(10).word(-1); // insert stack into root
+      b.word(1).word(10).word(11).word(-1); // insert screens
+      b.word(1).word(10).word(12).word(-1);
+      b.word(1).word(10).word(13).word(-1);
+      b.word(4).word(10).real(0).real(0).real(200).real(400); // frame stack
+      b.word(4).word(11).real(0).real(0).real(200).real(400); // frame screens
+      b.word(4).word(12).real(0).real(0).real(200).real(400);
+      b.word(4).word(13).real(0).real(0).real(200).real(400);
+      // Configure all three screens with animation=none
+      for (int i = 11; i <= 13; i++) {
+        b.word(20).word(i);
+        b.word(-1); // no title
+        b.bool(true); // shown
+        b.bool(false); // transparent
+        b.bool(false); // tint
+        b.bool(false); // background
+        b.bool(false); // titleColor
+        b.bool(true); // backVisible
+        b.bool(true); // gesture
+        b.bool(false); // preventBack
+        b.word(2); // animation=none
+        b.word(-1).word(-1).word(-1); // left, right, titleView
+        b.real(64); // headerHeight
+      }
+      main(
+          () -> {
+            host.mounter.apply(b.bytes(), b.objects());
+            return null;
+          });
+
+      StackBox stack = (StackBox) host.mounter.views.get(10);
+      StackBox.ScreenBox screen3 = (StackBox.ScreenBox) host.mounter.views.get(13);
+      check(stack != null && screen3 != null, "stack and screen created");
+      equal(3, stack.depth(), "stack has 3 screens shown");
+
+      // Test predictive back
+      main(
+          () -> {
+            stack.backStarted();
+            stack.backProgressed(0.5f);
+            return null;
+          });
+      check(screen3.getTranslationX() > 0, "screen translated during predictive back");
+
+      // Cancel the back gesture
+      main(
+          () -> {
+            stack.backCancelled();
+            return null;
+          });
+
+      // Wait for animation to settle
+      long deadline = System.currentTimeMillis() + 2000;
+      while (screen3.getTranslationX() != 0 && System.currentTimeMillis() < deadline) {
+        waitForIdleSync();
+        try {
+          Thread.sleep(50);
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+        }
+      }
+      equal(0f, screen3.getTranslationX(), "translation returns to 0 after cancel");
+
+      // Remove the top screen
+      Batch remove = batch();
+      remove.word(2).word(13); // REMOVE screen 3
+      main(
+          () -> {
+            host.mounter.apply(remove.bytes(), remove.objects());
+            return null;
+          });
+
+      equal(2, stack.depth(), "stack has 2 screens after removal");
+      check(!stack.screens.contains(13), "removed screen left the stack");
+    } finally {
+      main(
+          () -> {
+            activity.finish();
+            return null;
+          });
+      waitForIdleSync();
+    }
+  }
+
+  void testScreenHeaderOptions() {
+    Activity activity =
+        startActivitySync(
+            new Intent(context(), HostActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    try {
+      HostView host = main(() -> new HostView(activity));
+      main(
+          () -> {
+            activity.setContentView(host);
+            return null;
+          });
+      waitForIdleSync();
+
+      Batch b = batch();
+      b.word(0).word(10).word(5); // create stack
+      b.word(0).word(11).word(6); // create screen 1
+      b.word(0).word(12).word(6); // create screen 2
+      b.word(1).word(1).word(10).word(-1); // insert stack into root
+      b.word(1).word(10).word(11).word(-1); // insert screens
+      b.word(1).word(10).word(12).word(-1);
+      b.word(4).word(10).real(0).real(0).real(200).real(400); // frame stack
+      b.word(4).word(11).real(0).real(0).real(200).real(400); // frame screens
+      b.word(4).word(12).real(0).real(0).real(200).real(400);
+      // Configure screen 2 with headerVisible=false
+      b.word(20).word(12);
+      b.word(-1); // no title
+      b.bool(false); // shown=false (header hidden)
+      b.bool(false); // transparent
+      b.bool(false); // tint
+      b.bool(false); // background
+      b.bool(false); // titleColor
+      b.bool(true); // backVisible
+      b.bool(true); // gesture
+      b.bool(false); // preventBack
+      b.word(0); // animation=slide
+      b.word(-1).word(-1).word(-1); // left, right, titleView
+      b.real(64); // headerHeight
+      main(
+          () -> {
+            host.mounter.apply(b.bytes(), b.objects());
+            return null;
+          });
+
+      StackBox stack = (StackBox) host.mounter.views.get(10);
+      StackBox.ScreenBox screen2 = (StackBox.ScreenBox) host.mounter.views.get(12);
+      check(stack != null && screen2 != null, "stack and screen created");
+      equal(View.GONE, screen2.toolbar.getVisibility(), "toolbar hidden when shown=false");
+
+      // Test transparent background
+      Batch b2 = batch();
+      b2.word(20).word(12);
+      b2.word(-1); // no title
+      b2.bool(true); // shown=true
+      b2.bool(true); // transparent=true
+      b2.bool(false); // tint
+      b2.bool(false); // background
+      b2.bool(false); // titleColor
+      b2.bool(true); // backVisible
+      b2.bool(true); // gesture
+      b2.bool(false); // preventBack
+      b2.word(0); // animation
+      b2.word(-1).word(-1).word(-1); // left, right, titleView
+      b2.real(64); // headerHeight
+      main(
+          () -> {
+            host.mounter.apply(b2.bytes(), b2.objects());
+            return null;
+          });
+      equal(0, screen2.toolbar.getBackground().getAlpha(), "transparent toolbar background");
+
+      // Test preventBack=true, gesture=false
+      Batch b3 = batch();
+      b3.word(20).word(12);
+      b3.word(-1); // no title
+      b3.bool(true); // shown
+      b3.bool(false); // transparent
+      b3.bool(false); // tint
+      b3.bool(false); // background
+      b3.bool(false); // titleColor
+      b3.bool(false); // backVisible=false
+      b3.bool(false); // gesture=false
+      b3.bool(true); // preventBack=true
+      b3.word(0); // animation
+      b3.word(-1).word(-1).word(-1); // left, right, titleView
+      b3.real(64); // headerHeight
+      main(
+          () -> {
+            host.mounter.apply(b3.bytes(), b3.objects());
+            return null;
+          });
+      check(
+          screen2.toolbar.getNavigationIcon() == null, "no navigation icon when backVisible=false");
+      check(!stack.canPop(), "canPop false when the top screen prevents back");
+      check(!stack.canSwipe(), "canSwipe false when gesture=false");
+      check(stack.preventsBack(), "preventsBack true when preventBack=true");
+    } finally {
+      main(
+          () -> {
+            activity.finish();
+            return null;
+          });
+      waitForIdleSync();
+    }
   }
 }
