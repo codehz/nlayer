@@ -38,8 +38,9 @@ pub use mount::{
 pub use ops::{
     Accessibility, AccessibilityProp, AccessibilityRole, AccessibilityState, AccessibilityValue,
     CellSlot, Checked, Command, EventKind, HeaderSlot, IMAGE_SCALES, ImageScales, ImageSource,
-    Interaction, KeyboardDismiss, KeyboardTaps, KeyboardType, ModalAnimation, ModalPresentation,
-    ModalProp, Op, Prop, ScreenAnimation, ScreenProp, Tag,
+    Interaction, KeyboardDismiss, KeyboardTaps, KeyboardType, ListViewport, MaintainPosition,
+    ModalAnimation, ModalPresentation, ModalProp, Op, Prop, ScreenAnimation, ScreenProp, Tag,
+    Viewability,
 };
 pub use platform::ColorScheme;
 pub use style::Color;

@@ -309,6 +309,11 @@ fn render(cx: *mut JsContext, props: JsValue) -> Result<JsValue, JsValue> {
             "numColumns",
             "initialScrollIndex",
             "loadMoreThreshold",
+            "stickyHeaderIndices",
+            "inverted",
+            "maintainVisibleContentPosition",
+            "viewport",
+            "viewabilityConfig",
         ],
     )
     .map_err(fail)?;
@@ -322,6 +327,42 @@ fn render(cx: *mut JsContext, props: JsValue) -> Result<JsValue, JsValue> {
         // SAFETY: ours.
         unsafe { qjs::JS_FreeValue(cx, value) };
         set_number(cx, node, name, n).map_err(fail)?;
+    }
+    
+    // List structure props
+    let inverted = get(cx, props, "inverted");
+    if unsafe { qjs::JS_ToBool(cx, inverted) == 1 } {
+        set(cx, node, "inverted", inverted).map_err(fail)?;
+    } else {
+        unsafe { qjs::JS_FreeValue(cx, inverted) };
+    }
+    
+    let sticky = get(cx, props, "stickyHeaderIndices");
+    if !unsafe { qjs::JS_IsUndefined(sticky) } {
+        set(cx, node, "stickyHeaderIndices", sticky).map_err(fail)?;
+    } else {
+        unsafe { qjs::JS_FreeValue(cx, sticky) };
+    }
+    
+    let maintain = get(cx, props, "maintainVisibleContentPosition");
+    if !unsafe { qjs::JS_IsUndefined(maintain) } {
+        set(cx, node, "maintainVisibleContentPosition", maintain).map_err(fail)?;
+    } else {
+        unsafe { qjs::JS_FreeValue(cx, maintain) };
+    }
+    
+    let viewport_prop = get(cx, props, "viewport");
+    if !unsafe { qjs::JS_IsUndefined(viewport_prop) } {
+        set(cx, node, "viewport", viewport_prop).map_err(fail)?;
+    } else {
+        unsafe { qjs::JS_FreeValue(cx, viewport_prop) };
+    }
+    
+    let viewability = get(cx, props, "viewabilityConfig");
+    if !unsafe { qjs::JS_IsUndefined(viewability) } {
+        set(cx, node, "viewabilityConfig", viewability).map_err(fail)?;
+    } else {
+        unsafe { qjs::JS_FreeValue(cx, viewability) };
     }
     // Header and footer cells always; the empty one only without items.
     for (role, key) in [("header", "header"), ("footer", "footer")] {

@@ -208,6 +208,63 @@ pub(crate) fn decode_prop<'js>(
                 inserted: n(2),
             }
         }
+        (Some(Tag::List), "stickyHeaderIndices") => {
+            if let Some(array) = value.as_array() {
+                let mut indices = Vec::new();
+                for i in 0..array.len() {
+                    if let Some(n) = array.get::<f64>(i).ok() {
+                        indices.push(n.max(0.0) as u32);
+                    }
+                }
+                Prop::StickyHeaderIndices(Some(indices.into_boxed_slice()))
+            } else {
+                Prop::StickyHeaderIndices(None)
+            }
+        }
+        (Some(Tag::List), "inverted") => {
+            Prop::Inverted(value.as_bool().unwrap_or(false))
+        }
+        (Some(Tag::List), "maintainVisibleContentPosition") => {
+            if let Some(obj) = value.as_object() {
+                let threshold = obj.get::<&str, f64>("autoscrollToBottomThreshold")
+                    .ok()
+                    .map(|t| t.clamp(0.0, 1.0) as f32);
+                let min_index = obj.get::<&str, f64>("minIndexForVisible")
+                    .ok()
+                    .unwrap_or(0.0)
+                    .max(0.0) as u32;
+                Prop::MaintainVisibleContentPosition(Some(nlayer_core::MaintainPosition {
+                    min_index_for_visible: min_index,
+                    autoscroll_to_bottom_threshold: threshold,
+                }))
+            } else {
+                Prop::MaintainVisibleContentPosition(None)
+            }
+        }
+        (Some(Tag::List), "viewport") => {
+            let s = string(&value).unwrap_or_default();
+            let vp = match s.as_str() {
+                "parent" => nlayer_core::ListViewport::Parent,
+                _ => nlayer_core::ListViewport::Own,
+            };
+            Prop::Viewport(vp)
+        }
+        (Some(Tag::List), "viewabilityConfig") => {
+            if let Some(obj) = value.as_object() {
+                let coverage = obj.get::<&str, f64>("viewAreaCoverageThreshold")
+                    .ok()
+                    .map(|c| c.clamp(0.0, 1.0) as f32);
+                let visible = obj.get::<&str, f64>("itemVisibleThreshold")
+                    .ok()
+                    .map(|v| v.clamp(0.0, 1.0) as f32);
+                Prop::ViewabilityConfig(Some(nlayer_core::Viewability {
+                    view_area_coverage_threshold: coverage,
+                    item_visible_threshold: visible,
+                }))
+            } else {
+                Prop::ViewabilityConfig(None)
+            }
+        }
         (Some(Tag::Cell), "slot") => {
             let slot = if let Some(n) = value.as_number() {
                 CellSlot::Item(n.max(0.0) as u32)
