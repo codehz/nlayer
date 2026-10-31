@@ -578,6 +578,7 @@ fn manifest_xml() -> String {
     <uses-permission android:name="android.permission.INTERNET" />
     <application android:label="nlayer" android:usesCleartextTraffic="true"
         android:extractNativeLibs="false" android:supportsRtl="true"
+        android:enableOnBackInvokedCallback="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity android:name="{ACTIVITY}" android:exported="true"
             android:windowSoftInputMode="adjustNothing"

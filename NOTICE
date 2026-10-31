@@ -298,3 +298,7 @@ Copied files:
   stack, toolbar header, push/pop transitions and predictive-back frames;
   nsh's native pop and dismiss reporting are replaced by the v3 engine back
   path, and tab/status-bar handling is not copied)
+- `crates/nlayer-platform-android/java/dev/nlayer/android/ModalHost.java` from
+  `crates/nsh-platform-android/java/com/longbridge/nsh/ModalHost.java` (dialog
+  window, edge-to-edge insets, slide/fade presentation, back handling; v3 keeps
+  the engine-owned back/close path and drops status-bar/touch-tracker plumbing)

@@ -61,6 +61,18 @@ final class Native {
   static native void rootInsets(
       long handle, int id, float top, float right, float bottom, float left);
 
+  static native void rootSize(
+      long handle,
+      int id,
+      float width,
+      float height,
+      float top,
+      float right,
+      float bottom,
+      float left);
+
+  static native void modalShow(long handle, int id);
+
   private Native() {}
 
   static void sendPress(android.view.View view, int id) {

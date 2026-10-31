@@ -656,3 +656,64 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_rootInsets(
         },
     );
 }
+
+/// # Safety
+///
+/// `handle` is live. Sizes and insets are points.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_rootSize(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    id: jint,
+    width: jfloat,
+    height: jfloat,
+    top: jfloat,
+    right: jfloat,
+    bottom: jfloat,
+    left: jfloat,
+) {
+    if handle == 0 {
+        return;
+    }
+    let host = unsafe { host(handle) };
+    let control = host.control.lock().unwrap_or_else(|err| err.into_inner());
+    if let Some(control) = control.as_ref() {
+        control.set_root_size(
+            id as NodeId,
+            Size::new(Points(width), Points(height)),
+            Edges {
+                top: Points(top),
+                right: Points(right),
+                bottom: Points(bottom),
+                left: Points(left),
+            },
+        );
+        control.dispatch_event(
+            id as NodeId,
+            EventKind::Insets,
+            EventPayload::Insets {
+                top,
+                right,
+                bottom,
+                left,
+            },
+        );
+    }
+}
+
+/// # Safety
+///
+/// `handle` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_modalShow(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    id: jint,
+) {
+    if handle == 0 {
+        return;
+    }
+    dispatch(handle, id, EventKind::Show, EventPayload::None);
+}

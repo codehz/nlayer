@@ -11,6 +11,8 @@ import android.view.View;
 import android.view.ViewTreeObserver;
 import android.view.Window;
 import android.view.WindowInsets;
+import android.window.OnBackInvokedCallback;
+import android.window.OnBackInvokedDispatcher;
 import java.io.File;
 import java.nio.file.Files;
 
@@ -18,6 +20,8 @@ public class HostActivity extends Activity {
   private HostView host;
   private int safeTop, safeRight, safeBottom, safeLeft, keyboard = -1;
   private boolean dark;
+  private StackBox gesture;
+  private Object backCallback;
 
   @Override
   protected void onCreate(Bundle state) {
@@ -86,6 +90,51 @@ public class HostActivity extends Activity {
             }
           }
         });
+    // API 33+ predictive back: the engine routes back through the stack.
+    if (Build.VERSION.SDK_INT >= 34) {
+      backCallback =
+          new android.window.OnBackAnimationCallback() {
+            @Override
+            public void onBackStarted(android.window.BackEvent e) {
+              gesture = host.mounter.backStack();
+              if (gesture != null) gesture.backStarted();
+            }
+
+            @Override
+            public void onBackProgressed(android.window.BackEvent e) {
+              if (gesture != null) gesture.backProgressed(e.getProgress());
+            }
+
+            @Override
+            public void onBackCancelled() {
+              if (gesture != null) {
+                gesture.backCancelled();
+                gesture = null;
+              }
+            }
+
+            @Override
+            public void onBackInvoked() {
+              gesture = null;
+              if (host != null) host.back();
+            }
+          };
+      getOnBackInvokedDispatcher()
+          .registerOnBackInvokedCallback(
+              OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+              (android.window.OnBackAnimationCallback) backCallback);
+    } else if (Build.VERSION.SDK_INT >= 33) {
+      backCallback =
+          new OnBackInvokedCallback() {
+            @Override
+            public void onBackInvoked() {
+              if (host != null) host.back();
+            }
+          };
+      getOnBackInvokedDispatcher()
+          .registerOnBackInvokedCallback(
+              OnBackInvokedDispatcher.PRIORITY_DEFAULT, (OnBackInvokedCallback) backCallback);
+    }
   }
 
   static boolean isDark(Configuration config) {
@@ -188,6 +237,13 @@ public class HostActivity extends Activity {
 
   @Override
   protected void onDestroy() {
+    if (Build.VERSION.SDK_INT >= 34 && backCallback != null) {
+      getOnBackInvokedDispatcher()
+          .unregisterOnBackInvokedCallback((android.window.OnBackAnimationCallback) backCallback);
+    } else if (Build.VERSION.SDK_INT >= 33 && backCallback != null) {
+      getOnBackInvokedDispatcher()
+          .unregisterOnBackInvokedCallback((OnBackInvokedCallback) backCallback);
+    }
     if (host != null) host.destroy();
     super.onDestroy();
   }

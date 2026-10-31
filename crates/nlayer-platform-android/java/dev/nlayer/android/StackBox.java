@@ -411,6 +411,23 @@ final class StackBox extends FrameLayout {
       Native.rootInsets(handle, id, top, right, bottom, left);
     }
 
+    /** Called when host insets change after the screen is mounted. */
+    void insetsChanged() {
+      int height = toolbar.getLayoutParams().height;
+      int bar = Math.round(56 * mounter.density);
+      toolbar.setPadding(0, Math.max(0, height - bar), 0, 0);
+      reportHeader();
+      reportInsets();
+      requestLayout();
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+      super.onAttachedToWindow();
+      reportHeader();
+      reportInsets();
+    }
+
     /**
      * What the up arrow reads as: the system's own words for it (the action bar's, not in the
      * public resources).

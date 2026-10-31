@@ -220,6 +220,13 @@ public final class HostView extends FrameLayout {
     keyboard = k;
     if (handle != 0)
       Native.insets(handle, t / density, r / density, b / density, l / density, k / density);
+    // Notify screens of inset changes
+    for (int i = 0; i < mounter.views.size(); i++) {
+      android.view.View view = mounter.views.valueAt(i);
+      if (view instanceof StackBox.ScreenBox) {
+        ((StackBox.ScreenBox) view).insetsChanged();
+      }
+    }
   }
 
   /** The system's color scheme changed (`onConfigurationChanged`). */

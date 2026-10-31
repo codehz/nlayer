@@ -28,6 +28,14 @@ final class Mounter {
     float headerHeight;
   }
 
+  static final class ModalOptions {
+    int animation;
+    int presentation;
+    boolean closeOnEscape;
+    boolean closeOnBackdropPress;
+    boolean closeOnSwipe;
+  }
+
   private static final int CREATE = 0,
       INSERT = 1,
       REMOVE = 2,
@@ -48,7 +56,8 @@ final class Mounter {
       COMMAND = 17,
       ACCESSIBILITY = 18,
       LONG_PRESS_DELAY = 19,
-      SCREEN_CONFIG = 20;
+      SCREEN_CONFIG = 20,
+      MODAL_CONFIG = 21;
   final HostView host;
   final float density;
   final SparseArray<View> views = new SparseArray<>();
@@ -67,9 +76,12 @@ final class Mounter {
   final SparseArray<Boolean> longFired = new SparseArray<>();
   final SparseArray<Runnable> longRuns = new SparseArray<>();
   final SparseArray<ScreenOptions> screenOptions = new SparseArray<>();
+  final SparseArray<ModalOptions> modalOptions = new SparseArray<>();
   final SparseArray<int[]> headerSizes = new SparseArray<>();
+  final SparseArray<ModalHost> modals = new SparseArray<>();
   final java.util.LinkedHashSet<Integer> dirtyStacks = new java.util.LinkedHashSet<>();
   final java.util.LinkedHashSet<Integer> dirtyScreens = new java.util.LinkedHashSet<>();
+  final java.util.LinkedHashSet<Integer> dirtyModals = new java.util.LinkedHashSet<>();
   final android.util.SparseIntArray hosts = new android.util.SparseIntArray();
   final java.util.ArrayList<Integer> stacks = new java.util.ArrayList<>();
   final java.util.HashSet<Integer> headerItems = new java.util.HashSet<>();
@@ -149,6 +161,9 @@ final class Mounter {
           break;
         case SCREEN_CONFIG:
           screenConfig(b, objects);
+          break;
+        case MODAL_CONFIG:
+          modalConfig(b);
           break;
         default:
           throw new IllegalArgumentException("Unknown nlayer opcode");
@@ -313,6 +328,11 @@ final class Mounter {
       case 6:
         v = new StackBox.ScreenBox(host.getContext(), this, id);
         break;
+      case 7:
+        ModalHost modal = new ModalHost(host.getContext(), this, id);
+        modals.put(id, modal);
+        v = modal.root;
+        break;
       case 8:
         v = new Box(host.getContext(), this, id);
         headerItems.add(id);
@@ -348,6 +368,12 @@ final class Mounter {
 
   private void insert(int parent, int child, int before) {
     View p = views.get(parent), c = views.get(child);
+    // Modal into host
+    if (modals.get(child) != null) {
+      hosts.put(child, parent);
+      dirtyModals.add(child);
+      return;
+    }
     // ScreenBox into StackBox
     if (c instanceof StackBox.ScreenBox && p instanceof StackBox) {
       StackBox stack = (StackBox) p;
@@ -392,7 +418,7 @@ final class Mounter {
   }
 
   private void remove(int id) {
-    // Handle hosted children (screens in stacks, header items in screens)
+    // Handle hosted children (screens in stacks, header items in screens, modals)
     if (hosts.indexOfKey(id) >= 0) {
       int parentId = hosts.get(id);
       View parent = views.get(parentId);
@@ -400,6 +426,9 @@ final class Mounter {
         StackBox stack = (StackBox) parent;
         stack.screens.remove((Integer) id);
         dirtyStacks.add(parentId);
+      }
+      if (modals.get(id) != null) {
+        dirtyModals.add(id);
       }
       if (headerItems.contains(id)) {
         View v = views.get(id);
@@ -418,6 +447,12 @@ final class Mounter {
 
   private void delete(int id) {
     if (id == 1) return;
+    ModalHost modal = modals.get(id);
+    if (modal != null) {
+      modal.dismiss();
+      modals.remove(id);
+      modalOptions.remove(id);
+    }
     remove(id);
     views.remove(id);
     events.remove(id);
@@ -902,6 +937,26 @@ final class Mounter {
     }
   }
 
+  private void modalConfig(ByteBuffer b) {
+    int id = b.getInt();
+    ModalOptions opts = new ModalOptions();
+    opts.animation = b.getInt();
+    opts.presentation = b.getInt();
+    opts.closeOnEscape = b.getInt() != 0;
+    opts.closeOnBackdropPress = b.getInt() != 0;
+    opts.closeOnSwipe = b.getInt() != 0;
+    modalOptions.put(id, opts);
+    ModalHost modal = modals.get(id);
+    if (modal != null) {
+      modal.configure(
+          opts.animation,
+          opts.presentation,
+          opts.closeOnEscape,
+          opts.closeOnBackdropPress,
+          opts.closeOnSwipe);
+    }
+  }
+
   private void finishNavigation() {
     // Reconcile dirty stacks and mark their screens dirty
     for (int stackId : dirtyStacks) {
@@ -914,6 +969,7 @@ final class Mounter {
         }
       }
     }
+
     dirtyStacks.clear();
     // Configure dirty screens
     for (int screenId : dirtyScreens) {
@@ -951,10 +1007,35 @@ final class Mounter {
           opts.headerHeight,
           canGoBack);
     }
+    // Handle dirty modals
+    for (int modalId : dirtyModals) {
+      ModalHost modal = modals.get(modalId);
+      if (modal == null) continue;
+      ModalOptions opts = modalOptions.get(modalId);
+      if (opts != null) {
+        modal.configure(
+            opts.animation,
+            opts.presentation,
+            opts.closeOnEscape,
+            opts.closeOnBackdropPress,
+            opts.closeOnSwipe);
+      }
+      if (hosts.indexOfKey(modalId) >= 0) {
+        modal.show();
+      } else {
+        modal.dismiss();
+      }
+    }
+    dirtyModals.clear();
     dirtyScreens.clear();
   }
 
   StackBox backStack() {
+    // Return null when any modal is shown (no predictive back under dialogs)
+    for (int i = 0; i < modals.size(); i++) {
+      ModalHost modal = modals.valueAt(i);
+      if (modal.shown()) return null;
+    }
     for (int i = stacks.size() - 1; i >= 0; i--) {
       View v = views.get(stacks.get(i));
       if (v instanceof StackBox) {

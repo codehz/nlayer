@@ -55,6 +55,8 @@ public final class JavaTests extends Instrumentation {
     "testStackMountsScreensAndHeaders",
     "testStackPopsAndRunsPredictiveBack",
     "testScreenHeaderOptions",
+    "testModalPresentsAndDismisses",
+    "testModalConfigurationAndBackStack",
   };
 
   @Override
@@ -1193,6 +1195,199 @@ public final class JavaTests extends Instrumentation {
       check(!stack.canPop(), "canPop false when the top screen prevents back");
       check(!stack.canSwipe(), "canSwipe false when gesture=false");
       check(stack.preventsBack(), "preventsBack true when preventBack=true");
+    } finally {
+      main(
+          () -> {
+            activity.finish();
+            return null;
+          });
+      waitForIdleSync();
+    }
+  }
+
+  // --- Modals --------------------------------------------------------------
+
+  void testModalPresentsAndDismisses() {
+    Activity activity =
+        startActivitySync(
+            new Intent(context(), HostActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    try {
+      HostView host = main(() -> new HostView(activity));
+      main(
+          () -> {
+            activity.setContentView(host);
+            return null;
+          });
+      waitForIdleSync();
+      Batch b = batch();
+      int modalId = 10;
+      int contentId = 11;
+      // Create modal and content
+      b.word(0).word(modalId).word(7); // create modal kind 7
+      b.word(0).word(contentId).word(0); // create content Box
+      b.word(1).word(1).word(modalId).word(-1); // insert modal into root
+      b.word(1).word(modalId).word(contentId).word(-1); // insert content into modal
+      b.word(4).word(modalId).real(0).real(0).real(200).real(300); // frame the modal
+      b.word(4).word(contentId).real(10).real(10).real(100).real(100); // frame content
+      b.word(21)
+          .word(modalId)
+          .word(2)
+          .word(0)
+          .word(1)
+          .word(1)
+          .word(1); // MODAL_CONFIG: animation=2 none, presentation=0, all close flags true
+      main(
+          () -> {
+            host.mounter.apply(b.bytes(), b.objects());
+            return null;
+          });
+      waitForIdleSync();
+
+      ModalHost modal = main(() -> host.mounter.modals.get(modalId));
+      check(modal != null, "modal created");
+      check(modal.shown(), "modal is shown");
+      check(modal.dialog != null && modal.dialog.isShowing(), "dialog is showing");
+
+      Box content = (Box) host.mounter.views.get(contentId);
+      check(content != null, "content exists");
+      // Verify content's parent chain reaches the modal's container
+      check(content.getParent() == modal.root, "content parent is the modal root");
+      check(modal.root.getParent() != null, "modal root is attached to its window");
+
+      // Now remove the modal
+      Batch b2 = batch();
+      b2.word(2).word(modalId); // REMOVE modal
+      main(
+          () -> {
+            host.mounter.apply(b2.bytes(), b2.objects());
+            return null;
+          });
+      waitForIdleSync();
+
+      check(!modal.shown(), "modal no longer shown after remove");
+    } finally {
+      main(
+          () -> {
+            activity.finish();
+            return null;
+          });
+      waitForIdleSync();
+    }
+  }
+
+  void testModalConfigurationAndBackStack() {
+    Activity activity =
+        startActivitySync(
+            new Intent(context(), HostActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    try {
+      HostView host = main(() -> new HostView(activity));
+      main(
+          () -> {
+            activity.setContentView(host);
+            return null;
+          });
+      waitForIdleSync();
+      Batch b = batch();
+      int stackId = 20;
+      int screen1Id = 21;
+      int screen2Id = 22;
+      int modalId = 23;
+      // Create stack with two screens
+      b.word(0).word(stackId).word(5); // create stack
+      b.word(0).word(screen1Id).word(6); // create screen
+      b.word(0).word(screen2Id).word(6); // create screen
+      b.word(1).word(1).word(stackId).word(-1); // insert stack into root
+      b.word(1).word(stackId).word(screen1Id).word(-1); // insert screen1
+      b.word(1).word(stackId).word(screen2Id).word(-1); // insert screen2
+      b.word(4).word(stackId).real(0).real(0).real(300).real(400);
+      // Configure screens
+      b.word(20)
+          .word(screen1Id)
+          .word(-1)
+          .word(1)
+          .word(0)
+          .word(0)
+          .word(0)
+          .word(0)
+          .word(1)
+          .word(1)
+          .word(0)
+          .word(0)
+          .word(-1)
+          .word(-1)
+          .word(-1)
+          .real(0);
+      b.word(20)
+          .word(screen2Id)
+          .word(-1)
+          .word(1)
+          .word(0)
+          .word(0)
+          .word(0)
+          .word(0)
+          .word(1)
+          .word(1)
+          .word(0)
+          .word(0)
+          .word(-1)
+          .word(-1)
+          .word(-1)
+          .real(0);
+      // Create modal
+      b.word(0).word(modalId).word(7);
+      b.word(1).word(1).word(modalId).word(-1); // insert modal into root
+      b.word(4).word(modalId).real(0).real(0).real(200).real(200);
+      b.word(21).word(modalId).word(2).word(0).word(1).word(1).word(1); // MODAL_CONFIG
+      main(
+          () -> {
+            host.mounter.apply(b.bytes(), b.objects());
+            return null;
+          });
+      waitForIdleSync();
+
+      // With modal shown, backStack should return null
+      StackBox backStack = main(() -> host.mounter.backStack());
+      check(backStack == null, "backStack returns null when modal is shown");
+
+      // Remove modal
+      Batch b2 = batch();
+      b2.word(2).word(modalId);
+      main(
+          () -> {
+            host.mounter.apply(b2.bytes(), b2.objects());
+            return null;
+          });
+      waitForIdleSync();
+
+      // Now backStack should return the stack
+      StackBox stack = main(() -> host.mounter.backStack());
+      check(stack != null, "backStack returns stack after modal removed");
+      equal(stackId, main(() -> stack.id), "correct stack returned");
+
+      // Reconfigure modal with different settings
+      Batch b3 = batch();
+      b3.word(0).word(modalId).word(7); // recreate modal
+      b3.word(1).word(1).word(modalId).word(-1);
+      b3.word(4).word(modalId).real(0).real(0).real(200).real(200);
+      b3.word(21)
+          .word(modalId)
+          .word(1)
+          .word(0)
+          .word(0)
+          .word(1)
+          .word(1); // animation=1 fade, closeOnEscape=false
+      main(
+          () -> {
+            host.mounter.apply(b3.bytes(), b3.objects());
+            return null;
+          });
+      waitForIdleSync();
+
+      ModalHost modal = main(() -> host.mounter.modals.get(modalId));
+      equal(1, main(() -> modal.animation), "animation is fade");
+      equal(false, main(() -> modal.closeOnEscape), "closeOnEscape is false");
+      equal(true, main(() -> modal.closeOnBackdropPress), "closeOnBackdropPress is true");
+      equal(true, main(() -> modal.closeOnSwipe), "closeOnSwipe is true");
     } finally {
       main(
           () -> {
