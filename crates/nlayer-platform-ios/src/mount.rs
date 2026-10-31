@@ -227,6 +227,16 @@ define_class!(
             });
         }
 
+        #[unsafe(method(gestureRecognizer:shouldRecognizeSimultaneouslyWithGestureRecognizer:))]
+        fn should_recognize_simultaneously(
+            &self,
+            _gesture: &UIGestureRecognizer,
+            _other: &UIGestureRecognizer,
+        ) -> bool {
+            // Allow pan/pinch/rotation to run simultaneously
+            true
+        }
+
         #[unsafe(method(edited:))]
         fn edited(&self, sender: &AnyObject) {
             let Some(field) = sender.downcast_ref::<Field>() else {
@@ -2612,25 +2622,13 @@ impl Mounter {
         velocity: CGPoint,
     ) {
         let Some(slot) = self.slot(id) else { return };
+        let (pan_x, pan_y) = slot.pan_nodes;
         let events = slot.events;
-        let bindings = slot.bindings.clone();
 
         if state == UIGestureRecognizerState::Began {
-            // Read current values and stop animations
-            let x = bindings
-                .iter()
-                .find(|(prop, _)| {
-                    matches!(prop, nlayer_core::animation::AnimationProp::Transform(0))
-                })
-                .map(|(_, node)| self.animator.value(*node))
-                .unwrap_or(0.0);
-            let y = bindings
-                .iter()
-                .find(|(prop, _)| {
-                    matches!(prop, nlayer_core::animation::AnimationProp::Transform(1))
-                })
-                .map(|(_, node)| self.animator.value(*node))
-                .unwrap_or(0.0);
+            // Read current values and stop animations (set does both)
+            let x = pan_x.map(|n| self.animator.value(n)).unwrap_or(0.0);
+            let y = pan_y.map(|n| self.animator.value(n)).unwrap_or(0.0);
 
             if let Some(slot) = self.slot_mut(id) {
                 slot.gesture_start[0] = x;
@@ -2654,16 +2652,11 @@ impl Mounter {
             UIGestureRecognizerState::Began | UIGestureRecognizerState::Changed
         ) {
             let start = self.slot(id).map_or([0.0; 4], |s| s.gesture_start);
-            for (prop, node) in &bindings {
-                match prop {
-                    nlayer_core::animation::AnimationProp::Transform(0) => {
-                        self.animator.set(*node, start[0] + translation.x as f32);
-                    }
-                    nlayer_core::animation::AnimationProp::Transform(1) => {
-                        self.animator.set(*node, start[1] + translation.y as f32);
-                    }
-                    _ => {}
-                }
+            if let Some(n) = pan_x {
+                self.animator.set(n, start[0] + translation.x as f32);
+            }
+            if let Some(n) = pan_y {
+                self.animator.set(n, start[1] + translation.y as f32);
             }
             self.apply_animations();
         }
@@ -2673,20 +2666,8 @@ impl Mounter {
             UIGestureRecognizerState::Ended | UIGestureRecognizerState::Cancelled
         ) && events.contains(EventKind::PanEnd)
         {
-            let x = bindings
-                .iter()
-                .find(|(prop, _)| {
-                    matches!(prop, nlayer_core::animation::AnimationProp::Transform(0))
-                })
-                .map(|(_, node)| self.animator.value(*node))
-                .unwrap_or(0.0);
-            let y = bindings
-                .iter()
-                .find(|(prop, _)| {
-                    matches!(prop, nlayer_core::animation::AnimationProp::Transform(1))
-                })
-                .map(|(_, node)| self.animator.value(*node))
-                .unwrap_or(0.0);
+            let x = pan_x.map(|n| self.animator.value(n)).unwrap_or(0.0);
+            let y = pan_y.map(|n| self.animator.value(n)).unwrap_or(0.0);
 
             let payload = EventPayload::Pan {
                 translation: (translation.x as f32, translation.y as f32),
@@ -2707,12 +2688,8 @@ impl Mounter {
         velocity: f32,
     ) {
         let Some(slot) = self.slot(id) else { return };
+        let node = slot.pinch_node;
         let events = slot.events;
-        let bindings = slot.bindings.clone();
-        let node = bindings
-            .iter()
-            .find(|(prop, _)| matches!(prop, nlayer_core::animation::AnimationProp::Transform(0)))
-            .map(|(_, n)| *n);
 
         if state == UIGestureRecognizerState::Began {
             let start = node.map(|n| self.animator.value(n)).unwrap_or(1.0);
@@ -2768,12 +2745,8 @@ impl Mounter {
         velocity: f32,
     ) {
         let Some(slot) = self.slot(id) else { return };
+        let node = slot.rotation_node;
         let events = slot.events;
-        let bindings = slot.bindings.clone();
-        let node = bindings
-            .iter()
-            .find(|(prop, _)| matches!(prop, nlayer_core::animation::AnimationProp::Transform(0)))
-            .map(|(_, n)| *n);
 
         if state == UIGestureRecognizerState::Began {
             let start = node.map(|n| self.animator.value(n)).unwrap_or(0.0);
