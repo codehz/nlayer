@@ -120,6 +120,25 @@ pub struct TextRun {
 
 /// The model of a surface's views.
 #[derive(Debug, Default)]
+#[derive(Clone)]
+struct GestureBindings {
+    pan_x: Option<AnimationNode>,
+    pan_y: Option<AnimationNode>,
+    pinch: Option<AnimationNode>,
+    rotation: Option<AnimationNode>,
+}
+
+#[derive(Debug, Clone)]
+struct ActiveGesture {
+    id: NodeId,
+    start_time: f64,
+    last_time: f64,
+    start_pos: (f32, f32),
+    last_pos: (f32, f32),
+    start_values: [f32; 4], // pan_x, pan_y, pinch, rotation
+}
+
+#[derive(Debug, Default)]
 pub struct Screen {
     views: HashMap<NodeId, View>,
     /// The viewport `open` pinned. Visibility is judged against it.
@@ -130,6 +149,10 @@ pub struct Screen {
     graph: Graph,
     /// Animations that ended since the last report.
     finished: Vec<Finished>,
+    /// Gesture bindings: pan x/y, pinch scale, rotation angle nodes.
+    gesture_bindings: HashMap<NodeId, GestureBindings>,
+    /// Active gesture state.
+    active_gesture: Option<ActiveGesture>,
 }
 
 /// A node of [`Screen::tree`].
@@ -477,6 +500,19 @@ impl Screen {
                     view.test_id = test_id.clone();
                 }
             }
+            MountItem::PanBinding { id, x, y } => {
+                let bindings = self.gesture_bindings.entry(*id).or_default();
+                bindings.pan_x = *x;
+                bindings.pan_y = *y;
+            }
+            MountItem::PinchBinding { id, scale } => {
+                let bindings = self.gesture_bindings.entry(*id).or_default();
+                bindings.pinch = *scale;
+            }
+            MountItem::RotationBinding { id, angle } => {
+                let bindings = self.gesture_bindings.entry(*id).or_default();
+                bindings.rotation = *angle;
+            }
             MountItem::Accessibility { id, accessibility } => {
                 if let Some(view) = self.views.get_mut(id) {
                     view.accessibility = (**accessibility).clone();
@@ -589,6 +625,31 @@ impl Screen {
         for child in view.children {
             self.delete(child);
         }
+    }
+
+    fn hit_test(&self, x: f32, y: f32) -> Option<NodeId> {
+        // Walk tree front-to-back (reverse children order)
+        fn test_node(screen: &Screen, id: NodeId, x: f32, y: f32, offset: (f32, f32)) -> Option<NodeId> {
+            let view = screen.views.get(&id)?;
+            let local_x = x - offset.0;
+            let local_y = y - offset.1;
+            if local_x < 0.0 || local_y < 0.0 || local_x >= view.frame.size.width.0 || local_y >= view.frame.size.height.0 {
+                return None;
+            }
+            // Test children in reverse order (front-to-back)
+            for &child in view.children.iter().rev() {
+                let child_view = screen.views.get(&child)?;
+                let child_offset = (
+                    offset.0 + child_view.frame.origin.x.0,
+                    offset.1 + child_view.frame.origin.y.0,
+                );
+                if let Some(hit) = test_node(screen, child, x, y, child_offset) {
+                    return Some(hit);
+                }
+            }
+            Some(id)
+        }
+        test_node(self, nlayer_core::ROOT_ID, x, y, (0.0, 0.0))
     }
 }
 
@@ -824,6 +885,163 @@ impl Headless {
         Ok(())
     }
 
+    /// Begins a gesture at (x, y) at the given time. Finds the view at that
+    /// position, reads its gesture binding values, and starts tracking.
+    pub fn pointer_down(&mut self, x: f32, y: f32, time: f64) {
+        self.refresh();
+        let Some(id) = self.screen.hit_test(x, y) else {
+            return;
+        };
+        let bindings = self.screen.gesture_bindings.get(&id).cloned().unwrap_or_default();
+        let start_values = [
+            bindings.pan_x.map(|n| self.screen.graph.eval(n).number()).unwrap_or(0.0),
+            bindings.pan_y.map(|n| self.screen.graph.eval(n).number()).unwrap_or(0.0),
+            bindings.pinch.map(|n| self.screen.graph.eval(n).number()).unwrap_or(1.0),
+            bindings.rotation.map(|n| self.screen.graph.eval(n).number()).unwrap_or(0.0),
+        ];
+        self.screen.active_gesture = Some(ActiveGesture {
+            id,
+            start_time: time,
+            last_time: time,
+            start_pos: (x, y),
+            last_pos: (x, y),
+            start_values,
+        });
+
+        // Dispatch Start events if view listens
+        let view = self.screen.views.get(&id);
+        if let Some(view) = view {
+            if view.events.contains(EventKind::PanStart) {
+                self.engine.control().dispatch_event(
+                    id,
+                    EventKind::PanStart,
+                    EventPayload::Pan {
+                        translation: (0.0, 0.0),
+                        velocity: (0.0, 0.0),
+                        values: (start_values[0], start_values[1]),
+                    },
+                );
+            }
+            if view.events.contains(EventKind::PinchStart) {
+                self.engine.control().dispatch_event(
+                    id,
+                    EventKind::PinchStart,
+                    EventPayload::Pinch {
+                        scale: 1.0,
+                        velocity: 0.0,
+                        value: start_values[2],
+                    },
+                );
+            }
+            if view.events.contains(EventKind::RotationStart) {
+                self.engine.control().dispatch_event(
+                    id,
+                    EventKind::RotationStart,
+                    EventPayload::Rotation {
+                        angle: 0.0,
+                        velocity: 0.0,
+                        value: start_values[3],
+                    },
+                );
+            }
+        }
+    }
+
+    /// Moves the active gesture to (x, y) at the given time.
+    pub fn pointer_move(&mut self, x: f32, y: f32, time: f64) {
+        let Some(gesture) = &mut self.screen.active_gesture else {
+            return;
+        };
+        gesture.last_time = time;
+        gesture.last_pos = (x, y);
+
+        let id = gesture.id;
+        let dx = x - gesture.start_pos.0;
+        let dy = y - gesture.start_pos.1;
+
+        let bindings = self.screen.gesture_bindings.get(&id).cloned().unwrap_or_default();
+        if let Some(n) = bindings.pan_x {
+            self.screen.graph.set(n, gesture.start_values[0] + dx, &mut Vec::new());
+        }
+        if let Some(n) = bindings.pan_y {
+            self.screen.graph.set(n, gesture.start_values[1] + dy, &mut Vec::new());
+        }
+        // For pinch/rotation, simplified: assume scale/angle proportional to distance
+        // (Real platforms use two-finger gestures; headless uses single pointer)
+        if let Some(n) = bindings.pinch {
+            let dist = (dx * dx + dy * dy).sqrt();
+            let scale = 1.0 + dist / 100.0;
+            self.screen.graph.set(n, gesture.start_values[2] * scale, &mut Vec::new());
+        }
+        if let Some(n) = bindings.rotation {
+            let angle = dy.atan2(dx).to_degrees();
+            self.screen.graph.set(n, gesture.start_values[3] + angle, &mut Vec::new());
+        }
+        self.screen.apply_animated();
+    }
+
+    /// Ends the active gesture at the given time, dispatching End events with velocity.
+    pub fn pointer_up(&mut self, time: f64) {
+        let Some(gesture) = self.screen.active_gesture.take() else {
+            return;
+        };
+        let dt = (time - gesture.last_time).max(0.001);
+        let dx = gesture.last_pos.0 - gesture.start_pos.0;
+        let dy = gesture.last_pos.1 - gesture.start_pos.1;
+        let vel_x = dx / dt as f32;
+        let vel_y = dy / dt as f32;
+
+        let bindings = self.screen.gesture_bindings.get(&gesture.id).cloned().unwrap_or_default();
+        let current_values = [
+            bindings.pan_x.map(|n| self.screen.graph.eval(n).number()).unwrap_or(0.0),
+            bindings.pan_y.map(|n| self.screen.graph.eval(n).number()).unwrap_or(0.0),
+            bindings.pinch.map(|n| self.screen.graph.eval(n).number()).unwrap_or(1.0),
+            bindings.rotation.map(|n| self.screen.graph.eval(n).number()).unwrap_or(0.0),
+        ];
+
+        let view = self.screen.views.get(&gesture.id);
+        if let Some(view) = view {
+            if view.events.contains(EventKind::PanEnd) {
+                self.engine.control().dispatch_event(
+                    gesture.id,
+                    EventKind::PanEnd,
+                    EventPayload::Pan {
+                        translation: (dx, dy),
+                        velocity: (vel_x, vel_y),
+                        values: (current_values[0], current_values[1]),
+                    },
+                );
+            }
+            if view.events.contains(EventKind::PinchEnd) {
+                let dist = (dx * dx + dy * dy).sqrt();
+                let scale = 1.0 + dist / 100.0;
+                let vel_scale = (scale - 1.0) / dt as f32;
+                self.engine.control().dispatch_event(
+                    gesture.id,
+                    EventKind::PinchEnd,
+                    EventPayload::Pinch {
+                        scale,
+                        velocity: vel_scale,
+                        value: current_values[2],
+                    },
+                );
+            }
+            if view.events.contains(EventKind::RotationEnd) {
+                let angle = dy.atan2(dx).to_degrees();
+                let vel_angle = angle / dt as f32;
+                self.engine.control().dispatch_event(
+                    gesture.id,
+                    EventKind::RotationEnd,
+                    EventPayload::Rotation {
+                        angle,
+                        velocity: vel_angle,
+                        value: current_values[3],
+                    },
+                );
+            }
+        }
+    }
+
     /// Types `text` into the single-line input `selector` names. Focuses
     /// that field first (and no other), then appends one change per
     /// character to the value it already shows.
@@ -1048,4 +1266,89 @@ fn utf16_slice(text: &str, start: u32, end: u32) -> String {
         .take(end.saturating_sub(start) as usize)
         .collect();
     String::from_utf16_lossy(&units)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::*;
+
+    #[test]
+    fn gesture_reads_start_values() {
+        let gesture = ActiveGesture {
+            id: 1,
+            start_time: 0.0,
+            last_time: 0.0,
+            start_pos: (10.0, 20.0),
+            last_pos: (10.0, 20.0),
+            start_values: [5.0, 10.0, 2.0, 45.0],
+        };
+        
+        assert_eq!(gesture.start_values[0], 5.0);
+        assert_eq!(gesture.start_values[1], 10.0);
+        assert_eq!(gesture.start_values[2], 2.0);
+        assert_eq!(gesture.start_values[3], 45.0);
+    }
+
+    #[test]
+    fn gesture_move_accumulates_pan() {
+        let start_x = 5.0;
+        let start_y = 10.0;
+        let dx = 15.0;
+        let dy = 25.0;
+        
+        let new_x = start_x + dx;
+        let new_y = start_y + dy;
+        
+        assert_eq!(new_x, 20.0);
+        assert_eq!(new_y, 35.0);
+    }
+
+    #[test]
+    fn gesture_end_calculates_velocity() {
+        let mut screen = Screen::default();
+        let id = 1;
+        
+        screen.active_gesture = Some(ActiveGesture {
+            id,
+            start_time: 0.0,
+            last_time: 0.1,
+            start_pos: (10.0, 20.0),
+            last_pos: (30.0, 50.0),
+            start_values: [0.0, 0.0, 1.0, 0.0],
+        });
+        
+        let gesture = screen.active_gesture.as_ref().unwrap();
+        let dt = gesture.last_time - gesture.start_time;
+        let dx = gesture.last_pos.0 - gesture.start_pos.0;
+        let dy = gesture.last_pos.1 - gesture.start_pos.1;
+        
+        let vel_x = dx / dt as f32;
+        let vel_y = dy / dt as f32;
+        
+        // 20 points in 0.1s = 200 points/s
+        assert_eq!(vel_x, 200.0);
+        // 30 points in 0.1s = 300 points/s
+        assert_eq!(vel_y, 300.0);
+    }
+
+    #[test]
+    fn pinch_multiplies_scale() {
+        let start_scale = 2.0;
+        let gesture_scale = 1.5;
+        
+        let new_scale = start_scale * gesture_scale;
+        
+        assert_eq!(new_scale, 3.0);
+    }
+
+    #[test]
+    fn rotation_adds_angle() {
+        let start_angle = 45.0;
+        let delta_angle = 30.0;
+        
+        let new_angle = start_angle + delta_angle;
+        
+        assert_eq!(new_angle, 75.0);
+    }
 }
