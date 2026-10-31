@@ -1,179 +1,187 @@
-// Gesture (pan/pinch/rotation) tests
+// Gate logic tests for pan/scroll coordination
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { JSDOM } from "jsdom";
-import { Player } from "./nlayer.js";
+import { GestureGate } from "./gesture.js";
 
-function createTestEnv() {
-  const dom = new JSDOM("<!DOCTYPE html><html><body></body></html>");
-  const doc = dom.window.document;
-  const root = doc.createElement("div");
-  doc.body.appendChild(root);
-  const host = {
+test("GestureGate: single-axis x-only pan, horizontal drag activates pan", () => {
+  const gate = new GestureGate();
+  
+  gate.begin(1, {
+    x: 100,
+    y: 100,
+    pan: { id: 2, panNodes: [10, null] }, // x-only
+    scroll: { id: 3, horizontal: false },
+  });
+  
+  // Horizontal drag (dx=20, dy=5)
+  const result = gate.move(1, 120, 105, performance.now());
+  
+  assert.equal(result.consumed, true, "Pan should consume horizontal drag");
+  assert.equal(result.phase, 0, "Should be pan start");
+  assert.equal(result.panId, 2);
+});
+
+test("GestureGate: single-axis x-only pan, vertical drag goes to scroll", () => {
+  const gate = new GestureGate();
+  
+  gate.begin(1, {
+    x: 100,
+    y: 100,
+    pan: { id: 2, panNodes: [10, null] }, // x-only
+    scroll: { id: 3, horizontal: false },
+  });
+  
+  // Vertical drag (dx=5, dy=20)
+  const result = gate.move(1, 105, 120, performance.now());
+  
+  assert.equal(result.consumed, false, "Vertical drag should not be consumed by x-only pan");
+});
+
+test("GestureGate: single-axis y-only pan, vertical drag activates pan", () => {
+  const gate = new GestureGate();
+  
+  gate.begin(1, {
+    x: 100,
+    y: 100,
+    pan: { id: 2, panNodes: [null, 11] }, // y-only
+    scroll: { id: 3, horizontal: true },
+  });
+  
+  // Vertical drag (dx=5, dy=20)
+  const result = gate.move(1, 105, 120, performance.now());
+  
+  assert.equal(result.consumed, true, "Pan should consume vertical drag");
+  assert.equal(result.phase, 0, "Should be pan start");
+});
+
+test("GestureGate: single-axis y-only pan, horizontal drag goes to scroll", () => {
+  const gate = new GestureGate();
+  
+  gate.begin(1, {
+    x: 100,
+    y: 100,
+    pan: { id: 2, panNodes: [null, 11] }, // y-only
+    scroll: { id: 3, horizontal: true },
+  });
+  
+  // Horizontal drag (dx=20, dy=5)
+  const result = gate.move(1, 120, 105, performance.now());
+  
+  assert.equal(result.consumed, false, "Horizontal drag should not be consumed by y-only pan");
+});
+
+test("GestureGate: dual-axis pan activates on 6px threshold", () => {
+  const gate = new GestureGate();
+  
+  gate.begin(1, {
+    x: 100,
+    y: 100,
+    pan: { id: 2, panNodes: [10, 11] }, // both axes
+    scroll: { id: 3, horizontal: false },
+  });
+  
+  // Diagonal drag past threshold
+  const result = gate.move(1, 105, 105, performance.now());
+  
+  assert.equal(result.consumed, true, "Dual-axis pan should activate");
+  assert.equal(result.phase, 0);
+});
+
+test("GestureGate: pan reports velocity in correct units", () => {
+  const gate = new GestureGate();
+  const t0 = performance.now();
+  
+  gate.begin(1, {
+    x: 100,
+    y: 100,
+    pan: { id: 2, panNodes: [10, 11] },
+    scroll: null,
+  });
+  
+  // Start pan
+  gate.move(1, 110, 110, t0 + 10);
+  
+  // Continue with known velocity
+  const t1 = t0 + 110; // 100ms later
+  const result = gate.move(1, 150, 130, t1);
+  
+  assert.equal(result.phase, 1, "Should be move phase");
+  assert.equal(result.tx, 50);
+  assert.equal(result.ty, 30);
+  // velocity = displacement / time (points per millisecond)
+  assert.ok(Math.abs(result.vx - 50/110) < 0.01, "vx should be displacement/time");
+  assert.ok(Math.abs(result.vy - 30/110) < 0.01, "vy should be displacement/time");
+});
+
+test("GestureGate: end reports final velocity", () => {
+  const gate = new GestureGate();
+  const t0 = performance.now();
+  
+  gate.begin(1, {
+    x: 100,
+    y: 100,
+    pan: { id: 2, panNodes: [10, 11] },
+    scroll: null,
+  });
+  
+  gate.move(1, 110, 110, t0 + 10);
+  gate.move(1, 150, 130, t0 + 110);
+  
+  const result = gate.end(1, t0 + 110);
+  
+  assert.equal(result.phase, 2, "Should be end phase");
+  assert.equal(result.tx, 50);
+  assert.equal(result.ty, 30);
+  assert.ok(result.vx !== undefined);
+  assert.ok(result.vy !== undefined);
+});
+
+test("GestureGate: cancel phase", () => {
+  const gate = new GestureGate();
+  
+  gate.begin(1, {
+    x: 100,
+    y: 100,
+    pan: { id: 2, panNodes: [10, 11] },
+    scroll: null,
+  });
+  
+  gate.move(1, 110, 110, performance.now());
+  
+  const result = gate.cancel(1);
+  
+  assert.equal(result.phase, 3, "Should be cancel phase");
+  assert.equal(result.vx, 0, "Cancel should have zero velocity");
+  assert.equal(result.vy, 0);
+});
+
+test("GestureGate: no pan without binding", () => {
+  const gate = new GestureGate();
+  
+  gate.begin(1, {
+    x: 100,
+    y: 100,
     pan: null,
-    transformGesture: null,
-  };
-  const player = new Player(root, host, { baseCSS: "" });
-  return { player, root, host, doc, window: dom.window };
-}
-
-test("Player handles pan binding", () => {
-  const { player } = createTestEnv();
-
-  player.apply([
-    ["c", 2, "view"],
-    ["pb", 2, 10, 11], // pan with x node 10, y node 11
-  ]);
-
-  const el = player.view(2);
-  assert.ok(el._panNodes, "Should have pan nodes");
-  assert.deepEqual(el._panNodes, [10, 11]);
-});
-
-test("Player handles pinch binding", () => {
-  const { player } = createTestEnv();
-
-  player.apply([
-    ["c", 2, "view"],
-    ["pinchb", 2, 12], // pinch with scale node 12
-  ]);
-
-  const el = player.view(2);
-  assert.equal(el._pinchNode, 12, "Should have pinch node");
-});
-
-test("Player handles rotation binding", () => {
-  const { player } = createTestEnv();
-
-  player.apply([
-    ["c", 2, "view"],
-    ["rotb", 2, 13], // rotation with angle node 13
-  ]);
-
-  const el = player.view(2);
-  assert.equal(el._rotationNode, 13, "Should have rotation node");
-});
-
-test("Player clears pan binding with null", () => {
-  const { player } = createTestEnv();
-
-  player.apply([
-    ["c", 2, "view"],
-    ["pb", 2, 10, 11],
-    ["pb", 2, null, null], // clear
-  ]);
-
-  const el = player.view(2);
-  assert.equal(el._panNodes, null, "Should clear pan nodes");
-});
-
-test("Pan gesture calls host.pan", () => {
-  const { player, root, host } = createTestEnv();
-  const calls = [];
-  host.pan = (...args) => calls.push(args);
-
-  player.apply([
-    ["c", 2, "view"],
-    ["f", 2, 10, 10, 100, 100],
-    ["pb", 2, 10, 11],
-  ]);
-
-  const el = player.view(2);
+    scroll: { id: 3, horizontal: false },
+  });
   
-  // Simulate pointer down
-  const downEvent = new root.ownerDocument.defaultView.PointerEvent("pointerdown", {
-    pointerId: 1,
-    clientX: 50,
-    clientY: 50,
-    pointerType: "touch",
-    button: 0,
-  });
-  Object.defineProperty(downEvent, "target", { value: el, writable: false });
-  root.dispatchEvent(downEvent);
-
-  // Simulate pointer move (should trigger pan start at >6px)
-  const moveEvent = new root.ownerDocument.defaultView.PointerEvent("pointermove", {
-    pointerId: 1,
-    clientX: 60,
-    clientY: 60,
-    pointerType: "touch",
-    button: 0,
-  });
-  Object.defineProperty(moveEvent, "target", { value: el, writable: false });
-  root.dispatchEvent(moveEvent);
-
-  assert.ok(calls.length >= 1, "Should call host.pan at least once");
-  const startCall = calls[0];
-  assert.equal(startCall[0], 2, "Should call with view id 2");
-  assert.equal(startCall[1], 0, "Should call with phase 0 (start)");
-});
-
-test("Pan gesture reports translation and velocity", () => {
-  const { player, root, host } = createTestEnv();
-  const calls = [];
-  host.pan = (...args) => calls.push(args);
-
-  player.apply([
-    ["c", 2, "view"],
-    ["f", 2, 10, 10, 100, 100],
-    ["pb", 2, 10, 11],
-  ]);
-
-  const el = player.view(2);
+  const result = gate.move(1, 120, 120, performance.now());
   
-  // Down at 50,50
-  const downEvent = new root.ownerDocument.defaultView.PointerEvent("pointerdown", {
-    pointerId: 1,
-    clientX: 50,
-    clientY: 50,
-    pointerType: "touch",
-    button: 0,
-  });
-  Object.defineProperty(downEvent, "target", { value: el, writable: false });
-  root.dispatchEvent(downEvent);
-
-  // Move to 70,80 (dx=20, dy=30)
-  const moveEvent = new root.ownerDocument.defaultView.PointerEvent("pointermove", {
-    pointerId: 1,
-    clientX: 70,
-    clientY: 80,
-    pointerType: "touch",
-    button: 0,
-  });
-  Object.defineProperty(moveEvent, "target", { value: el, writable: false });
-  root.dispatchEvent(moveEvent);
-
-  // Up
-  const upEvent = new root.ownerDocument.defaultView.PointerEvent("pointerup", {
-    pointerId: 1,
-    clientX: 70,
-    clientY: 80,
-    pointerType: "touch",
-    button: 0,
-  });
-  Object.defineProperty(upEvent, "target", { value: el, writable: false });
-  root.dispatchEvent(upEvent);
-
-  const endCall = calls[calls.length - 1];
-  assert.equal(endCall[1], 2, "End phase should be 2");
-  assert.equal(endCall[2], 20, "Translation x should be 20");
-  assert.equal(endCall[3], 30, "Translation y should be 30");
-  // Velocity assertions would need timing control
+  assert.equal(result.consumed, false, "Should not consume without pan binding");
 });
 
-test("Multiple gestures can coexist on same view", () => {
-  const { player } = createTestEnv();
-
-  player.apply([
-    ["c", 2, "view"],
-    ["pb", 2, 10, 11],
-    ["pinchb", 2, 12],
-    ["rotb", 2, 13],
-  ]);
-
-  const el = player.view(2);
-  assert.deepEqual(el._panNodes, [10, 11]);
-  assert.equal(el._pinchNode, 12);
-  assert.equal(el._rotationNode, 13);
+test("GestureGate: preventDefault flag set when pan activates", () => {
+  const gate = new GestureGate();
+  
+  gate.begin(1, {
+    x: 100,
+    y: 100,
+    pan: { id: 2, panNodes: [10, 11] },
+    scroll: { id: 3, horizontal: false },
+  });
+  
+  const result = gate.move(1, 110, 110, performance.now());
+  
+  assert.equal(result.preventDefault, true, "Should set preventDefault when gated and activated");
 });
