@@ -97,3 +97,25 @@ textarea.nl-field {
   width: 100%;
   height: 100%;
 }
+/* Stack visibility: only the top screen is visible */
+.nl-stack {
+  overflow: hidden;
+}
+.nl-stack > .nl-screen {
+  visibility: hidden;
+}
+.nl-stack > .nl-screen.nl-top {
+  visibility: visible;
+}
+/* Screen clips content */
+.nl-screen {
+  overflow: hidden;
+}
+/* HeaderItem sits above content */
+.nl-headeritem {
+  z-index: 1;
+}
+/* Modal sits above all */
+.nl-modal {
+  z-index: 10;
+}

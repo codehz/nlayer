@@ -26,6 +26,10 @@ pub trait Bridge {
     fn dispatch_back(&self) -> bool {
         false
     }
+    /// Reduce motion changed (internal, not exported to apps). The web
+    /// runtime computes its own from a media query; this is a no-op unless
+    /// a host overrides it.
+    fn set_reduce_motion(&self, _enabled: bool) {}
 }
 
 thread_local! {
@@ -80,6 +84,10 @@ impl Script {
 
     pub(crate) fn dispatch_back(&self) -> bool {
         self.0.dispatch_back()
+    }
+
+    pub(crate) fn set_reduce_motion(&self, enabled: bool) {
+        self.0.set_reduce_motion(enabled);
     }
 
     pub(crate) fn next_timer(&self) -> Option<std::time::Duration> {

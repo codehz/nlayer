@@ -21,7 +21,7 @@ use std::{
 };
 
 use nlayer_core::{
-    EventKind, NodeId,
+    EventKind, NO_NATIVE_HEADER, NodeId,
     geometry::{Edges, Points, Size},
     text::ApproxTextEngine,
 };
@@ -75,7 +75,9 @@ impl PageSession {
         let wake_page = Arc::clone(&page);
         let wake: Wake = Arc::new(move || wake_page.request_pump());
         let engine = LocalEngine::start(
-            EngineConfig::new(bundle, viewport).with_os(nlayer_engine::Os::Web),
+            EngineConfig::new(bundle, viewport)
+                .with_os(nlayer_engine::Os::Web)
+                .with_header_heights(NO_NATIVE_HEADER),
             ApproxTextEngine,
             sink,
             wake,
@@ -184,6 +186,18 @@ impl PageSession {
         let control = self.engine.control();
         control.set_safe_area(safe_area);
         control.set_keyboard_inset(keyboard);
+    }
+
+    /// The platform presents root `id` (a modal) at `size`, with `insets`
+    /// of it covered by system UI.
+    pub fn set_root_size(&self, id: NodeId, size: Size<Points>, insets: Edges<Points>) {
+        self.engine.control().set_root_size(id, size, insets);
+    }
+
+    /// The platform measured where the content of screen `id` starts below
+    /// its header (`None`: let the core estimate it).
+    pub fn set_screen_header(&self, id: NodeId, height: Option<Points>) {
+        self.engine.control().set_screen_header(id, height);
     }
 }
 

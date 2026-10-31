@@ -84,6 +84,8 @@ struct NodeData {
     owner: (u32, u32),
     /// The node's object (not owned: the data goes with it).
     object: JsValue,
+    /// Popped callback for navigation screens (owned).
+    popped: JsValue,
 }
 
 /// Registers the renderer's classes and makes the root node; runs once per
@@ -272,6 +274,7 @@ fn new_node(cx: *mut JsContext, id: NodeId, text: bool, tag: Option<Tag>) -> JsV
         handlers: Vec::new(),
         owner: reactive::owner_handle(cx),
         object: UNDEFINED,
+        popped: UNDEFINED,
     }));
     // SAFETY: a registered class; the opaque is the boxed data, freed by
     // the finalizer.
@@ -326,6 +329,8 @@ unsafe extern "C" fn node_finalize(rt: *mut qjs::JSRuntime, obj: JsValue) {
     for (_, v) in data.handlers.drain(..) {
         unsafe { qjs::JS_FreeValueRT(rt, v) };
     }
+    // SAFETY: a value the node owned (undefined frees as a no-op).
+    unsafe { qjs::JS_FreeValueRT(rt, data.popped) };
 }
 
 unsafe extern "C" fn node_mark(rt: *mut qjs::JSRuntime, obj: JsValue, mark: qjs::JS_MarkFunc) {
@@ -341,6 +346,8 @@ unsafe extern "C" fn node_mark(rt: *mut qjs::JSRuntime, obj: JsValue, mark: qjs:
     for &(_, v) in &data.handlers {
         unsafe { qjs::JS_MarkValue(rt, v, mark) };
     }
+    // SAFETY: marking reads the value (undefined has nothing to mark).
+    unsafe { qjs::JS_MarkValue(rt, data.popped, mark) };
 }
 
 // --- The tree mirror ----------------------------------------------------------
@@ -1548,7 +1555,7 @@ unsafe extern "C" fn each_mark(rt: *mut qjs::JSRuntime, obj: JsValue, mark: qjs:
 /// `list()` (both accessors), one row per key (`key(item, index)`, the
 /// index for `key` `"index"`, or the item itself) kept while the key
 /// stays.
-unsafe extern "C" fn each(
+pub(crate) unsafe extern "C" fn each(
     cx: *mut JsContext,
     _this: JsValue,
     argc: c_int,
@@ -2615,6 +2622,45 @@ pub(crate) fn spread_props_except(
     skip: &[&str],
 ) -> Result<(), JsValue> {
     spread_except(cx, node, props, skip)
+}
+
+/// Sets the popped callback of node `v` to `f`.
+pub(crate) fn set_popped(cx: *mut JsContext, v: JsValue, f: JsValue) {
+    let p = node_ptr(cx, v);
+    if p.is_null() {
+        return;
+    }
+    // SAFETY: live node data.
+    unsafe {
+        let data = &mut *p;
+        if !qjs::JS_IsUndefined(data.popped) {
+            qjs::JS_FreeValue(cx, data.popped);
+        }
+        data.popped = qjs::JS_DupValue(cx, f);
+    }
+}
+
+/// Gets the popped callback of node `v` (duplicated).
+pub(crate) fn popped(cx: *mut JsContext, v: JsValue) -> JsValue {
+    let p = node_ptr(cx, v);
+    if p.is_null() {
+        return UNDEFINED;
+    }
+    // SAFETY: live node data.
+    unsafe {
+        let data = &*p;
+        qjs::JS_DupValue(cx, data.popped)
+    }
+}
+
+/// Gets the tag of node `v`.
+pub(crate) fn node_tag(cx: *mut JsContext, v: JsValue) -> Option<Tag> {
+    let p = node_ptr(cx, v);
+    if p.is_null() {
+        return None;
+    }
+    // SAFETY: live node data.
+    unsafe { (*p).tag }
 }
 
 /// The exports of `nlayer:rt`.

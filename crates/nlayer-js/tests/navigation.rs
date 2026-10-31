@@ -455,3 +455,374 @@ fn dialog_creates_backdrop_and_popup_views() {
             >= 2
     );
 }
+
+#[test]
+fn nav_stack_renders_screens_for_each_route() {
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r#"
+        import { createNavStack, NavStack, NavPage } from "@nlayer/ui";
+        import { mount } from "@nlayer/runtime";
+        const nav = createNavStack([{ id: 1 }, { id: 2 }]);
+        globalThis.dispose = mount(() => 
+            NavStack({ state: nav, children: (route, index) => 
+                NavPage({ title: `Page ${route.id}`, children: `Content ${index}` })
+            })
+        );
+        "#,
+    )
+    .unwrap();
+
+    let mut ops = Vec::new();
+    host.take_ops(&mut ops);
+
+    // Should have created a Stack
+    assert!(create_id(&ops, Tag::Stack).is_some());
+
+    // Should have created 2 Screens (one per route)
+    let screens: Vec<_> = ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::Create {
+                id,
+                tag: Tag::Screen,
+            } => Some(*id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(screens.len(), 2, "Should create one Screen per route");
+}
+
+#[test]
+fn nav_stack_passes_route_and_index_to_children() {
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r#"
+        import { createNavStack, NavStack, NavPage } from "@nlayer/ui";
+        import { mount } from "@nlayer/runtime";
+        const nav = createNavStack([{ name: "A" }, { name: "B" }]);
+        globalThis.calls = [];
+        globalThis.dispose = mount(() => 
+            NavStack({ state: nav, children: (route, index) => {
+                calls.push({ route: route.name, index: index() });
+                return NavPage({ children: route.name });
+            }})
+        );
+        "#,
+    )
+    .unwrap();
+
+    host.eval_source(r#"globalThis.callsJson = JSON.stringify(calls);"#)
+        .unwrap();
+    let calls = host.global_string("callsJson").unwrap();
+    assert_eq!(
+        calls,
+        r#"[{"route":"A","index":0},{"route":"B","index":1}]"#
+    );
+}
+
+#[test]
+fn nav_stack_same_route_twice_renders_two_screens() {
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r#"
+        import { createNavStack, NavStack, NavPage } from "@nlayer/ui";
+        import { mount } from "@nlayer/runtime";
+        const route = { id: 1 };
+        const nav = createNavStack([route, route]);
+        globalThis.dispose = mount(() => 
+            NavStack({ state: nav, children: (r, i) => NavPage({ children: `${i}` }) })
+        );
+        "#,
+    )
+    .unwrap();
+
+    let mut ops = Vec::new();
+    host.take_ops(&mut ops);
+
+    let screen_count = ops
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                Op::Create {
+                    tag: Tag::Screen,
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(
+        screen_count, 2,
+        "Same route pushed twice should render two Screens"
+    );
+}
+
+#[test]
+fn nav_stack_push_updates_dom_rows() {
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r#"
+        import { createNavStack, NavStack, NavPage } from "@nlayer/ui";
+        import { mount } from "@nlayer/runtime";
+        const nav = createNavStack([{ id: 1 }]);
+        globalThis.nav = nav;
+        globalThis.dispose = mount(() => 
+            NavStack({ state: nav, children: (route) => NavPage({ children: `${route.id}` }) })
+        );
+        "#,
+    )
+    .unwrap();
+
+    let mut ops = Vec::new();
+    host.take_ops(&mut ops);
+    let initial_screens = ops
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                Op::Create {
+                    tag: Tag::Screen,
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(initial_screens, 1);
+
+    // Push a new route
+    host.eval_source(r#"nav.push({ id: 2 });"#).unwrap();
+    ops.clear();
+    host.take_ops(&mut ops);
+
+    let new_screens = ops
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                Op::Create {
+                    tag: Tag::Screen,
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(new_screens, 1, "Push should create one new Screen");
+}
+
+#[test]
+fn nav_stack_pop_updates_dom_rows() {
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r#"
+        import { createNavStack, NavStack, NavPage } from "@nlayer/ui";
+        import { mount } from "@nlayer/runtime";
+        const nav = createNavStack([{ id: 1 }, { id: 2 }]);
+        globalThis.nav = nav;
+        globalThis.dispose = mount(() => 
+            NavStack({ state: nav, children: (route) => NavPage({ children: `${route.id}` }) })
+        );
+        "#,
+    )
+    .unwrap();
+
+    let mut ops = Vec::new();
+    host.take_ops(&mut ops);
+
+    // Pop a route
+    host.eval_source(r#"nav.pop();"#).unwrap();
+    ops.clear();
+    host.take_ops(&mut ops);
+
+    let removes = ops
+        .iter()
+        .filter(|op| matches!(op, Op::Remove { .. }))
+        .count();
+    assert!(removes > 0, "Pop should remove the popped screen");
+}
+
+#[test]
+fn nav_stack_set_routes_updates_dom_rows() {
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r#"
+        import { createNavStack, NavStack, NavPage } from "@nlayer/ui";
+        import { mount } from "@nlayer/runtime";
+        const nav = createNavStack([{ id: 1 }]);
+        globalThis.nav = nav;
+        globalThis.dispose = mount(() => 
+            NavStack({ state: nav, children: (route) => NavPage({ children: `${route.id}` }) })
+        );
+        "#,
+    )
+    .unwrap();
+
+    let mut ops = Vec::new();
+    host.take_ops(&mut ops);
+
+    // Replace all routes
+    host.eval_source(r#"nav.setRoutes([{ id: 2 }, { id: 3 }, { id: 4 }]);"#)
+        .unwrap();
+    ops.clear();
+    host.take_ops(&mut ops);
+
+    let new_screens = ops
+        .iter()
+        .filter(|op| {
+            matches!(
+                op,
+                Op::Create {
+                    tag: Tag::Screen,
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(
+        new_screens, 3,
+        "setRoutes should create Screens for new routes"
+    );
+}
+
+#[test]
+fn dismiss_event_removes_route_then_calls_on_dismiss() {
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r#"
+        import { createNavStack, NavStack, NavPage } from "@nlayer/ui";
+        import { mount } from "@nlayer/runtime";
+        const nav = createNavStack([{ id: 1 }, { id: 2 }]);
+        globalThis.nav = nav;
+        globalThis.order = [];
+        globalThis.dispose = mount(() => 
+            NavStack({ state: nav, children: (route, index) => 
+                NavPage({ 
+                    onDismiss: () => {
+                        order.push("dismiss");
+                        order.push(nav.routes().length);
+                    },
+                    children: `${route.id}` 
+                })
+            })
+        );
+        "#,
+    )
+    .unwrap();
+
+    let mut ops = Vec::new();
+    host.take_ops(&mut ops);
+
+    // Get the second screen's ID
+    let screens: Vec<_> = ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::Create {
+                id,
+                tag: Tag::Screen,
+            } => Some(*id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(screens.len(), 2);
+    let second_screen = screens[1];
+
+    // Dispatch Dismiss event on the second screen
+    host.dispatch_event(second_screen, EventKind::Dismiss, &EventPayload::None);
+
+    // Check that the route was removed before onDismiss was called
+    host.eval_source(r#"globalThis.orderJson = JSON.stringify(order);"#)
+        .unwrap();
+    let order = host.global_string("orderJson").unwrap();
+    assert_eq!(
+        order, r#"["dismiss",1]"#,
+        "Route should be removed before onDismiss callback"
+    );
+}
+
+#[test]
+fn nav_page_header_slots_create_header_items_with_slot_prop() {
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r#"
+        import { NavPage } from "@nlayer/ui";
+        import { mount } from "@nlayer/runtime";
+        globalThis.dispose = mount(() => 
+            NavPage({ 
+                headerLeft: "Left", 
+                headerRight: "Right", 
+                headerTitle: "Title",
+                header: "Custom",
+                children: "content" 
+            })
+        );
+        "#,
+    )
+    .unwrap();
+
+    let mut ops = Vec::new();
+    host.take_ops(&mut ops);
+
+    // Check that HeaderItem nodes were created with headerSlot props
+    let header_items: Vec<_> = ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::Create {
+                id,
+                tag: Tag::HeaderItem,
+            } => Some(*id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        header_items.len(),
+        4,
+        "Should create HeaderItem for each slot"
+    );
+
+    let slots: Vec<_> = ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::SetProp {
+                prop: Prop::HeaderSlot(slot),
+                ..
+            } => Some(*slot),
+            _ => None,
+        })
+        .collect();
+    assert!(slots.contains(&HeaderSlot::Left));
+    assert!(slots.contains(&HeaderSlot::Right));
+    assert!(slots.contains(&HeaderSlot::Title));
+    assert!(slots.contains(&HeaderSlot::Header));
+}
+
+#[test]
+fn dialog_does_not_spread_on_insets_to_modal() {
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r#"
+        import { Dialog } from "@nlayer/ui";
+        import { mount } from "@nlayer/runtime";
+        globalThis.insetsCalled = 0;
+        globalThis.dispose = mount(() => 
+            Dialog({ 
+                open: true,
+                onInsets: () => { insetsCalled = 1; },
+                children: "content" 
+            })
+        );
+        "#,
+    )
+    .unwrap();
+
+    let mut ops = Vec::new();
+    host.take_ops(&mut ops);
+
+    // Check that Modal was created
+    let _modal_id = create_id(&ops, Tag::Modal).expect("Dialog should create Modal");
+
+    // onInsets should not have been called (it's not spread to modal)
+    host.eval_source(r#"globalThis.callStatus = String(insetsCalled);"#)
+        .unwrap();
+    let called = host.global_string("callStatus").unwrap();
+    assert_eq!(called, "0", "onInsets should not be spread to Modal");
+}

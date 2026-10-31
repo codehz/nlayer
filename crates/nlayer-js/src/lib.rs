@@ -160,6 +160,14 @@ impl Host {
         });
     }
 
+    /// Reduce motion changed (internal, not exported to apps): whether
+    /// Dialog slides. The page's runtime has its own media query signal.
+    pub fn set_reduce_motion(&self, enabled: bool) {
+        self.cx.with(|cx| {
+            state::set_reduce_motion(cx.as_raw().as_ptr(), enabled);
+        });
+    }
+
     /// Delivers the platform's back button (Android) or history back (a
     /// page that pushed an entry): whether a `BackHandler` listener
     /// handled it. Listeners run newest first.

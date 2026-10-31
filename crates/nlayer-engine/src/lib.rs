@@ -125,6 +125,15 @@ pub struct EngineConfig {
     /// The app's storage, overriding the file [`EngineConfig::data_dir`]
     /// names.
     pub storage: Option<Arc<dyn StorageBackend>>,
+    /// The native header heights (regular, larger with accessibility text):
+    /// where screen content starts below the platform header (iOS, Android).
+    /// The web draws no header of its own: set
+    /// [`nlayer_core::NO_NATIVE_HEADER`].
+    /// [`EngineConfig::new`] is `(Points(44.0), Points(96.0))` (iOS defaults).
+    pub header_heights: (Points, Points),
+    /// Reduce motion (internal, not exported): whether Dialog slides.
+    /// [`EngineConfig::new`] is `false`.
+    pub reduce_motion: bool,
 }
 
 impl EngineConfig {
@@ -139,6 +148,8 @@ impl EngineConfig {
             data_dir: None,
             storage: None,
             color_scheme: ColorScheme::Light,
+            header_heights: (Points(44.0), Points(96.0)),
+            reduce_motion: false,
         }
     }
 
@@ -172,8 +183,20 @@ impl EngineConfig {
         self.color_scheme = scheme;
         self
     }
-}
 
+    /// The native header heights for this surface (the web sets
+    /// [`nlayer_core::NO_NATIVE_HEADER`]).
+    pub fn with_header_heights(mut self, heights: (Points, Points)) -> Self {
+        self.header_heights = heights;
+        self
+    }
+
+    /// Reduce motion (internal, not exported to apps).
+    pub fn with_reduce_motion(mut self, enabled: bool) -> Self {
+        self.reduce_motion = enabled;
+        self
+    }
+}
 /// The storage of the app `config` runs: [`EngineConfig::storage`], or a
 /// file in its directory of [`EngineConfig::data_dir`].
 #[cfg(feature = "js")]
@@ -207,6 +230,8 @@ enum Message {
     ColorScheme(ColorScheme),
     /// The platform's back button, or history back.
     Back,
+    /// Reduce motion changed (internal, not exported to apps).
+    ReduceMotion(bool),
     /// The platform presents root `id` (a modal) at `size`, with `insets`
     /// of it covered by system UI.
     RootSize(NodeId, Size<Points>, Edges<Points>),
@@ -302,6 +327,11 @@ impl EngineControl {
     /// it, and what read it lays out again.
     pub fn set_color_scheme(&self, scheme: ColorScheme) {
         let _ = self.tx.send(Message::ColorScheme(scheme));
+    }
+
+    /// Reduce motion changed (internal, not exported to apps).
+    pub fn set_reduce_motion(&self, enabled: bool) {
+        let _ = self.tx.send(Message::ReduceMotion(enabled));
     }
 
     /// The platform's back button (Android) or history back (a page that
@@ -629,6 +659,7 @@ impl<M: TextEngine> Session<M> {
         let mut core = Core::new(text_engine, config.viewport);
         core.set_safe_area(config.safe_area);
         core.set_keyboard_inset(config.keyboard);
+        core.set_header_heights(config.header_heights.0, config.header_heights.1);
         #[cfg(feature = "js")]
         let host = {
             let host = nlayer_js::Host::new().map_err(|error| EngineError::new(error.message))?;
@@ -641,6 +672,10 @@ impl<M: TextEngine> Session<M> {
         };
         #[cfg(feature = "browser")]
         let host = browser::Script::start(config.os).map_err(EngineError::new)?;
+        #[cfg(feature = "js")]
+        host.set_reduce_motion(config.reduce_motion);
+        #[cfg(feature = "browser")]
+        host.set_reduce_motion(config.reduce_motion);
         #[cfg(target_arch = "wasm32")]
         let _ = notify;
         Ok(Session {
@@ -741,6 +776,12 @@ impl<M: TextEngine> Session<M> {
                 self.host.set_color_scheme(scheme);
                 #[cfg(feature = "browser")]
                 let _ = scheme;
+            }
+            Message::ReduceMotion(enabled) => {
+                #[cfg(feature = "js")]
+                self.host.set_reduce_motion(enabled);
+                #[cfg(feature = "browser")]
+                self.host.set_reduce_motion(enabled);
             }
             Message::Back => {
                 let handled = self.core.handle_back();

@@ -382,10 +382,6 @@ impl Node {
             accessibility: Accessibility::default(),
         }
     }
-
-    fn is_layout_root(&self) -> bool {
-        self.kind.is_layout_root()
-    }
 }
 
 /// Taffy context of a text block.
@@ -619,44 +615,40 @@ impl<M: TextEngine> Core<M> {
     /// The engine tries `BackHandler` and platform behavior only when this
     /// returns `false`.
     pub fn handle_back(&mut self) -> bool {
-        // Priority: modal first, then topmost screen in a stack.
-        // A modal always wins. For screens, find the last (topmost) in its stack.
+        // Priority: topmost modal (last created), then topmost screen (last in its stack).
         let mut candidate: Option<(Key, bool)> = None; // (key, is_modal)
 
-        // First check for any modal.
-        for &key in &self.roots {
+        // Find the last live modal in creation order.
+        for &key in self.roots.iter().rev() {
             let node = &self.nodes[key as usize];
-            if !node.created {
-                continue;
-            }
-            if node.kind == Kind::Modal {
+            if node.created && node.kind == Kind::Modal {
                 candidate = Some((key, true));
                 break;
             }
         }
 
-        // If no modal, find the topmost screen in any stack.
+        // If no modal, find the topmost screen of the last stack in creation order.
         if candidate.is_none() {
-            for &key in &self.roots {
+            for &key in self.roots.iter().rev() {
                 let node = &self.nodes[key as usize];
                 if !node.created || node.kind != Kind::Screen {
                     continue;
                 }
-                // Screen's parent is the stack. Find the last screen child of that stack.
                 let stack_key = node.parent;
                 if stack_key == NO_KEY {
                     continue;
                 }
                 let stack = &self.nodes[stack_key as usize];
-                if stack.kind != Kind::Stack || stack.children.is_empty() {
+                if stack.kind != Kind::Stack {
                     continue;
                 }
                 // Last child of the stack is the topmost screen.
-                let topmost_key = *stack.children.last().unwrap();
-                let topmost = &self.nodes[topmost_key as usize];
-                if topmost.created && topmost.kind == Kind::Screen {
-                    candidate = Some((topmost_key, false));
-                    break;
+                if let Some(&topmost_key) = stack.children.last() {
+                    let topmost = &self.nodes[topmost_key as usize];
+                    if topmost.created && topmost.kind == Kind::Screen {
+                        candidate = Some((topmost_key, false));
+                        break;
+                    }
                 }
             }
         }
@@ -688,14 +680,19 @@ impl<M: TextEngine> Core<M> {
                 self.events.push((id, EventKind::RequestClose));
             }
             can_act
-        } else if can_act {
-            if node.events.contains(EventKind::Dismiss) {
-                self.events.push((id, EventKind::Dismiss));
-            }
-            true
         } else {
+            // For screens: return true if non-root (even if popOnBack=false).
+            // Emit Dismiss only if can_act is true.
             let stack_key = node.parent;
-            stack_key != NO_KEY && self.nodes[stack_key as usize].children.len() > 1
+            let is_root = stack_key != NO_KEY && self.nodes[stack_key as usize].children.len() == 1;
+            if is_root {
+                false
+            } else {
+                if can_act && node.events.contains(EventKind::Dismiss) {
+                    self.events.push((id, EventKind::Dismiss));
+                }
+                true
+            }
         }
     }
 
@@ -867,10 +864,13 @@ impl<M: TextEngine> Core<M> {
                 let root = self.root;
                 let children = mem::take(&mut self.nodes[root as usize].children);
                 for &child in &children {
-                    self.emit_frames(child);
+                    if !self.nodes[child as usize].kind.is_layout_root() {
+                        self.emit_frames(child);
+                    }
                 }
                 self.nodes[root as usize].children = children;
             }
+            self.layout_roots();
             for key in relaid {
                 self.emit_frames(key);
             }
@@ -920,6 +920,7 @@ impl<M: TextEngine> Core<M> {
         // The authored style. [`Self::sync_scroll_style`] derives the
         // taffy style (the scroll axis, and a horizontal row).
         let scroll_base = matches!(kind, Kind::Scroll | Kind::List).then(|| layout_style.clone());
+        let root_base = matches!(kind, Kind::Screen | Kind::Modal).then(|| layout_style.clone());
         let layout = match kind {
             Kind::Image => self
                 .layout
@@ -943,6 +944,9 @@ impl<M: TextEngine> Core<M> {
             self.nodes[key as usize].dirty |= dirty::TEXT_BUILD;
         }
         if let Some(base) = scroll_base {
+            self.nodes[key as usize].base_layout = Some(Box::new(base));
+        }
+        if let Some(base) = root_base {
             self.nodes[key as usize].base_layout = Some(Box::new(base));
         }
         if matches!(kind, Kind::Scroll | Kind::List) {
@@ -1035,8 +1039,10 @@ impl<M: TextEngine> Core<M> {
         } else {
             self.env_styled.remove(&id);
         }
-        // env_styled tracking removed for v3
-        if matches!(kind, Kind::Text | Kind::Scroll | Kind::List) {
+        if matches!(
+            kind,
+            Kind::Text | Kind::Scroll | Kind::List | Kind::Screen | Kind::Modal
+        ) {
             self.nodes[key as usize].base_layout = Some(Box::new(layout.clone()));
         }
         if matches!(kind, Kind::Scroll | Kind::List) {
@@ -1353,6 +1359,11 @@ impl<M: TextEngine> Core<M> {
                             config.tint_color = tint_color;
                         }
                     }
+                    self.nodes[key as usize]
+                        .root
+                        .as_mut()
+                        .expect("root")
+                        .laid_out = None;
                     self.nodes[key as usize].dirty |= dirty::SCREEN;
                     self.needs_layout = true;
                 }
@@ -1458,6 +1469,13 @@ impl<M: TextEngine> Core<M> {
         self.nodes[child as usize].parent = parent;
         self.nodes[parent as usize].children.insert(pos, child);
         self.update_direction(child);
+        // A header slot's options are part of the screen's config.
+        if self.nodes[child as usize].kind == Kind::HeaderItem
+            && self.nodes[parent as usize].kind == Kind::Screen
+        {
+            self.mark(parent, dirty::SCREEN);
+            self.needs_layout = true;
+        }
         if inline {
             self.mark_text_block(parent);
             return Ok(());
@@ -1487,11 +1505,13 @@ impl<M: TextEngine> Core<M> {
             return Ok(());
         }
         if let Some(child_layout) = self.nodes[child as usize].layout {
-            let parent_layout = self.nodes[parent as usize]
-                .layout
-                .expect("block parent has layout");
-            self.layout
-                .insert_child_at_index(parent_layout, pos, child_layout);
+            if !self.nodes[child as usize].kind.is_layout_root() {
+                let parent_layout = self.nodes[parent as usize]
+                    .layout
+                    .expect("block parent has layout");
+                self.layout
+                    .insert_child_at_index(parent_layout, pos, child_layout);
+            }
             self.needs_layout = true;
             if parent_created {
                 self.ensure_created(child);
@@ -1525,6 +1545,12 @@ impl<M: TextEngine> Core<M> {
             self.mark_text_block(parent);
             return;
         }
+        if self.nodes[key as usize].kind == Kind::HeaderItem
+            && self.nodes[parent as usize].kind == Kind::Screen
+        {
+            self.mark(parent, dirty::SCREEN);
+            self.needs_layout = true;
+        }
         if let Some(layout) = layout {
             if self.nodes[parent as usize].kind == Kind::List {
                 if self.nodes[key as usize].kind == Kind::Cell
@@ -1534,10 +1560,12 @@ impl<M: TextEngine> Core<M> {
                     self.mark(parent, dirty::LIST);
                 }
             } else {
-                let parent_layout = self.nodes[parent as usize]
-                    .layout
-                    .expect("block parent has layout");
-                self.layout.remove_child(parent_layout, layout);
+                if !self.nodes[key as usize].kind.is_layout_root() {
+                    let parent_layout = self.nodes[parent as usize]
+                        .layout
+                        .expect("block parent has layout");
+                    self.layout.remove_child(parent_layout, layout);
+                }
                 self.needs_layout = true;
             }
             if emit_remove && created && self.nodes[parent as usize].created {
@@ -1857,10 +1885,14 @@ impl<M: TextEngine> Core<M> {
                     .push(MountItem::Accessibility { id, accessibility });
             }
             if flags & dirty::SCREEN != 0
-                && let Some(root) = self.nodes[key as usize].root.as_ref()
+                && let Some(config) = self.screen_config(key)
             {
-                let config = Box::new(root.screen.clone());
-                self.mount.push(MountItem::ScreenConfig { id, config });
+                // Before the layout that follows, with the header height it
+                // measured last (layout_detached emits again if it moves).
+                self.mount.push(MountItem::ScreenConfig {
+                    id,
+                    config: Box::new(config),
+                });
             }
             if flags & dirty::MODAL != 0
                 && let Some(root) = self.nodes[key as usize].root.as_ref()
@@ -2918,7 +2950,271 @@ impl<M: TextEngine> Core<M> {
         self.layout.set_style(layout, style);
         self.needs_layout = true;
     }
+    /// Number of screens / modals / header items above `key`.
+    fn root_depth(&self, mut key: Key) -> u32 {
+        let mut depth = 0;
+        key = self.nodes[key as usize].parent;
+        while key != NO_KEY {
+            let n = &self.nodes[key as usize];
+            if n.kind.is_layout_root() {
+                depth += 1;
+            }
+            key = n.parent;
+        }
+        depth
+    }
 
+    /// How far the system UI at the top reaches into `key`:
+    /// its root's top inset minus its offset in that root.
+    fn top_overlap(&self, key: Key) -> f32 {
+        let mut y = 0.0;
+        let mut k = key;
+        loop {
+            let n = &self.nodes[k as usize];
+            if k == self.root {
+                return (self.safe_area.top.0 - y).max(0.0);
+            }
+            if n.kind.is_layout_root() {
+                let inset = match n.kind {
+                    Kind::Modal => n.root.as_ref().map_or(0.0, |r| r.insets.top.0),
+                    _ => 0.0,
+                };
+                return (inset - y).max(0.0);
+            }
+            if !n.frame.origin.y.0.is_nan() {
+                y += n.frame.origin.y.0;
+            }
+            if n.parent == NO_KEY {
+                return 0.0;
+            }
+            k = n.parent;
+        }
+    }
+
+    /// The platform draws a header of its own above screens (iOS, Android);
+    /// without one ([`NO_NATIVE_HEADER`]) a screen's `header` slot is placed
+    /// at its top.
+    fn native_header(&self) -> bool {
+        self.header_heights != crate::NO_NATIVE_HEADER
+    }
+
+    /// The size of screen `key`: its stack's (`None` outside a stack).
+    fn screen_size(&self, key: Key) -> Option<Size<Points>> {
+        let parent = self.nodes[key as usize].parent;
+        let p = self.nodes.get(parent as usize)?;
+        let stack_layout = p.layout.filter(|_| p.kind == Kind::Stack)?;
+        let s = self.rounded_layout(stack_layout).size;
+        Some(crate::geometry::size_pt(s.width, s.height))
+    }
+
+    /// The `header` slot item of screen `key`, once created.
+    fn header_slot(&self, key: Key) -> Option<Key> {
+        self.nodes[key as usize]
+            .children
+            .iter()
+            .copied()
+            .find(|&c| {
+                let n = &self.nodes[c as usize];
+                n.kind == Kind::HeaderItem
+                    && n.created
+                    && n.root
+                        .as_ref()
+                        .is_some_and(|r| r.slot == crate::ops::HeaderSlot::Header)
+            })
+    }
+
+    /// Without a native header: the height of screen `key`'s `header` slot,
+    /// laid out first (as wide as the screen), 0 without one.
+    fn drawn_header(&mut self, key: Key) -> f32 {
+        let Some(item) = self.header_slot(key) else {
+            return 0.0;
+        };
+        self.layout_detached(item);
+        self.nodes[item as usize]
+            .layout
+            .map_or(0.0, |l| self.rounded_layout(l).size.height)
+    }
+
+    /// Lays out one layout root (Screen, Modal, HeaderItem) at the size
+    /// its container gives.
+    fn layout_detached(&mut self, key: Key) {
+        let native_header = self.native_header();
+        let drawn_header = if !native_header && self.nodes[key as usize].kind == Kind::Screen {
+            self.drawn_header(key)
+        } else {
+            0.0
+        };
+        let node = &self.nodes[key as usize];
+        let (Some(layout), kind, parent) = (node.layout, node.kind, node.parent) else {
+            return;
+        };
+        let root = node.root.as_ref().expect("root state");
+        let (size, header, available) = match kind {
+            Kind::Screen => {
+                let Some(size) = self.screen_size(key) else {
+                    return;
+                };
+                let c = &root.screen;
+                let measured = root.header.filter(|_| !c.header_transparent);
+                let header = if !native_header {
+                    drawn_header
+                } else if !c.header_visible {
+                    0.0
+                } else if let Some(measured) = measured {
+                    measured
+                } else {
+                    self.header_heights.0.0 + self.top_overlap(parent)
+                };
+                (
+                    size,
+                    header,
+                    taffy::Size {
+                        width: taffy::AvailableSpace::Definite(size.width.0),
+                        height: taffy::AvailableSpace::Definite(size.height.0),
+                    },
+                )
+            }
+            Kind::HeaderItem if !native_header && root.slot == crate::ops::HeaderSlot::Header => {
+                let Some(screen) = self.screen_size(parent) else {
+                    return;
+                };
+                (
+                    crate::geometry::size_pt(screen.width.0, 0.0),
+                    0.0,
+                    taffy::Size {
+                        width: taffy::AvailableSpace::Definite(screen.width.0),
+                        height: taffy::AvailableSpace::MaxContent,
+                    },
+                )
+            }
+            Kind::Modal => {
+                let size = root.reported.unwrap_or(self.viewport);
+                (
+                    size,
+                    0.0,
+                    taffy::Size {
+                        width: taffy::AvailableSpace::Definite(size.width.0),
+                        height: taffy::AvailableSpace::Definite(size.height.0),
+                    },
+                )
+            }
+            // A header item of a native header: the platform places it,
+            // but its content still lays out for the frame it reports.
+            _ => (
+                crate::geometry::Size::default(),
+                0.0,
+                taffy::Size {
+                    width: taffy::AvailableSpace::MaxContent,
+                    height: taffy::AvailableSpace::MaxContent,
+                },
+            ),
+        };
+        let changed = root.laid_out != Some((size, header));
+        if !changed && !self.layout.dirty(layout) {
+            return;
+        }
+        if kind == Kind::HeaderItem && size.width > Points::ZERO {
+            let mut style = self.layout.style(layout).clone();
+            style.size.width = taffy::Dimension::length(size.width.0);
+            style.size.height = taffy::Dimension::auto();
+            self.layout.set_style(layout, style);
+        } else if kind != Kind::HeaderItem {
+            let config_padding = match kind {
+                Kind::Screen if native_header && root.screen.header_transparent => 0.0,
+                _ => header,
+            };
+            let mut style = self.nodes[key as usize]
+                .base_layout
+                .as_deref()
+                .cloned()
+                .unwrap_or_default();
+            style.size = taffy::Size {
+                width: taffy::Dimension::length(size.width.0),
+                height: taffy::Dimension::length(size.height.0),
+            };
+            if config_padding > 0.0 {
+                let base = match style.padding.top.into_raw() {
+                    raw if raw.tag() == taffy::CompactLength::LENGTH_TAG => raw.value(),
+                    _ => 0.0,
+                };
+                style.padding.top = taffy::LengthPercentage::length(base + config_padding);
+            }
+            self.layout.set_style(layout, style);
+        }
+        let header_changed = root.laid_out.is_none_or(|(_, h)| h != header);
+        self.nodes[key as usize]
+            .root
+            .as_mut()
+            .expect("root state")
+            .laid_out = Some((size, header));
+        self.layout_root(layout, available);
+        self.emit_frames(key);
+        if kind == Kind::Screen && header_changed {
+            let id = self.nodes[key as usize].id;
+            if let Some(config) = self.screen_config(key) {
+                self.mount.push(MountItem::ScreenConfig {
+                    id,
+                    config: Box::new(config),
+                });
+            }
+        }
+    }
+
+    /// The options of screen `key`, with its header items.
+    fn screen_config(&self, key: Key) -> Option<crate::ScreenConfig> {
+        let node = &self.nodes[key as usize];
+        let root = node.root.as_ref().filter(|_| node.kind == Kind::Screen)?;
+        let mut config = root.screen.clone();
+        config.header_height = Points(root.laid_out.map_or(0.0, |(_, h)| h));
+        for &c in &node.children {
+            let child = &self.nodes[c as usize];
+            if child.kind != Kind::HeaderItem || !child.created {
+                continue;
+            }
+            let slot = child
+                .root
+                .as_ref()
+                .map_or(crate::ops::HeaderSlot::Left, |r| r.slot);
+            let target = match slot {
+                crate::ops::HeaderSlot::Left => &mut config.left,
+                crate::ops::HeaderSlot::Right => &mut config.right,
+                crate::ops::HeaderSlot::Title => &mut config.title_view,
+                crate::ops::HeaderSlot::Header => &mut config.header_view,
+            };
+            *target = Some(child.id);
+        }
+        Some(config)
+    }
+
+    /// Lays out the tree under `root` within `available`.
+    fn layout_root(&mut self, root: LayoutId, available: taffy::Size<taffy::AvailableSpace>) {
+        let engine = &self.text_engine;
+        let cache = &mut self.measure_cache;
+        self.layout
+            .compute_layout_with_measure(root, available, |input, _, cx, style| {
+                measure_leaf(engine, cache, input, cx, style)
+            });
+    }
+
+    /// Lays out layout roots (screens, modals, header items) in depth order.
+    fn layout_roots(&mut self) {
+        if self.roots.is_empty() {
+            return;
+        }
+        let mut order: Vec<(u32, Key)> = self
+            .roots
+            .iter()
+            .filter(|&&k| {
+                let n = &self.nodes[k as usize];
+                n.created && n.parent != NO_KEY
+            })
+            .map(|&k| (self.root_depth(k), k))
+            .collect();
+        order.sort_unstable();
+        for (_, key) in order {
+            self.layout_detached(key);
+        }
+    }
     /// Lays out the list cells that changed: items at their column's
     /// width, the header, footer and empty placeholder at the full width.
     fn layout_cells(&mut self) {
@@ -3398,6 +3694,12 @@ impl<M: TextEngine> Core<M> {
             if self.nodes[key as usize].kind == Kind::Scroll {
                 self.sync_scroll_style(key);
                 continue;
+            }
+            // A layout root is laid out from its base style every time.
+            if self.nodes[key as usize].kind.is_layout_root()
+                && let Some(base) = self.nodes[key as usize].base_layout.as_deref_mut()
+            {
+                shift_insets(base, was, now);
             }
             let Some(layout) = self.nodes[key as usize].layout else {
                 continue;
@@ -6467,5 +6769,504 @@ mod tests {
         );
         assert_eq!(events[0].0, 4);
         assert_eq!(events[0].1, EventKind::BackRequest);
+    }
+
+    #[test]
+    fn screen_layout_in_stack() {
+        let mut c = Core::new(FakeEngine, size_pt(400.0, 900.0));
+
+        // Create a stack at 390x800.
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Stack,
+        })
+        .unwrap();
+        c.apply(Op::SetStyle {
+            id: 2,
+            style: Box::new(Style {
+                layout: taffy::Style {
+                    size: taffy::Size {
+                        width: Dimension::length(390.0),
+                        height: Dimension::length(800.0),
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            patch: StylePatch::default(),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+
+        // Create two screens.
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 4,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+        c.commit();
+
+        // Both screens should be laid out at 390x800.
+        let frame3 = c.nodes.iter().find(|(_, n)| n.id == 3).unwrap().1.frame;
+        let frame4 = c.nodes.iter().find(|(_, n)| n.id == 4).unwrap().1.frame;
+        assert_eq!(frame3.size.width.0, 390.0);
+        assert_eq!(frame3.size.height.0, 800.0);
+        assert_eq!(frame4.size.width.0, 390.0);
+        assert_eq!(frame4.size.height.0, 800.0);
+
+        // Frames should have been emitted.
+        let batch = c.commit();
+        assert!(batch.is_none(), "no changes, no batch");
+    }
+
+    #[test]
+    fn header_item_layout_and_config() {
+        let mut c = Core::new(FakeEngine, size_pt(400.0, 800.0));
+        c.set_header_heights(Points::ZERO, Points::ZERO);
+
+        // Create stack and screen.
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Stack,
+        })
+        .unwrap();
+        c.apply(Op::SetStyle {
+            id: 2,
+            style: Box::new(Style {
+                layout: taffy::Style {
+                    size: taffy::Size {
+                        width: Dimension::length(400.0),
+                        height: Dimension::length(800.0),
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            patch: StylePatch::default(),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+
+        // Create header items.
+        c.apply(Op::Create {
+            id: 4,
+            tag: Tag::HeaderItem,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 4,
+            prop: Prop::HeaderSlot(crate::ops::HeaderSlot::Header),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 3,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 5,
+            tag: Tag::HeaderItem,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 5,
+            prop: Prop::HeaderSlot(crate::ops::HeaderSlot::Left),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 3,
+            child: 5,
+            before: None,
+        })
+        .unwrap();
+
+        // Add content to header to give it height.
+        c.apply(Op::Create {
+            id: 6,
+            tag: Tag::View,
+        })
+        .unwrap();
+        c.apply(Op::SetStyle {
+            id: 6,
+            style: Box::new(Style {
+                layout: taffy::Style {
+                    size: taffy::Size {
+                        width: Dimension::length(100.0),
+                        height: Dimension::length(50.0),
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            patch: StylePatch::default(),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 4,
+            child: 6,
+            before: None,
+        })
+        .unwrap();
+
+        let batch = c.commit().expect("changes");
+
+        // Header should be laid out (has non-zero dimensions).
+        let header_frame = c.nodes.iter().find(|(_, n)| n.id == 4).unwrap().1.frame;
+        assert!(header_frame.size.width.0 > 0.0, "header should have width");
+        assert!(
+            header_frame.size.height.0 > 0.0,
+            "header should have height"
+        );
+
+        // ScreenConfig should include header_height and slots.
+        let config_item = batch
+            .items
+            .iter()
+            .rev()
+            .find_map(|item| match item {
+                MountItem::ScreenConfig { id, config } if *id == 3 => Some(config),
+                _ => None,
+            })
+            .expect("ScreenConfig emitted");
+        assert!(
+            config_item.header_height.0 > 0.0,
+            "config should have header height"
+        );
+        assert_eq!(config_item.header_view, Some(4));
+        assert_eq!(config_item.left, Some(5));
+    }
+
+    #[test]
+    fn header_slot_replacement_updates_screen_config() {
+        let mut c = Core::new(FakeEngine, size_pt(400.0, 800.0));
+        c.set_header_heights(Points::ZERO, Points::ZERO);
+        for (id, tag) in [(2, Tag::Stack), (3, Tag::Screen)] {
+            c.apply(Op::Create { id, tag }).unwrap();
+        }
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        fn insert_header(c: &mut Core<FakeEngine>, id: NodeId) -> Option<NodeId> {
+            c.apply(Op::Create {
+                id,
+                tag: Tag::HeaderItem,
+            })
+            .unwrap();
+            c.apply(Op::SetProp {
+                id,
+                prop: Prop::HeaderSlot(crate::ops::HeaderSlot::Header),
+            })
+            .unwrap();
+            c.apply(Op::Insert {
+                parent: 3,
+                child: id,
+                before: None,
+            })
+            .unwrap();
+            c.commit()
+                .and_then(|batch| {
+                    batch.items.iter().rev().find_map(|item| match item {
+                        MountItem::ScreenConfig { id, config } if *id == 3 => {
+                            Some(config.header_view)
+                        }
+                        _ => None,
+                    })
+                })
+                .expect("a screen config")
+        }
+        assert_eq!(insert_header(&mut c, 4), Some(4));
+        c.apply(Op::Remove {
+            parent: 3,
+            child: 4,
+        })
+        .unwrap();
+        assert_eq!(insert_header(&mut c, 5), Some(5));
+    }
+
+    #[test]
+    fn native_header_moves_content() {
+        let mut c = Core::new(FakeEngine, size_pt(400.0, 800.0));
+        c.set_header_heights(Points(64.0), Points(96.0));
+
+        // Create stack and screen.
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Stack,
+        })
+        .unwrap();
+        c.apply(Op::SetStyle {
+            id: 2,
+            style: Box::new(Style {
+                layout: taffy::Style {
+                    size: taffy::Size {
+                        width: Dimension::length(400.0),
+                        height: Dimension::length(800.0),
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            patch: StylePatch::default(),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+
+        // Add a child view.
+        c.apply(Op::Create {
+            id: 4,
+            tag: Tag::View,
+        })
+        .unwrap();
+        c.apply(Op::SetStyle {
+            id: 4,
+            style: Box::new(Style {
+                layout: taffy::Style {
+                    size: taffy::Size {
+                        width: Dimension::length(100.0),
+                        height: Dimension::length(100.0),
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            patch: StylePatch::default(),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 3,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+
+        c.commit();
+
+        // Content should start at y=64 (native header height).
+        let child_frame = c.nodes.iter().find(|(_, n)| n.id == 4).unwrap().1.frame;
+        assert_eq!(child_frame.origin.y.0, 64.0);
+
+        // With headerTransparent, content should start at y=0.
+        c.apply(Op::SetProp {
+            id: 3,
+            prop: Prop::Screen(crate::ops::ScreenProp::HeaderTransparent(true)),
+        })
+        .unwrap();
+        c.commit();
+
+        let child_frame = c.nodes.iter().find(|(_, n)| n.id == 4).unwrap().1.frame;
+        assert_eq!(child_frame.origin.y.0, 0.0);
+    }
+
+    #[test]
+    fn modal_layout_at_reported_size() {
+        let mut c = core();
+
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Modal,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+
+        // Set modal size.
+        c.set_root_size(2, size_pt(350.0, 600.0), Edges::default());
+        c.commit();
+
+        // Modal should be laid out at that size.
+        let frame = c.nodes.iter().find(|(_, n)| n.id == 2).unwrap().1.frame;
+        assert_eq!(frame.size.width.0, 350.0);
+        assert_eq!(frame.size.height.0, 600.0);
+    }
+
+    #[test]
+    fn screen_and_modal_config_emission() {
+        let mut c = core();
+
+        // Create screen.
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Stack,
+        })
+        .unwrap();
+        c.apply(Op::SetStyle {
+            id: 2,
+            style: Box::new(Style {
+                layout: taffy::Style {
+                    size: taffy::Size {
+                        width: Dimension::length(400.0),
+                        height: Dimension::length(800.0),
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            patch: StylePatch::default(),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+
+        // Create modal.
+        c.apply(Op::Create {
+            id: 4,
+            tag: Tag::Modal,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+
+        let batch = c.commit().expect("changes");
+
+        // ScreenConfig should be emitted.
+        assert!(batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::ScreenConfig { id, .. } if *id == 3
+        )));
+
+        // ModalConfig should be emitted.
+        assert!(batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::ModalConfig { id, .. } if *id == 4
+        )));
+    }
+
+    #[test]
+    fn topmost_modal_wins_back() {
+        let mut c = core();
+
+        // Create two modals.
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Modal,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::Modal,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.commit();
+
+        // Listen on both.
+        c.apply(Op::Listen {
+            id: 2,
+            event: EventKind::BackRequest,
+            enabled: true,
+        })
+        .unwrap();
+        c.apply(Op::Listen {
+            id: 3,
+            event: EventKind::BackRequest,
+            enabled: true,
+        })
+        .unwrap();
+        c.commit();
+
+        // The last created modal (3) should handle back.
+        c.handle_back();
+        let mut events = Vec::new();
+        c.take_events(&mut events);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0, 3, "topmost modal should receive back");
     }
 }

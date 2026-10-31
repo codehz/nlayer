@@ -292,3 +292,39 @@ pub extern "C" fn nlayer_back() {
         }
     });
 }
+
+/// Reports a modal's root size and safe-area insets to the engine.
+/// Applied at the next [`nlayer_pump`].
+#[unsafe(no_mangle)]
+pub extern "C" fn nlayer_root_size(
+    id: u32,
+    width: f32,
+    height: f32,
+    top: f32,
+    right: f32,
+    bottom: f32,
+    left: f32,
+) {
+    let width = if width.is_finite() { width } else { 0.0 };
+    let height = if height.is_finite() { height } else { 0.0 };
+    let top = if top.is_finite() { top } else { 0.0 };
+    let right = if right.is_finite() { right } else { 0.0 };
+    let bottom = if bottom.is_finite() { bottom } else { 0.0 };
+    let left = if left.is_finite() { left } else { 0.0 };
+
+    RUNNING.with(|slot| {
+        if let Some(session) = slot.borrow_mut().as_mut() {
+            use nlayer_core::geometry::{Edges, Size, px};
+            session.set_root_size(
+                id.into(),
+                Size::new(px(width), px(height)),
+                Edges {
+                    top: px(top),
+                    right: px(right),
+                    bottom: px(bottom),
+                    left: px(left),
+                },
+            );
+        }
+    });
+}

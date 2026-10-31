@@ -22,7 +22,9 @@ test("the page graph and a text mount do not need QuickJS", async () => {
   const exported = WebAssembly.Module.exports(module).map((entry) => entry.name);
   assert.equal(exported.includes("nlayer_browser_initialize"), true);
   assert.equal(exported.includes("nlayer_start"), false);
-  const binary = Buffer.from(bytes).toString("latin1");
+  // Search the bytes: a debug build's string table can exceed the largest
+  // string V8 makes.
+  const binary = Buffer.from(bytes);
   assert.equal(binary.includes("__rquickjs"), false);
   assert.equal(binary.includes("QuickJS"), false);
   const frames = [];

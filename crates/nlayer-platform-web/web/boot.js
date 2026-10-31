@@ -255,6 +255,7 @@ export async function startPage(root, options = {}) {
     wasm = await instantiate(options.wasm, options);
     watchSurface(root);
   }
+  player?.dispose();
   root.replaceChildren();
   player = new Player(
     root,
@@ -307,6 +308,12 @@ export async function startPage(root, options = {}) {
           return wasm.nlayer_pump();
         });
       },
+      setRootSize(id, width, height, top, right, bottom, left) {
+        enter(() => {
+          wasm.nlayer_root_size(id, width, height, top, right, bottom, left);
+          return wasm.nlayer_pump();
+        });
+      },
     },
     { assetBase: options.assetBase ?? "", assetMap: options.assetMap, baseCSS: options.baseCSS },
   );
@@ -347,6 +354,8 @@ export async function startPage(root, options = {}) {
 export function stopPage() {
   clearTimeout(timer);
   timer = 0;
+  player?.dispose();
+  player = null;
   releaseBundle?.();
   releaseBundle = null;
   if (facade) {

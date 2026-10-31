@@ -165,3 +165,12 @@ pub(crate) fn uninstall(cx: &Ctx<'_>) {
         crate::reactive::free_all(&mut state.graph, raw);
     }
 }
+
+/// Writes `enabled` to the reduceMotion signal (internal).
+pub(crate) fn set_reduce_motion(cx: *mut qjs::JSContext, enabled: bool) {
+    unsafe {
+        let signal = (*state(cx)).reduce_motion.get();
+        let value = if enabled { qjs::JS_TRUE } else { qjs::JS_FALSE };
+        crate::reactive::set_signal(cx, signal, value);
+    }
+}

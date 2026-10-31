@@ -147,17 +147,20 @@ export class Player {
     if (options.baseCSS != null) installBase(this.doc, options.baseCSS);
     this.historyDepth = 0;
     this.historySync = 0;
+    this.ignoredPops = 0;
     this.window = this.doc.defaultView ?? globalThis;
     this.history = this.window.history;
+    this.historySession = `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+    this.onPopState = (e) => this.popState(e);
+    this.onResize = () => this.windowResized();
     if (this.history && typeof this.history.pushState === "function") {
-      this.history.replaceState({ nlayer: 0 }, "");
-      this.window.addEventListener?.("popstate", (e) => {
-        const depth = e.state?.nlayer ?? 0;
-        if (depth > this.historyDepth) return;
-        this.historyDepth = depth;
-        this.host.back?.();
-      });
+      this.history.replaceState(this.historyState(0), "");
+      this.window.addEventListener?.("popstate", this.onPopState);
     }
+    this.window.addEventListener?.("resize", this.onResize);
+    this.safeArea = options.safeArea ?? null;
+    this.changedStacks = new Set();
+    this.changedModals = false;
   }
 
   /** `env(keyboard-inset-height)`. A pin of 0 leaves taps alone. */
@@ -178,6 +181,7 @@ export class Player {
       const handler = this[`op_${item[0]}`];
       if (handler) handler.call(this, item);
     }
+    this.reconcileStacks();
   }
 
   view(id) {
@@ -243,16 +247,9 @@ export class Player {
     });
     if (kind === "scroll") this.wireScroll(el);
     if (kind === "screen") {
-      el.addEventListener("nlayer:dismiss", () => this.host.dismiss?.(id));
-      el.addEventListener("nlayer:backpress", () => this.host.backPress?.(id));
       el.addEventListener("nlayer:insets", (e) => this.host.insets?.(id, e.detail));
     }
     if (kind === "modal") {
-      el.addEventListener("nlayer:show", () => this.host.show?.(id));
-      el.addEventListener("nlayer:dismiss", () => this.host.dismiss?.(id));
-      el.addEventListener("nlayer:requestclose", (e) =>
-        this.host.requestClose?.(id, e.detail?.reason),
-      );
       el.addEventListener("nlayer:insets", (e) => this.host.insets?.(id, e.detail));
     }
     el.addEventListener("click", (event) => {
@@ -324,18 +321,56 @@ export class Player {
       before && before.parentNode === parent ? before : (parent._spacer ?? null),
     );
     this.raiseBorder(parent);
+    this.trackChange(parent, child);
   }
 
   op_r([, id]) {
-    this.view(id)?.remove();
+    const el = this.view(id);
+    if (!el) return;
+    const parent = el.parentNode;
+    el.remove();
+    if (parent) this.trackChange(parent, el);
   }
 
   op_d([, id]) {
     const el = this.view(id);
     if (!el) return;
+    const parent = el.parentNode;
     this.animation?.unbind(id);
     this.views.delete(id);
     el.remove();
+    if (parent) this.trackChange(parent, el);
+  }
+
+  trackChange(parent, child) {
+    if (child._kind === "screen" && parent?._kind === "stack") {
+      this.changedStacks.add(parent);
+      this.syncHistorySoon();
+    } else if (child._kind === "modal") {
+      this.changedModals = true;
+      this.syncHistorySoon();
+    }
+  }
+
+  reconcileStacks() {
+    for (const stack of this.changedStacks) {
+      if (!this.views.has(stack._id)) continue;
+      const screens = [...stack.children].filter((c) => c._kind === "screen");
+      screens.forEach((screen, i) => {
+        const isTop = i === screens.length - 1;
+        screen.classList.toggle("nl-top", isTop);
+      });
+    }
+    this.changedStacks.clear();
+    if (this.changedModals) {
+      this.changedModals = false;
+      for (const el of this.views.values()) {
+        if (el._kind !== "modal" || !el.isConnected) continue;
+        // A modal covers the window wherever the app rendered it.
+        if (el.parentNode !== this.root) this.root.append(el);
+        this.placeModal(el);
+      }
+    }
   }
 
   op_f([, id, x, y, w, h]) {
@@ -913,7 +948,11 @@ export class Player {
     if (name === "scrollToEnd") {
       if (!animated) this.noteInstant(el);
       const [x, y] = el._horizontal ? [el.scrollWidth, 0] : [0, el.scrollHeight];
-      el.scrollTo?.({ left: x, top: y, behavior: animated ? "smooth" : "instant" });
+      el.scrollTo?.({
+        left: x,
+        top: y,
+        behavior: animated ? "smooth" : "instant",
+      });
       if (!el.scrollTo) {
         el.scrollLeft = x;
         el.scrollTop = y;
@@ -928,7 +967,11 @@ export class Player {
     const distance = Math.abs((el.scrollTop || 0) - y) + Math.abs((el.scrollLeft || 0) - x);
     const useInstant = !animated || distance > 5000;
 
-    el.scrollTo?.({ left: x, top: y, behavior: useInstant ? "instant" : "smooth" });
+    el.scrollTo?.({
+      left: x,
+      top: y,
+      behavior: useInstant ? "instant" : "smooth",
+    });
     if (!el.scrollTo) {
       el.scrollLeft = x;
       el.scrollTop = y;
@@ -946,6 +989,7 @@ export class Player {
     const el = this.view(id);
     if (!el) return;
     el._modalConfig = config;
+    this.placeModal(el);
     this.syncHistorySoon();
   }
 
@@ -957,13 +1001,73 @@ export class Player {
     }, 0);
   }
 
+  placeModal(el) {
+    if (!el || el._kind !== "modal") return;
+    const [width, height] = this.rootSize();
+    const [top, right, bottom, left] = this.readInsets();
+    const last = el._lastPlace;
+    if (
+      last &&
+      last[0] === width &&
+      last[1] === height &&
+      last[2] === top &&
+      last[3] === right &&
+      last[4] === bottom &&
+      last[5] === left
+    )
+      return;
+    el._lastPlace = [width, height, top, right, bottom, left];
+    this.host.setRootSize?.(el._id, width, height, top, right, bottom, left);
+  }
+
+  rootSize() {
+    return [this.root.clientWidth || 0, this.root.clientHeight || 0];
+  }
+
+  readInsets() {
+    if (this.safeArea) {
+      const area = this.safeArea;
+      return [area.top || 0, area.right || 0, area.bottom || 0, area.left || 0];
+    }
+    if (typeof getComputedStyle !== "function") {
+      return [0, 0, 0, 0];
+    }
+    const probe = this.doc.createElement("div");
+    probe.style.cssText =
+      "position:absolute;visibility:hidden;padding:" +
+      "env(safe-area-inset-top) env(safe-area-inset-right) " +
+      "env(safe-area-inset-bottom) env(safe-area-inset-left)";
+    this.root.append(probe);
+    const style = getComputedStyle(probe);
+    const n = (value) => parseFloat(value) || 0;
+    const insets = [
+      n(style.paddingTop),
+      n(style.paddingRight),
+      n(style.paddingBottom),
+      n(style.paddingLeft),
+    ];
+    probe.remove();
+    return insets;
+  }
+
+  windowResized() {
+    for (const el of this.views.values()) {
+      if (el._kind === "modal" && el.isConnected) this.placeModal(el);
+    }
+  }
+
+  historyState(depth) {
+    return { ...(this.history.state ?? {}), nlayer: depth, nlayerSession: this.historySession };
+  }
+
   syncHistory() {
     const depth = this.backDepth();
     const have = this.historyDepth || 0;
     for (let i = have + 1; i <= depth; i++) {
-      this.history.pushState({ nlayer: i }, "");
+      this.history.pushState(this.historyState(i), "");
     }
     if (depth < have) {
+      this.ignoredPops++;
       this.history.go(depth - have);
     }
     this.historyDepth = depth;
@@ -981,6 +1085,33 @@ export class Player {
       }
     }
     return depth;
+  }
+
+  popState(e) {
+    if (this.ignoredPops > 0) {
+      this.ignoredPops--;
+      return;
+    }
+    const have = this.historyDepth;
+    if (e.state?.nlayerSession !== this.historySession) {
+      this.historyDepth = 0;
+      // Blind loop: host.back() posts to the engine and returns immediately,
+      // not a boolean result. Each call queues one back event.
+      for (let i = 0; i < have; i++) this.host.back?.();
+      if (e.state?.nlayer != null) this.history.back();
+      return;
+    }
+    const at = e.state.nlayer ?? 0;
+    if (at < have) {
+      this.historyDepth = at;
+      // Blind loop: host.back() posts to the engine and returns immediately,
+      // not a boolean result. Each call queues one back event.
+      for (let i = at; i < have; i++) this.host.back?.();
+      this.syncHistorySoon();
+    } else if (at > have) {
+      this.ignoredPops++;
+      this.history.go(have - at);
+    }
   }
 
   blurField() {
@@ -1027,6 +1158,17 @@ export class Player {
       this.swallowTarget = event.target;
       event.preventDefault?.();
       event.stopPropagation?.();
+    }
+  }
+
+  dispose() {
+    if (this.onPopState) {
+      this.window.removeEventListener?.("popstate", this.onPopState);
+      this.onPopState = null;
+    }
+    if (this.onResize) {
+      this.window.removeEventListener?.("resize", this.onResize);
+      this.onResize = null;
     }
   }
 }

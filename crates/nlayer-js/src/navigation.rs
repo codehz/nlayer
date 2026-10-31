@@ -9,6 +9,8 @@
 //! M1: JS surface only. Native containers (UINavigationController, Android
 //! stack, web history) come in M2.
 
+#![allow(unsafe_op_in_unsafe_fn)]
+
 use std::ffi::{CStr, c_int};
 
 use nlayer_core::Tag;
@@ -56,87 +58,6 @@ pub(crate) const EXPORTS: &[(&str, fn(*mut JsContext) -> JsValue)] = &[
     ("NavPage", screen_export),
     ("Dialog", modal_export),
 ];
-
-/// The TypeScript definitions for navigation.
-pub(crate) const TYPES: &str = r#"/** The routes of a `<NavStack>`: the app's values; each push is a page of its own, the same route pushed twice included. */
-export interface NavStackState<R> {
-  /** The routes, bottom to top (reactive). */
-  routes: Accessor<readonly R[]>;
-  /** Pushes a page. */
-  push(route: R): void;
-  /** Pops `count` pages (default 1; at least one stays). */
-  pop(count?: number): void;
-  /** Pops back to the first page. */
-  popToRoot(): void;
-  /** Replaces the top page. */
-  replace(route: R): void;
-  /** Replaces the pages with `routes`; a route that stays (the same value)
-   * keeps its page and its state. */
-  setRoutes(routes: R[]): void;
-  /** Removes the topmost page of `route`, wherever it is. */
-  remove(route: R): void;
-}
-
-export interface NavStackProps<R> {
-  state: NavStackState<R>;
-  testID?: string;
-  style?: StyleProp<ViewStyle>;
-  class?: string;
-  /** Renders a route; return a `<NavPage>` for options. */
-  children: (route: R, index: Accessor<number>) => JSX.Element;
-}
-
-export interface NavPageProps {
-  testID?: string;
-  /** The page's title. */
-  title?: string;
-  /** The app's header (desktops and web). */
-  header?: JSX.Element;
-  /** The user popped the page (back button, swipe); its route is gone. */
-  onDismiss?: () => void;
-  /** The user pressed back on the page, whether or not it popped. */
-  onBackPress?: () => void;
-  /** Platform insets changed (safe area). */
-  onInsets?: (insets: { top: number; right: number; bottom: number; left: number }) => void;
-  style?: StyleProp<ViewStyle>;
-  class?: string;
-  children?: JSX.Element;
-}
-
-/** What closed a dialog: Escape or the back button (`"cancel"`), a press
- * on its backdrop, a swipe down. */
-export type DialogChangeReason = "cancel" | "backdropPress" | "swipe";
-
-export interface DialogProps {
-  testID?: string;
-  /** Shown while true (default). */
-  open?: boolean;
-  /** How it comes in and goes (default `"slide"`). */
-  animation?: "slide" | "fade" | "none";
-  /** It finished appearing. */
-  onShow?: () => void;
-  /** It went away: the user closed it, or the app removed it. */
-  onClose?: () => void;
-  /** The user tried to close it, whether or not a `closeOn*` flag let it close. */
-  onRequestClose?: (event: { reason: DialogChangeReason }) => void;
-  /** The user closed it (the `closeOn*` flag of what they did let it
-   * close): it closes whatever `open` says, so keep `open` in sync (set it
-   * to false here); while `open` stays true it stays closed, and it opens
-   * again when `open` goes from false to true. */
-  onOpenChange?: (event: { open: boolean; reason: DialogChangeReason }) => void;
-  /** Platform insets changed (safe area). */
-  onInsets?: (insets: { top: number; right: number; bottom: number; left: number }) => void;
-  style?: StyleProp<ViewStyle>;
-  class?: string;
-  backdropStyle?: StyleProp<ViewStyle>;
-  backdropClass?: string;
-  backdropTestID?: string;
-  closeOnBackdropPress?: boolean;
-  closeOnSwipe?: boolean;
-  closeOnEscape?: boolean;
-  children?: JSX.Element;
-}
-"#;
 
 // --- The navigator --------------------------------------------------------------
 
@@ -301,7 +222,7 @@ unsafe extern "C" fn read_routes(
 }
 
 /// The stack state's functions, by magic: push (0), pop (1), popToRoot (2),
-/// replace (3), setRoutes (4), remove (5).
+/// replace (3), setRoutes (4), remove (5), removeExact (6).
 unsafe extern "C" fn navigate(
     cx: *mut JsContext,
     _this: JsValue,
@@ -355,32 +276,56 @@ unsafe extern "C" fn navigate(
             }
         }
         4 => {
-            // setRoutes(routes)
+            // setRoutes(routes): a route that stays keeps its page (entry).
             if argc > 0 {
-                let new_routes = unsafe { *argv };
-                let new_entries: Vec<JsValue> = routes_of(cx, new_routes)
-                    .into_iter()
-                    .map(|r| {
-                        let e = entry(cx, r);
-                        free(cx, r);
-                        e
-                    })
-                    .collect();
-                free_values(cx, entries);
-                entries = new_entries;
+                let new_routes = routes_of(cx, *argv);
+                let mut old: Vec<Option<JsValue>> = entries.drain(..).map(Some).collect();
+                let mut next = Vec::with_capacity(new_routes.len());
+                for route in new_routes {
+                    let kept = old.iter_mut().position(|slot| {
+                        slot.as_ref().is_some_and(|e| {
+                            let r = route_of(cx, *e);
+                            let equal = strict_equal(cx, r, route);
+                            free(cx, r);
+                            equal
+                        })
+                    });
+                    match kept.and_then(|at| old[at].take()) {
+                        Some(e) => {
+                            free(cx, route);
+                            next.push(e);
+                        }
+                        None => {
+                            next.push(entry(cx, route));
+                            free(cx, route);
+                        }
+                    }
+                }
+                let left: Vec<JsValue> = old.into_iter().flatten().collect();
+                free_values(cx, left);
+                entries = next;
             }
         }
         5 => {
-            // remove(route)
+            // remove(route): the topmost screen showing that route.
             if argc > 0 && entries.len() > 1 {
                 let target = unsafe { *argv };
-                // Find last occurrence
                 if let Some(pos) = entries.iter().rposition(|&e| {
                     let r = route_of(cx, e);
-                    let same = same(r, target);
+                    let equal = strict_equal(cx, r, target);
                     free(cx, r);
-                    same
+                    equal
                 }) {
+                    let removed = entries.remove(pos);
+                    free(cx, removed);
+                }
+            }
+        }
+        6 => {
+            // remove this exact entry (the user popped its page).
+            if argc > 0 {
+                let target = unsafe { *argv };
+                if let Some(pos) = entries.iter().position(|&e| strict_equal(cx, e, target)) {
                     let removed = entries.remove(pos);
                     free(cx, removed);
                 }
@@ -405,10 +350,161 @@ fn stack_export(cx: *mut JsContext) -> JsValue {
 unsafe extern "C" fn stack_component(
     cx: *mut JsContext,
     _this: JsValue,
+    argc: c_int,
+    argv: *mut JsValue,
+) -> JsValue {
+    let props = reactive::arg(argc, argv, 0);
+    let node = dom::create_element(cx, Tag::Stack);
+    // SAFETY: an inline tag check.
+    if unsafe { qjs::JS_IsException(node) } {
+        return node;
+    }
+    let result = (|| -> Result<(), JsValue> {
+        dom::spread_props_except(cx, node, props, &["state", "children"])?;
+        // SAFETY: the navigator and its hidden entries signal, both owned.
+        let navigator = unsafe { qjs::JS_GetPropertyStr(cx, props, c"state".as_ptr()) };
+        let entries = unsafe { qjs::JS_GetPropertyStr(cx, navigator, ENTRIES.as_ptr()) };
+        free(cx, navigator);
+        if unsafe { qjs::JS_IsException(entries) } {
+            return Err(entries);
+        }
+        // SAFETY: a row per entry, kept while the entry is in the stack.
+        let render = native(cx, stack_row, 2, &mut [props]);
+        let mut args = [entries, render];
+        let rows = unsafe { crate::dom::each(cx, UNDEFINED, 2, args.as_mut_ptr()) };
+        free(cx, entries);
+        free(cx, render);
+        if unsafe { qjs::JS_IsException(rows) } {
+            return Err(rows);
+        }
+        let r = dom::insert_value_at(cx, node, rows, None);
+        free(cx, rows);
+        r
+    })();
+    match result {
+        Ok(()) => reactive::finish_value(cx, node),
+        Err(e) => {
+            free(cx, node);
+            e
+        }
+    }
+}
+
+/// One route of a stack: its screen (the app's `<NavPage>`, or one around
+/// what it rendered); a native pop removes the route.
+unsafe extern "C" fn stack_row(
+    cx: *mut JsContext,
+    _this: JsValue,
+    argc: c_int,
+    argv: *mut JsValue,
+    _magic: c_int,
+    data: *mut JsValue,
+) -> JsValue {
+    // SAFETY: one data value (the stack's props); `item` is an accessor.
+    let props = unsafe { *data };
+    let (item, index) = (reactive::arg(argc, argv, 0), reactive::arg(argc, argv, 1));
+    // SAFETY: the entry accessor called untracked.
+    let entry = reactive::untracked_with(cx, || unsafe {
+        qjs::JS_Call(cx, item, UNDEFINED, 0, std::ptr::null_mut())
+    });
+    if unsafe { qjs::JS_IsException(entry) } {
+        return entry;
+    }
+    let route = route_of(cx, entry);
+    // SAFETY: the app's function, called untracked.
+    let children = unsafe { qjs::JS_GetPropertyStr(cx, props, c"children".as_ptr()) };
+    let mut args = [route, index];
+    let rendered = reactive::untracked_with(cx, || unsafe {
+        qjs::JS_Call(cx, children, UNDEFINED, 2, args.as_mut_ptr())
+    });
+    free(cx, children);
+    free(cx, route);
+    if unsafe { qjs::JS_IsException(rendered) } {
+        free(cx, entry);
+        return rendered;
+    }
+    // SAFETY: the navigator's entries signal, owned.
+    let navigator = unsafe { qjs::JS_GetPropertyStr(cx, props, c"state".as_ptr()) };
+    let entries = unsafe { qjs::JS_GetPropertyStr(cx, navigator, ENTRIES.as_ptr()) };
+    free(cx, navigator);
+    let popped = native(cx, pop_route, 2, &mut [entries, entry]);
+    free(cx, entries);
+    free(cx, entry);
+    // An accessor (e.g. a component made hot) may render another screen
+    // later.
+    let result =
+        if unsafe { qjs::JS_IsFunction(cx, rendered) } && dom::node_id(cx, rendered).is_none() {
+            let wrap = native(cx, screen_of_accessor, 0, &mut [rendered, popped]);
+            reactive::memo(cx, wrap, false)
+        } else {
+            screen_for(cx, rendered, popped)
+        };
+    free(cx, rendered);
+    free(cx, popped);
+    result
+}
+
+/// The route entry a screen popped natively stands for: removes that entry.
+unsafe extern "C" fn pop_route(
+    cx: *mut JsContext,
+    _this: JsValue,
     _argc: c_int,
     _argv: *mut JsValue,
+    _magic: c_int,
+    data: *mut JsValue,
 ) -> JsValue {
-    dom::host_component(cx, "stack", true)
+    // SAFETY: two data values (the entries signal, the entry); the entry
+    // is the argument.
+    let mut args = [unsafe { *data.add(1) }];
+    unsafe { navigate(cx, UNDEFINED, 1, args.as_mut_ptr(), 6, data) }
+}
+
+unsafe extern "C" fn screen_of_accessor(
+    cx: *mut JsContext,
+    _this: JsValue,
+    _argc: c_int,
+    _argv: *mut JsValue,
+    _magic: c_int,
+    data: *mut JsValue,
+) -> JsValue {
+    // SAFETY: two data values (the accessor, the popped callback).
+    let (accessor, popped) = unsafe { (*data, *data.add(1)) };
+    let rendered = unsafe { qjs::JS_Call(cx, accessor, UNDEFINED, 0, std::ptr::null_mut()) };
+    if unsafe { qjs::JS_IsException(rendered) } {
+        return rendered;
+    }
+    let r = reactive::untracked_with(cx, || screen_for(cx, rendered, popped));
+    free(cx, rendered);
+    r
+}
+
+/// The screen for what a route rendered (borrowed): itself when it is one,
+/// else a screen around it; told about native pops (`popped`).
+fn screen_for(cx: *mut JsContext, rendered: JsValue, popped: JsValue) -> JsValue {
+    let node = if dom::node_tag(cx, rendered) == Some(Tag::Screen) {
+        // SAFETY: a dup returned.
+        unsafe { qjs::JS_DupValue(cx, rendered) }
+    } else {
+        // SAFETY: new props for a screen around the content.
+        let props = unsafe { qjs::JS_NewObject(cx) };
+        unsafe {
+            qjs::JS_SetPropertyStr(
+                cx,
+                props,
+                c"children".as_ptr(),
+                qjs::JS_DupValue(cx, rendered),
+            );
+        }
+        let mut args = [props];
+        let node = unsafe { screen_component(cx, UNDEFINED, 1, args.as_mut_ptr()) };
+        free(cx, props);
+        node
+    };
+    // SAFETY: an inline tag check.
+    if !unsafe { qjs::JS_IsException(node) } {
+        dom::set_popped(cx, node, popped);
+    }
+    node
 }
 
 // --- Screen -----------------------------------------------------------------------
@@ -462,22 +558,20 @@ unsafe extern "C" fn screen_component(
     }
     free(cx, insets_handler);
 
-    // Set up onDismiss if provided
+    // A native pop always removes the route, whether the app listens.
     let on_dismiss = qjs::JS_GetPropertyStr(cx, props, c"onDismiss".as_ptr());
-    if !qjs::JS_IsUndefined(on_dismiss) && !qjs::JS_IsNull(on_dismiss) {
-        let dismiss_handler = {
-            let mut data = [on_dismiss];
-            native(cx, on_dismiss_handler, 1, &mut data)
-        };
-        if let Err(e) = dom::set_prop_value(cx, node, "onDismiss", dismiss_handler) {
-            free(cx, dismiss_handler);
-            free(cx, on_dismiss);
-            free(cx, insets_signal);
-            free(cx, node);
-            return e;
-        }
+    let dismiss_handler = {
+        let mut data = [on_dismiss, node];
+        native(cx, on_dismiss_handler, 2, &mut data)
+    };
+    if let Err(e) = dom::set_prop_value(cx, node, "onDismiss", dismiss_handler) {
         free(cx, dismiss_handler);
+        free(cx, on_dismiss);
+        free(cx, insets_signal);
+        free(cx, node);
+        return e;
     }
+    free(cx, dismiss_handler);
     free(cx, on_dismiss);
 
     // Set up onBackPress if provided
@@ -596,18 +690,31 @@ unsafe extern "C" fn on_dismiss_handler(
     _magic: c_int,
     data: *mut JsValue,
 ) -> JsValue {
-    // SAFETY: data points to valid callback value owned by the function data
+    // SAFETY: data[0] = user callback, data[1] = node
     let callback = unsafe { *data };
-    // SAFETY: cx is valid, callback is a live JS value
+    let node = unsafe { *data.add(1) };
+
+    // First, call the popped callback to remove the route
+    let popped = dom::popped(cx, node);
+    if !unsafe { qjs::JS_IsUndefined(popped) } {
+        let result = unsafe { qjs::JS_Call(cx, popped, UNDEFINED, 0, std::ptr::null_mut()) };
+        if unsafe { qjs::JS_IsException(result) } {
+            unsafe { qjs::JS_FreeValue(cx, result) };
+        } else {
+            unsafe { qjs::JS_FreeValue(cx, result) };
+        }
+        // Free the popped callback after calling it
+        unsafe { qjs::JS_FreeValue(cx, popped) };
+        dom::set_popped(cx, node, UNDEFINED);
+    }
+
+    // Then call the user's onDismiss callback
     if !unsafe { qjs::JS_IsFunction(cx, callback) } {
         return UNDEFINED;
     }
     let mut args = [];
-    // SAFETY: cx and callback are valid, args pointer is valid
     let result = unsafe { qjs::JS_Call(cx, callback, UNDEFINED, 0, args.as_mut_ptr()) };
-    // SAFETY: cx and result are valid
     if unsafe { qjs::JS_IsException(result) } {
-        // SAFETY: cx and result are valid
         unsafe { qjs::JS_FreeValue(cx, result) };
     }
     UNDEFINED
@@ -797,6 +904,7 @@ unsafe extern "C" fn modal_render(
             "onClose",
             "onCancel",
             "onOpenChange",
+            "onInsets",
         ];
         if let Err(e) = dom::spread_props_except(cx, node, props, skip) {
             free(cx, node);
@@ -1051,8 +1159,17 @@ unsafe extern "C" fn on_request_close(
     let state = *data.add(1);
 
     let event = reactive::arg(argc, argv, 0);
-    let reason_val = qjs::JS_GetPropertyStr(cx, event, c"reason".as_ptr());
-    let reason_cstr = qjs::JS_ToCString(cx, reason_val);
+    // A core-emitted close (back, Escape) carries no reason: "cancel".
+    let reason_val = if unsafe { qjs::JS_IsObject(event) } {
+        qjs::JS_GetPropertyStr(cx, event, c"reason".as_ptr())
+    } else {
+        UNDEFINED
+    };
+    let reason_cstr = if qjs::JS_IsUndefined(reason_val) {
+        std::ptr::null()
+    } else {
+        qjs::JS_ToCString(cx, reason_val)
+    };
     let reason_bytes = if !reason_cstr.is_null() {
         CStr::from_ptr(reason_cstr).to_bytes()
     } else {
@@ -1378,21 +1495,9 @@ fn free_values(cx: *mut JsContext, values: Vec<JsValue>) {
     }
 }
 
-fn same(a: JsValue, b: JsValue) -> bool {
-    // SAFETY: comparing JS values.
-    unsafe {
-        let tag_a = qjs::JS_VALUE_GET_TAG(a);
-        let tag_b = qjs::JS_VALUE_GET_TAG(b);
-        if tag_a != tag_b {
-            return false;
-        }
-        // Reference equality for objects
-        if tag_a == qjs::JS_TAG_OBJECT {
-            return qjs::JS_VALUE_GET_PTR(a) == qjs::JS_VALUE_GET_PTR(b);
-        }
-        // Value equality for primitives
-        qjs::JS_VALUE_GET_INT(a) == qjs::JS_VALUE_GET_INT(b)
-    }
+fn strict_equal(cx: *mut JsContext, a: JsValue, b: JsValue) -> bool {
+    // SAFETY: an identity comparison of live values.
+    unsafe { qjs::JS_IsStrictEqual(cx, a, b) }
 }
 
 /// Gets the `reduceMotion` environment bit (internal only, not exported).
@@ -1428,12 +1533,10 @@ fn insets_context(cx: *mut JsContext) -> JsValue {
 }
 
 fn insert_array(cx: *mut JsContext, parent: JsValue, items: Vec<JsValue>) -> Result<(), JsValue> {
-    unsafe {
-        let arr = new_array(cx, items);
-        let result = dom::insert_value_at(cx, parent, arr, None);
-        free(cx, arr);
-        result
-    }
+    let arr = new_array(cx, items);
+    let result = dom::insert_value_at(cx, parent, arr, None);
+    free(cx, arr);
+    result
 }
 
 fn new_string(cx: *mut JsContext, s: &str) -> JsValue {

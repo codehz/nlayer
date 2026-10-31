@@ -262,9 +262,28 @@ Copied files:
 - `crates/nlayer-cli/src/android_package.rs` uses the APK metadata and
   signing boundary from `crates/nsh-cli/src/package.rs` and
   `crates/nsh-cli/src/android.rs`; the Java host's APK `assets/` reading keeps
-- M1 navigation protocol and independent layout roots in `crates/nlayer-core/src/{ops,mount}.rs` and `src/core/mod.rs` from `crates/nsh-core/src/{ops,mount.rs,core/mod.rs}`: stack, screen, modal and header item tags; v3-pruned screen/modal config and props; header slot layout and `set_screen_header` accounting. Large titles, header back titles, status bar props and iOS system buttons are not copied.
-- `crates/nlayer-js/src/navigation.rs` from `crates/nsh-js/src/navigation.rs` (route stack mutations, NavStack/NavPage/Dialog component patterns, callbacks and insets; nsh-only native options are not copied).
-- `crates/nlayer-platform-web/web/browser/navigation.js` from `crates/nsh-platform-web/web/browser/navigation.js` (route stack facade, page/header slots, modal behavior and insets context).
-- Navigation history operations in `crates/nlayer-platform-web/web/nlayer.js` from `crates/nsh-platform-web/web/nsh.js` (screen/modal history synchronization and popstate handling, v3 navigation consumers only).
-- Navigation mount encoding in `crates/nlayer-platform-web/src/encode.rs` follows `crates/nsh-platform-web/src/encode.rs` (v3 ScreenConfig/ModalConfig fields only).
   the `run` push path.
+- v3 M1 navigation protocol and independent layout roots in
+  `crates/nlayer-core/src/{ops,mount}.rs` and `src/core/mod.rs` from
+  `crates/nsh-core/src/{ops,mount.rs,core/mod.rs}`: stack, screen, modal and
+  header item tags; v3-pruned screen/modal config and props; header slot
+  layout and `set_screen_header` accounting. Large titles, header back
+  titles, status bar props and iOS system buttons are not copied.
+- `crates/nlayer-js/src/navigation.rs` from
+  `crates/nsh-js/src/navigation.rs` (route stack mutations,
+  NavStack/NavPage/Dialog component patterns, callbacks and insets;
+  nsh-only native options are not copied).
+- `crates/nlayer-engine/src/lib.rs` navigation messages and back dispatch
+  from `crates/nsh-engine/src/lib.rs` (`Message::ScreenHeader`, root sizing
+  and the stack → listener → platform back order; large titles and the
+  desktop backend are not copied).
+- `crates/nlayer-platform-web/web/browser/navigation.js` from
+  `crates/nsh-platform-web/web/browser/navigation.js` (route stack facade,
+  page/header slots, modal behavior and insets context).
+- Navigation history operations in
+  `crates/nlayer-platform-web/web/nlayer.js` from
+  `crates/nsh-platform-web/web/nsh.js` (screen/modal history
+  synchronization and popstate handling, v3 navigation consumers only).
+- Navigation mount encoding in `crates/nlayer-platform-web/src/encode.rs`
+  follows `crates/nsh-platform-web/src/encode.rs` (v3
+  ScreenConfig/ModalConfig fields only).

@@ -177,7 +177,7 @@ test("Player history back forwards to engine for stack entries", () => {
   assert.equal(player.historyDepth, 0);
 });
 
-test("Player screen registers event callbacks", () => {
+test("Player screen no longer registers dismiss/backpress callbacks", () => {
   const { player, host, window } = createTestEnv();
 
   let dismissCalled = false;
@@ -192,20 +192,20 @@ test("Player screen registers event callbacks", () => {
   player.apply([["c", 2, "screen"]]);
 
   const el = player.view(2);
+  // Core dispatches events directly now, not through DOM events
   el.dispatchEvent(new window.CustomEvent("nlayer:dismiss"));
-  assert.ok(dismissCalled, "Should call dismiss callback");
+  assert.equal(dismissCalled, false, "Should not call dismiss via DOM event");
 
   el.dispatchEvent(new window.CustomEvent("nlayer:backpress"));
-  assert.ok(backPressCalled, "Should call backPress callback");
+  assert.equal(backPressCalled, false, "Should not call backPress via DOM event");
 });
 
-test("Player modal registers event callbacks", () => {
+test("Player modal no longer registers show/dismiss/requestclose callbacks", () => {
   const { player, host, window } = createTestEnv();
 
   let showCalled = false;
   let dismissCalled = false;
   let requestCloseCalled = false;
-  let closeReason = null;
 
   host.show = () => {
     showCalled = true;
@@ -215,22 +215,25 @@ test("Player modal registers event callbacks", () => {
   };
   host.requestClose = (id, reason) => {
     requestCloseCalled = true;
-    closeReason = reason;
   };
 
   player.apply([["c", 2, "modal"]]);
 
   const el = player.view(2);
 
+  // Core dispatches events directly now, not through DOM events
   el.dispatchEvent(new window.CustomEvent("nlayer:show"));
-  assert.ok(showCalled, "Should call show callback");
+  assert.equal(showCalled, false, "Should not call show via DOM event");
 
   el.dispatchEvent(new window.CustomEvent("nlayer:dismiss"));
-  assert.ok(dismissCalled, "Should call dismiss callback");
+  assert.equal(dismissCalled, false, "Should not call dismiss via DOM event");
 
-  el.dispatchEvent(new window.CustomEvent("nlayer:requestclose", { detail: { reason: "cancel" } }));
-  assert.ok(requestCloseCalled, "Should call requestClose callback");
-  assert.equal(closeReason, "cancel", "Should pass close reason");
+  el.dispatchEvent(
+    new window.CustomEvent("nlayer:requestclose", {
+      detail: { reason: "cancel" },
+    }),
+  );
+  assert.equal(requestCloseCalled, false, "Should not call requestClose via DOM event");
 });
 
 test("Player insets callback receives detail", () => {
@@ -253,4 +256,225 @@ test("Player insets callback receives detail", () => {
   assert.ok(receivedInsets, "Should receive insets");
   assert.equal(receivedInsets.top, 50);
   assert.equal(receivedInsets.bottom, 30);
+});
+
+test("Only the last screen in a stack has nl-top class", () => {
+  const { player, root } = createTestEnv();
+  player.apply([
+    ["c", 10, "stack"],
+    ["c", 11, "screen"],
+    ["c", 12, "screen"],
+    ["i", 1, 10, null],
+    ["i", 10, 11, null],
+    ["i", 10, 12, null],
+  ]);
+  const stack = root.querySelector("[class*='nl-stack']");
+  const screens = [...stack.children].filter((c) => c._kind === "screen");
+  assert.equal(screens.length, 2);
+  assert.equal(screens[0].classList.contains("nl-top"), false);
+  assert.equal(screens[1].classList.contains("nl-top"), true);
+});
+
+test("Removing top screen makes previous screen top", () => {
+  const { player, root } = createTestEnv();
+  player.apply([
+    ["c", 10, "stack"],
+    ["c", 11, "screen"],
+    ["c", 12, "screen"],
+    ["i", 1, 10, null],
+    ["i", 10, 11, null],
+    ["i", 10, 12, null],
+  ]);
+  const stack = root.querySelector("[class*='nl-stack']");
+  const screens = [...stack.children].filter((c) => c._kind === "screen");
+  assert.equal(screens[1].classList.contains("nl-top"), true);
+  assert.equal(player.backDepth(), 1);
+
+  player.apply([["r", 12]]);
+  assert.equal(screens[0].classList.contains("nl-top"), true);
+  assert.equal(player.backDepth(), 0);
+});
+
+test("op_r removes DOM node and updates stack", () => {
+  const { player, root } = createTestEnv();
+  player.apply([
+    ["c", 10, "stack"],
+    ["c", 11, "screen"],
+    ["c", 12, "screen"],
+    ["i", 1, 10, null],
+    ["i", 10, 11, null],
+    ["i", 10, 12, null],
+  ]);
+
+  const stack = player.view(10);
+  assert.equal(stack.children.length, 2, "Stack should have 2 screens");
+  const screen12 = player.view(12);
+  assert.ok(screen12, "Screen 12 should exist in views map");
+
+  // Remove screen 12 with op "r" (removes from DOM, keeps in views map)
+  player.apply([["r", 12]]);
+
+  // Verify DOM node is removed from parent
+  assert.equal(stack.children.length, 1, "Stack should have 1 screen after removal");
+  assert.equal(screen12.parentNode, null, "Screen 12 should be detached from parent");
+  assert.equal(player.view(12), screen12, "Screen 12 should still be in views map");
+
+  // Verify previous screen becomes top
+  const screen11 = player.view(11);
+  assert.equal(screen11.classList.contains("nl-top"), true, "Screen 11 should be top");
+
+  // Verify history depth drops
+  assert.equal(player.backDepth(), 0, "Back depth should drop to 0");
+});
+
+test("a modal covers the window wherever the app rendered it", () => {
+  const { player, root } = createTestEnv();
+  player.host.setRootSize = () => {};
+  player.apply([
+    ["c", 2, "view"],
+    ["i", 1, 2, null],
+    ["c", 20, "modal"],
+    ["i", 2, 20, null],
+  ]);
+  const modal = player.view(20);
+  assert.equal(modal.parentNode, root, "the modal moves to the root layer");
+  assert.equal(player.view(2).contains(modal), false);
+});
+
+test("Modal insert calls setRootSize with dimensions and insets", () => {
+  const { player, root } = createTestEnv();
+  const calls = [];
+  player.host.setRootSize = (...args) => calls.push(args);
+  player.safeArea = { top: 20, right: 0, bottom: 0, left: 0 };
+
+  player.apply([
+    ["c", 20, "modal"],
+    ["i", 1, 20, null],
+    ["mc", 20, {}],
+  ]);
+
+  assert.equal(calls.length, 1);
+  const [id, width, height, top, right, bottom, left] = calls[0];
+  assert.equal(id, 20);
+  assert.equal(typeof width, "number");
+  assert.equal(typeof height, "number");
+  assert.equal(top, 20);
+  assert.equal(right, 0);
+  assert.equal(bottom, 0);
+  assert.equal(left, 0);
+});
+
+test("Modal does not call setRootSize again if size unchanged", () => {
+  const { player } = createTestEnv();
+  const calls = [];
+  player.host.setRootSize = (...args) => calls.push(args);
+  player.safeArea = { top: 0, right: 0, bottom: 0, left: 0 };
+
+  player.apply([
+    ["c", 20, "modal"],
+    ["i", 1, 20, null],
+    ["mc", 20, {}],
+  ]);
+
+  assert.equal(calls.length, 1);
+
+  player.apply([["mc", 20, {}]]);
+  assert.equal(calls.length, 1); // No new call
+});
+
+test("App-initiated pop does not call host.back on popstate", async () => {
+  const { player } = createTestEnv();
+  const backCalls = [];
+  player.host.back = () => backCalls.push(1);
+
+  player.apply([
+    ["c", 10, "stack"],
+    ["c", 11, "screen"],
+    ["c", 12, "screen"],
+    ["i", 1, 10, null],
+    ["i", 10, 11, null],
+    ["i", 10, 12, null],
+  ]);
+
+  // Wait for async history sync
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(player.historyDepth, 1);
+
+  // App pops the screen (syncHistory will set ignoredPops)
+  player.apply([["r", 12]]);
+
+  // Wait for async history sync
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  // Simulate the resulting popstate event
+  player.popState({
+    state: { nlayer: 0, nlayerSession: player.historySession },
+  });
+
+  // ignoredPops should have consumed this, so host.back is not called
+  assert.equal(backCalls.length, 0);
+});
+
+test("User back on stack calls host.back", async () => {
+  const { player } = createTestEnv();
+  const backCalls = [];
+  player.host.back = () => backCalls.push(1);
+
+  player.apply([
+    ["c", 10, "stack"],
+    ["c", 11, "screen"],
+    ["c", 12, "screen"],
+    ["i", 1, 10, null],
+    ["i", 10, 11, null],
+    ["i", 10, 12, null],
+  ]);
+
+  // Wait for async history sync
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(player.historyDepth, 1);
+
+  // Simulate user pressing back button (not app-initiated)
+  player.popState({
+    state: { nlayer: 0, nlayerSession: player.historySession },
+  });
+
+  assert.equal(backCalls.length, 1);
+  assert.equal(player.historyDepth, 0);
+});
+
+test("Foreign session back calls host.back for all entries", async () => {
+  const { player } = createTestEnv();
+  const backCalls = [];
+  player.host.back = () => backCalls.push(1);
+
+  player.apply([
+    ["c", 10, "stack"],
+    ["c", 11, "screen"],
+    ["c", 12, "screen"],
+    ["c", 13, "screen"],
+    ["i", 1, 10, null],
+    ["i", 10, 11, null],
+    ["i", 10, 12, null],
+    ["i", 10, 13, null],
+  ]);
+
+  // Wait for async history sync
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(player.historyDepth, 2);
+
+  // Simulate back to a different session (e.g., after reload)
+  player.popState({ state: { nlayer: 1, nlayerSession: "different" } });
+
+  assert.equal(backCalls.length, 2); // Should call back twice
+  assert.equal(player.historyDepth, 0);
+});
+
+test("Dispose removes event listeners", () => {
+  const { player } = createTestEnv();
+
+  // Listeners are set in constructor if available
+  player.dispose();
+
+  assert.equal(player.onPopState, null);
+  assert.equal(player.onResize, null);
 });
