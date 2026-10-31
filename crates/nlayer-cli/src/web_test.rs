@@ -361,6 +361,44 @@ impl HostedApp for WebApp {
         self.call("tree", &[])
     }
 
+    fn drag(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String> {
+        let (cx, cy) = self.point("press", selector)?;
+        let center_x = cx as f64;
+        let center_y = cy as f64;
+        let end_x = center_x + x as f64;
+        let end_y = center_y + y as f64;
+        
+        self.mouse("mousePressed", center_x, center_y, 1)?;
+        for i in 1..=5 {
+            let t = i as f64 / 5.0;
+            let curr_x = center_x + x as f64 * t;
+            let curr_y = center_y + y as f64 * t;
+            self.mouse("mouseMoved", curr_x, curr_y, 1)?;
+        }
+        self.mouse("mouseReleased", end_x, end_y, 0)?;
+        Ok(())
+    }
+
+    fn drag_and_hold(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String> {
+        let (cx, cy) = self.point("press", selector)?;
+        let center_x = cx as f64;
+        let center_y = cy as f64;
+        
+        self.mouse("mousePressed", center_x, center_y, 1)?;
+        for i in 1..=5 {
+            let t = i as f64 / 5.0;
+            let curr_x = center_x + x as f64 * t;
+            let curr_y = center_y + y as f64 * t;
+            self.mouse("mouseMoved", curr_x, curr_y, 1)?;
+        }
+        Ok(())
+    }
+
+    fn drop(&mut self) -> Result<(), String> {
+        self.mouse("mouseReleased", 0.0, 0.0, 0)?;
+        Ok(())
+    }
+
     fn close(&mut self) {
         if let Some(page) = self.page.take()
             && let Ok(mut browser) = self.browser.lock()

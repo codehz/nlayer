@@ -201,6 +201,18 @@ impl HostedApp for IosApp {
         self.call("tree", "", "", 0.0)
     }
 
+    fn drag(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String> {
+        self.call("drag", selector, "", 0.0).map(|_| ())
+    }
+
+    fn drag_and_hold(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String> {
+        self.call("dragAndHold", selector, "", 0.0).map(|_| ())
+    }
+
+    fn drop(&mut self) -> Result<(), String> {
+        self.call("drop", "", "", 0.0).map(|_| ())
+    }
+
     fn close(&mut self) {
         if !self.open {
             return;
