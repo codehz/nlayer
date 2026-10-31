@@ -1062,6 +1062,12 @@ export interface App {
   compose(selector: string, text: string, composing: boolean): void;
   /** Scrolls the scroll view `selector` names by `distance` points toward its content's end. */
   scroll(selector: string, distance: number): void;
+  /** Drags `selector` by (`x`, `y`) points. */
+  drag(selector: string, x: number, y: number): void;
+  /** Drags `selector` by (`x`, `y`) but keeps the pointer down. */
+  dragAndHold(selector: string, x: number, y: number): void;
+  /** Releases the held pointer from `dragAndHold`. */
+  drop(): void;
   /** Advances the headless test clock by `ms` milliseconds in 60 Hz frames
    * (animated values move; promises settle). */
   advance(ms: number): void;
