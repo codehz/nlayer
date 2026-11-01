@@ -344,7 +344,7 @@ impl Encoder {
                 out.item("scr").num(*id);
                 out.s.push_str(",{");
                 out.s.push_str("\"headerHeight\":");
-                out.num(config.header_height.0);
+                push_num(&mut out.s, config.header_height.0);
                 out.s.push_str(",\"headerVisible\":");
                 out.s.push_str(if config.header_visible {
                     "true"
@@ -370,11 +370,14 @@ impl Encoder {
                 out.s
                     .push_str(if config.back_visible { "true" } else { "false" });
                 out.s.push_str(",\"animation\":");
-                out.str(match config.animation {
-                    nlayer_core::ScreenAnimation::Default => "default",
-                    nlayer_core::ScreenAnimation::Fade => "fade",
-                    nlayer_core::ScreenAnimation::None => "none",
-                });
+                push_str(
+                    &mut out.s,
+                    match config.animation {
+                        nlayer_core::ScreenAnimation::Default => "default",
+                        nlayer_core::ScreenAnimation::Fade => "fade",
+                        nlayer_core::ScreenAnimation::None => "none",
+                    },
+                );
                 if let Some(title) = &config.title {
                     out.s.push_str(",\"title\":");
                     push_str(&mut out.s, title);
@@ -393,19 +396,19 @@ impl Encoder {
                 }
                 if let Some(node) = config.left {
                     out.s.push_str(",\"left\":");
-                    out.num(node);
+                    push_num(&mut out.s, node);
                 }
                 if let Some(node) = config.right {
                     out.s.push_str(",\"right\":");
-                    out.num(node);
+                    push_num(&mut out.s, node);
                 }
                 if let Some(node) = config.title_view {
                     out.s.push_str(",\"titleView\":");
-                    out.num(node);
+                    push_num(&mut out.s, node);
                 }
                 if let Some(node) = config.header_view {
                     out.s.push_str(",\"headerView\":");
-                    out.num(node);
+                    push_num(&mut out.s, node);
                 }
                 out.s.push('}');
                 out.end();
@@ -414,17 +417,23 @@ impl Encoder {
                 out.item("mc").num(*id);
                 out.s.push_str(",{");
                 out.s.push_str("\"animation\":");
-                out.str(match config.animation {
-                    nlayer_core::ModalAnimation::Slide => "slide",
-                    nlayer_core::ModalAnimation::Fade => "fade",
-                    nlayer_core::ModalAnimation::None => "none",
-                });
+                push_str(
+                    &mut out.s,
+                    match config.animation {
+                        nlayer_core::ModalAnimation::Slide => "slide",
+                        nlayer_core::ModalAnimation::Fade => "fade",
+                        nlayer_core::ModalAnimation::None => "none",
+                    },
+                );
                 out.s.push_str(",\"presentation\":");
-                out.str(match config.presentation {
-                    nlayer_core::ModalPresentation::FullScreen => "fullscreen",
-                    nlayer_core::ModalPresentation::PageSheet => "pagesheet",
-                    nlayer_core::ModalPresentation::FormSheet => "formsheet",
-                });
+                push_str(
+                    &mut out.s,
+                    match config.presentation {
+                        nlayer_core::ModalPresentation::FullScreen => "fullscreen",
+                        nlayer_core::ModalPresentation::PageSheet => "pagesheet",
+                        nlayer_core::ModalPresentation::FormSheet => "formsheet",
+                    },
+                );
                 out.s.push_str(",\"closeOnEscape\":");
                 out.s.push_str(if config.close_on_escape {
                     "true"
@@ -695,14 +704,8 @@ impl Out {
     }
 
     fn num(&mut self, n: impl Into<f64>) -> &mut Self {
-        let n = n.into();
         self.s.push(',');
-        if n.is_finite() {
-            let r = (n * 1000.0).round() / 1000.0;
-            let _ = write!(self.s, "{r}");
-        } else {
-            self.s.push_str("null");
-        }
+        push_num(&mut self.s, n);
         self
     }
 
@@ -778,6 +781,16 @@ fn text_hash(css: &str) -> u64 {
         h = h.wrapping_mul(0x0100_0000_01b3);
     }
     h
+}
+
+fn push_num(out: &mut String, n: impl Into<f64>) {
+    let n = n.into();
+    if n.is_finite() {
+        let r = (n * 1000.0).round() / 1000.0;
+        let _ = write!(out, "{r}");
+    } else {
+        out.push_str("null");
+    }
 }
 
 fn push_str(out: &mut String, v: &str) {
