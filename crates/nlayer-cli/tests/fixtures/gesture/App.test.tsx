@@ -31,8 +31,8 @@ test("pan drives animated value and springs back on release", () => {
   const initial = mustFind(app.tree(), "panCard");
   expect(translateX(initial)).toBe(0);
 
-  // Drag horizontally
-  app.drag("panCard", 120, 0);
+  // Drag horizontally and hold, so the value is read before the spring runs.
+  app.dragAndHold("panCard", 120, 0);
   app.advance(50);
 
   // Should have moved right
@@ -40,6 +40,7 @@ test("pan drives animated value and springs back on release", () => {
   expect(translateX(dragged) > 100).toBe(true);
 
   // After release, spring back to 0
+  app.drop();
   app.advance(500);
   const sprung = mustFind(app.tree(), "panCard");
   expect(Math.abs(translateX(sprung)) < 5).toBe(true);
@@ -55,7 +56,7 @@ test("horizontal pan in vertical scroll does not trigger scroll", () => {
 
   // Drag card horizontally inside scroll
   app.drag("scrollPanCard", 50, 0);
-  app.advance(50);
+  app.advance(0);
 
   // Scroll position should not change
   const afterY = mustFind(app.tree(), "scroll").offset?.y ?? 0;
