@@ -542,17 +542,20 @@ fn point_of(
     press: Press,
 ) -> Result<(objc2::rc::Retained<UIWindow>, Point), String> {
     let window = window_of(mounter)?;
+    let scene = mounter.scene();
+    
     let point = match press {
         Press::View(id) => {
             let view = mounter
                 .view_of(id)
                 .ok_or_else(|| "the view is gone".to_owned())?;
             let bounds = view.bounds();
-            let mid = CGPoint::new(
+            let local_center = CGPoint::new(
                 bounds.origin.x + bounds.size.width / 2.0,
                 bounds.origin.y + bounds.size.height / 2.0,
             );
-            to_window(&view, mid)
+            // Calculate absolute window coordinates by walking up the scene tree
+            absolute_point(&scene, id, local_center.x, local_center.y)?
         }
         Press::Span { view, start, end } => {
             let text = mounter
@@ -562,22 +565,51 @@ fn point_of(
                 let bounds = text.bounds();
                 CGPoint::new(bounds.size.width / 2.0, bounds.size.height / 2.0)
             });
-            to_window(&text, local)
+            // Calculate absolute window coordinates by walking up the scene tree
+            absolute_point(&scene, view, local.x, local.y)?
         }
     };
-    Ok((
-        window,
-        Point {
-            x: point.x,
-            y: point.y,
-        },
-    ))
+    Ok((window, point))
 }
 
-fn to_window(view: &UIView, point: CGPoint) -> CGPoint {
-    // SAFETY: `convertPoint:toView:` with a nil view is the window's space.
-    unsafe { msg_send![view, convertPoint: point, toView: Option::<&UIView>::None] }
+/// Calculate absolute window coordinates by accumulating frames up the parent chain,
+/// subtracting scroll offsets from scroll view ancestors. This matches the logic in
+/// headless tests and the `locate()` helper in App.test.tsx.
+fn absolute_point(
+    scene: &crate::scene::Scene,
+    mut id: u32,
+    local_x: f64,
+    local_y: f64,
+) -> Result<Point, String> {
+    let mut x = local_x;
+    let mut y = local_y;
+    
+    loop {
+        let node = scene.node(id).ok_or_else(|| "node not in scene".to_owned())?;
+        
+        // Add this node's frame offset relative to its parent (convert f32 to f64)
+        x += node.frame.x as f64;
+        y += node.frame.y as f64;
+        
+        // Move to parent
+        let Some(parent_id) = node.parent else {
+            // Reached root, return accumulated coordinates
+            break;
+        };
+        
+        // If parent is a scroll view, subtract its contentOffset (convert f32 to f64)
+        let parent_node = scene.node(parent_id).ok_or_else(|| "parent not in scene".to_owned())?;
+        if let Some(scroll) = &parent_node.scroll {
+            x -= scroll.x as f64;
+            y -= scroll.y as f64;
+        }
+        
+        id = parent_id;
+    }
+    
+    Ok(Point { x, y })
 }
+
 
 fn window_of(mounter: &Mounter) -> Result<objc2::rc::Retained<UIWindow>, String> {
     mounter

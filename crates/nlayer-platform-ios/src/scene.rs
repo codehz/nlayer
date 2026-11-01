@@ -287,6 +287,11 @@ impl Scene {
         }
     }
 
+    /// Get a node by id for coordinate calculations.
+    pub(crate) fn node(&self, id: u32) -> Option<&Node> {
+        self.nodes.get(id as usize)?.as_ref()
+    }
+
     pub(crate) fn type_target(&self, selector: &str) -> Result<u32, String> {
         let hit = self.resolve(selector)?;
         if !self.visible(hit) {
