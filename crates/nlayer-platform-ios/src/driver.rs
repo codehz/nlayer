@@ -287,107 +287,70 @@ fn type_text(selector: String, text: String) -> Result<Value, String> {
 
 fn scroll(selector: String, distance: f32) -> Result<Value, String> {
     on_ui(move || -> Result<Value, String> {
-        let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
-        let mounter = mounter.borrow();
-        let scene = mounter.scene();
-        let id = scene.scroll_target(&selector)?;
-        let scroll = mounter
-            .scroll(id)
-            .ok_or_else(|| format!("`{selector}` is not in a scroll view"))?;
-        let window = window_of(&mounter)?;
-        
-        let offset = scroll.contentOffset();
-        let content = scroll.contentSize();
-        let bounds = scroll.bounds();
-        let horizontal = scroll.alwaysBounceHorizontal();
-        
-        // Calculate target offset
-        let (target_x, target_y) = if horizontal {
-            (
-                scene::next_offset(
-                    offset.x as f32,
-                    distance,
-                    content.width as f32,
-                    bounds.size.width as f32,
-                ),
-                offset.y as f32,
-            )
-        } else {
-            (
-                offset.x as f32,
-                scene::next_offset(
+        let (scroll, x, y) = {
+            let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
+            let mounter = mounter.borrow();
+            let scene = mounter.scene();
+            let id = scene.scroll_target(&selector)?;
+            let scroll = mounter
+                .scroll(id)
+                .ok_or_else(|| format!("`{selector}` is not in a scroll view"))?;
+            let offset = scroll.contentOffset();
+            let content = scroll.contentSize();
+            let bounds = scroll.bounds().size;
+            let horizontal = scroll.alwaysBounceHorizontal();
+            let (x, y) = if horizontal {
+                (
+                    scene::next_offset(
+                        offset.x as f32,
+                        distance,
+                        content.width as f32,
+                        bounds.width as f32,
+                    ),
                     offset.y as f32,
-                    distance,
-                    content.height as f32,
-                    bounds.size.height as f32,
-                ),
-            )
+                )
+            } else {
+                (
+                    offset.x as f32,
+                    scene::next_offset(
+                        offset.y as f32,
+                        distance,
+                        content.height as f32,
+                        bounds.height as f32,
+                    ),
+                )
+            };
+            (scroll, x, y)
         };
+        scroll.setContentOffset(CGPoint::new(x as CGFloat, y as CGFloat));
         
-        // Calculate swipe distance (negative because swipe direction is opposite to scroll)
-        let swipe_distance = if horizontal {
-            (offset.x - target_x as CGFloat) as f64
-        } else {
-            (offset.y - target_y as CGFloat) as f64
-        };
+        // Reset pan gesture recognizer state to prevent it from blocking subsequent touches.
+        // After programmatic setContentOffset, the pan recognizer may still be in tracking/
+        // delay state, which can swallow tap gestures on child views. Toggling isEnabled
+        // forces it back to .possible state.
+        let pan = scroll.panGestureRecognizer();
+        pan.setEnabled(false);
+        pan.setEnabled(true);
         
-        // Get scroll view center in window coordinates for touch start point
-        let scroll_center = CGPoint::new(
-            bounds.origin.x + bounds.size.width / 2.0,
-            bounds.origin.y + bounds.size.height / 2.0,
-        );
-        let window_point: CGPoint = unsafe {
-            msg_send![&*scroll, convertPoint:scroll_center, toView:Option::<&objc2_ui_kit::UIView>::None]
-        };
-        
-        // Perform HID swipe gesture
-        let steps = 10;
-        let step_distance = swipe_distance / steps as f64;
-        
-        let (start_x, start_y, dx, dy) = if horizontal {
-            (window_point.x, window_point.y, step_distance, 0.0)
-        } else {
-            (window_point.x, window_point.y, 0.0, step_distance)
-        };
-        
-        // Touch down
-        if !synth::touch(&window, start_x, start_y, Phase::Down) {
-            return Err("the simulator did not take the touch down".into());
-        }
-        thread::sleep(Duration::from_millis(16));
-        
-        // Move through steps
-        for i in 1..=steps {
-            let x = start_x + dx * i as f64;
-            let y = start_y + dy * i as f64;
-            if !synth::touch(&window, x, y, Phase::Move) {
-                return Err("the simulator did not take the touch move".into());
-            }
-            thread::sleep(Duration::from_millis(16));
+        // The offset is the end of a drag that glides. The delegate reports
+        // the same callbacks a finger would. The mounter borrow is gone, so
+        // the delegate's `try_borrow` succeeds.
+        if let Some(delegate) = scroll.delegate() {
+            let scroll = &*scroll;
+            // First notify that scrolling occurred - this updates engine state
+            let _: () = unsafe { msg_send![&*delegate, scrollViewDidScroll: scroll] };
+            let _: () = unsafe { msg_send![&*delegate, scrollViewWillBeginDragging: scroll] };
+            let _: () = unsafe {
+                msg_send![&*delegate, scrollViewDidEndDragging: scroll, willDecelerate: true]
+            };
+            let _: () = unsafe { msg_send![&*delegate, scrollViewDidEndDecelerating: scroll] };
         }
         
-        // Touch up
-        let end_x = start_x + dx * steps as f64;
-        let end_y = start_y + dy * steps as f64;
-        if !synth::touch(&window, end_x, end_y, Phase::Up) {
-            return Err("the simulator did not take the touch up".into());
-        }
+        // Force layout update to ensure all view frames are current after scroll
+        scroll.layoutIfNeeded();
         
-        // Wait for scroll animation to settle
-        thread::sleep(Duration::from_millis(300));
-        
-        // Verify we reached the target (within tolerance)
-        let final_offset = scroll.contentOffset();
-        let actual = if horizontal { final_offset.x } else { final_offset.y };
-        let target = if horizontal { target_x } else { target_y };
-        let diff = (actual - target as CGFloat).abs();
-        
-        if diff > 10.0 {
-            // If not close enough, adjust with setContentOffset as fallback
-            scroll.setContentOffset(CGPoint::new(target_x as CGFloat, target_y as CGFloat));
-            thread::sleep(Duration::from_millis(50));
-        }
-        
+        // Brief settle to let the scroll event propagate and trigger a frame update
+        thread::sleep(Duration::from_millis(50));
         Ok(json!(null))
     })?
 }
