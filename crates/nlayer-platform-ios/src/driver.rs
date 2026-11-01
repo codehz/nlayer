@@ -313,13 +313,13 @@ fn scroll(selector: String, distance: f32) -> Result<Value, String> {
 }
 
 fn drag(selector: String, x: f32, y: f32) -> Result<Value, String> {
-    // Press down at selector position
+    // Find element by testID without requiring it to be pressable
     let start_point = on_ui(move || -> Result<Point, String> {
         let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
         let mounter = mounter.borrow();
         let scene = mounter.scene();
-        let press = scene.press(&selector)?;
-        let (window, point) = point_of(&mounter, press)?;
+        let point_target = scene.point(&selector)?;
+        let (window, point) = point_of(&mounter, point_target)?;
         if !synth::touch(&window, point.x, point.y, Phase::Down) {
             return Err("the simulator did not take the touch".into());
         }
@@ -363,13 +363,13 @@ fn drag(selector: String, x: f32, y: f32) -> Result<Value, String> {
 }
 
 fn drag_and_hold(selector: String, x: f32, y: f32) -> Result<Value, String> {
-    // Press down at selector position
+    // Find element by testID without requiring it to be pressable
     let start_point = on_ui(move || -> Result<Point, String> {
         let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
         let mounter = mounter.borrow();
         let scene = mounter.scene();
-        let press = scene.press(&selector)?;
-        let (window, point) = point_of(&mounter, press)?;
+        let point_target = scene.point(&selector)?;
+        let (window, point) = point_of(&mounter, point_target)?;
         if !synth::touch(&window, point.x, point.y, Phase::Down) {
             return Err("the simulator did not take the touch".into());
         }

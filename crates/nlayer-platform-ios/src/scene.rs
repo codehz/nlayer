@@ -266,6 +266,27 @@ impl Scene {
         }
     }
 
+    /// Like `press`, but doesn't require the element to be pressable.
+    /// Used for drag operations that target any visible element by testID.
+    pub(crate) fn point(&self, selector: &str) -> Result<Press, String> {
+        let hit = self.resolve(selector)?;
+        if !self.visible(hit) {
+            return Err(format!("`{selector}` is not in view"));
+        }
+        match hit {
+            Match::Span { view, index } => {
+                let node = self.nodes[view as usize].as_ref().unwrap();
+                let span = &node.spans[index];
+                Ok(Press::Span {
+                    view,
+                    start: span.start,
+                    end: span.end,
+                })
+            }
+            Match::View(id) => Ok(Press::View(id)),
+        }
+    }
+
     pub(crate) fn type_target(&self, selector: &str) -> Result<u32, String> {
         let hit = self.resolve(selector)?;
         if !self.visible(hit) {

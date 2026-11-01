@@ -11,6 +11,9 @@ AR_wasm32_unknown_unknown = "llvm-ar"
 # The browser host keeps the same stack; deep layout runs on it too.
 rustflags = ["-C", "link-arg=-zstack-size=8388608", "--cfg", 'getrandom_backend="custom"']
 
+
+# Android NDK linkers. Requires NDK's toolchains/llvm/prebuilt/*/bin in PATH.
+# Set by test environment or manually: export PATH=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin:$PATH
 [target.aarch64-linux-android]
 linker = "aarch64-linux-android34-clang"
 
