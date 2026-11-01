@@ -250,6 +250,17 @@ final class Mounter {
     updateGestureBox(id);
   }
 
+  private void pinchBinding(ByteBuffer b) {
+    int id = b.getInt();
+    boolean hasScale = b.get() != 0;
+    if (hasScale) {
+      pinchBindings.put(id, true);
+    } else {
+      pinchBindings.remove(id);
+    }
+    updateGestureBox(id);
+  }
+
   private void rotationBinding(ByteBuffer b) {
     int id = b.getInt();
     boolean hasAngle = b.get() != 0;

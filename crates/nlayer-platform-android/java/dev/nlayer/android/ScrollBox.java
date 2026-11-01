@@ -272,9 +272,9 @@ final class ScrollBox extends FrameLayout {
       float snapTarget = computeSnapTarget();
       if (snapTarget >= 0) {
         if (horizontal) {
-          scroller.smoothScrollTo(Math.round(snapTarget), scroller.getScrollY());
+          ((HorizontalScrollView) scroller).smoothScrollTo(Math.round(snapTarget), scroller.getScrollY());
         } else {
-          scroller.smoothScrollTo(scroller.getScrollX(), Math.round(snapTarget));
+          ((ScrollView) scroller).smoothScrollTo(scroller.getScrollX(), Math.round(snapTarget));
         }
         return; // Let smoothScroll complete, which will call cameToRest again
       }
