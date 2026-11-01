@@ -12,7 +12,7 @@ use jni::{
     objects::{JByteArray, JClass, JObject, JString, JValue},
     sys::{jboolean, jfloat, jint, jlong},
 };
-use nlayer_core::geometry::{Edges, Points, Size, px};
+use nlayer_core::geometry::{Edges, Point, Points, Size, px};
 use nlayer_core::{EventKind, NodeId};
 use nlayer_engine::{Engine, EngineConfig, EngineControl, EventPayload, MountSink, Os};
 
@@ -470,6 +470,23 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_scroll(
     let Some(event) = EventKind::from_raw(raw) else {
         return;
     };
+    // Update core's scroll position for list windowing, sticky headers, and viewport=parent
+    // (same as web does in nlayer-platform-web/src/page.rs)
+    if event == EventKind::Scroll && handle != 0 {
+        let host = unsafe { host(handle) };
+        if let Some(control) = host
+            .control
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .as_ref()
+        {
+            control.update_scroll_position(
+                id as NodeId,
+                Point::new(Points(x), Points(y)),
+            );
+        }
+    }
+    // Then dispatch the event for onScroll listeners
     dispatch(
         handle,
         id,
