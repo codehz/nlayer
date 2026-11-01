@@ -1411,18 +1411,23 @@ impl Mounter {
                 disable_interval_momentum,
                 deceleration,
             } => {
-                let Some(Native::Scroll(scroll)) = self.native(id) else {
-                    return;
-                };
                 let width = size.width.0;
                 let height = size.height.0;
+                
+                // Insert content size
                 self.relay
                     .ivars()
                     .content
                     .borrow_mut()
                     .insert(id, (width, height));
-                scroll.setContentSize(CGSize::new(width as CGFloat, height as CGFloat));
-                if crate::scroll_extent::still_judged(scroll.alwaysBounceHorizontal()) {
+
+                // Check if we need to track content size
+                let should_track = if let Some(Native::Scroll(scroll)) = self.native(id) {
+                    crate::scroll_extent::still_judged(scroll.alwaysBounceHorizontal())
+                } else {
+                    false
+                };
+                if should_track {
                     self.content_sizes.push((id, height as CGFloat));
                 }
 
@@ -1430,11 +1435,17 @@ impl Mounter {
                 if let Some(slot) = self.slot_mut(id) {
                     slot.snap_paging = paging;
                     slot.snap_interval = snap_interval;
-                    slot.snap_offsets = snap_offsets;
+                    slot.snap_offsets = snap_offsets.clone();
                     slot.snap_alignment = snap_alignment;
                     slot.snap_one_step = disable_interval_momentum;
                     slot.snap_deceleration = deceleration;
                 }
+
+                // Now set scroll view properties
+                let Some(Native::Scroll(scroll)) = self.native(id) else {
+                    return;
+                };
+                scroll.setContentSize(CGSize::new(width as CGFloat, height as CGFloat));
 
                 // Calculate and set deceleration rate
                 let behavior = nlayer_core::snap::SnapBehavior {
@@ -3007,7 +3018,7 @@ impl Mounter {
         let Some(slot) = self.slot_mut(id) else {
             return;
         };
-        let Native::Scroll(scroll) = &slot.native else {
+        let Native::Scroll(_scroll) = &slot.native else {
             return;
         };
 
@@ -3015,20 +3026,34 @@ impl Mounter {
         let has_control = slot.refresh_control.is_some();
 
         if wants_refresh && !has_control {
-            let control = UIRefreshControl::new(self.mtm);
+            // Capture needed values before creating control
+            let mtm = self.mtm;
+            let relay = self.relay.clone();
+            
+            let control = UIRefreshControl::new(mtm);
             unsafe {
                 control.addTarget_action_forControlEvents(
-                    Some(&self.relay),
+                    Some(&relay),
                     sel!(handleRefresh:),
                     objc2_ui_kit::UIControlEvents::ValueChanged,
                 );
             }
-            scroll.setRefreshControl(Some(&control));
-            slot.refresh_control = Some(control);
+            
+            // Now get scroll again and set control
+            if let Some(slot) = self.slot_mut(id) {
+                if let Native::Scroll(scroll) = &slot.native {
+                    scroll.setRefreshControl(Some(&control));
+                    slot.refresh_control = Some(control);
+                }
+            }
         } else if !wants_refresh && has_control {
-            scroll.setRefreshControl(None);
-            slot.refresh_control = None;
-            slot.refreshing = false;
+            if let Some(slot) = self.slot_mut(id) {
+                if let Native::Scroll(scroll) = &slot.native {
+                    scroll.setRefreshControl(None);
+                    slot.refresh_control = None;
+                    slot.refreshing = false;
+                }
+            }
         }
     }
 
