@@ -814,6 +814,14 @@ pub(crate) struct Mounter {
     dirty_modals: Vec<NodeId>,
     /// Stacks deferred while a transition runs.
     deferred_stacks: Vec<NodeId>,
+    /// Gesture and animation bindings that arrived before their view was
+    /// created: the core sets a prop before the batch creates the view.
+    /// Applied when the view is created.
+    pending_pan: std::collections::HashMap<NodeId, (Option<u32>, Option<u32>)>,
+    pending_pinch: std::collections::HashMap<NodeId, Option<u32>>,
+    pending_rotation: std::collections::HashMap<NodeId, Option<u32>>,
+    pending_bindings:
+        std::collections::HashMap<NodeId, Vec<(nlayer_core::animation::AnimationProp, u32)>>,
 }
 
 impl Mounter {
@@ -849,6 +857,10 @@ impl Mounter {
             dirty_headers: Vec::new(),
             dirty_modals: Vec::new(),
             deferred_stacks: Vec::new(),
+            pending_pan: std::collections::HashMap::new(),
+            pending_pinch: std::collections::HashMap::new(),
+            pending_rotation: std::collections::HashMap::new(),
+            pending_bindings: std::collections::HashMap::new(),
         }));
         CURRENT.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&mounter)));
         relay.bind(Rc::downgrade(&mounter));
@@ -1114,7 +1126,7 @@ impl Mounter {
 
     /// Runs one display frame: the graph moves, bound values are painted,
     /// and finished animations go back to the engine.
-    pub(crate) fn tick_animation(&mut self, now: f64) {
+    fn tick_animation(&mut self, now: f64) {
         if self.frame_pending {
             self.frame_pending = false;
             if let Some(control) = &self.control {
@@ -1188,6 +1200,9 @@ impl Mounter {
             }
             if let Some(slot) = self.slot_mut(id) {
                 paint_view(&view, &style, slot, scroll);
+                // The scene reads `slot.style`; keep the painted values so a
+                // test tree shows where a pan or a running animation put it.
+                slot.style = style;
             }
         }
     }
@@ -1278,6 +1293,10 @@ impl Mounter {
             }
             MountItem::Delete { id } => {
                 self.forget_scroll(id);
+                self.pending_pan.remove(&id);
+                self.pending_pinch.remove(&id);
+                self.pending_rotation.remove(&id);
+                self.pending_bindings.remove(&id);
                 if self.focused == Some(id) {
                     self.end_focus(id);
                 }
@@ -1413,7 +1432,7 @@ impl Mounter {
             } => {
                 let width = size.width.0;
                 let height = size.height.0;
-                
+
                 // Insert content size
                 self.relay
                     .ivars()
@@ -1553,6 +1572,7 @@ impl Mounter {
                 self.update_link();
             }
             MountItem::AnimationBindings { id, bindings } => {
+                self.pending_bindings.insert(id, bindings.clone());
                 if let Some(slot) = self.slot_mut(id) {
                     slot.bindings = bindings.clone();
                 }
@@ -1574,18 +1594,21 @@ impl Mounter {
                 apply_accessibility(&view, &slot.accessibility, mtm);
             }
             MountItem::PanBinding { id, x, y } => {
+                self.pending_pan.insert(id, (x, y));
                 if let Some(slot) = self.slot_mut(id) {
                     slot.pan_nodes = (x, y);
                 }
                 self.sync_gestures(id);
             }
             MountItem::PinchBinding { id, scale } => {
+                self.pending_pinch.insert(id, scale);
                 if let Some(slot) = self.slot_mut(id) {
                     slot.pinch_node = scale;
                 }
                 self.sync_gestures(id);
             }
             MountItem::RotationBinding { id, angle } => {
+                self.pending_rotation.insert(id, angle);
                 if let Some(slot) = self.slot_mut(id) {
                     slot.rotation_node = angle;
                 }
@@ -1714,6 +1737,30 @@ impl Mounter {
             slot.keyboard_tap = Some(keyboard_tap(self.mtm, &self.relay, &view));
         }
         self.slots[id as usize] = Some(slot);
+        // Bindings may arrive before the view (the core sets a prop before
+        // the batch creates it). Apply what was kept.
+        if let Some((x, y)) = self.pending_pan.remove(&id) {
+            if let Some(slot) = self.slot_mut(id) {
+                slot.pan_nodes = (x, y);
+            }
+        }
+        if let Some(scale) = self.pending_pinch.remove(&id) {
+            if let Some(slot) = self.slot_mut(id) {
+                slot.pinch_node = scale;
+            }
+        }
+        if let Some(angle) = self.pending_rotation.remove(&id) {
+            if let Some(slot) = self.slot_mut(id) {
+                slot.rotation_node = angle;
+            }
+        }
+        if let Some(bindings) = self.pending_bindings.remove(&id) {
+            if let Some(slot) = self.slot_mut(id) {
+                slot.bindings = bindings;
+            }
+        }
+        self.sync_gestures(id);
+        self.apply_animations();
     }
 
     fn insert(&mut self, parent: NodeId, child: NodeId, before: Option<NodeId>) {
@@ -3029,7 +3076,7 @@ impl Mounter {
             // Capture needed values before creating control
             let mtm = self.mtm;
             let relay = self.relay.clone();
-            
+
             let control = UIRefreshControl::new(mtm);
             unsafe {
                 control.addTarget_action_forControlEvents(
@@ -3038,7 +3085,7 @@ impl Mounter {
                     objc2_ui_kit::UIControlEvents::ValueChanged,
                 );
             }
-            
+
             // Now get scroll again and set control
             if let Some(slot) = self.slot_mut(id) {
                 if let Native::Scroll(scroll) = &slot.native {
