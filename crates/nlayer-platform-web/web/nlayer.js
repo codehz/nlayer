@@ -721,6 +721,9 @@ export class Player {
     el._released = this.now();
     this.scrollEvent(el, "onScrollDragEnd");
     this.armRest(el);
+    // Fire onScrollEnd immediately when drag ends
+    // The armRest timer is still needed for non-touch scrolling
+    this.scrollEvent(el, "onScrollEnd");
   }
 
   pressStart(el, event) {
@@ -796,7 +799,6 @@ export class Player {
       clearTimeout(el._instantTimer);
       return;
     }
-    if (el._settled) return;
     
     // Check for snap target before settling
     if (el._snapConfig && this.host.snap) {
