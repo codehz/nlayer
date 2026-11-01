@@ -430,9 +430,10 @@ export function createFacade(wasm, requestPump, options = {}) {
   let safeAreaSignal;
   let reduceMotionSignal;
   const navigation = createNavigation(
-    { signal, computed, untracked, batch, context },
+    { signal, computed, untracked, batch, context, cleanup },
     {
       rt,
+      back: (handler) => BackHandler.addEventListener(handler),
       listen: (node, event, handler) => {
         const id = values.nodeIds.get(node);
         if (id === undefined) return;

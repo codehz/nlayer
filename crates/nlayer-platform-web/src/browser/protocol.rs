@@ -4,9 +4,11 @@
 use std::cell::RefCell;
 
 use nlayer_core::{
-    AccessibilityProp, AccessibilityRole, AccessibilityState, AccessibilityValue, CellSlot,
-    Checked, ImageScales, ImageSource, Interaction, KeyboardDismiss, KeyboardTaps, KeyboardType,
-    NodeId, Op, Prop, Tag,
+    AccessibilityProp, AccessibilityRole, AccessibilityState, AccessibilityValue, CellSlot, Checked,
+    Color, HeaderSlot, ImageScales, ImageSource, Interaction, KeyboardDismiss, KeyboardTaps,
+    DecelerationRate, KeyboardType, ListViewport, MaintainPosition, ModalAnimation,
+    ModalPresentation, ModalProp, NodeId, Op, Prop, ScreenAnimation, ScreenProp, SnapAlignment, Tag,
+    Viewability,
     animation::AnimationProp,
     geometry::{Points, Size},
     style::{
@@ -151,6 +153,87 @@ pub(super) fn decode_prop(
                 inserted: n(2),
             }
         }
+        (Some(Tag::Scroll | Tag::List), "pagingEnabled") => Prop::PagingEnabled(value.bool()),
+        (Some(Tag::Scroll | Tag::List), "snapToInterval") => {
+            let interval = if nullish(value) {
+                0.0
+            } else {
+                value.number_value().unwrap_or(0.0)
+            };
+            Prop::SnapToInterval((interval > 0.0).then(|| interval as f32))
+        }
+        (Some(Tag::Scroll | Tag::List), "snapToOffsets") => {
+            Prop::SnapToOffsets(values(value).map(|offsets| {
+                offsets
+                    .iter()
+                    .map(|n| *n as f32)
+                    .collect::<Box<[f32]>>()
+            }))
+        }
+        (Some(Tag::Scroll | Tag::List), "snapToAlignment") => {
+            Prop::SnapToAlignment(match string(value).as_str() {
+                "center" => SnapAlignment::Center,
+                "end" => SnapAlignment::End,
+                _ => SnapAlignment::Start,
+            })
+        }
+        (Some(Tag::Scroll | Tag::List), "disableIntervalMomentum") => {
+            Prop::DisableIntervalMomentum(value.bool())
+        }
+        (Some(Tag::Scroll | Tag::List), "decelerationRate") => {
+            Prop::DecelerationRate(if let Some(rate) = value.number_value() {
+                DecelerationRate::Custom(rate.clamp(0.0, 1.0) as f32)
+            } else if string(value) == "fast" {
+                DecelerationRate::Fast
+            } else {
+                DecelerationRate::Normal
+            })
+        }
+        (Some(Tag::Scroll | Tag::List), "refreshing") => Prop::Refreshing(value.bool()),
+        (Some(Tag::Scroll | Tag::List), "refreshIndicator") => {
+            let height = if nullish(value) {
+                0.0
+            } else {
+                value.number_value().unwrap_or(0.0)
+            };
+            Prop::RefreshIndicator((height > 0.0).then(|| Points(height as f32)))
+        }
+        (Some(Tag::List), "stickyHeaderIndices") => Prop::StickyHeaderIndices(indices(value)),
+        (Some(Tag::List), "inverted") => Prop::Inverted(value.bool()),
+        (Some(Tag::List), "maintainVisibleContentPosition") => {
+            Prop::MaintainVisibleContentPosition(
+                value
+                    .get("minIndexForVisible")
+                    .ok()
+                    .map(|index| MaintainPosition {
+                        min_index_for_visible: index.number_value().unwrap_or(0.0).max(0.0) as u32,
+                        autoscroll_to_bottom_threshold: value
+                            .get("autoscrollToBottomThreshold")
+                            .ok()
+                            .and_then(|t| t.number_value())
+                            .and_then(|t| (t >= 0.0).then_some(t as f32)),
+                    }),
+            )
+        }
+        (Some(Tag::List), "viewport") => Prop::Viewport(if string(value) == "parent" {
+            ListViewport::Parent
+        } else {
+            ListViewport::Own
+        }),
+        (Some(Tag::List), "viewabilityConfig") => Prop::ViewabilityConfig(
+            (!nullish(value)).then(|| Viewability {
+                view_area_coverage_threshold: value
+                    .get("viewAreaCoverageThreshold")
+                    .ok()
+                    .and_then(|c| c.number_value())
+                    .map(|c| c.clamp(0.0, 1.0) as f32),
+                item_visible_threshold: value
+                    .get("itemVisibleThreshold")
+                    .ok()
+                    .and_then(|v| v.number_value())
+                    .map(|v| v.clamp(0.0, 1.0) as f32),
+            }),
+        ),
         (Some(Tag::Cell), "slot") => {
             let slot = if let Some(n) = value.number_value() {
                 CellSlot::Item(n.max(0.0) as u32)
@@ -166,6 +249,89 @@ pub(super) fn decode_prop(
                 }
             };
             Prop::Slot(slot)
+        }
+        (Some(Tag::Screen), "title") => Prop::Screen(ScreenProp::Title(optional_string(value))),
+        (Some(Tag::Screen), "headerVisible") => {
+            Prop::Screen(ScreenProp::HeaderVisible(unless_false(value)))
+        }
+        (Some(Tag::Screen), "headerTransparent") => {
+            Prop::Screen(ScreenProp::HeaderTransparent(value.bool()))
+        }
+        (Some(Tag::Screen), "headerBackVisible") => {
+            Prop::Screen(ScreenProp::HeaderBackVisible(unless_false(value)))
+        }
+        (Some(Tag::Screen), "popOnSwipe") => Prop::Screen(ScreenProp::PopOnSwipe(unless_false(value))),
+        (Some(Tag::Screen), "popOnBack") => Prop::Screen(ScreenProp::PopOnBack(unless_false(value))),
+        (Some(Tag::Screen), "animation") => {
+            let name = string(value);
+            match name.as_str() {
+                "fade" => Prop::Screen(ScreenProp::Animation(ScreenAnimation::Fade)),
+                "none" => Prop::Screen(ScreenProp::Animation(ScreenAnimation::None)),
+                "default" | "slide" => {
+                    Prop::Screen(ScreenProp::Animation(ScreenAnimation::Default))
+                }
+                other => {
+                    warnings.warn(format!("unknown screen animation `{other}`"));
+                    return Ok(None);
+                }
+            }
+        }
+        (Some(Tag::Screen), "headerStyle") => {
+            Prop::Screen(ScreenProp::HeaderStyle {
+                background_color: style_color(value, "backgroundColor"),
+                title_color: style_color(value, "color"),
+                tint_color: style_color(value, "tintColor"),
+            })
+        }
+        (Some(Tag::Modal), "animation") => {
+            let name = string(value);
+            match name.as_str() {
+                "slide" => Prop::Modal(ModalProp::Animation(ModalAnimation::Slide)),
+                "fade" => Prop::Modal(ModalProp::Animation(ModalAnimation::Fade)),
+                "none" => Prop::Modal(ModalProp::Animation(ModalAnimation::None)),
+                other => {
+                    warnings.warn(format!("unknown modal animation `{other}`"));
+                    return Ok(None);
+                }
+            }
+        }
+        (Some(Tag::Modal), "presentation") => {
+            let name = string(value);
+            match name.as_str() {
+                "fullScreen" | "fullscreen" => {
+                    Prop::Modal(ModalProp::Presentation(ModalPresentation::FullScreen))
+                }
+                "pageSheet" | "pagesheet" => {
+                    Prop::Modal(ModalProp::Presentation(ModalPresentation::PageSheet))
+                }
+                "formSheet" | "formsheet" => {
+                    Prop::Modal(ModalProp::Presentation(ModalPresentation::FormSheet))
+                }
+                other => {
+                    warnings.warn(format!("unknown modal presentation `{other}`"));
+                    return Ok(None);
+                }
+            }
+        }
+        (Some(Tag::Modal), "closeOnEscape") => {
+            Prop::Modal(ModalProp::CloseOnEscape(unless_false(value)))
+        }
+        (Some(Tag::Modal), "closeOnBackdropPress") => {
+            Prop::Modal(ModalProp::CloseOnBackdropPress(unless_false(value)))
+        }
+        (Some(Tag::Modal), "closeOnSwipe") => Prop::Modal(ModalProp::CloseOnSwipe(unless_false(value))),
+        (Some(Tag::HeaderItem), "headerSlot") => {
+            let name = string(value);
+            match name.as_str() {
+                "left" => Prop::HeaderSlot(HeaderSlot::Left),
+                "right" => Prop::HeaderSlot(HeaderSlot::Right),
+                "title" => Prop::HeaderSlot(HeaderSlot::Title),
+                "header" => Prop::HeaderSlot(HeaderSlot::Header),
+                other => {
+                    warnings.warn(format!("unknown header slot `{other}`"));
+                    return Ok(None);
+                }
+            }
         }
         (Some(Tag::Cell), "cellIndex") => {
             Prop::CellIndex(value.number_value().unwrap_or(0.0).max(0.0) as u32)
@@ -205,6 +371,34 @@ pub(super) fn decode_prop(
         }
     };
     Ok(Some(Op::SetProp { id, prop }))
+}
+
+/// The numbers of an array prop, when it is one.
+fn indices(value: &Value) -> Option<Box<[u32]>> {
+    values(value).map(|numbers| {
+        numbers
+            .iter()
+            .map(|n| n.max(0.0) as u32)
+            .collect::<Box<[u32]>>()
+    })
+}
+
+/// An array prop's numbers; `None` when it is not an array.
+fn values(value: &Value) -> Option<Vec<f64>> {
+    let length = value.length()?;
+    (0..length)
+        .map(|i| value.index(i).ok().and_then(|v| v.number_value()))
+        .collect()
+}
+
+/// A boolean prop whose default is true: only an explicit false turns it off.
+fn unless_false(value: &Value) -> bool {
+    nullish(value) || value.bool()
+}
+
+/// One color of a style object, when it parses.
+fn style_color(value: &Value, key: &str) -> Option<Color> {
+    optional_string(&value.get(key).ok()?).and_then(|text| Color::parse(&text))
 }
 
 /// An accessibility prop, when `name` is one. An unknown `role` warns.

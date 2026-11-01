@@ -9,7 +9,7 @@
 // Route state is held by the shared Rust reactive graph. Stack transitions,
 // layout, back handling and modal surfaces remain in the Rust core/platform.
 export function createNavigation(reactive, dom, animation, safeArea, reduceMotion) {
-  const { signal, computed, untracked, batch } = reactive;
+  const { signal, computed, untracked, batch, cleanup } = reactive;
   const rt = dom.rt;
   const pages = new WeakSet();
   const popped = new WeakMap();
@@ -110,7 +110,9 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
     );
     const [insets, onInsets] = nativeInsets(true);
     rt.prop(node, "onInsets", onInsets);
-    dom.listen(node, "onDismiss", () => {
+    // `prop`, not `listen`: the engine only emits Dismiss to a screen that
+    // told it about the event, and back depends on it.
+    rt.prop(node, "onDismiss", () => {
       popped.get(node)?.();
       props.onDismiss?.();
     });
@@ -142,7 +144,16 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
   function NavStack(props) {
     const node = rt.element("stack");
     rt.spread(node, except(props, ["state", "children"]));
-    const entries = props.state.__nlayerEntries;
+    const state = props.state;
+    const entries = state.__nlayerEntries;
+    // The route list lives here, so back pops it here: the engine's own
+    // stack never sees these screens.
+    const off = dom.back?.(() => {
+      if (untracked(entries).length <= 1) return false;
+      state.pop();
+      return true;
+    });
+    if (off) cleanup(off);
     const rows = rt.each(entries, (read, index) => {
       const entry = untracked(read);
       const rendered = untracked(() => props.children(entry.route, index));

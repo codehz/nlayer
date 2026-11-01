@@ -41,6 +41,10 @@ export function installHost(player, root) {
       const id = target.el._id;
       player.host.longPress?.(id);
     },
+    /** The back button: the engine consumes it before the page sees it. */
+    back() {
+      player.host.back?.();
+    },
     field(selector) {
       const target = one(player, root, selector);
       visible(root, target, selector);
