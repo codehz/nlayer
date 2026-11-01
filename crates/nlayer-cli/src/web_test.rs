@@ -362,7 +362,7 @@ impl HostedApp for WebApp {
     }
 
     fn drag(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String> {
-        let (cx, cy) = self.point("press", selector)?;
+        let (cx, cy) = self.point("point", selector)?;
         let center_x = cx as f64;
         let center_y = cy as f64;
         let end_x = center_x + x as f64;
@@ -380,7 +380,7 @@ impl HostedApp for WebApp {
     }
 
     fn drag_and_hold(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String> {
-        let (cx, cy) = self.point("press", selector)?;
+        let (cx, cy) = self.point("point", selector)?;
         let center_x = cx as f64;
         let center_y = cy as f64;
         

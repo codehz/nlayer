@@ -14,7 +14,7 @@ test("pan drives animated value and springs back on release", () => {
   
   // Initial position
   const initial = find(app.tree(), "panCard");
-  expect(initial.frame.origin.x).toBe(0);
+  expect(initial.frame.x).toBe(0);
   
   // Drag horizontally
   app.drag("panCard", 120, 0);
@@ -22,12 +22,12 @@ test("pan drives animated value and springs back on release", () => {
   
   // Should have moved right
   const dragged = find(app.tree(), "panCard");
-  expect(dragged.frame.origin.x > 100).toBe(true);
+  expect(dragged.frame.x > 100).toBe(true);
   
   // After release, spring back to 0
   app.advance(500);
   const sprung = find(app.tree(), "panCard");
-  expect(Math.abs(sprung.frame.origin.x) < 5).toBe(true);
+  expect(Math.abs(sprung.frame.x) < 5).toBe(true);
   
   app.close();
 });
@@ -59,9 +59,11 @@ test("horizontal pan in vertical scroll does not trigger scroll", () => {
 test("pinch and rotation bindings present without errors", () => {
   const app = open("App.tsx");
   
-  // Verify views with bindings exist
-  expect(find(app.tree(), "pinchCard")).toBeTruthy();
-  expect(find(app.tree(), "rotationCard")).toBeTruthy();
+  // Verify views with bindings exist (toBeTruthy not available, check not null)
+  const pinch = find(app.tree(), "pinchCard");
+  const rotation = find(app.tree(), "rotationCard");
+  expect(pinch !== null).toBe(true);
+  expect(rotation !== null).toBe(true);
   
   app.close();
 });

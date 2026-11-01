@@ -349,7 +349,7 @@ fn packages_build_for_each_target() {
 fn the_browser_handles_pan_gestures() {
     let _guard = lock();
     let dir = app_fixture("gesture");
-    let report = run(&dir.join("App.test.tsx"), Some(TestTarget::Web));
+    let report = run(&dir.join("Web.test.tsx"), Some(TestTarget::Web));
     let _ = fs::remove_dir_all(&dir);
     assert!(report.ok(), "web: {report}");
 }
