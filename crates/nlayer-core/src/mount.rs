@@ -409,6 +409,13 @@ pub enum MountItem {
         /// Keep first visible item in place when prepending.
         maintain_position: Option<crate::ops::MaintainPosition>,
     },
+    /// Set refresh indicator state.
+    Refreshing {
+        /// Scroll view.
+        id: NodeId,
+        /// Whether refresh indicator is active.
+        refreshing: bool,
+    },
 }
 
 /// Everything about an input except its text.

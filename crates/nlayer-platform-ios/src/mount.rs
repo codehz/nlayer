@@ -1591,7 +1591,7 @@ impl Mounter {
             }
             MountItem::Refreshing { id, refreshing } => self.set_refreshing(id, refreshing),
             MountItem::ListContent { .. } => {
-                // List content is handled by the engine via events
+                // List content is handled by core layout
             }
         }
     }
@@ -1738,6 +1738,7 @@ impl Mounter {
             slot.own_press = events.contains(EventKind::Press);
             slot.own_long = events.contains(EventKind::LongPress);
         }
+        self.sync_refresh(id);
         self.sync_press(id);
         self.sync_hover(id);
         self.sync_gestures(id);
@@ -3007,6 +3008,47 @@ impl Mounter {
             };
             if let Some(control) = &self.control {
                 control.dispatch_event(id, EventKind::PinchEnd, payload);
+            }
+        }
+    }
+
+    fn sync_refresh(&mut self, id: NodeId) {
+        let Some(slot) = self.slot_mut(id) else { return };
+        let Native::Scroll(scroll) = &slot.native else { return };
+        
+        let wants_refresh = slot.events.contains(EventKind::Refresh);
+        let has_control = slot.refresh_control.is_some();
+        
+        if wants_refresh && !has_control {
+            let control = UIRefreshControl::new(self.mtm);
+            unsafe {
+                control.addTarget_action_forControlEvents(
+                    Some(&self.relay),
+                    sel!(handleRefresh:),
+                    objc2_ui_kit::UIControlEvents::ValueChanged,
+                );
+            }
+            scroll.setRefreshControl(Some(&control));
+            slot.refresh_control = Some(control);
+        } else if !wants_refresh && has_control {
+            scroll.setRefreshControl(None);
+            slot.refresh_control = None;
+            slot.refreshing = false;
+        }
+    }
+
+    fn set_refreshing(&mut self, id: NodeId, refreshing: bool) {
+        let Some(slot) = self.slot_mut(id) else { return };
+        if slot.refreshing == refreshing {
+            return;
+        }
+        slot.refreshing = refreshing;
+        
+        if let Some(control) = &slot.refresh_control {
+            if refreshing {
+                control.beginRefreshing();
+            } else {
+                control.endRefreshing();
             }
         }
     }

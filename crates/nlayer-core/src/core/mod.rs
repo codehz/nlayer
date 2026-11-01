@@ -75,6 +75,8 @@ mod dirty {
     pub(super) const SCREEN: u32 = 1 << 14;
     /// Emit [`crate::MountItem::ModalConfig`].
     pub(super) const MODAL: u32 = 1 << 15;
+    /// Emit [`crate::MountItem::Refreshing`].
+    pub(super) const REFRESHING: u32 = 1 << 16;
 }
 
 /// Host kind.
@@ -1236,7 +1238,7 @@ impl<M: TextEngine> Core<M> {
                         was_refreshing != refreshing
                     });
                 if changed {
-                    self.mark(key, dirty::SCROLL);
+                    self.mark(key, dirty::REFRESHING);
                 }
             }
             Prop::RefreshIndicator(height) => {
@@ -2078,6 +2080,14 @@ impl<M: TextEngine> Core<M> {
             }
             if flags & (dirty::INPUT | dirty::INPUT_VALUE) != 0 {
                 self.emit_input(key, id, flags);
+            }
+            if flags & dirty::REFRESHING != 0
+                && let Some(scroll) = self.nodes[key as usize].scroll.as_ref()
+            {
+                self.mount.push(MountItem::Refreshing {
+                    id,
+                    refreshing: scroll.refreshing,
+                });
             }
             if flags & dirty::SELECTION != 0 {
                 let selection = self.nodes[key as usize]
