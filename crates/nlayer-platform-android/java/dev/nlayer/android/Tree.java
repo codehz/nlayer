@@ -332,6 +332,15 @@ final class Tree {
     event.recycle();
   }
 
+  static void move(HostView host, float xDp, float yDp) {
+    float x = xDp * host.density, y = yDp * host.density;
+    long now = android.os.SystemClock.uptimeMillis();
+    MotionEvent event =
+        MotionEvent.obtain(host.downTime, now, MotionEvent.ACTION_MOVE, x, y, 0);
+    host.dispatchTouchEvent(event);
+    event.recycle();
+  }
+
   static void typeChar(HostView host, int id, String text) {
     View v = host.mounter.views.get(id);
     if (!(v instanceof InputBox) || text == null || text.isEmpty()) return;
