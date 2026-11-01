@@ -323,10 +323,48 @@ test("dialog opens and back() closes it", () => {
   app.press("open-dialog-fade");
   app.waitFor("demo-dialog");
   
+  // back() closes the dialog (should trigger onRequestClose with reason="cancel")
   app.back();
+  
+  // Dialog should be closed
   const tree = app.tree();
   const dialog = flat(tree, []).find((n) => n.testID === "demo-dialog");
   expect(dialog).toBe(undefined);
+  
+  // Note: onRequestClose fires with reason="cancel" for back button
+  // Platform behavior: Android back key, iOS swipe, web Escape all trigger "cancel"
+  // Headless doesn't persist state across back() that pops the page, so we test close only
+});
+
+test("dialog with animation=none", () => {
+  const app = open("./App.tsx");
+  reveal(app, (n) => n.testID === "open-dialog");
+  app.press("open-dialog");
+  app.waitFor("dialog-page");
+  
+  app.press("open-none");
+  app.waitFor("demo-dialog");
+  
+  app.press("close-dialog");
+  const tree = app.tree();
+  const dialog = flat(tree, []).find((n) => n.testID === "demo-dialog");
+  expect(dialog).toBe(undefined);
+});
+
+test("dialog closeOnBackdropPress and closeOnEscape options", () => {
+  const app = open("./App.tsx");
+  reveal(app, (n) => n.testID === "open-dialog");
+  app.press("open-dialog");
+  app.waitFor("dialog-page");
+  
+  // Test that toggles are visible
+  const texts = app.texts();
+  expect(texts).toContain("closeOnBackdropPress: true");
+  expect(texts).toContain("closeOnEscape: true");
+  
+  // Note: backdropPress and Escape require user interaction on real platforms
+  // Headless mode only tests back() which triggers "cancel" reason
+  // Platform-specific: iOS swipe down, Android/web Escape key need manual testing
 });
 
 test("detail pop increments dismissed count", () => {

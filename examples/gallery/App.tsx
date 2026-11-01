@@ -672,7 +672,10 @@ type Route =
   | { name: "header" };
 function DialogDemoPage(props: { nav: NavStackHandle }) {
   const dialogOpen = signal(false);
-  const dialogAnimation = signal<"fade" | "slide" | "scale">("fade");
+  const dialogAnimation = signal<"fade" | "slide" | "none">("fade");
+  const lastCloseReason = signal<string>("");
+  const closeOnBackdrop = signal(true);
+  const closeOnEscape = signal(true);
   
   return (
     <View testID="dialog-page" style={{ flex: 1, backgroundColor: "#fff", padding: 16 }}>
@@ -681,7 +684,13 @@ function DialogDemoPage(props: { nav: NavStackHandle }) {
         ← Back
       </Text>
       
-      <View style={{ gap: 12 }}>
+      {lastCloseReason() && (
+        <Text testID="close-reason" style={{ marginBottom: 12, color: "#10b981", fontWeight: "600" }}>
+          Closed by: {lastCloseReason()}
+        </Text>
+      )}
+      
+      <View style={{ gap: 12, marginBottom: 16 }}>
         <Text testID="open-dialog-fade" onPress={() => { dialogAnimation.set("fade"); dialogOpen.set(true); }}
               style={{ padding: 12, backgroundColor: "#3b82f6", color: "#fff", borderRadius: 6, textAlign: "center" }}>
           Open Dialog (fade)
@@ -690,9 +699,20 @@ function DialogDemoPage(props: { nav: NavStackHandle }) {
               style={{ padding: 12, backgroundColor: "#8b5cf6", color: "#fff", borderRadius: 6, textAlign: "center" }}>
           Open Dialog (slide)
         </Text>
-        <Text testID="open-scale" onPress={() => { dialogAnimation.set("scale"); dialogOpen.set(true); }}
+        <Text testID="open-none" onPress={() => { dialogAnimation.set("none"); dialogOpen.set(true); }}
               style={{ padding: 12, backgroundColor: "#ec4899", color: "#fff", borderRadius: 6, textAlign: "center" }}>
-          Open Dialog (scale)
+          Open Dialog (none)
+        </Text>
+      </View>
+      
+      <View style={{ gap: 8, marginBottom: 16 }}>
+        <Text testID="toggle-backdrop" onPress={() => closeOnBackdrop.set(!closeOnBackdrop())}
+              style={{ padding: 8, backgroundColor: closeOnBackdrop() ? "#10b981" : "#cbd5e1", borderRadius: 4 }}>
+          closeOnBackdropPress: {closeOnBackdrop() ? "true" : "false"}
+        </Text>
+        <Text testID="toggle-escape" onPress={() => closeOnEscape.set(!closeOnEscape())}
+              style={{ padding: 8, backgroundColor: closeOnEscape() ? "#10b981" : "#cbd5e1", borderRadius: 4 }}>
+          closeOnEscape: {closeOnEscape() ? "true" : "false"}
         </Text>
       </View>
       
@@ -700,12 +720,21 @@ function DialogDemoPage(props: { nav: NavStackHandle }) {
         <Dialog
           testID="demo-dialog"
           animation={dialogAnimation()}
-          onClose={() => dialogOpen.set(false)}
+          closeOnBackdropPress={closeOnBackdrop()}
+          closeOnEscape={closeOnEscape()}
+          onRequestClose={(e) => {
+            lastCloseReason.set(e.reason);
+          }}
+          onOpenChange={(e) => {
+            if (!e.open) {
+              dialogOpen.set(false);
+            }
+          }}
         >
           <View style={{ backgroundColor: "#fff", padding: 24, borderRadius: 12, minWidth: 280 }}>
             <Text style={{ fontSize: 18, fontWeight: "700", marginBottom: 12 }}>Dialog Title</Text>
             <Text style={{ color: "#64748b", marginBottom: 16 }}>
-              Click outside, press Escape, or use back to close
+              Press back() to close with reason "cancel", or press Close button
             </Text>
             <Text testID="close-dialog" onPress={() => dialogOpen.set(false)}
                   style={{ padding: 12, backgroundColor: "#3b82f6", color: "#fff", borderRadius: 6, textAlign: "center" }}>
