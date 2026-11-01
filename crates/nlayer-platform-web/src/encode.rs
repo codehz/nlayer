@@ -559,6 +559,9 @@ impl Encoder {
                 view,
                 text,
             } => self.state(out, *id, *interaction, view, text),
+            MountItem::Refreshing { id, refreshing } => {
+                out.item("ref").num(*id).bool(*refreshing).end();
+            }
         }
     }
 

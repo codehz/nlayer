@@ -893,6 +893,29 @@ export class Player {
     };
   }
 
+  op_ref([, id, refreshing]) {
+    const el = this.views.get(id);
+    if (!el) return;
+    el._refreshing = refreshing;
+    if (refreshing) {
+      // Ensure pull indicator shows
+      if (el._pull < (el._behavior?.refreshIndicator?.height ?? 56)) {
+        this.animatePull(el, el._behavior?.refreshIndicator?.height ?? 56);
+      }
+    } else {
+      // Hide pull indicator
+      this.animatePull(el, 0);
+    }
+  }
+
+  op_lc([, id, config]) {
+    const el = this.views.get(id);
+    if (!el) return;
+    el._listConfig = config;
+    // Core handles sticky/inverted via frame calculations
+    // Platform just applies the frames
+  }
+
   op_sb([, id, dx, dy]) {
     const el = this.view(id);
     if (!el) return;
