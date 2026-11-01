@@ -877,27 +877,23 @@ impl AppHost for HeadlessHost {
         if let Some(scheme) = request.color_scheme {
             config = config.with_color_scheme(scheme);
         }
+        // Apply insets to config before starting engine so env() reads them in first frame
+        if request.safe_area.is_some() || request.keyboard.is_some() {
+            let safe_area = request.safe_area.map_or(
+                Edges { top: px(0.0), right: px(0.0), bottom: px(0.0), left: px(0.0) },
+                |area| Edges {
+                    top: px(area.top),
+                    right: px(area.right),
+                    bottom: px(area.bottom),
+                    left: px(area.left),
+                }
+            );
+            let keyboard = px(request.keyboard.unwrap_or(0.0));
+            config = config.with_insets(safe_area, keyboard);
+        }
         let mut app =
             Headless::start_with_config(config, || ApproxTextEngine).map_err(engine_error)?;
-        let mut nudges = 0;
-        if let Some(area) = request.safe_area {
-            app.control().set_safe_area(Edges {
-                top: px(area.top),
-                right: px(area.right),
-                bottom: px(area.bottom),
-                left: px(area.left),
-            });
-            nudges += 1;
-        }
-        if let Some(height) = request.keyboard {
-            app.control().set_keyboard_inset(px(height));
-            nudges += 1;
-        }
-        settle(&mut app, nudges);
-        // Always wait for at least one frame to ensure initial mount completes,
-        // and layout stabilizes after inset changes. The settle() above waits for
-        // inset-triggered frames, but the final layout pass may need one more frame.
-        app.next_frame(Duration::from_millis(100));
+        // Drain initial mount frame (insets already in config, no additional frames expected)
         app.refresh();
         Ok(Box::new(HeadlessApp { app: Some(app) }))
     }
