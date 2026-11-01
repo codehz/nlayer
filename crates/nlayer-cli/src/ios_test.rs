@@ -218,11 +218,13 @@ impl HostedApp for IosApp {
     }
 
     fn drag(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String> {
-        self.call_ex("drag", selector, "", 0.0, x, y, 0.0).map(|_| ())
+        self.call_ex("drag", selector, "", 0.0, x, y, 0.0)
+            .map(|_| ())
     }
 
     fn drag_and_hold(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String> {
-        self.call_ex("dragAndHold", selector, "", 0.0, x, y, 0.0).map(|_| ())
+        self.call_ex("dragAndHold", selector, "", 0.0, x, y, 0.0)
+            .map(|_| ())
     }
 
     fn drop(&mut self) -> Result<(), String> {
@@ -233,9 +235,9 @@ impl HostedApp for IosApp {
     }
 
     fn advance(&mut self, ms: f64) -> Result<(), String> {
-        self.call_ex("advance", "", "", 0.0, 0.0, 0.0, ms).map(|_| ())
+        self.call_ex("advance", "", "", 0.0, 0.0, 0.0, ms)
+            .map(|_| ())
     }
-
 
     fn close(&mut self) {
         if !self.open {

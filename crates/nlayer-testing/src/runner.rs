@@ -880,13 +880,18 @@ impl AppHost for HeadlessHost {
         // Apply insets to config before starting engine so env() reads them in first frame
         if request.safe_area.is_some() || request.keyboard.is_some() {
             let safe_area = request.safe_area.map_or(
-                Edges { top: px(0.0), right: px(0.0), bottom: px(0.0), left: px(0.0) },
+                Edges {
+                    top: px(0.0),
+                    right: px(0.0),
+                    bottom: px(0.0),
+                    left: px(0.0),
+                },
                 |area| Edges {
                     top: px(area.top),
                     right: px(area.right),
                     bottom: px(area.bottom),
                     left: px(area.left),
-                }
+                },
             );
             let keyboard = px(request.keyboard.unwrap_or(0.0));
             config = config.with_insets(safe_area, keyboard);
@@ -973,7 +978,10 @@ impl HostedApp for HeadlessApp {
     }
 
     fn drag_and_hold(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String> {
-        self.app.as_mut().ok_or("closed")?.drag_and_hold(selector, x, y)
+        self.app
+            .as_mut()
+            .ok_or("closed")?
+            .drag_and_hold(selector, x, y)
     }
 
     fn drop(&mut self) -> Result<(), String> {
@@ -982,7 +990,6 @@ impl HostedApp for HeadlessApp {
     fn back(&mut self) -> Result<(), String> {
         self.app()?.back()
     }
-
 
     fn close(&mut self) {
         if let Some(app) = self.app.take() {

@@ -242,12 +242,14 @@ pub(crate) fn decode_prop<'js>(
                 Prop::RefreshIndicator(None)
             } else {
                 let height = number(&value).unwrap_or(0.0);
-                Prop::RefreshIndicator(if height > 0.0 { Some(Points(height)) } else { None })
+                Prop::RefreshIndicator(if height > 0.0 {
+                    Some(Points(height))
+                } else {
+                    None
+                })
             }
         }
-        (Some(Tag::Scroll | Tag::List), "pullValue") => {
-            Prop::PullValue(animated_node(&value))
-        }
+        (Some(Tag::Scroll | Tag::List), "pullValue") => Prop::PullValue(animated_node(&value)),
         (Some(Tag::List), "count") => Prop::Count(value.as_number().unwrap_or(0.0).max(0.0) as u32),
         (Some(Tag::List), "estimatedItemSize") => {
             Prop::EstimatedItemSize(Points(number(&value).unwrap_or(50.0)))
@@ -283,15 +285,15 @@ pub(crate) fn decode_prop<'js>(
                 Prop::StickyHeaderIndices(None)
             }
         }
-        (Some(Tag::List), "inverted") => {
-            Prop::Inverted(value.as_bool().unwrap_or(false))
-        }
+        (Some(Tag::List), "inverted") => Prop::Inverted(value.as_bool().unwrap_or(false)),
         (Some(Tag::List), "maintainVisibleContentPosition") => {
             if let Some(obj) = value.as_object() {
-                let threshold = obj.get::<&str, f64>("autoscrollToBottomThreshold")
+                let threshold = obj
+                    .get::<&str, f64>("autoscrollToBottomThreshold")
                     .ok()
                     .and_then(|t| (t >= 0.0).then_some(t as f32));
-                let min_index = obj.get::<&str, f64>("minIndexForVisible")
+                let min_index = obj
+                    .get::<&str, f64>("minIndexForVisible")
                     .ok()
                     .unwrap_or(0.0)
                     .max(0.0) as u32;
@@ -313,10 +315,12 @@ pub(crate) fn decode_prop<'js>(
         }
         (Some(Tag::List), "viewabilityConfig") => {
             if let Some(obj) = value.as_object() {
-                let coverage = obj.get::<&str, f64>("viewAreaCoverageThreshold")
+                let coverage = obj
+                    .get::<&str, f64>("viewAreaCoverageThreshold")
                     .ok()
                     .map(|c| c.clamp(0.0, 1.0) as f32);
-                let visible = obj.get::<&str, f64>("itemVisibleThreshold")
+                let visible = obj
+                    .get::<&str, f64>("itemVisibleThreshold")
                     .ok()
                     .map(|v| v.clamp(0.0, 1.0) as f32);
                 Prop::ViewabilityConfig(Some(nlayer_core::Viewability {

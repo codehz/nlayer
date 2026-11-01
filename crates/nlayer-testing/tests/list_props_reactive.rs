@@ -47,47 +47,54 @@ mount(App);
     "#;
     let mut app = app(source);
     assert!(app.wait_for("Sticky: off", Duration::from_secs(1)));
-    
+
     let screen = app.screen();
-    let list_id = screen.views()
+    let list_id = screen
+        .views()
         .find_map(|(id, v)| (v.kind == ViewKind::Scroll).then_some(id))
         .expect("list");
-    
+
     // Initially sticky is off, scroll to 100
     app.scroll(list_id, 0.0, 100.0);
     std::thread::sleep(Duration::from_millis(100));
     app.refresh();
-    
+
     let screen = app.screen();
-    let item0_container = screen.views()
+    let item0_container = screen
+        .views()
         .find(|(_, v)| v.test_id.as_deref() == Some("item-0"))
         .and_then(|(_, v)| v.parent)
         .and_then(|parent_id| screen.frame(parent_id))
         .expect("item-0 container");
-    
+
     // Without sticky, item 0 container should be at offset 0 (not pinned, so y=0 relative to scroll)
-    assert_eq!(item0_container.origin.y.0, 0.0, 
-        "Without sticky at offset=100, item-0 container should not be shifted");
-    
+    assert_eq!(
+        item0_container.origin.y.0, 0.0,
+        "Without sticky at offset=100, item-0 container should not be shifted"
+    );
+
     // Now toggle sticky ON via signal
     assert!(app.press_text("Sticky: off"));
     std::thread::sleep(Duration::from_millis(100));
     app.refresh();
-    
+
     assert!(app.wait_for("Sticky: on", Duration::from_millis(500)));
-    
+
     // Scroll is still at 100, now with sticky enabled
     let screen = app.screen();
-    let item0_container = screen.views()
+    let item0_container = screen
+        .views()
         .find(|(_, v)| v.test_id.as_deref() == Some("item-0"))
         .and_then(|(_, v)| v.parent)
         .and_then(|parent_id| screen.frame(parent_id))
         .expect("item-0 container after toggle");
-    
+
     // With sticky enabled, item 0 should be pinned at y=100 (shift = offset - item_offset)
-    assert_eq!(item0_container.origin.y.0, 100.0,
-        "With sticky enabled at offset=100, item-0 container should be pinned at y=100");
-    
+    assert_eq!(
+        item0_container.origin.y.0, 100.0,
+        "With sticky enabled at offset=100, item-0 container should be pinned at y=100"
+    );
+
     app.stop();
 }
 
@@ -126,51 +133,60 @@ mount(App);
     let mut app = app(source);
     assert!(app.wait_for("Inverted: off", Duration::from_secs(1)));
     assert!(app.wait_for("Row 0", Duration::from_millis(500)));
-    
+
     // Get baseline positions before toggle (normal order: item-0 above item-2)
     let screen = app.screen();
-    let item0_y_before = screen.views()
+    let item0_y_before = screen
+        .views()
         .find(|(_, v)| v.test_id.as_deref() == Some("item-0"))
         .and_then(|(_, v)| v.parent)
         .and_then(|parent_id| screen.frame(parent_id))
         .map(|f| f.origin.y.0)
         .expect("item-0 before toggle");
-    let item2_y_before = screen.views()
+    let item2_y_before = screen
+        .views()
         .find(|(_, v)| v.test_id.as_deref() == Some("item-2"))
         .and_then(|(_, v)| v.parent)
         .and_then(|parent_id| screen.frame(parent_id))
         .map(|f| f.origin.y.0)
         .expect("item-2 before toggle");
-    
-    assert!(item0_y_before < item2_y_before, 
-        "Before inverted: item-0 should be above item-2");
-    
+
+    assert!(
+        item0_y_before < item2_y_before,
+        "Before inverted: item-0 should be above item-2"
+    );
+
     // Toggle inverted ON via signal
     assert!(app.press_text("Inverted: off"));
     std::thread::sleep(Duration::from_millis(200));
     app.refresh();
-    
+
     assert!(app.wait_for("Inverted: on", Duration::from_millis(500)));
-    
+
     // After toggle: inverted order (item-0 below item-2)
     let screen = app.screen();
-    let item0_y_after = screen.views()
+    let item0_y_after = screen
+        .views()
         .find(|(_, v)| v.test_id.as_deref() == Some("item-0"))
         .and_then(|(_, v)| v.parent)
         .and_then(|parent_id| screen.frame(parent_id))
         .map(|f| f.origin.y.0)
         .expect("item-0 after toggle");
-    let item2_y_after = screen.views()
+    let item2_y_after = screen
+        .views()
         .find(|(_, v)| v.test_id.as_deref() == Some("item-2"))
         .and_then(|(_, v)| v.parent)
         .and_then(|parent_id| screen.frame(parent_id))
         .map(|f| f.origin.y.0)
         .expect("item-2 after toggle");
-    
-    assert!(item0_y_after > item2_y_after, 
-        "After inverted toggle: item-0 ({}) should be below item-2 ({})", 
-        item0_y_after, item2_y_after);
-    
+
+    assert!(
+        item0_y_after > item2_y_after,
+        "After inverted toggle: item-0 ({}) should be below item-2 ({})",
+        item0_y_after,
+        item2_y_after
+    );
+
     app.stop();
 }
 
@@ -208,14 +224,14 @@ mount(App);
     "#;
     let mut app = app(source);
     assert!(app.wait_for("Snap: off", Duration::from_secs(1)));
-    
+
     // Toggle snap ON via signal
     assert!(app.press_text("Snap: off"));
     std::thread::sleep(Duration::from_millis(100));
     app.refresh();
-    
+
     assert!(app.wait_for("Snap: on", Duration::from_millis(500)));
-    
+
     // The prop was set reactively (no crash, no warning)
     app.stop();
 }
@@ -254,14 +270,14 @@ mount(App);
     "#;
     let mut app = app(source);
     assert!(app.wait_for("Refreshing: off", Duration::from_secs(1)));
-    
+
     // Toggle refreshing ON via signal
     assert!(app.press_text("Refreshing: off"));
     std::thread::sleep(Duration::from_millis(100));
     app.refresh();
-    
+
     assert!(app.wait_for("Refreshing: on", Duration::from_millis(500)));
-    
+
     // The prop was set reactively (no crash, no warning)
     app.stop();
 }

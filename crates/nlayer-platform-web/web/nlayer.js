@@ -146,30 +146,6 @@ export class Player {
     root.addEventListener("pointercancel", (event) => this.pointerCancel(event), true);
     root.addEventListener("pointermove", (event) => this.pointerMove(event), true);
     root.addEventListener("pointerup", (event) => this.pointerUp(event), true);
-    // CDP's Input.dispatchMouseEvent doesn't synthesize pointer events in headless mode,
-    // so we listen to mouse events and call gesture handlers directly.
-    root.addEventListener("mousedown", (event) => {
-      // Only handle if this is a real mouse event without pointer properties
-      if (event.pointerId === undefined) {
-        event.pointerId = 1;
-        event.pointerType = 'mouse';
-        this.pointerDown(event);
-      }
-    }, true);
-    root.addEventListener("mousemove", (event) => {
-      if (event.pointerId === undefined && event.buttons > 0) {
-        event.pointerId = 1;
-        event.pointerType = 'mouse';
-        this.pointerMove(event);
-      }
-    }, true);
-    root.addEventListener("mouseup", (event) => {
-      if (event.pointerId === undefined) {
-        event.pointerId = 1;
-        event.pointerType = 'mouse';
-        this.pointerUp(event);
-      }
-    }, true);
     root.addEventListener("touchend", this.onTouchEnd);
     root.addEventListener("touchcancel", this.onTouchEnd);
     const view = this.doc.defaultView;
@@ -606,32 +582,40 @@ export class Player {
     for (const type of ["wheel", "pointerdown", "touchstart", "keydown"]) {
       el.addEventListener(type, takeOver, { passive: true });
     }
-    
+
     // Pull-to-refresh touch handling
     let startY = 0;
     let pulling = false;
-    el.addEventListener("touchstart", (e) => {
-      if (e.touches.length === 1 && this.canPull(el)) {
-        startY = e.touches[0].clientY;
-        pulling = false;
-      }
-    }, { passive: true });
-    
-    el.addEventListener("touchmove", (e) => {
-      if (e.touches.length !== 1 || !this.canPull(el)) return;
-      const dy = e.touches[0].clientY - startY;
-      const scrollTop = el.scrollTop - (el._pull || 0);
-      if (scrollTop <= 0 && dy > 0) {
-        if (!e.cancelable) {
+    el.addEventListener(
+      "touchstart",
+      (e) => {
+        if (e.touches.length === 1 && this.canPull(el)) {
+          startY = e.touches[0].clientY;
           pulling = false;
-          return;
         }
-        e.preventDefault();
-        pulling = true;
-        this.dragPull(el, -dy);
-      }
-    }, { passive: false });
-    
+      },
+      { passive: true },
+    );
+
+    el.addEventListener(
+      "touchmove",
+      (e) => {
+        if (e.touches.length !== 1 || !this.canPull(el)) return;
+        const dy = e.touches[0].clientY - startY;
+        const scrollTop = el.scrollTop - (el._pull || 0);
+        if (scrollTop <= 0 && dy > 0) {
+          if (!e.cancelable) {
+            pulling = false;
+            return;
+          }
+          e.preventDefault();
+          pulling = true;
+          this.dragPull(el, -dy);
+        }
+      },
+      { passive: false },
+    );
+
     const endPull = () => {
       if (pulling) {
         pulling = false;
@@ -641,21 +625,19 @@ export class Player {
     el.addEventListener("touchend", endPull);
     el.addEventListener("touchcancel", endPull);
   }
-  
+
   canPull(el) {
-    return !el._horizontal && el._events?.has("onRefresh") && 
-           el.scrollTop - (el._pull || 0) <= 0.5;
+    return !el._horizontal && el._events?.has("onRefresh") && el.scrollTop - (el._pull || 0) <= 0.5;
   }
-  
+
   dragPull(el, distance) {
     // Apply rubber band resistance: (1 - 1/(over*0.55/dim + 1)) * dim
     const viewport = el.clientHeight;
-    const resistedPull = viewport > 0
-        ? (1 - 1 / (distance * 0.55 / viewport + 1)) * viewport
-        : distance * 0.5;
+    const resistedPull =
+      viewport > 0 ? (1 - 1 / ((distance * 0.55) / viewport + 1)) * viewport : distance * 0.5;
     this.setPull(el, resistedPull);
   }
-  
+
   releasePull(el) {
     const threshold = el._behavior?.refreshIndicator?.height ?? 64;
     if (!el._refreshing && el._pull >= threshold) {
@@ -665,7 +647,7 @@ export class Player {
     const target = el._refreshing ? (el._behavior?.refreshIndicator?.height ?? 56) : 0;
     this.animatePull(el, target);
   }
-  
+
   setPull(el, pull) {
     if (pull === el._pull) return;
     el._pull = pull;
@@ -681,10 +663,10 @@ export class Player {
       el._contentW || 0,
       el._contentH || 0,
       el.clientWidth,
-      el.clientHeight
+      el.clientHeight,
     );
   }
-  
+
   animatePull(el, target) {
     cancelAnimationFrame(el._pullAnimation);
     const from = el._pull || 0;
@@ -711,8 +693,6 @@ export class Player {
     }
     return chain;
   }
-
-
 
   beginDrag(el) {
     if (!el || el._touchDrag) return;
@@ -823,7 +803,7 @@ export class Player {
       clearTimeout(el._instantTimer);
       return;
     }
-    
+
     // Check for snap target before settling
     if (el._snapConfig && this.host.snap) {
       const horizontal = el._horizontal ?? false;
@@ -831,7 +811,7 @@ export class Player {
       const viewport = horizontal ? el.clientWidth : el.clientHeight;
       const content = horizontal ? el.scrollWidth : el.scrollHeight;
       const velocity = 0; // scrollend means already stopped
-      
+
       const cfg = el._snapConfig;
       const target = this.host.snap(
         offset,
@@ -843,20 +823,20 @@ export class Player {
         cfg.snapOffsets,
         cfg.snapAlignment,
         cfg.disableIntervalMomentum,
-        cfg.deceleration
+        cfg.deceleration,
       );
-      
+
       if (target >= 0 && Math.abs(target - offset) > 0.5) {
         // Snap to target
         this.noteInstant(el);
         el.scrollTo({
-          [horizontal ? 'left' : 'top']: target,
-          behavior: 'smooth'
+          [horizontal ? "left" : "top"]: target,
+          behavior: "smooth",
         });
         return; // Don't fire onScrollEnd yet, wait for snap to complete
       }
     }
-    
+
     el._settled = true;
     el._released = 0;
     if (el._momentum) {
@@ -903,7 +883,19 @@ export class Player {
     swapClass(el, "_overflow", horizontal ? "nl-ox" : "nl-oy");
   }
 
-  op_scs([, id, w, h, refreshIndicator, paging, snapInterval, snapOffsets, snapAlignment, disableIntervalMomentum, deceleration]) {
+  op_scs([
+    ,
+    id,
+    w,
+    h,
+    refreshIndicator,
+    paging,
+    snapInterval,
+    snapOffsets,
+    snapAlignment,
+    disableIntervalMomentum,
+    deceleration,
+  ]) {
     const el = this.view(id);
     if (!el?._spacer) return;
     el._spacer.style.width = `${w}px`;
@@ -938,6 +930,9 @@ export class Player {
     const el = this.views.get(id);
     if (!el) return;
     el._listConfig = config;
+    // A list in its parent's viewport is a plain clipped view as long as
+    // its content; the scroll view around it does the scrolling.
+    if (config.viewportParent) el.style.overflow = "hidden";
     // Core handles sticky/inverted via frame calculations
     // Platform just applies the frames
   }
@@ -1345,8 +1340,6 @@ export class Player {
       event.stopPropagation?.();
     }
   }
-
-
 
   dispose() {
     if (this.onPopState) {

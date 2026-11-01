@@ -135,7 +135,7 @@ export function createFacade(wasm, requestPump, options = {}) {
     if (name === "children" || name === "ref") return;
     const id = values.nodeIds.get(target);
     if (id === undefined) throw new TypeError("nlayer: not a node");
-    
+
     // Handle gesture props: extract animation node IDs from animated values
     if (name === "pan" || name === "pinch" || name === "rotation") {
       if (value != null && typeof value === "object") {
@@ -152,7 +152,7 @@ export function createFacade(wasm, requestPump, options = {}) {
         return;
       }
     }
-    
+
     if (name.startsWith("on")) {
       let table = handlers.get(id);
       if (!table) handlers.set(id, (table = new Map()));

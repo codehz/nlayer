@@ -320,11 +320,11 @@ export function createAnimation() {
       node.velocity = 0;
       applyAll();
     },
-    timing(config) {
-      return start(this.__av, timingDriver(config));
+    timing(to, options) {
+      return start(this.__av, timingDriver(motionConfig(to, options)));
     },
-    spring(config) {
-      return start(this.__av, springDriver(config));
+    spring(to, options) {
+      return start(this.__av, springDriver(motionConfig(to, options)));
     },
     stop() {
       const value = valueOf(this.__av);
@@ -338,11 +338,11 @@ export function createAnimation() {
   });
   AnimatedValue.prototype.get = AnimatedValue.prototype.getValue;
   const Animated = {
-    timing(value, config) {
-      return value.timing(config);
+    timing(value, to, options) {
+      return value.timing(to, options);
     },
-    spring(value, config) {
-      return value.spring(config);
+    spring(value, to, options) {
+      return value.spring(to, options);
     },
   };
 
@@ -379,6 +379,12 @@ export function createAnimation() {
       nodes.clear();
     },
   };
+}
+
+/// A driver's config: `{ toValue, ... }`, or a target followed by options.
+function motionConfig(to, options) {
+  if (to !== null && to !== undefined && typeof to === "object") return to;
+  return { ...(options ?? {}), toValue: to };
 }
 
 function timingDriver(config = {}) {

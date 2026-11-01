@@ -18,6 +18,8 @@ use objc2_ui_kit::{UIView, UIWindow};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use nlayer_core::ROOT_ID;
+
 use crate::mount::Mounter;
 use crate::pin::Pin;
 use crate::scene::{self, Press, Query, Scene};
@@ -160,12 +162,13 @@ fn drain_main_queue() {
     // catch work that schedules more work (e.g., scroll events triggering frames).
     const DRAIN_ITERATIONS: u32 = 10;
     const DRAIN_DELAY_MS: u64 = 20;
-    
+
     for _ in 0..DRAIN_ITERATIONS {
         on_ui(|| {
             // Being on the main thread allows one turn of the dispatch queue
             // to execute any pending async blocks.
-        }).ok();
+        })
+        .ok();
         thread::sleep(Duration::from_millis(DRAIN_DELAY_MS));
     }
 }
@@ -323,7 +326,7 @@ fn scroll(selector: String, distance: f32) -> Result<Value, String> {
             (scroll, x, y)
         };
         scroll.setContentOffset(CGPoint::new(x as CGFloat, y as CGFloat));
-        
+
         // Reset pan gesture recognizer state to prevent it from blocking subsequent touches.
         // After programmatic setContentOffset, the pan recognizer may still be in tracking/
         // delay state, which can swallow tap gestures on child views. Toggling isEnabled
@@ -331,7 +334,7 @@ fn scroll(selector: String, distance: f32) -> Result<Value, String> {
         let pan = scroll.panGestureRecognizer();
         pan.setEnabled(false);
         pan.setEnabled(true);
-        
+
         // The offset is the end of a drag that glides. The delegate reports
         // the same callbacks a finger would. The mounter borrow is gone, so
         // the delegate's `try_borrow` succeeds.
@@ -345,10 +348,10 @@ fn scroll(selector: String, distance: f32) -> Result<Value, String> {
             };
             let _: () = unsafe { msg_send![&*delegate, scrollViewDidEndDecelerating: scroll] };
         }
-        
+
         // Force layout update to ensure all view frames are current after scroll
         scroll.layoutIfNeeded();
-        
+
         // Brief settle to let the scroll event propagate and trigger a frame update
         thread::sleep(Duration::from_millis(50));
         Ok(json!(null))
@@ -377,24 +380,25 @@ fn drag(selector: String, x: f32, y: f32) -> Result<Value, String> {
     } else {
         y
     };
-    
+
     // Find element by testID without requiring it to be pressable.
-    let start_point = on_ui(move || -> Result<Point, String> {
+    let (start_point, scale) = on_ui(move || -> Result<(Point, f64), String> {
         let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
         let mounter = mounter.borrow();
         let scene = mounter.scene();
         let point_target = scene.point(&selector)?;
         let (window, point) = point_of(&mounter, point_target)?;
+        let scale = window_scale(&mounter)?;
         if !synth::touch(&window, point.x, point.y, Phase::Down) {
             return Err("the simulator did not take the touch".into());
         }
-        Ok(point)
+        Ok((point, scale))
     })??;
     thread::sleep(Duration::from_millis(20));
 
-    // Move to target position using compensated distance
-    let end_x = start_point.x + compensated_x as f64;
-    let end_y = start_point.y + compensated_y as f64;
+    // Move to target position using compensated distance, in window points
+    let end_x = start_point.x + compensated_x as f64 * scale;
+    let end_y = start_point.y + compensated_y as f64 * scale;
 
     // Generate intermediate move events
     let steps = 5;
@@ -450,24 +454,25 @@ fn drag_and_hold(selector: String, x: f32, y: f32) -> Result<Value, String> {
     } else {
         y
     };
-    
+
     // Find element by testID without requiring it to be pressable
-    let start_point = on_ui(move || -> Result<Point, String> {
+    let (start_point, scale) = on_ui(move || -> Result<(Point, f64), String> {
         let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
         let mounter = mounter.borrow();
         let scene = mounter.scene();
         let point_target = scene.point(&selector)?;
         let (window, point) = point_of(&mounter, point_target)?;
+        let scale = window_scale(&mounter)?;
         if !synth::touch(&window, point.x, point.y, Phase::Down) {
             return Err("the simulator did not take the touch".into());
         }
-        Ok(point)
+        Ok((point, scale))
     })??;
     thread::sleep(Duration::from_millis(20));
 
-    // Move to target position using compensated distance
-    let end_x = start_point.x + compensated_x as f64;
-    let end_y = start_point.y + compensated_y as f64;
+    // Move to target position using compensated distance, in window points
+    let end_x = start_point.x + compensated_x as f64 * scale;
+    let end_y = start_point.y + compensated_y as f64 * scale;
 
     // Generate intermediate move events
     let steps = 5;
@@ -555,13 +560,13 @@ fn point_of(
     press: Press,
 ) -> Result<(objc2::rc::Retained<UIWindow>, Point), String> {
     let window = window_of(mounter)?;
-    
+
     let point = match press {
         Press::View(id) => {
             let view = mounter
                 .view_of(id)
                 .ok_or_else(|| "the view is gone".to_owned())?;
-            
+
             // Use UIKit's convertRect to get the view's bounds in window coordinates.
             // This automatically handles all coordinate transformations including scroll offsets,
             // navigation bars, safe areas, and transforms.
@@ -572,7 +577,7 @@ fn point_of(
             // Use the center of the converted rect
             let center_x = rect_in_window.origin.x + rect_in_window.size.width / 2.0;
             let center_y = rect_in_window.origin.y + rect_in_window.size.height / 2.0;
-            
+
             CGPoint::new(center_x, center_y)
         }
         Press::Span { view, start, end } => {
@@ -583,12 +588,12 @@ fn point_of(
                 let bounds = text.bounds();
                 CGPoint::new(bounds.size.width / 2.0, bounds.size.height / 2.0)
             });
-            
+
             // Convert the local point directly to window coordinates
             let point_in_window: CGPoint = unsafe {
                 msg_send![&*text, convertPoint:local, toView:Option::<&objc2_ui_kit::UIView>::None]
             };
-            
+
             point_in_window
         }
     };
@@ -601,13 +606,29 @@ fn point_of(
     ))
 }
 
-
-
 fn window_of(mounter: &Mounter) -> Result<objc2::rc::Retained<UIWindow>, String> {
     mounter
-        .view_of(nlayer_core::ROOT_ID)
+        .view_of(ROOT_ID)
         .and_then(|view| view.window())
         .ok_or_else(|| "the window is not up".to_owned())
+}
+
+/// One point of the app's surface in the window's points: a pinned
+/// viewport bigger than the window is shown scaled down.
+fn window_scale(mounter: &Mounter) -> Result<f64, String> {
+    let root = mounter
+        .view_of(ROOT_ID)
+        .ok_or_else(|| "the app is not up".to_owned())?;
+    // SAFETY: `convertPoint:toView:` converts in the view hierarchy.
+    let origin: CGPoint =
+        unsafe { msg_send![&*root, convertPoint: CGPoint::ZERO, toView: Option::<&UIView>::None] };
+    let unit: CGPoint = unsafe {
+        msg_send![&*root, convertPoint: CGPoint::new(1.0, 0.0), toView: Option::<&UIView>::None]
+    };
+    let scale = (unit.x - origin.x).abs().max((unit.y - origin.y).abs());
+    (scale > 0.0)
+        .then_some(scale)
+        .ok_or_else(|| "the app's surface has no size".to_owned())
 }
 
 fn on_ui<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Result<T, String> {

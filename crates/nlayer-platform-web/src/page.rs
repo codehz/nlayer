@@ -83,10 +83,7 @@ impl PageSession {
             sink,
             wake,
         )?;
-        Ok(PageSession { 
-            engine,
-            page,
-        })
+        Ok(PageSession { engine, page })
     }
 
     /// How long until the next timer (`None`: only input, and a finished fetch on the QuickJS host).
@@ -160,10 +157,9 @@ impl PageSession {
         }
         // Update core's scroll position for list windowing, sticky headers, and viewport=parent
         // (same as headless does in nlayer-testing/src/lib.rs)
-        self.engine.control().update_scroll_position(
-            id,
-            Point::new(Points(x), Points(y)),
-        );
+        self.engine
+            .control()
+            .update_scroll_position(id, Point::new(Points(x), Points(y)));
         // Then dispatch the event for onScroll listeners
         self.engine.control().dispatch_event(
             id,

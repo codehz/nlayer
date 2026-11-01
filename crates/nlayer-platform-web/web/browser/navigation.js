@@ -167,7 +167,9 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
         return untracked(() => {
           const screenFor = (rendered) => {
             const page = pages.has(rendered) ? rendered : NavPage({ children: rendered });
-            popped.set(page, () => entries.set(untracked(entries).filter((value) => value !== entry)));
+            popped.set(page, () =>
+              entries.set(untracked(entries).filter((value) => value !== entry)),
+            );
             return page;
           };
           return typeof rendered === "function"

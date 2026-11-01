@@ -359,21 +359,23 @@ impl Scene {
         let Some(frame) = self.absolute_frame(hit) else {
             return Err("absolute_frame returned None".to_owned());
         };
-        
+
         if frame.w <= 0.0 || frame.h <= 0.0 {
             return Err("zero size".to_owned());
         }
-        
+
         if self.hidden(hit.view()) {
             return Err("hidden".to_owned());
         }
-        
+
         let (center_x, center_y) = frame.center();
         if center_x < 0.0 || center_y < 0.0 || center_x > self.width || center_y > self.height {
-            return Err(format!("out of surface: center ({}, {}) not in (0, 0, {}, {})", 
-                center_x, center_y, self.width, self.height));
+            return Err(format!(
+                "out of surface: center ({}, {}) not in (0, 0, {}, {})",
+                center_x, center_y, self.width, self.height
+            ));
         }
-        
+
         // Check scroll clipping to match headless semantics
         let mut id = hit.view();
         while let Some(parent) = self.nodes[id as usize]
@@ -391,13 +393,15 @@ impl Scene {
                 let x = center_x - origin.0;
                 let y = center_y - origin.1;
                 if x < 0.0 || y < 0.0 || x > view.frame.w || y > view.frame.h {
-                    return Err(format!("clipped by scroll[{}]: local ({}, {}) not in (0, 0, {}, {})",
-                        parent, x, y, view.frame.w, view.frame.h));
+                    return Err(format!(
+                        "clipped by scroll[{}]: local ({}, {}) not in (0, 0, {}, {})",
+                        parent, x, y, view.frame.w, view.frame.h
+                    ));
                 }
             }
             id = parent;
         }
-        
+
         Ok(())
     }
 

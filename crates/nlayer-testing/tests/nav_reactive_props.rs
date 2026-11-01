@@ -44,28 +44,36 @@ fn nav_page_pop_on_back_reactive() {
     "#;
 
     let code = compile_module("test.tsx", source).expect("compile");
-    let mut app = Headless::start(&code, Size::new(Points(390.0), Points(844.0)))
-        .expect("start");
+    let mut app = Headless::start(&code, Size::new(Points(390.0), Points(844.0))).expect("start");
 
     // Detail page is already mounted (nav starts with both routes)
     assert!(app.screen().texts().contains(&"Detail".to_string()));
-    
+
     // Initially popOnBack is true (interceptBack is false)
     // With onBackPress registered, should return Ask
-    assert!(matches!(app.screen().back_target(), Back::Ask(_)), 
-        "Expected Back::Ask initially, got {:?}", app.screen().back_target());
-    
+    assert!(
+        matches!(app.screen().back_target(), Back::Ask(_)),
+        "Expected Back::Ask initially, got {:?}",
+        app.screen().back_target()
+    );
+
     // Toggle interception by pressing button
     app.press_selector("toggle").expect("press toggle");
     app.control().synchronize().expect("sync");
     let _ = app.next_frame(Duration::from_millis(100));
-    
+
     // Now popOnBack is false (interceptBack is true), still Ask since onBackPress is registered
-    assert!(matches!(app.screen().back_target(), Back::Ask(_)), 
-        "Expected Back::Ask after toggling, got {:?}", app.screen().back_target());
-        
+    assert!(
+        matches!(app.screen().back_target(), Back::Ask(_)),
+        "Expected Back::Ask after toggling, got {:?}",
+        app.screen().back_target()
+    );
+
     // Actually call back() and verify the handler was called
     app.back().expect("back");
-    assert!(app.screen().texts().contains(&"Intercepted".to_string()),
-        "Expected 'Intercepted' text after back(), texts: {:?}", app.screen().texts());
+    assert!(
+        app.screen().texts().contains(&"Intercepted".to_string()),
+        "Expected 'Intercepted' text after back(), texts: {:?}",
+        app.screen().texts()
+    );
 }

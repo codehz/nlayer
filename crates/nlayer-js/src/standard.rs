@@ -547,6 +547,15 @@ const ANIMATION: &str = r##"(function () {
             easing(config.easing === undefined ? "ease-in-out" : config.easing),
             config.delay === undefined ? 0 : Math.max(0, Number(config.delay))];
     }
+    function motionConfig(to, options) {
+        if (to !== null && to !== undefined && typeof to === "object") return to;
+        var config = {}, key;
+        if (options !== null && options !== undefined && typeof options === "object") {
+            for (key in options) config[key] = options[key];
+        }
+        config.toValue = to;
+        return config;
+    }
     function start(id, driverData) {
         var animation = allocate("animation");
         var promise = new Promise(function (resolve) { ends.set(animation, { resolve: resolve, read: false }); });
@@ -579,8 +588,8 @@ const ANIMATION: &str = r##"(function () {
     });
     Object.assign(AnimatedValue.prototype, {
         set: function (value) { send([2, valueId(this), Number(value)]); },
-        timing: function (config) { return start(valueId(this), driver(valueId(this), config, false)); },
-        spring: function (config) { return start(valueId(this), driver(valueId(this), config, true)); },
+        timing: function (to, options) { return start(valueId(this), driver(valueId(this), motionConfig(to, options), false)); },
+        spring: function (to, options) { return start(valueId(this), driver(valueId(this), motionConfig(to, options), true)); },
         stop: function () {
             var id = valueId(this);
             send([4, id]);
@@ -598,8 +607,8 @@ const ANIMATION: &str = r##"(function () {
     });
     AnimatedValue.prototype.get = AnimatedValue.prototype.getValue;
     var Animated = {
-        timing: function (value, config) { return value.timing(config); },
-        spring: function (value, config) { return value.spring(config); }
+        timing: function (value, to, options) { return value.timing(to, options); },
+        spring: function (value, to, options) { return value.spring(to, options); }
     };
     function __nlayerAnimationFinished(rows) {
         for (var i = 0; i < rows.length; i++) {

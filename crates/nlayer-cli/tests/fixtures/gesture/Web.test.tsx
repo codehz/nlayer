@@ -11,37 +11,37 @@ function find(node: any, name: string): any {
 
 test("pan drives animated value and springs back on release", () => {
   const app = open("App.tsx");
-  
+
   // Initial position
   const initial = find(app.tree(), "panCard");
   expect(initial.frame.x).toBe(0);
-  
+
   // Drag horizontally
   app.drag("panCard", 120, 0);
-  
+
   // Web platform runs in real browser - animation happens but we can't
   // wait with advance(). Just verify structure exists.
   const dragged = find(app.tree(), "panCard");
   expect(dragged !== null).toBe(true);
-  
+
   app.close();
 });
 
 test("horizontal pan in vertical scroll does not trigger scroll", () => {
   const app = open("App.tsx");
-  
+
   // Record initial scroll position
   const initialScroll = find(app.tree(), "scroll");
   const initialY = initialScroll.scrollY || 0;
-  
+
   // Drag card horizontally inside scroll
   app.drag("scrollPanCard", 50, 0);
-  
+
   // Scroll position should not change (immediate check, no advance needed)
   const afterDrag = find(app.tree(), "scroll");
   const afterY = afterDrag.scrollY || 0;
   expect(afterY).toBe(initialY);
-  
+
   app.close();
 });
 
@@ -52,12 +52,12 @@ test("horizontal pan in vertical scroll does not trigger scroll", () => {
 // specific multi-touch injection APIs. This smoke just ensures bindings are present.
 test("pinch and rotation bindings present without errors", () => {
   const app = open("App.tsx");
-  
+
   // Verify views with bindings exist (toBeTruthy not available, check not null)
   const pinch = find(app.tree(), "pinchCard");
   const rotation = find(app.tree(), "rotationCard");
   expect(pinch !== null).toBe(true);
   expect(rotation !== null).toBe(true);
-  
+
   app.close();
 });

@@ -677,46 +677,103 @@ function DialogDemoPage(props: { nav: NavStackHandle }) {
   const lastCloseReason = signal<string>("");
   const closeOnBackdrop = signal(true);
   const closeOnEscape = signal(true);
-  
+
   return (
     <View testID="dialog-page" style={{ flex: 1, backgroundColor: "#fff", padding: 16 }}>
       <Text style={{ fontSize: 20, fontWeight: "700", marginBottom: 16 }}>Dialog Demo</Text>
-      <Text testID="dialog-back" onPress={() => props.nav.pop()} style={{ color: "#3b82f6", marginBottom: 16 }}>
+      <Text
+        testID="dialog-back"
+        onPress={() => props.nav.pop()}
+        style={{ color: "#3b82f6", marginBottom: 16 }}
+      >
         ← Back
       </Text>
-      
+
       {lastCloseReason() && (
-        <Text testID="close-reason" style={{ marginBottom: 12, color: "#10b981", fontWeight: "600" }}>
+        <Text
+          testID="close-reason"
+          style={{ marginBottom: 12, color: "#10b981", fontWeight: "600" }}
+        >
           Closed by: {lastCloseReason()}
         </Text>
       )}
-      
+
       <View style={{ gap: 12, marginBottom: 16 }}>
-        <Text testID="open-dialog-fade" onPress={() => { dialogAnimation.set("fade"); dialogOpen.set(true); }}
-              style={{ padding: 12, backgroundColor: "#3b82f6", color: "#fff", borderRadius: 6, textAlign: "center" }}>
+        <Text
+          testID="open-dialog-fade"
+          onPress={() => {
+            dialogAnimation.set("fade");
+            dialogOpen.set(true);
+          }}
+          style={{
+            padding: 12,
+            backgroundColor: "#3b82f6",
+            color: "#fff",
+            borderRadius: 6,
+            textAlign: "center",
+          }}
+        >
           Open Dialog (fade)
         </Text>
-        <Text testID="open-slide" onPress={() => { dialogAnimation.set("slide"); dialogOpen.set(true); }}
-              style={{ padding: 12, backgroundColor: "#8b5cf6", color: "#fff", borderRadius: 6, textAlign: "center" }}>
+        <Text
+          testID="open-slide"
+          onPress={() => {
+            dialogAnimation.set("slide");
+            dialogOpen.set(true);
+          }}
+          style={{
+            padding: 12,
+            backgroundColor: "#8b5cf6",
+            color: "#fff",
+            borderRadius: 6,
+            textAlign: "center",
+          }}
+        >
           Open Dialog (slide)
         </Text>
-        <Text testID="open-none" onPress={() => { dialogAnimation.set("none"); dialogOpen.set(true); }}
-              style={{ padding: 12, backgroundColor: "#ec4899", color: "#fff", borderRadius: 6, textAlign: "center" }}>
+        <Text
+          testID="open-none"
+          onPress={() => {
+            dialogAnimation.set("none");
+            dialogOpen.set(true);
+          }}
+          style={{
+            padding: 12,
+            backgroundColor: "#ec4899",
+            color: "#fff",
+            borderRadius: 6,
+            textAlign: "center",
+          }}
+        >
           Open Dialog (none)
         </Text>
       </View>
-      
+
       <View style={{ gap: 8, marginBottom: 16 }}>
-        <Text testID="toggle-backdrop" onPress={() => closeOnBackdrop.set(!closeOnBackdrop())}
-              style={{ padding: 8, backgroundColor: closeOnBackdrop() ? "#10b981" : "#cbd5e1", borderRadius: 4 }}>
+        <Text
+          testID="toggle-backdrop"
+          onPress={() => closeOnBackdrop.set(!closeOnBackdrop())}
+          style={{
+            padding: 8,
+            backgroundColor: closeOnBackdrop() ? "#10b981" : "#cbd5e1",
+            borderRadius: 4,
+          }}
+        >
           closeOnBackdropPress: {closeOnBackdrop() ? "true" : "false"}
         </Text>
-        <Text testID="toggle-escape" onPress={() => closeOnEscape.set(!closeOnEscape())}
-              style={{ padding: 8, backgroundColor: closeOnEscape() ? "#10b981" : "#cbd5e1", borderRadius: 4 }}>
+        <Text
+          testID="toggle-escape"
+          onPress={() => closeOnEscape.set(!closeOnEscape())}
+          style={{
+            padding: 8,
+            backgroundColor: closeOnEscape() ? "#10b981" : "#cbd5e1",
+            borderRadius: 4,
+          }}
+        >
           closeOnEscape: {closeOnEscape() ? "true" : "false"}
         </Text>
       </View>
-      
+
       {dialogOpen() && (
         <Dialog
           testID="demo-dialog"
@@ -737,8 +794,17 @@ function DialogDemoPage(props: { nav: NavStackHandle }) {
             <Text style={{ color: "#64748b", marginBottom: 16 }}>
               Press back() to close with reason "cancel", or press Close button
             </Text>
-            <Text testID="close-dialog" onPress={() => dialogOpen.set(false)}
-                  style={{ padding: 12, backgroundColor: "#3b82f6", color: "#fff", borderRadius: 6, textAlign: "center" }}>
+            <Text
+              testID="close-dialog"
+              onPress={() => dialogOpen.set(false)}
+              style={{
+                padding: 12,
+                backgroundColor: "#3b82f6",
+                color: "#fff",
+                borderRadius: 6,
+                textAlign: "center",
+              }}
+            >
               Close
             </Text>
           </View>
@@ -753,21 +819,25 @@ function GestureCardPage(props: { nav: NavStackHandle }) {
   const translateY = createAnimatedValue(0);
   const panEndX = signal(0);
   const panEndY = signal(0);
-  
+
   const scale = createAnimatedValue(1);
   const pinchEndScale = signal(1);
-  
+
   const angle = createAnimatedValue(0);
   const rotationEndAngle = signal(0);
-  
+
   return (
     <Scroll testID="gesture-page" style={{ flex: 1, backgroundColor: "#fff" }}>
       <View style={{ padding: 16 }}>
         <Text style={{ fontSize: 20, fontWeight: "700", marginBottom: 16 }}>Gestures</Text>
-        <Text testID="gesture-back" onPress={() => props.nav.pop()} style={{ color: "#3b82f6", marginBottom: 16 }}>
+        <Text
+          testID="gesture-back"
+          onPress={() => props.nav.pop()}
+          style={{ color: "#3b82f6", marginBottom: 16 }}
+        >
           ← Back
         </Text>
-        
+
         <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8 }}>Pan (drag)</Text>
         <Text testID="pan-end" style={{ marginBottom: 8, fontSize: 12, color: "#64748b" }}>
           Translation: ({panEndX()}, {panEndY()})
@@ -794,7 +864,7 @@ function GestureCardPage(props: { nav: NavStackHandle }) {
         >
           <Text style={{ color: "#fff", fontSize: 14, fontWeight: "600" }}>Drag Me</Text>
         </View>
-        
+
         <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8 }}>Pinch (scale)</Text>
         <Text testID="pinch-end" style={{ marginBottom: 8, fontSize: 12, color: "#64748b" }}>
           Scale: {pinchEndScale().toFixed(2)}
@@ -820,7 +890,7 @@ function GestureCardPage(props: { nav: NavStackHandle }) {
           <Text style={{ color: "#fff", fontSize: 14, fontWeight: "600" }}>Pinch Me</Text>
           <Text style={{ color: "#e0e7ff", fontSize: 10 }}>Two fingers</Text>
         </View>
-        
+
         <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8 }}>Rotation (angle)</Text>
         <Text testID="rotation-end" style={{ marginBottom: 8, fontSize: 12, color: "#64748b" }}>
           Angle: {rotationEndAngle().toFixed(0)}°
@@ -846,8 +916,10 @@ function GestureCardPage(props: { nav: NavStackHandle }) {
           <Text style={{ color: "#fff", fontSize: 14, fontWeight: "600" }}>Rotate Me</Text>
           <Text style={{ color: "#fce7f3", fontSize: 10 }}>Two fingers</Text>
         </View>
-        
-        <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8 }}>Horizontal pan in vertical scroll</Text>
+
+        <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8 }}>
+          Horizontal pan in vertical scroll
+        </Text>
         <Text style={{ marginBottom: 8, fontSize: 12, color: "#64748b" }}>
           Swipe left/right on the card (scroll negotiation)
         </Text>
@@ -870,7 +942,7 @@ function GestureCardPage(props: { nav: NavStackHandle }) {
         >
           <Text style={{ color: "#fff", fontSize: 14, fontWeight: "600" }}>Swipe Horizontal</Text>
         </View>
-        
+
         <Text style={{ fontSize: 12, color: "#64748b", marginTop: 16 }}>
           Note: Pinch and rotation require two fingers on real devices.{"\n"}
           Headless tests only cover pan (drag). Manual testing required for pinch/rotation.
@@ -884,15 +956,30 @@ function DetailPage(props: { nav: NavStackHandle }) {
   return (
     <Scroll testID="detail" style={{ flex: 1, backgroundColor: "#fff" }}>
       <View style={{ padding: 16 }}>
-        <Text testID="detail-title" style={{ fontSize: 24, fontWeight: "700", marginBottom: 12 }}>Detail Screen</Text>
-        <Text style={{ marginBottom: 16 }}>This demonstrates push/pop navigation with native header</Text>
-        <Text testID="go-back" onPress={() => props.nav.pop()}
-              style={{ color: "#3b82f6", marginBottom: 16, fontWeight: "600" }}>
+        <Text testID="detail-title" style={{ fontSize: 24, fontWeight: "700", marginBottom: 12 }}>
+          Detail Screen
+        </Text>
+        <Text style={{ marginBottom: 16 }}>
+          This demonstrates push/pop navigation with native header
+        </Text>
+        <Text
+          testID="go-back"
+          onPress={() => props.nav.pop()}
+          style={{ color: "#3b82f6", marginBottom: 16, fontWeight: "600" }}
+        >
           ← Back
         </Text>
-        <Text testID="intercept-back" onPress={() => detailInterceptBack.set(!detailInterceptBack())}
-              style={{ padding: 12, backgroundColor: detailInterceptBack() ? "#10b981" : "#cbd5e1", 
-                       borderRadius: 6, textAlign: "center", marginBottom: 16 }}>
+        <Text
+          testID="intercept-back"
+          onPress={() => detailInterceptBack.set(!detailInterceptBack())}
+          style={{
+            padding: 12,
+            backgroundColor: detailInterceptBack() ? "#10b981" : "#cbd5e1",
+            borderRadius: 6,
+            textAlign: "center",
+            marginBottom: 16,
+          }}
+        >
           {detailInterceptBack() ? "Back Interception ON" : "Enable Back Interception"}
         </Text>
         {detailBackIntercepted() && (
@@ -907,23 +994,45 @@ function DetailPage(props: { nav: NavStackHandle }) {
 
 function HeaderDemoPage(props: { nav: NavStackHandle }) {
   const transparent = signal(false);
-  
+
   return (
-    <Scroll testID="header-demo" style={{ flex: 1, backgroundColor: transparent() ? "#3b82f6" : "#fff" }}>
+    <Scroll
+      testID="header-demo"
+      style={{ flex: 1, backgroundColor: transparent() ? "#3b82f6" : "#fff" }}
+    >
       <View style={{ padding: 16, paddingTop: transparent() ? 120 : 16 }}>
-        <Text style={{ fontSize: 24, fontWeight: "700", marginBottom: 12, color: transparent() ? "#fff" : "#000" }}>
+        <Text
+          style={{
+            fontSize: 24,
+            fontWeight: "700",
+            marginBottom: 12,
+            color: transparent() ? "#fff" : "#000",
+          }}
+        >
           Header Demo
         </Text>
         <Text style={{ marginBottom: 16, color: transparent() ? "#f0f9ff" : "#64748b" }}>
           iOS/Android: native header. Web: app-drawn header slot.
         </Text>
-        <Text testID="toggle-transparent" onPress={() => transparent.set(!transparent())}
-              style={{ padding: 12, backgroundColor: transparent() ? "#1e40af" : "#3b82f6", 
-                       color: "#fff", borderRadius: 6, textAlign: "center", marginBottom: 16 }}>
+        <Text
+          testID="toggle-transparent"
+          onPress={() => transparent.set(!transparent())}
+          style={{
+            padding: 12,
+            backgroundColor: transparent() ? "#1e40af" : "#3b82f6",
+            color: "#fff",
+            borderRadius: 6,
+            textAlign: "center",
+            marginBottom: 16,
+          }}
+        >
           {transparent() ? "Transparent ON" : "Toggle Transparent"}
         </Text>
-        <Text testID="header-back" onPress={() => props.nav.pop()}
-              style={{ color: transparent() ? "#fff" : "#3b82f6", fontWeight: "600" }}>
+        <Text
+          testID="header-back"
+          onPress={() => props.nav.pop()}
+          style={{ color: transparent() ? "#fff" : "#3b82f6", fontWeight: "600" }}
+        >
           ← Back
         </Text>
       </View>
@@ -939,34 +1048,61 @@ function ListDemoPage(props: { nav: NavStackHandle }) {
   const invertedEnabled = signal(false);
   const viewableFirst = signal(0);
   const viewableLast = signal(0);
-  
+
   const handleRefresh = () => {
     refreshing.set(true);
     setTimeout(() => {
       refreshing.set(false);
     }, 1000);
   };
-  
+
   return (
     <View testID="list-page" style={{ flex: 1, backgroundColor: "#fff" }}>
       <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: "#e2e8f0" }}>
         <Text style={{ fontSize: 20, fontWeight: "700" }}>Virtual List</Text>
-        <Text testID="list-back" onPress={() => props.nav.pop()}
-              style={{ color: "#3b82f6", marginTop: 8, marginBottom: 8, fontWeight: "600" }}>
+        <Text
+          testID="list-back"
+          onPress={() => props.nav.pop()}
+          style={{ color: "#3b82f6", marginTop: 8, marginBottom: 8, fontWeight: "600" }}
+        >
           ← Back
         </Text>
-        
+
         <View style={{ gap: 8, marginTop: 8 }}>
-          <Text testID="toggle-snap" onPress={() => snapEnabled.set(!snapEnabled())}
-                style={{ padding: 6, backgroundColor: snapEnabled() ? "#10b981" : "#cbd5e1", borderRadius: 4, fontSize: 12 }}>
+          <Text
+            testID="toggle-snap"
+            onPress={() => snapEnabled.set(!snapEnabled())}
+            style={{
+              padding: 6,
+              backgroundColor: snapEnabled() ? "#10b981" : "#cbd5e1",
+              borderRadius: 4,
+              fontSize: 12,
+            }}
+          >
             snapToInterval: {snapEnabled() ? "64px" : "off"}
           </Text>
-          <Text testID="toggle-sticky" onPress={() => stickyEnabled.set(!stickyEnabled())}
-                style={{ padding: 6, backgroundColor: stickyEnabled() ? "#10b981" : "#cbd5e1", borderRadius: 4, fontSize: 12 }}>
+          <Text
+            testID="toggle-sticky"
+            onPress={() => stickyEnabled.set(!stickyEnabled())}
+            style={{
+              padding: 6,
+              backgroundColor: stickyEnabled() ? "#10b981" : "#cbd5e1",
+              borderRadius: 4,
+              fontSize: 12,
+            }}
+          >
             stickyHeaderIndices: {stickyEnabled() ? "[0, 10, 20]" : "off"}
           </Text>
-          <Text testID="toggle-inverted" onPress={() => invertedEnabled.set(!invertedEnabled())}
-                style={{ padding: 6, backgroundColor: invertedEnabled() ? "#10b981" : "#cbd5e1", borderRadius: 4, fontSize: 12 }}>
+          <Text
+            testID="toggle-inverted"
+            onPress={() => invertedEnabled.set(!invertedEnabled())}
+            style={{
+              padding: 6,
+              backgroundColor: invertedEnabled() ? "#10b981" : "#cbd5e1",
+              borderRadius: 4,
+              fontSize: 12,
+            }}
+          >
             inverted: {invertedEnabled() ? "true" : "false"}
           </Text>
           <Text testID="viewable-range" style={{ fontSize: 11, color: "#64748b" }}>
@@ -1003,7 +1139,8 @@ function ListDemoPage(props: { nav: NavStackHandle }) {
               paddingHorizontal: 16,
               borderBottomWidth: 1,
               borderBottomColor: "#f1f5f9",
-              backgroundColor: [0, 10, 20].includes(index()) && stickyEnabled() ? "#e0f2fe" : "#fff",
+              backgroundColor:
+                [0, 10, 20].includes(index()) && stickyEnabled() ? "#e0f2fe" : "#fff",
             }}
           >
             <Text testID={index() === 0 ? "first" : undefined}>
@@ -1021,8 +1158,11 @@ function ViewportParentPage(props: { nav: NavStackHandle }) {
     <View testID="viewport-parent-page" style={{ flex: 1, backgroundColor: "#fff" }}>
       <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: "#e2e8f0" }}>
         <Text style={{ fontSize: 20, fontWeight: "700" }}>List viewport="parent"</Text>
-        <Text testID="vp-back" onPress={() => props.nav.pop()}
-              style={{ color: "#3b82f6", marginTop: 8, fontWeight: "600" }}>
+        <Text
+          testID="vp-back"
+          onPress={() => props.nav.pop()}
+          style={{ color: "#3b82f6", marginTop: 8, fontWeight: "600" }}
+        >
           ← Back
         </Text>
         <Text style={{ fontSize: 12, color: "#64748b", marginTop: 8 }}>
@@ -1057,9 +1197,7 @@ function ViewportParentPage(props: { nav: NavStackHandle }) {
           )}
         </List>
         <View style={{ padding: 16 }}>
-          <Text style={{ fontSize: 14, fontWeight: "600", marginTop: 8 }}>
-            Content after list
-          </Text>
+          <Text style={{ fontSize: 14, fontWeight: "600", marginTop: 8 }}>Content after list</Text>
         </View>
       </Scroll>
     </View>
@@ -1078,7 +1216,9 @@ function HomePage() {
           paddingLeft: "calc(env(safe-area-inset-left) + 16px)",
         }}
       >
-        <Text testID="home-title" style={{ fontSize: 28, fontWeight: "700", color: "#0f172a" }}>Gallery</Text>
+        <Text testID="home-title" style={{ fontSize: 28, fontWeight: "700", color: "#0f172a" }}>
+          Gallery
+        </Text>
         <Text style={{ fontSize: 14, color: "#64748b" }}>
           v3 Navigation: Stack, Screens, Modals, Dialogs
         </Text>
@@ -1097,33 +1237,54 @@ function HomePage() {
         <StorageDemo />
         <ColorScheme />
         <BackNav />
-        
+
         <Section title="Navigation Demos">
-          <Text testID="dismissed-count" style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
+          <Text
+            testID="dismissed-count"
+            style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}
+          >
             Dismissed: {dismissedCount()}
           </Text>
-          <Text testID="open-detail" onPress={() => nav.push({ name: "detail", id: 1 })}
-                style={{ color: "#3b82f6", fontWeight: "600", padding: 8 }}>
+          <Text
+            testID="open-detail"
+            onPress={() => nav.push({ name: "detail", id: 1 })}
+            style={{ color: "#3b82f6", fontWeight: "600", padding: 8 }}
+          >
             → Detail (push/pop/onDismiss/onBackPress)
           </Text>
-          <Text testID="open-dialog" onPress={() => nav.push({ name: "dialog" })}
-                style={{ color: "#3b82f6", fontWeight: "600", padding: 8 }}>
+          <Text
+            testID="open-dialog"
+            onPress={() => nav.push({ name: "dialog" })}
+            style={{ color: "#3b82f6", fontWeight: "600", padding: 8 }}
+          >
             → Dialog Demo
           </Text>
-          <Text testID="open-gesture" onPress={() => nav.push({ name: "gesture" })}
-                style={{ color: "#3b82f6", fontWeight: "600", padding: 8 }}>
+          <Text
+            testID="open-gesture"
+            onPress={() => nav.push({ name: "gesture" })}
+            style={{ color: "#3b82f6", fontWeight: "600", padding: 8 }}
+          >
             → Gesture Card (pan → translate)
           </Text>
-          <Text testID="open-list" onPress={() => nav.push({ name: "list" })}
-                style={{ color: "#3b82f6", fontWeight: "600", padding: 8 }}>
+          <Text
+            testID="open-list"
+            onPress={() => nav.push({ name: "list" })}
+            style={{ color: "#3b82f6", fontWeight: "600", padding: 8 }}
+          >
             → List Demo (5000 rows)
           </Text>
-          <Text testID="open-header" onPress={() => nav.push({ name: "header" })}
-                style={{ color: "#3b82f6", fontWeight: "600", padding: 8 }}>
+          <Text
+            testID="open-header"
+            onPress={() => nav.push({ name: "header" })}
+            style={{ color: "#3b82f6", fontWeight: "600", padding: 8 }}
+          >
             → Header Demo (title, headerStyle, headerTransparent)
           </Text>
-          <Text testID="open-viewport-parent" onPress={() => nav.push({ name: "viewport-parent" })}
-                style={{ color: "#3b82f6", fontWeight: "600", padding: 8 }}>
+          <Text
+            testID="open-viewport-parent"
+            onPress={() => nav.push({ name: "viewport-parent" })}
+            style={{ color: "#3b82f6", fontWeight: "600", padding: 8 }}
+          >
             → List viewport="parent" (nested in Scroll)
           </Text>
         </Section>
@@ -1139,12 +1300,13 @@ function App() {
         const r = route;
         let content;
         let title: string | undefined;
-        let headerStyle: { backgroundColor?: string; color?: string; tintColor?: string } | undefined;
+        let headerStyle:
+          { backgroundColor?: string; color?: string; tintColor?: string } | undefined;
         let headerTransparent = false;
-        let header: JSX.Element | undefined;
-        let headerLeft: JSX.Element | undefined;
-        let headerRight: JSX.Element | undefined;
-        
+        let header: unknown;
+        let headerLeft: unknown;
+        let headerRight: unknown;
+
         if (r.name === "home") {
           content = <HomePage />;
           title = "Gallery";
@@ -1165,15 +1327,44 @@ function App() {
           content = <HeaderDemoPage nav={nav} />;
           title = "Header";
           headerStyle = { backgroundColor: "#10b981", color: "#fff", tintColor: "#fff" };
-          // Note: header, headerLeft, headerRight slots are for web only
-          // iOS/Android use native system headers with title and headerStyle
+          // iOS and Android put these in the system header; web draws
+          // `header` at the top of the page instead.
+          headerLeft = (
+            <Text onPress={() => nav.pop()} style={{ color: "#fff", fontWeight: "600" }}>
+              Back
+            </Text>
+          );
+          headerRight = <Text style={{ color: "#fff" }}>Right</Text>;
+          header = (
+            <View
+              testID="drawn-header"
+              style={{
+                height: 44,
+                paddingHorizontal: 12,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+                backgroundColor: "#10b981",
+              }}
+            >
+              <Text
+                testID="drawn-header-back"
+                onPress={() => nav.pop()}
+                style={{ color: "#fff", fontWeight: "600" }}
+              >
+                ← Back
+              </Text>
+              <Text style={{ color: "#fff", fontWeight: "700" }}>Header</Text>
+              <Text style={{ color: "#fff" }}>Right</Text>
+            </View>
+          );
         } else if (r.name === "viewport-parent") {
           content = <ViewportParentPage nav={nav} />;
           title = "Viewport Parent";
         } else {
-          content = <Text>Unknown route: {r.name}</Text>;
+          content = <Text>Unknown route</Text>;
         }
-        
+
         return (
           <NavPage
             title={title}
@@ -1184,12 +1375,16 @@ function App() {
             headerRight={headerRight}
             onDismiss={() => dismissedCount.set(dismissedCount() + 1)}
             popOnBack={r.name !== "detail" || !detailInterceptBack()}
-            onBackPress={r.name === "detail" ? () => {
-              if (detailInterceptBack()) {
-                detailBackIntercepted.set(true);
-                setTimeout(() => detailBackIntercepted.set(false), 1000);
-              }
-            } : undefined}
+            onBackPress={
+              r.name === "detail"
+                ? () => {
+                    if (detailInterceptBack()) {
+                      detailBackIntercepted.set(true);
+                      setTimeout(() => detailBackIntercepted.set(false), 1000);
+                    }
+                  }
+                : undefined
+            }
           >
             {content}
           </NavPage>

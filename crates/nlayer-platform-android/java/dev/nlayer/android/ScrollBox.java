@@ -11,11 +11,12 @@ import android.widget.ProgressBar;
 import android.widget.ScrollView;
 
 /**
- * One-axis scroll view. Drag and fling callbacks match UIKit's scroll delegate, with pull-to-refresh.
- * Event kinds are {@code EventKind} discriminants. Each callback carries the
+ * One-axis scroll view. Drag and fling callbacks match UIKit's scroll delegate, with
+ * pull-to-refresh. Event kinds are {@code EventKind} discriminants. Each callback carries the
  * content offset, the content size and this view's visible size, in points. {@code onScroll} is at
  * most once per frame. There is no decelerating callback: rest is no movement for a moment after
- * the finger lifts. An iOS bounce can report a negative offset; this view does not (but pull reports negative).
+ * the finger lifts. An iOS bounce can report a negative offset; this view does not (but pull
+ * reports negative).
  */
 final class ScrollBox extends FrameLayout {
   private static final int SCROLL = 1;
@@ -45,6 +46,7 @@ final class ScrollBox extends FrameLayout {
 
   /** Pull-to-refresh state. */
   private boolean refreshing;
+
   private float pull;
   private boolean pulling;
   private float startY;
@@ -69,6 +71,7 @@ final class ScrollBox extends FrameLayout {
 
   /** Snap behavior configuration. */
   private boolean snapPaging;
+
   private float snapInterval;
   private float[] snapOffsets;
   private int snapAlignment;
@@ -90,15 +93,17 @@ final class ScrollBox extends FrameLayout {
     density = c.getResources().getDisplayMetrics().density;
     setBackground(decor);
     content = new Content(c, m, id);
-    
+
     // Add spinner for pull-to-refresh
     spinner = new ProgressBar(c);
     spinner.setIndeterminate(true);
     spinner.setVisibility(GONE);
     int size = Math.round(28 * density);
-    addView(spinner, new FrameLayout.LayoutParams(size, size, 
-        android.view.Gravity.CENTER_HORIZONTAL | android.view.Gravity.TOP));
-    
+    addView(
+        spinner,
+        new FrameLayout.LayoutParams(
+            size, size, android.view.Gravity.CENTER_HORIZONTAL | android.view.Gravity.TOP));
+
     build(c);
   }
 
@@ -265,21 +270,22 @@ final class ScrollBox extends FrameLayout {
       return;
     }
     flushScroll();
-    
+
     // Apply snap if flung
     if (flung && scroller != null) {
       flung = false;
       float snapTarget = computeSnapTarget();
       if (snapTarget >= 0) {
         if (horizontal) {
-          ((HorizontalScrollView) scroller).smoothScrollTo(Math.round(snapTarget), scroller.getScrollY());
+          ((HorizontalScrollView) scroller)
+              .smoothScrollTo(Math.round(snapTarget), scroller.getScrollY());
         } else {
           ((ScrollView) scroller).smoothScrollTo(scroller.getScrollX(), Math.round(snapTarget));
         }
         return; // Let smoothScroll complete, which will call cameToRest again
       }
     }
-    
+
     if (momentum) {
       momentum = false;
       emit(MOMENTUM_END);
@@ -322,7 +328,10 @@ final class ScrollBox extends FrameLayout {
     scroller.setHorizontalScrollBarEnabled(indicator && horizontal);
   }
 
-  /** Pull to refresh: whether the spinner shows, where (dp) a pull refreshes and the room kept while refreshing. */
+  /**
+   * Pull to refresh: whether the spinner shows, where (dp) a pull refreshes and the room kept while
+   * refreshing.
+   */
   void setRefresh(boolean own, float height) {
     float inset = own ? height : 56f;
     boolean changed = refreshIndicator == own || inset != refreshInset;
@@ -347,14 +356,21 @@ final class ScrollBox extends FrameLayout {
       }
       animatePull(refreshInset * d, null);
     } else {
-      animatePull(0, () -> {
-        if (spinner != null) spinner.setVisibility(GONE);
-      });
+      animatePull(
+          0,
+          () -> {
+            if (spinner != null) spinner.setVisibility(GONE);
+          });
     }
   }
 
-  void setSnapBehavior(boolean paging, float interval, float[] offsets, 
-                       int alignment, boolean disableIntervalMomentum, float deceleration) {
+  void setSnapBehavior(
+      boolean paging,
+      float interval,
+      float[] offsets,
+      int alignment,
+      boolean disableIntervalMomentum,
+      float deceleration) {
     this.snapPaging = paging;
     this.snapInterval = interval;
     this.snapOffsets = offsets;
@@ -365,12 +381,12 @@ final class ScrollBox extends FrameLayout {
 
   private float computeSnapTarget() {
     if (scroller == null) return -1.0f;
-    
+
     // Get current scroll position and dimensions in pixels
     float offsetPx = horizontal ? scroller.getScrollX() : scroller.getScrollY();
     float viewportPx = horizontal ? getWidth() : getHeight();
     float contentPx = horizontal ? contentW : contentH;
-    
+
     // Compute deceleration rate using same logic as nlayer_core::snap::rate
     float decel = snapDeceleration;
     boolean hasSnapping = snapInterval > 0 || (snapOffsets != null && snapOffsets.length > 0);
@@ -381,12 +397,12 @@ final class ScrollBox extends FrameLayout {
         decel = 0.998f;
       }
     }
-    
+
     // Estimate velocity from last fling (we don't have actual velocity tracked)
     // Use projected = offset for simplicity (assumes velocity ~0 at rest)
     float targetPx = offsetPx;
     float velocityPxPerMs = 0.0f;
-    
+
     return Native.snapTarget(
         getHostHandle(),
         id,
@@ -400,8 +416,7 @@ final class ScrollBox extends FrameLayout {
         snapOffsets,
         snapAlignment,
         snapDisableIntervalMomentum,
-        decel
-    );
+        decel);
   }
 
   private long getHostHandle() {
@@ -417,8 +432,10 @@ final class ScrollBox extends FrameLayout {
   }
 
   private boolean canPull() {
-    return !horizontal && (pressMask & (1 << REFRESH)) != 0 && 
-           scroller != null && scroller.getScrollY() == 0;
+    return !horizontal
+        && (pressMask & (1 << REFRESH)) != 0
+        && scroller != null
+        && scroller.getScrollY() == 0;
   }
 
   @Override
@@ -445,9 +462,10 @@ final class ScrollBox extends FrameLayout {
         // Apply rubber band resistance (nsh formula: (1-1/(over*0.55/dim+1))*dim)
         float rawPull = Math.max(0, e.getY() - startY);
         float viewport = getHeight();
-        float resistedPull = viewport > 0 
-            ? (1.0f - 1.0f / (rawPull * 0.55f / viewport + 1.0f)) * viewport
-            : rawPull * 0.5f;
+        float resistedPull =
+            viewport > 0
+                ? (1.0f - 1.0f / (rawPull * 0.55f / viewport + 1.0f)) * viewport
+                : rawPull * 0.5f;
         setPull(resistedPull);
         if (refreshIndicator && spinner != null) {
           spinner.setVisibility(VISIBLE);
@@ -461,9 +479,11 @@ final class ScrollBox extends FrameLayout {
           setRefreshing(true);
           // Core fires REFRESH via update_scroll_position, don't emit here
         } else {
-          animatePull(0, () -> {
-            if (spinner != null) spinner.setVisibility(GONE);
-          });
+          animatePull(
+              0,
+              () -> {
+                if (spinner != null) spinner.setVisibility(GONE);
+              });
         }
         return true;
     }
@@ -480,9 +500,16 @@ final class ScrollBox extends FrameLayout {
       spinner.setTranslationY(Math.max(0, px / 2 - spinner.getHeight() / 2f));
     }
     // Report pull distance to core (negative offset means pull)
-    Native.sendScroll(this, id, SCROLL, 0, -px / density, 
-        contentPointsW, contentPointsH, 
-        getWidth() / density, getHeight() / density);
+    Native.sendScroll(
+        this,
+        id,
+        SCROLL,
+        0,
+        -px / density,
+        contentPointsW,
+        contentPointsH,
+        getWidth() / density,
+        getHeight() / density);
   }
 
   private void animatePull(float to, Runnable end) {
@@ -490,12 +517,13 @@ final class ScrollBox extends FrameLayout {
     a.setDuration(250);
     a.addUpdateListener(v -> setPull((float) v.getAnimatedValue()));
     if (end != null) {
-      a.addListener(new android.animation.AnimatorListenerAdapter() {
-        @Override
-        public void onAnimationEnd(android.animation.Animator animation) {
-          end.run();
-        }
-      });
+      a.addListener(
+          new android.animation.AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(android.animation.Animator animation) {
+              end.run();
+            }
+          });
     }
     a.start();
   }
@@ -662,11 +690,13 @@ final class ScrollBox extends FrameLayout {
     applying = false;
   }
 
-  /** A test scroll landed at the current offset: the six callbacks, in order. */
+  /** A test scroll landed at the current offset: the callbacks, in order. */
   void noteTestGesture() {
     dropScrollFrame();
     emitTest(DRAG_START);
-    emitTest(SCROLL);
+    // The core follows the offset whatever listens (lists, sticky rows and
+    // lists in a parent viewport); JavaScript events are below.
+    send(SCROLL);
     emitTest(DRAG_END);
     emitTest(MOMENTUM_START);
     emitTest(MOMENTUM_END);

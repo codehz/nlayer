@@ -81,7 +81,6 @@ test("column, row, and grid place their children", () => {
   expect(b.frame.x).toBe(d.frame.x);
 });
 
-
 test("a press updates the label", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
   expect(app.texts()).toContain("Press");
@@ -293,7 +292,7 @@ test("back() returns from detail to home", () => {
   reveal(app, (n) => n.testID === "open-detail");
   app.press("open-detail");
   app.waitFor("detail-title");
-  
+
   app.back();
   app.waitFor("open-detail");
   const tree = app.tree();
@@ -306,7 +305,7 @@ test("onBackPress intercepts back() on detail", () => {
   reveal(app, (n) => n.testID === "open-detail");
   app.press("open-detail");
   app.waitFor("intercept-back");
-  
+
   app.press("intercept-back");
   app.back();
   app.waitFor("back-intercepted");
@@ -320,24 +319,24 @@ test("dialog opens and back() closes it", () => {
   reveal(app, (n) => n.testID === "open-dialog");
   app.press("open-dialog");
   app.waitFor("dialog-page");
-  
+
   app.press("open-dialog-fade");
   app.waitFor("demo-dialog");
-  
+
   // back() closes the dialog (should trigger onRequestClose with reason="cancel")
   app.back();
-  
+
   // Dialog should be closed
   const tree = app.tree();
   const dialog = flat(tree, []).find((n) => n.testID === "demo-dialog");
   expect(dialog).toBe(undefined);
-  
+
   // Check if we're still on dialog-page (to read close-reason)
   const dialogPage = flat(tree, []).find((n) => n.testID === "dialog-page");
   if (dialogPage) {
     // Still on dialog page - check close reason
     const texts = app.texts();
-    const closeReason = texts.find(t => t.startsWith("Closed by:"));
+    const closeReason = texts.find((t) => t.startsWith("Closed by:"));
     if (closeReason) {
       expect(closeReason).toContain("cancel");
     }
@@ -351,10 +350,10 @@ test("dialog with animation=none", () => {
   reveal(app, (n) => n.testID === "open-dialog");
   app.press("open-dialog");
   app.waitFor("dialog-page");
-  
+
   app.press("open-none");
   app.waitFor("demo-dialog");
-  
+
   app.press("close-dialog");
   const tree = app.tree();
   const dialog = flat(tree, []).find((n) => n.testID === "demo-dialog");
@@ -366,12 +365,12 @@ test("dialog closeOnBackdropPress and closeOnEscape options", () => {
   reveal(app, (n) => n.testID === "open-dialog");
   app.press("open-dialog");
   app.waitFor("dialog-page");
-  
+
   // Test that toggles are visible
   const texts = app.texts();
   expect(texts).toContain("closeOnBackdropPress: true");
   expect(texts).toContain("closeOnEscape: true");
-  
+
   // Note: backdropPress and Escape require user interaction on real platforms
   // Headless mode only tests back() which triggers "cancel" reason
   // Platform-specific: iOS swipe down, Android/web Escape key need manual testing
@@ -380,90 +379,48 @@ test("dialog closeOnBackdropPress and closeOnEscape options", () => {
 test("detail pop increments dismissed count", () => {
   const app = open("./App.tsx");
   reveal(app, (n) => n.testID === "open-detail");
-  
+
   const initialTree = app.tree();
   const initialCount = flat(initialTree, []).find((n) => n.testID === "dismissed-count");
   expect(must(initialCount).text).toBe("Dismissed: 0");
-  
+
   app.press("open-detail");
   app.waitFor("detail-title");
   app.back();
   app.waitFor("dismissed-count");
-  
+
   const finalTree = app.tree();
   const finalCount = flat(finalTree, []).find((n) => n.testID === "dismissed-count");
   expect(must(finalCount).text).toBe("Dismissed: 1");
 });
 
-test("drag gesture card moves it", () => {
+test("a pan reports its translation", () => {
   const app = open("./App.tsx");
   reveal(app, (n) => n.testID === "open-gesture");
   app.press("open-gesture");
   app.waitFor("gesture-card");
-  
-  // Verify initial state
-  const beforeTree = app.tree();
-  const beforeText = flat(beforeTree, []).find((n) => n.testID === "pan-end");
-  expect(must(beforeText).text).toContain("Translation: (0, 0)");
-  
-  // Drag triggers onPanEnd which sets panEndX/Y signals
-  app.drag("gesture-card", 80, 0);
-  
-  // Read immediately - the signal should be set in onPanEnd
-  const afterTree = app.tree();
-  const panEndText = flat(afterTree, []).find((n) => n.testID === "pan-end");
-  if (!panEndText) {
-    expect("pan-end").toBe("should exist");
-  }
-  const text = must(panEndText).text;
-  // The text should have changed from (0, 0)
-  const match = text.match(/Translation: \((-?\d+), (-?\d+)\)/);
-  if (!match) {
-    expect(text).toBe("should contain Translation: (x, y)");
-  }
-  const x = parseInt(match![1]);
-  const y = parseInt(match![2]);
-  // Accept any non-zero value as proof onPanEnd fired
-  // (may be 0 if spring completed instantly in headless)
-  if (x === 0 && y === 0) {
-    // Spring may complete instantly in headless; verify gesture card is present
-    const card = flat(afterTree, []).find((n) => n.testID === "gesture-card");
-    if (!card) expect("gesture-card").toBe("should exist after drag");
-  } else {
-    // Non-zero means onPanEnd fired successfully
-    if (!(x >= 75 && x <= 85)) {
-      expect(`x=${x}`).toBe("x should be near 80");
-    }
-  }
-});
 
-test("pan velocity feeds spring animation", () => {
-  const app = open("./App.tsx");
-  reveal(app, (n) => n.testID === "open-gesture");
-  app.press("open-gesture");
-  app.waitFor("gesture-card");
-  
   // Drag gesture triggers onPanEnd with translation
   app.drag("gesture-card", 80, 0);
-  
-  // Check that onPanEnd recorded translation
-  let texts = app.texts();
-  const translationText = texts.find(t => t.startsWith("Translation:"));
+
+  // onPanEnd receives the translation the drag made.
+  const texts = app.texts();
+  const translationText = texts.find((t) => t.startsWith("Translation:"));
   if (!translationText) {
     expect("Translation: text").toBe("should exist after drag");
   }
-  
+
   // Parse translation value - expect x ≈ 80
   const match = translationText?.match(/Translation: \((-?\d+), (-?\d+)\)/);
   if (match) {
     const x = parseInt(match[1]);
     const y = parseInt(match[2]);
-    
+
     // Assert translation.x is approximately 80 (within ±2px)
     if (Math.abs(x - 80) > 2) {
       expect(`translation.x=${x}`).toBe("should be ≈80");
     }
-    
+
     // Y should be 0 since we dragged horizontally
     if (Math.abs(y) > 2) {
       expect(`translation.y=${y}`).toBe("should be ≈0");
@@ -476,24 +433,17 @@ test("pinch and rotation gestures display", () => {
   reveal(app, (n) => n.testID === "open-gesture");
   app.press("open-gesture");
   app.waitFor("gesture-page");
-  
-  // Verify pinch and rotation cards are present
+
+  // The cards host pinch and rotation; two-finger input has no headless
+  // step (as in nsh), so the values are exercised on a host.
   const tree = app.tree();
   const pinchCard = flat(tree, []).find((n) => n.testID === "pinch-card");
   const rotationCard = flat(tree, []).find((n) => n.testID === "rotation-card");
   const scrollPanCard = flat(tree, []).find((n) => n.testID === "scroll-pan-card");
-  
+
   if (!pinchCard) expect("pinchCard").toBe("should exist");
   if (!rotationCard) expect("rotationCard").toBe("should exist");
   if (!scrollPanCard) expect("scrollPanCard").toBe("should exist");
-  
-  // Note: Pinch and rotation gestures require two-finger input on real devices
-  // Headless mode doesn't support pinch/rotation simulation
-  // Manual testing required on iOS/Android/web:
-  //   - Pinch: two fingers pinch in/out → scale value changes, springs back to 1.0
-  //   - Rotation: two fingers rotate → angle value changes, springs back to 0°
-  //   - onPinchEnd/onRotationEnd: e.velocity feeds spring for smooth return
-  // Core unit tests cover gesture value recording (see nlayer-core animation tests)
 });
 
 test("list demo shows virtual list", () => {
@@ -502,7 +452,7 @@ test("list demo shows virtual list", () => {
   app.press("open-list");
   app.waitFor("list");
   app.waitFor("first");
-  
+
   app.press("list-back");
   app.waitFor("open-list");
 });
@@ -512,12 +462,12 @@ test("list with snapToInterval and stickyHeaderIndices", () => {
   reveal(app, (n) => n.testID === "open-list");
   app.press("open-list");
   app.waitFor("list-page");
-  
+
   // Enable snap and scroll
   app.press("toggle-snap");
   let texts = app.texts();
   expect(texts).toContain("snapToInterval: 64px");
-  
+
   // Scroll by 150: the offset must match the scroll distance. Snapping is
   // applied by the platform host (iOS/Android/web) when a gesture ends, not
   // by core, so headless asserts propagation only (offset follows the scroll).
@@ -527,27 +477,27 @@ test("list with snapToInterval and stickyHeaderIndices", () => {
   if (listAfterSnap && listAfterSnap.offset && Math.abs(listAfterSnap.offset.y - 150) > 5) {
     expect(`list offset.y=${listAfterSnap.offset.y}`).toBe("should be ≈150");
   }
-  
+
   // Disable snap, enable sticky headers
   app.press("toggle-snap");
   app.press("toggle-sticky");
-  
+
   // Verify sticky toggle updates the UI text
   texts = app.texts();
   expect(texts).toContain("stickyHeaderIndices: [0, 10, 20]");
-  
+
   // Reset scroll to 0, then scroll down 100px
   app.scroll("list", -1000);
   app.scroll("list", 100);
-  
+
   const afterSticky = app.tree();
   const afterList = flat(afterSticky, []).find((n) => n.testID === "list");
-  
+
   // Verify scroll offset
   if (afterList && afterList.offset && Math.abs(afterList.offset.y - 100) > 5) {
     expect(`list offset.y=${afterList.offset.y}`).toBe("should be ≈100");
   }
-  
+
   // Verify sticky header is pinned at top (y≈100)
   const item0After = flat(afterSticky, []).find((n) => n.testID === "first-item");
   if (item0After) {
@@ -565,39 +515,45 @@ test("list with inverted and onViewableItemsChange", () => {
   reveal(app, (n) => n.testID === "open-list");
   app.press("open-list");
   app.waitFor("list-page");
-  
+
   // Get baseline: item-0 position before inverted (should be at top, y=0)
   let tree = app.tree();
   const item0Before = flat(tree, []).find((n) => n.testID === "first-item");
   if (!item0Before) {
     expect("first-item before inverted").toBe("should exist");
   }
-  const item0ParentBefore = flat(tree, []).find((n) => n.children?.includes(item0Before));
-  
+  const item0ParentBefore = item0Before
+    ? flat(tree, []).find((n) => n.children.includes(item0Before))
+    : undefined;
+
   // Enable inverted
   app.press("toggle-inverted");
-  
+
   // Verify toggle works
   let texts = app.texts();
   expect(texts).toContain("inverted: true");
-  
+
   // Verify inverted layout: item-0 moves from top (y=0) to bottom (large y)
   tree = app.tree();
   const item0After = flat(tree, []).find((n) => n.testID === "first-item");
   if (!item0After) {
     expect("first-item after inverted").toBe("should exist");
   }
-  const item0ParentAfter = flat(tree, []).find((n) => n.children?.includes(item0After));
-  
+  const item0ParentAfter = item0After
+    ? flat(tree, []).find((n) => n.children.includes(item0After))
+    : undefined;
+
   if (item0ParentBefore?.frame && item0ParentAfter?.frame) {
     // Before inverted: item-0 at top (y=0)
     expect(item0ParentBefore.frame.y).toBe(0);
     // After inverted: item-0 at bottom of 1000-item list (y > 1000)
     if (item0ParentAfter.frame.y <= 1000) {
-      expect("item0 y=" + item0ParentAfter.frame.y).toBe("inverted: item0 should be at bottom (y > 1000)");
+      expect("item0 y=" + item0ParentAfter.frame.y).toBe(
+        "inverted: item0 should be at bottom (y > 1000)",
+      );
     }
   }
-  
+
   // Verify onViewableItemsChange fires
   const viewableText = texts.find((t) => t.startsWith("Viewable:"));
   if (!viewableText) {
@@ -610,55 +566,60 @@ test("list viewport=parent uses outer scroll", () => {
   reveal(app, (n) => n.testID === "open-viewport-parent");
   app.press("open-viewport-parent");
   app.waitFor("viewport-parent-page");
-  
+
   // Get initial rendered items
   let tree = app.tree();
   let listItems = flat(tree, []).filter((n) => n.testID?.startsWith("vp-item-"));
-  
+
   // Should render some items (windowing active)
   if (listItems.length === 0) {
     expect("viewport=parent items").toBe("should render");
   }
-  
+
   // Should not render all 100 items (windowing working)
   if (listItems.length >= 100) {
     expect(`rendered ${listItems.length} items`).toBe("should window (< 100)");
   }
-  
+
   const initialItemCount = listItems.length;
-  const initialItemIds = listItems.map(n => n.testID).sort();
-  
+  const initialItemIds = listItems.map((n) => n.testID).sort();
+
   // Verify all items are within parent scroll frame
   const outerScroll = flat(tree, []).find((n) => n.testID === "outer-scroll");
   if (!outerScroll || !outerScroll.frame) {
     expect("outer-scroll").toBe("should exist with frame");
   }
-  
+
   const scrollHeight = outerScroll?.frame?.height || 0;
   for (const item of listItems) {
     if (item.frame) {
       // Items should be within scroll viewport + reasonable overscan
       if (item.frame.y > scrollHeight + 1000 || item.frame.y < -1000) {
-        expect(`item ${item.testID} y=${item.frame.y}`).toBe(`within scroll bounds (0 to ${scrollHeight} + overscan)`);
+        expect(`item ${item.testID} y=${item.frame.y}`).toBe(
+          `within scroll bounds (0 to ${scrollHeight} + overscan)`,
+        );
       }
     }
   }
-  
+
   // Scroll outer scroll view - windowed items should change
   app.scroll("outer-scroll", 500);
   tree = app.tree();
   listItems = flat(tree, []).filter((n) => n.testID?.startsWith("vp-item-"));
-  
-  const afterScrollItemIds = listItems.map(n => n.testID).sort();
-  
+
+  const afterScrollItemIds = listItems.map((n) => n.testID).sort();
+
   // After scroll, some items should be different (windowing updated)
-  const itemsChanged = afterScrollItemIds.some(id => !initialItemIds.includes(id)) ||
-                       initialItemIds.some(id => !afterScrollItemIds.includes(id));
-  
+  const itemsChanged =
+    afterScrollItemIds.some((id) => !initialItemIds.includes(id)) ||
+    initialItemIds.some((id) => !afterScrollItemIds.includes(id));
+
   if (!itemsChanged) {
-    expect("windowed items after scroll").toBe("should change (new items appear, old items disappear)");
+    expect("windowed items after scroll").toBe(
+      "should change (new items appear, old items disappear)",
+    );
   }
-  
+
   // Verify new items are also within bounds
   for (const item of listItems) {
     if (item.frame) {
@@ -674,37 +635,16 @@ test("header demo shows title and header props", () => {
   reveal(app, (n) => n.testID === "open-header");
   app.press("open-header");
   app.waitFor("header-demo");
-  
+
   const texts = app.texts();
   expect(texts).toContain("Header Demo");
-  
-  // Header slots (header, headerLeft, headerRight) are NOT rendered in headless
-  // Headless simulates no specific platform, these are platform-specific features
-  
-  // MANUAL VERIFICATION REQUIRED:
-  //
-  // Web (browser):
-  //   - Navigate to header demo page
-  //   - Should see custom header slots if implemented:
-  //     * Custom header element at top
-  //     * "Left" button on left side
-  //     * "Right" button on right side
-  //
-  // iOS (device/simulator):
-  //   - Navigate to header demo page
-  //   - Should see native UINavigationBar:
-  //     * Title: "Header"
-  //     * Background color: green (#10b981)
-  //     * Tint color: white
-  //     * Back button on left (system default)
-  //
-  // Android (device/emulator):
-  //   - Navigate to header demo page
-  //   - Should see native ActionBar:
-  //     * Title: "Header"
-  //     * Background color: green (#10b981)
-  //     * Back arrow on left (system default)
-  
+
+  // Web has no native header: it draws the app's `header` slot at the top
+  // instead (iOS and Android show the system header, not in the tree).
+  const drawn = flat(app.tree(), []).find((n) => n.testID === "drawn-header");
+  if (drawn && drawn.frame) {
+    expect(drawn.frame.y).toBe(0);
+  }
   app.press("header-back");
   app.waitFor("page"); // Wait for home page scroll view
 });

@@ -87,9 +87,9 @@ public final class HostView extends FrameLayout {
   }
 
   /**
-   * Paints the animation graph now. A gesture moved a bound value, which is
-   * not a running animation, so the frame callback would not schedule one.
-   * Called on the UI thread from the touch handling.
+   * Paints the animation graph now. A gesture moved a bound value, which is not a running
+   * animation, so the frame callback would not schedule one. Called on the UI thread from the touch
+   * handling.
    */
   void flushAnimation() {
     if (handle == 0) return;

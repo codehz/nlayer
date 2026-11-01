@@ -269,7 +269,6 @@ pub(crate) unsafe extern "C" fn list(
     }
 }
 
-
 /// Effect that watches a single List prop and sets it on the node when it changes.
 unsafe extern "C" fn prop_effect_run(
     cx: *mut JsContext,
@@ -281,26 +280,26 @@ unsafe extern "C" fn prop_effect_run(
 ) -> JsValue {
     // SAFETY: three data values: node, props, prop_name
     let (node, props, prop_name_val) = (*data, *data.add(1), *data.add(2));
-    
+
     // Get the property name as a string
     let name_ptr = qjs::JS_ToCString(cx, prop_name_val);
     if name_ptr.is_null() {
         return UNDEFINED;
     }
     let name = std::ffi::CStr::from_ptr(name_ptr).to_str().unwrap_or("");
-    
+
     // Get the current value from props
     let value = get(cx, props, name);
-    
+
     // Set it on the node (this goes through set_prop -> decode_prop -> Op::SetProp)
     let result = set(cx, node, name, value);
-    
+
     qjs::JS_FreeCString(cx, name_ptr);
-    
+
     if result.is_err() {
         qjs::JS_FreeValue(cx, result.unwrap_err());
     }
-    
+
     UNDEFINED
 }
 fn render(cx: *mut JsContext, props: JsValue) -> Result<JsValue, JsValue> {
@@ -361,7 +360,7 @@ fn render(cx: *mut JsContext, props: JsValue) -> Result<JsValue, JsValue> {
         ],
     )
     .map_err(fail)?;
-    
+
     // Numeric props with defaults
     for (name, fallback) in [
         ("estimatedItemSize", 50.0),
@@ -374,7 +373,7 @@ fn render(cx: *mut JsContext, props: JsValue) -> Result<JsValue, JsValue> {
         unsafe { qjs::JS_FreeValue(cx, value) };
         set_number(cx, node, name, n).map_err(fail)?;
     }
-    
+
     // Make second-layer props reactive with effects
     for prop_name in [
         "stickyHeaderIndices",
@@ -408,7 +407,7 @@ fn render(cx: *mut JsContext, props: JsValue) -> Result<JsValue, JsValue> {
         // SAFETY: the effect keeps its own value.
         unsafe { qjs::JS_FreeValue(cx, r) };
     }
-    
+
     // Header and footer cells always; the empty one only without items.
     for (role, key) in [("header", "header"), ("footer", "footer")] {
         if has(cx, props, key) {

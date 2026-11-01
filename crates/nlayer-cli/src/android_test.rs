@@ -93,13 +93,17 @@ impl AppHost for AndroidHost {
         .map_err(|error| error.to_string())?;
         let files = nlayer_testing::fixture_file_port(&app_dir);
         let files_forwarded = format!("tcp:{files}");
+        let forwarded = format!("tcp:{port}");
+        // A run that died before `close` may still hold these ports on the
+        // device: replace the bindings instead of failing on them.
+        let _ = android::adb(sdk, &serial, &["reverse", "--remove", &files_forwarded]);
         android::adb(
             sdk,
             &serial,
             &["reverse", &files_forwarded, &files_forwarded],
         )
         .map_err(|error| error.to_string())?;
-        let forwarded = format!("tcp:{port}");
+        let _ = android::adb(sdk, &serial, &["reverse", "--remove", &forwarded]);
         android::adb(sdk, &serial, &["reverse", &forwarded, &forwarded])
             .map_err(|error| error.to_string())?;
         android::relaunch(sdk, &serial).map_err(|error| error.to_string())?;

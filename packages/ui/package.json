@@ -6,6 +6,9 @@
   "type": "module",
   "sideEffects": false,
   "types": "./index.d.ts",
+  "dependencies": {
+    "@nlayer/runtime": "workspace:*"
+  },
   "exports": {
     ".": {
       "types": "./index.d.ts"

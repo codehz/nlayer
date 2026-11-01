@@ -35,27 +35,42 @@ fn pan_events_fire_on_view() {
     "###;
 
     let code = compile_module("test.tsx", source).expect("compile");
-    let mut app = Headless::start(&code, Size::new(Points(390.0), Points(844.0)))
-        .expect("start");
+    let mut app = Headless::start(&code, Size::new(Points(390.0), Points(844.0))).expect("start");
 
     app.refresh();
 
     // Check initial state - should show "no" and "x=0"
     let initial_texts = app.texts();
-    assert!(initial_texts.iter().any(|t| t.contains("no")), "Initial: {:?}", initial_texts);
-    assert!(initial_texts.iter().any(|t| t.contains("x=0")), "Initial: {:?}", initial_texts);
-    
+    assert!(
+        initial_texts.iter().any(|t| t.contains("no")),
+        "Initial: {:?}",
+        initial_texts
+    );
+    assert!(
+        initial_texts.iter().any(|t| t.contains("x=0")),
+        "Initial: {:?}",
+        initial_texts
+    );
+
     // Drag the card
     app.drag("card", 80.0, 0.0).expect("drag");
     app.control().synchronize().expect("sync after drag");
     app.refresh();
-    
+
     // Check if PanStart fired
     let after_texts = app.texts();
-    assert!(after_texts.iter().any(|t| t.contains("started")),
-        "PanStart should fire. Texts: {:?}", after_texts);
-    
+    assert!(
+        after_texts.iter().any(|t| t.contains("started")),
+        "PanStart should fire. Texts: {:?}",
+        after_texts
+    );
+
     // Check if PanEnd fired with x≈80
-    assert!(after_texts.iter().any(|t| t.contains("x=80") || t.contains("x=79") || t.contains("x=81")),
-        "PanEnd should fire with x≈80. Texts: {:?}", after_texts);
+    assert!(
+        after_texts
+            .iter()
+            .any(|t| t.contains("x=80") || t.contains("x=79") || t.contains("x=81")),
+        "PanEnd should fire with x≈80. Texts: {:?}",
+        after_texts
+    );
 }

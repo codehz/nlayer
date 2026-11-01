@@ -12,7 +12,7 @@ use nlayer_engine::{Engine, EngineConfig, EngineError, MountSink};
 use objc2::rc::{Retained, Weak};
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send};
-use objc2_core_foundation::{CGFloat, CGPoint, CGRect, CGSize};
+use objc2_core_foundation::{CGAffineTransform, CGFloat, CGPoint, CGRect, CGSize};
 use objc2_foundation::{NSNotification, NSNotificationCenter, NSOperationQueue, NSValue};
 use objc2_ui_kit::{
     NSValueUIGeometryExtensions, UIKeyboardFrameEndUserInfoKey,
@@ -323,7 +323,38 @@ pub(crate) fn start(
     if pin.is_some() {
         root.setAutoresizingMask(UIViewAutoresizing::empty());
     }
-    container.addSubview(&root);
+    // A pinned surface bigger than the window (a test's viewport) is shown
+    // as one, scaled down: shrinking it would change the layout the test
+    // asked for, and a part left outside the window takes no touches.
+    let scaled = pin.as_ref().and_then(|pin| {
+        let size = container.bounds().size;
+        let scale = (size.width as f32 / pin.width)
+            .min(size.height as f32 / pin.height)
+            .min(1.0);
+        (scale < 1.0).then_some(scale)
+    });
+    if let (Some(pin), Some(scale)) = (&pin, scaled) {
+        let size = container.bounds().size;
+        let holder = UIView::new(mtm);
+        holder.setBounds(CGRect::new(
+            CGPoint::ZERO,
+            CGSize::new(pin.width as CGFloat, pin.height as CGFloat),
+        ));
+        holder.setCenter(CGPoint::new(size.width / 2.0, size.height / 2.0));
+        holder.setTransform(CGAffineTransform {
+            a: scale as CGFloat,
+            b: 0.0,
+            c: 0.0,
+            d: scale as CGFloat,
+            tx: 0.0,
+            ty: 0.0,
+        });
+        holder.setClipsToBounds(true);
+        holder.addSubview(&root);
+        container.addSubview(&holder);
+    } else {
+        container.addSubview(&root);
+    }
     let mounter = Mounter::new(mtm, root.retain().into_super(), assets.clone());
     if let Some(pin) = pin.clone() {
         mounter.borrow_mut().set_pin(pin);

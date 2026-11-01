@@ -199,6 +199,7 @@ final class Mounter {
     }
     finishNavigation();
   }
+
   private void events(ByteBuffer b) {
     int id = b.getInt(), mask = b.getInt();
     b.getInt();
@@ -207,12 +208,12 @@ final class Mounter {
     events.put(id, mask);
     View v = views.get(id);
     if (v == null) return;
-    
+
     // Update gesture box based on events and bindings
     if (v instanceof Box) {
       updateGestureBox(id);
     }
-    
+
     boolean press = (mask & 1) != 0 || (mask & (1 << 11)) != 0;
     if (v instanceof Box) ((Box) v).pressMask = mask;
     if (v instanceof ImageBox) ((ImageBox) v).pressMask = mask;
@@ -285,10 +286,8 @@ final class Mounter {
     int mask = events.get(id, 0);
     boolean hasEvents = (mask & (0x3F << 17)) != 0;
     boolean hasBindings =
-        panAxis != 0
-            || pinchBindings.get(id, false)
-            || rotationBindings.get(id, false);
-    
+        panAxis != 0 || pinchBindings.get(id, false) || rotationBindings.get(id, false);
+
     if ((hasEvents || hasBindings) && box.gestures == null) {
       box.gestures = new Gestures(box, id, this);
     } else if (!hasEvents && !hasBindings && box.gestures != null) {
@@ -788,25 +787,26 @@ final class Mounter {
     int snapAlignment = b.getInt();
     boolean disableIntervalMomentum = b.getInt() != 0;
     float deceleration = b.getFloat();
-    
+
     if (v instanceof ScrollBox) {
       ScrollBox s = (ScrollBox) v;
       s.contentPointsW = w;
       s.contentPointsH = h;
       s.size(Math.round(w * density), Math.round(h * density));
-      
+
       // Handle refresh indicator
       if (refreshIndicator >= 0) {
         s.setRefresh(true, refreshIndicator);
       } else {
         s.setRefresh(false, 0);
       }
-      
+
       // Set snap behavior
-      s.setSnapBehavior(paging, snapInterval, snapOffsets, snapAlignment, 
-                        disableIntervalMomentum, deceleration);
+      s.setSnapBehavior(
+          paging, snapInterval, snapOffsets, snapAlignment, disableIntervalMomentum, deceleration);
     }
   }
+
   private void scrollBy(ByteBuffer b) {
     View v = views.get(b.getInt());
     float x = b.getFloat(), y = b.getFloat();
@@ -822,21 +822,21 @@ final class Mounter {
     }
     boolean inverted = b.getInt() != 0;
     boolean viewportParent = b.getInt() != 0;
-    
+
     // Viewability config
     boolean hasViewability = b.getInt() != 0;
     if (hasViewability) {
       b.getFloat(); // view_area_coverage_threshold
       b.getFloat(); // item_visible_threshold
     }
-    
+
     // MaintainPosition config
     boolean hasMaintain = b.getInt() != 0;
     if (hasMaintain) {
       b.getInt(); // min_index_for_visible
       b.getFloat(); // autoscroll_to_bottom_threshold
     }
-    
+
     // Core handles sticky/inverted via frame calculations
     // Platform just applies the frames
   }

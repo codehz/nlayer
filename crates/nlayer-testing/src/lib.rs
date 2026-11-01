@@ -119,8 +119,7 @@ pub struct TextRun {
 }
 
 /// The model of a surface's views.
-#[derive(Debug, Default)]
-#[derive(Clone)]
+#[derive(Debug, Default, Clone)]
 struct GestureBindings {
     pan_x: Option<AnimationNode>,
     pan_y: Option<AnimationNode>,
@@ -386,12 +385,12 @@ impl Screen {
             if let Some(&screen_id) = state.screens.last() {
                 let view = self.views.get(&screen_id);
                 let screen_cfg = view.and_then(|v| v.screen.as_ref());
-                
+
                 // If screen has onBackPress listener, always ask it
                 if view.is_some_and(|v| v.events.contains(EventKind::BackRequest)) {
                     return Back::Ask(screen_id);
                 }
-                
+
                 // If depth > 1 and !prevent_back, can pop
                 if state.screens.len() > 1 {
                     let prevent_back = screen_cfg.map_or(false, |cfg| cfg.prevent_back);
@@ -451,25 +450,28 @@ impl Screen {
                 self.ensure(*parent, ViewKind::View);
                 self.ensure(*child, ViewKind::View);
                 self.detach(*child);
-                
+
                 // Track stack/screen relationships
                 let parent_kind = self.views.get(parent).map(|v| v.kind);
                 let child_kind = self.views.get(child).map(|v| v.kind);
-                
+
                 if parent_kind == Some(ViewKind::Stack) && child_kind == Some(ViewKind::Screen) {
-                    let state = self.stacks.entry(*parent).or_insert_with(StackState::default);
+                    let state = self
+                        .stacks
+                        .entry(*parent)
+                        .or_insert_with(StackState::default);
                     if !state.screens.contains(child) {
                         state.screens.push(*child);
                     }
                 }
-                
+
                 // Track modals
                 if child_kind == Some(ViewKind::Modal) {
                     if !self.modals.contains(child) {
                         self.modals.push(*child);
                     }
                 }
-                
+
                 let children = &mut self.views.get_mut(parent).expect("a view").children;
                 let at = match before {
                     Some(before) => children
@@ -778,11 +780,21 @@ impl Screen {
 
     fn hit_test(&self, x: f32, y: f32) -> Option<NodeId> {
         // Walk tree front-to-back (reverse children order)
-        fn test_node(screen: &Screen, id: NodeId, x: f32, y: f32, offset: (f32, f32)) -> Option<NodeId> {
+        fn test_node(
+            screen: &Screen,
+            id: NodeId,
+            x: f32,
+            y: f32,
+            offset: (f32, f32),
+        ) -> Option<NodeId> {
             let view = screen.views.get(&id)?;
             let local_x = x - offset.0;
             let local_y = y - offset.1;
-            if local_x < 0.0 || local_y < 0.0 || local_x >= view.frame.size.width.0 || local_y >= view.frame.size.height.0 {
+            if local_x < 0.0
+                || local_y < 0.0
+                || local_x >= view.frame.size.width.0
+                || local_y >= view.frame.size.height.0
+            {
                 return None;
             }
             // Test children in reverse order (front-to-back)
@@ -982,31 +994,56 @@ impl Headless {
         match self.screen.back_target() {
             Back::Pop(screen_id) => {
                 // For a poppable screen, dispatch Dismiss event to trigger the pop
-                self.engine.control().dispatch_event(screen_id, EventKind::Dismiss, EventPayload::None);
+                self.engine.control().dispatch_event(
+                    screen_id,
+                    EventKind::Dismiss,
+                    EventPayload::None,
+                );
                 let _ = self.next_frame(Duration::from_millis(100));
                 Ok(())
             }
             Back::Ask(screen_id) => {
                 // Send BackRequest event to let callback handle it
-                self.engine.control().dispatch_event(screen_id, EventKind::BackRequest, EventPayload::None);
+                self.engine.control().dispatch_event(
+                    screen_id,
+                    EventKind::BackRequest,
+                    EventPayload::None,
+                );
                 let _ = self.next_frame(Duration::from_millis(100));
-                
+
                 // If popOnBack is true (prevent_back is false), also pop after callback
-                let prevent_back = self.screen.view(screen_id)
+                let prevent_back = self
+                    .screen
+                    .view(screen_id)
                     .and_then(|v| v.screen.as_ref())
                     .map_or(false, |cfg| cfg.prevent_back);
                 if !prevent_back {
                     // Callback was notified, now do the pop
-                    self.engine.control().dispatch_event(screen_id, EventKind::Dismiss, EventPayload::None);
+                    self.engine.control().dispatch_event(
+                        screen_id,
+                        EventKind::Dismiss,
+                        EventPayload::None,
+                    );
                     let _ = self.next_frame(Duration::from_millis(100));
                 }
                 Ok(())
             }
-            Back::Close { modal, close_on_escape } => {
+            Back::Close {
+                modal,
+                close_on_escape,
+            } => {
                 if close_on_escape {
                     // Send RequestClose event
-                    if self.screen.view(modal).is_some_and(|v| v.events.contains(EventKind::RequestClose)) {
-                        self.engine.control().dispatch_event(modal, EventKind::RequestClose, EventPayload::None);
+                    if self
+                        .screen
+                        .view(modal)
+                        .is_some_and(|v| v.events.contains(EventKind::RequestClose))
+                    {
+                        self.engine.control().dispatch_event(
+                            modal,
+                            EventKind::RequestClose,
+                            EventPayload::None,
+                        );
                     }
                     let _ = self.next_frame(Duration::from_millis(100));
                     Ok(())
@@ -1089,7 +1126,7 @@ impl Headless {
         let Some(mut id) = self.screen.hit_test(x, y) else {
             return;
         };
-        
+
         // Walk up to find ancestor with gesture bindings
         let gesture_id = loop {
             if let Some(bindings) = self.screen.gesture_bindings.get(&id) {
@@ -1105,30 +1142,41 @@ impl Headless {
             };
             id = parent;
         };
-        
+
         let Some(id) = gesture_id else {
             return;
         };
-        
-        let bindings = self.screen.gesture_bindings.get(&id).cloned().unwrap_or_default();
+
+        let bindings = self
+            .screen
+            .gesture_bindings
+            .get(&id)
+            .cloned()
+            .unwrap_or_default();
         let mut finished: Vec<Finished> = Vec::new();
-        
+
         // Read current values and stop animations
         let start_values = [
-            bindings.pan_x.map(|n| {
-                let val = self.screen.graph.eval(n).number();
-                
-                val
-            }).unwrap_or(0.0),
-            bindings.pan_y.map(|n| {
-                let val = self.screen.graph.eval(n).number();
-                
-                val
-            }).unwrap_or(0.0),
+            bindings
+                .pan_x
+                .map(|n| {
+                    let val = self.screen.graph.eval(n).number();
+
+                    val
+                })
+                .unwrap_or(0.0),
+            bindings
+                .pan_y
+                .map(|n| {
+                    let val = self.screen.graph.eval(n).number();
+
+                    val
+                })
+                .unwrap_or(0.0),
             0.0, // pinch not supported
             0.0, // rotation not supported
         ];
-        
+
         self.screen.active_gesture = Some(ActiveGesture {
             id,
             start_time: time,
@@ -1171,13 +1219,22 @@ impl Headless {
         let dx = x - gesture.start_pos.0;
         let dy = y - gesture.start_pos.1;
 
-        let bindings = self.screen.gesture_bindings.get(&id).cloned().unwrap_or_default();
+        let bindings = self
+            .screen
+            .gesture_bindings
+            .get(&id)
+            .cloned()
+            .unwrap_or_default();
         let mut finished = Vec::new();
         if let Some(n) = bindings.pan_x {
-            self.screen.graph.set(n, gesture.start_values[0] + dx, &mut finished);
+            self.screen
+                .graph
+                .set(n, gesture.start_values[0] + dx, &mut finished);
         }
         if let Some(n) = bindings.pan_y {
-            self.screen.graph.set(n, gesture.start_values[1] + dy, &mut finished);
+            self.screen
+                .graph
+                .set(n, gesture.start_values[1] + dy, &mut finished);
         }
         self.screen.apply_animated();
     }
@@ -1189,21 +1246,32 @@ impl Headless {
         let Some(gesture) = self.screen.active_gesture.take() else {
             return;
         };
-        
+
         // Velocity from last movement segment (prev -> last)
         let dt = (gesture.last_time - gesture.prev_time).max(0.001);
         let dx_segment = gesture.last_pos.0 - gesture.prev_pos.0;
         let dy_segment = gesture.last_pos.1 - gesture.prev_pos.1;
         let vel_x = dx_segment / dt as f32;
         let vel_y = dy_segment / dt as f32;
-        
+
         let dx_total = gesture.last_pos.0 - gesture.start_pos.0;
         let dy_total = gesture.last_pos.1 - gesture.start_pos.1;
 
-        let bindings = self.screen.gesture_bindings.get(&gesture.id).cloned().unwrap_or_default();
+        let bindings = self
+            .screen
+            .gesture_bindings
+            .get(&gesture.id)
+            .cloned()
+            .unwrap_or_default();
         let current_values = [
-            bindings.pan_x.map(|n| self.screen.graph.eval(n).number()).unwrap_or(0.0),
-            bindings.pan_y.map(|n| self.screen.graph.eval(n).number()).unwrap_or(0.0),
+            bindings
+                .pan_x
+                .map(|n| self.screen.graph.eval(n).number())
+                .unwrap_or(0.0),
+            bindings
+                .pan_y
+                .map(|n| self.screen.graph.eval(n).number())
+                .unwrap_or(0.0),
             0.0, // pinch not supported
             0.0, // rotation not supported
         ];
@@ -1229,17 +1297,19 @@ impl Headless {
         self.refresh();
         let target = selector::resolve(&self.screen, selector)?;
         self.require_visible(selector, target)?;
-        
+
         let view_id = target.view();
-        let bounds = self.screen.view(view_id)
+        let bounds = self
+            .screen
+            .view(view_id)
             .ok_or_else(|| format!("`{selector}` view not found"))?
             .frame;
         let center = bounds.center();
-        
+
         // Start gesture
         let start_time = self.now;
         self.pointer_down(center.x.0, center.y.0, start_time);
-        
+
         // Move in steps (60fps), at least 3 frames for smooth velocity
         let frames = 5;
         for i in 1..=frames {
@@ -1250,15 +1320,17 @@ impl Headless {
             self.pointer_move(curr_x, curr_y, curr_time);
             self.now = curr_time;
         }
-        
+
         // End gesture
         self.now = start_time + (frames as f32 * FRAME as f32) as f64;
         self.pointer_up(self.now);
-        
+
         // Synchronize to process the PanEnd event and update signals
-        self.control().synchronize().map_err(|e| format!("sync failed: {e}"))?;
+        self.control()
+            .synchronize()
+            .map_err(|e| format!("sync failed: {e}"))?;
         self.refresh();
-        
+
         Ok(())
     }
 
@@ -1267,17 +1339,19 @@ impl Headless {
         self.refresh();
         let target = selector::resolve(&self.screen, selector)?;
         self.require_visible(selector, target)?;
-        
+
         let view_id = target.view();
-        let bounds = self.screen.view(view_id)
+        let bounds = self
+            .screen
+            .view(view_id)
             .ok_or_else(|| format!("`{selector}` view not found"))?
             .frame;
         let center = bounds.center();
-        
+
         // Start gesture
         let start_time = self.now;
         self.pointer_down(center.x.0, center.y.0, start_time);
-        
+
         // Move in steps
         let frames = 5;
         for i in 1..=frames {
@@ -1288,7 +1362,7 @@ impl Headless {
             self.pointer_move(curr_x, curr_y, curr_time);
             self.now = curr_time;
         }
-        
+
         // Don't call pointer_up - leave gesture active
         Ok(())
     }
@@ -1388,11 +1462,10 @@ impl Headless {
         self.require_visible(selector, target)?;
         let id = selector::scroll_of(&self.screen, target)
             .ok_or_else(|| format!("`{selector}` is not in a scroll view"))?;
-        
-        
+
         selector::scroll_by(&mut self.screen, id, distance)
             .map_err(|_| format!("`{selector}` is not in a scroll view"))?;
-        
+
         // Tell engine about new scroll position so it can recompute layout
         let view = self
             .screen
@@ -1401,11 +1474,11 @@ impl Headless {
         self.control().update_scroll_position(
             id,
             nlayer_core::geometry::Point::new(
-                nlayer_core::geometry::Points(view.scroll_x), 
-                nlayer_core::geometry::Points(view.scroll_y)
-            )
+                nlayer_core::geometry::Points(view.scroll_x),
+                nlayer_core::geometry::Points(view.scroll_y),
+            ),
         );
-        
+
         let content = view.scroll_content.unwrap_or(view.frame.size);
         let payload = EventPayload::Scroll {
             x: view.scroll_x,
@@ -1422,7 +1495,7 @@ impl Headless {
                 .control()
                 .dispatch_event(id, event, payload.clone());
         }
-        
+
         // Drain frames until engine settles (sticky rows may take multiple passes)
         // Add timeout to prevent infinite loops
         let settle_start = Instant::now();
@@ -1431,10 +1504,10 @@ impl Headless {
                 break; // Timeout to prevent infinite loop
             }
         }
-        
+
         // Final refresh to ensure screen reflects latest state
         self.refresh();
-        
+
         Ok(())
     }
     /// Scrolls the scroll view to the given offset. Waits for the engine to
@@ -1447,9 +1520,12 @@ impl Headless {
         }
         self.control().update_scroll_position(
             id,
-            nlayer_core::geometry::Point::new(nlayer_core::geometry::Points(x), nlayer_core::geometry::Points(y))
+            nlayer_core::geometry::Point::new(
+                nlayer_core::geometry::Points(x),
+                nlayer_core::geometry::Points(y),
+            ),
         );
-        
+
         // Dispatch scroll events to trigger frame recomputation
         let view = self.screen.view(id).expect("scroll view");
         let content = view.scroll_content.unwrap_or(view.frame.size);
@@ -1462,9 +1538,11 @@ impl Headless {
             height: view.frame.size.height.0,
         };
         for event in [EventKind::Scroll, EventKind::ScrollEnd] {
-            self.engine.control().dispatch_event(id, event, payload.clone());
+            self.engine
+                .control()
+                .dispatch_event(id, event, payload.clone());
         }
-        
+
         // Drain frames until engine settles (sticky rows may take multiple passes)
         while self.next_frame(Duration::from_millis(30)) {}
         self.refresh();
@@ -1594,7 +1672,7 @@ mod tests {
             last_time: 0.0,
             start_values: [5.0, 10.0, 0.0, 0.0],
         };
-        
+
         // Verify start values captured
         assert_eq!(gesture.start_values[0], 5.0);
         assert_eq!(gesture.start_values[1], 10.0);
@@ -1607,10 +1685,10 @@ mod tests {
         let start_y = 10.0;
         let dx = 15.0;
         let dy = 25.0;
-        
+
         let new_x = start_x + dx;
         let new_y = start_y + dy;
-        
+
         assert_eq!(new_x, 20.0);
         assert_eq!(new_y, 35.0);
     }
@@ -1622,14 +1700,14 @@ mod tests {
         let last_pos = (30.0, 50.0);
         let prev_time = 0.0;
         let last_time = 0.1; // seconds
-        
+
         let dt = last_time - prev_time;
         let dx = last_pos.0 - prev_pos.0;
         let dy = last_pos.1 - prev_pos.1;
-        
+
         let vel_x = dx / dt as f32;
         let vel_y = dy / dt as f32;
-        
+
         // 20 points in 0.1s = 200 points/s
         assert_eq!(vel_x, 200.0);
         // 30 points in 0.1s = 300 points/s
@@ -1643,160 +1721,257 @@ mod tests {
         let mut parent_has_binding = false;
         let child_id = 2;
         let parent_id = 1;
-        
+
         // Simulate: child has no binding, parent does
         if !parent_has_binding {
             // Would walk to parent
             parent_has_binding = true;
         }
-        
+
         assert!(parent_has_binding);
     }
 }
 
-    #[test]
-    fn stack_tracks_screens() {
-        let mut screen = Screen::default();
-        let stack_id = 10;
-        let screen1 = 11;
-        let screen2 = 12;
-        
-        screen.apply_item(&MountItem::Create { id: stack_id, kind: ViewKind::Stack });
-        screen.apply_item(&MountItem::Create { id: screen1, kind: ViewKind::Screen });
-        screen.apply_item(&MountItem::Create { id: screen2, kind: ViewKind::Screen });
-        
-        screen.apply_item(&MountItem::Insert { parent: stack_id, child: screen1, before: None });
-        assert_eq!(screen.stack_depth(stack_id), 1);
-        
-        screen.apply_item(&MountItem::Insert { parent: stack_id, child: screen2, before: None });
-        assert_eq!(screen.stack_depth(stack_id), 2);
-        assert_eq!(screen.top_screen(stack_id), Some(screen2));
-    }
+#[test]
+fn stack_tracks_screens() {
+    let mut screen = Screen::default();
+    let stack_id = 10;
+    let screen1 = 11;
+    let screen2 = 12;
 
-    #[test]
-    fn back_target_pops_when_allowed() {
-        let mut screen = Screen::default();
-        let stack_id = 10;
-        let screen1 = 11;
-        let screen2 = 12;
-        
-        screen.apply_item(&MountItem::Create { id: stack_id, kind: ViewKind::Stack });
-        screen.apply_item(&MountItem::Create { id: screen1, kind: ViewKind::Screen });
-        screen.apply_item(&MountItem::Create { id: screen2, kind: ViewKind::Screen });
-        
-        screen.apply_item(&MountItem::Insert { parent: stack_id, child: screen1, before: None });
-        screen.apply_item(&MountItem::Insert { parent: stack_id, child: screen2, before: None });
-        
-        // Default prevent_back is false, so should pop
-        match screen.back_target() {
-            Back::Pop(id) => assert_eq!(id, screen2),
-            other => panic!("Expected Back::Pop, got {:?}", other),
+    screen.apply_item(&MountItem::Create {
+        id: stack_id,
+        kind: ViewKind::Stack,
+    });
+    screen.apply_item(&MountItem::Create {
+        id: screen1,
+        kind: ViewKind::Screen,
+    });
+    screen.apply_item(&MountItem::Create {
+        id: screen2,
+        kind: ViewKind::Screen,
+    });
+
+    screen.apply_item(&MountItem::Insert {
+        parent: stack_id,
+        child: screen1,
+        before: None,
+    });
+    assert_eq!(screen.stack_depth(stack_id), 1);
+
+    screen.apply_item(&MountItem::Insert {
+        parent: stack_id,
+        child: screen2,
+        before: None,
+    });
+    assert_eq!(screen.stack_depth(stack_id), 2);
+    assert_eq!(screen.top_screen(stack_id), Some(screen2));
+}
+
+#[test]
+fn back_target_pops_when_allowed() {
+    let mut screen = Screen::default();
+    let stack_id = 10;
+    let screen1 = 11;
+    let screen2 = 12;
+
+    screen.apply_item(&MountItem::Create {
+        id: stack_id,
+        kind: ViewKind::Stack,
+    });
+    screen.apply_item(&MountItem::Create {
+        id: screen1,
+        kind: ViewKind::Screen,
+    });
+    screen.apply_item(&MountItem::Create {
+        id: screen2,
+        kind: ViewKind::Screen,
+    });
+
+    screen.apply_item(&MountItem::Insert {
+        parent: stack_id,
+        child: screen1,
+        before: None,
+    });
+    screen.apply_item(&MountItem::Insert {
+        parent: stack_id,
+        child: screen2,
+        before: None,
+    });
+
+    // Default prevent_back is false, so should pop
+    match screen.back_target() {
+        Back::Pop(id) => assert_eq!(id, screen2),
+        other => panic!("Expected Back::Pop, got {:?}", other),
+    }
+}
+
+#[test]
+fn back_target_asks_when_listening() {
+    let mut screen = Screen::default();
+    let stack_id = 10;
+    let screen1 = 11;
+
+    screen.apply_item(&MountItem::Create {
+        id: stack_id,
+        kind: ViewKind::Stack,
+    });
+    screen.apply_item(&MountItem::Create {
+        id: screen1,
+        kind: ViewKind::Screen,
+    });
+    screen.apply_item(&MountItem::Insert {
+        parent: stack_id,
+        child: screen1,
+        before: None,
+    });
+
+    // Add BackRequest listener using EventMask::set
+    let mut events = EventMask::default();
+    events.set(EventKind::BackRequest, true);
+    screen.apply_item(&MountItem::Events {
+        id: screen1,
+        events,
+    });
+
+    match screen.back_target() {
+        Back::Ask(id) => assert_eq!(id, screen1),
+        other => panic!("Expected Back::Ask, got {:?}", other),
+    }
+}
+
+#[test]
+fn back_target_closes_modal() {
+    let mut screen = Screen::default();
+    let modal_id = 20;
+
+    screen.apply_item(&MountItem::Create {
+        id: modal_id,
+        kind: ViewKind::Modal,
+    });
+    screen.apply_item(&MountItem::Insert {
+        parent: 1,
+        child: modal_id,
+        before: None,
+    });
+
+    let config = ModalConfig {
+        close_on_escape: true,
+        ..Default::default()
+    };
+    screen.apply_item(&MountItem::ModalConfig {
+        id: modal_id,
+        config,
+    });
+
+    match screen.back_target() {
+        Back::Close {
+            modal,
+            close_on_escape,
+        } => {
+            assert_eq!(modal, modal_id);
+            assert!(close_on_escape);
         }
+        other => panic!("Expected Back::Close, got {:?}", other),
     }
+}
 
-    #[test]
-    fn back_target_asks_when_listening() {
-        let mut screen = Screen::default();
-        let stack_id = 10;
-        let screen1 = 11;
-        
-        screen.apply_item(&MountItem::Create { id: stack_id, kind: ViewKind::Stack });
-        screen.apply_item(&MountItem::Create { id: screen1, kind: ViewKind::Screen });
-        screen.apply_item(&MountItem::Insert { parent: stack_id, child: screen1, before: None });
-        
-        // Add BackRequest listener using EventMask::set
-        let mut events = EventMask::default();
-        events.set(EventKind::BackRequest, true);
-        screen.apply_item(&MountItem::Events { id: screen1, events });
-        
-        match screen.back_target() {
-            Back::Ask(id) => assert_eq!(id, screen1),
-            other => panic!("Expected Back::Ask, got {:?}", other),
-        }
-    }
+#[test]
+fn back_target_nothing_at_root() {
+    let screen = Screen::default();
+    assert_eq!(screen.back_target(), Back::Nothing);
+}
 
-    #[test]
-    fn back_target_closes_modal() {
-        let mut screen = Screen::default();
-        let modal_id = 20;
-        
-        screen.apply_item(&MountItem::Create { id: modal_id, kind: ViewKind::Modal });
-        screen.apply_item(&MountItem::Insert { parent: 1, child: modal_id, before: None });
-        
-        let config = ModalConfig {
-            close_on_escape: true,
-            ..Default::default()
-        };
-        screen.apply_item(&MountItem::ModalConfig { id: modal_id, config });
-        
-        match screen.back_target() {
-            Back::Close { modal, close_on_escape } => {
-                assert_eq!(modal, modal_id);
-                assert!(close_on_escape);
-            }
-            other => panic!("Expected Back::Close, got {:?}", other),
-        }
-    }
+#[test]
+fn modal_stacks_correctly() {
+    let mut screen = Screen::default();
+    let modal1 = 20;
+    let modal2 = 21;
 
-    #[test]
-    fn back_target_nothing_at_root() {
-        let screen = Screen::default();
-        assert_eq!(screen.back_target(), Back::Nothing);
-    }
+    screen.apply_item(&MountItem::Create {
+        id: modal1,
+        kind: ViewKind::Modal,
+    });
+    screen.apply_item(&MountItem::Insert {
+        parent: 1,
+        child: modal1,
+        before: None,
+    });
+    assert_eq!(screen.top_modal(), Some(modal1));
 
-    #[test]
-    fn modal_stacks_correctly() {
-        let mut screen = Screen::default();
-        let modal1 = 20;
-        let modal2 = 21;
-        
-        screen.apply_item(&MountItem::Create { id: modal1, kind: ViewKind::Modal });
-        screen.apply_item(&MountItem::Insert { parent: 1, child: modal1, before: None });
-        assert_eq!(screen.top_modal(), Some(modal1));
-        
-        screen.apply_item(&MountItem::Create { id: modal2, kind: ViewKind::Modal });
-        screen.apply_item(&MountItem::Insert { parent: 1, child: modal2, before: None });
-        assert_eq!(screen.top_modal(), Some(modal2));
-        
-        screen.apply_item(&MountItem::Remove { id: modal2 });
-        assert_eq!(screen.top_modal(), Some(modal1));
-    }
+    screen.apply_item(&MountItem::Create {
+        id: modal2,
+        kind: ViewKind::Modal,
+    });
+    screen.apply_item(&MountItem::Insert {
+        parent: 1,
+        child: modal2,
+        before: None,
+    });
+    assert_eq!(screen.top_modal(), Some(modal2));
 
-    #[test]
-    fn screen_header_records_height() {
-        let mut screen = Screen::default();
-        let screen_id = 11;
-        
-        screen.apply_item(&MountItem::Create { id: screen_id, kind: ViewKind::Screen });
-        
-        let config = Box::new(ScreenConfig {
-            header_height: Points(44.0),
-            ..Default::default()
-        });
-        screen.apply_item(&MountItem::ScreenConfig { id: screen_id, config });
-        
-        assert_eq!(screen.screen_headers.get(&screen_id), Some(&Points(44.0)));
-    }
+    screen.apply_item(&MountItem::Remove { id: modal2 });
+    assert_eq!(screen.top_modal(), Some(modal1));
+}
 
-    #[test]
-    fn remove_cleans_up_stacks_and_modals() {
-        let mut screen = Screen::default();
-        let stack_id = 10;
-        let screen1 = 11;
-        let modal_id = 20;
-        
-        screen.apply_item(&MountItem::Create { id: stack_id, kind: ViewKind::Stack });
-        screen.apply_item(&MountItem::Create { id: screen1, kind: ViewKind::Screen });
-        screen.apply_item(&MountItem::Insert { parent: stack_id, child: screen1, before: None });
-        assert_eq!(screen.stack_depth(stack_id), 1);
-        
-        screen.apply_item(&MountItem::Remove { id: screen1 });
-        assert_eq!(screen.stack_depth(stack_id), 0);
-        
-        screen.apply_item(&MountItem::Create { id: modal_id, kind: ViewKind::Modal });
-        screen.apply_item(&MountItem::Insert { parent: 1, child: modal_id, before: None });
-        assert_eq!(screen.top_modal(), Some(modal_id));
-        
-        screen.apply_item(&MountItem::Remove { id: modal_id });
-        assert_eq!(screen.top_modal(), None);
-    }
+#[test]
+fn screen_header_records_height() {
+    let mut screen = Screen::default();
+    let screen_id = 11;
+
+    screen.apply_item(&MountItem::Create {
+        id: screen_id,
+        kind: ViewKind::Screen,
+    });
+
+    let config = Box::new(ScreenConfig {
+        header_height: Points(44.0),
+        ..Default::default()
+    });
+    screen.apply_item(&MountItem::ScreenConfig {
+        id: screen_id,
+        config,
+    });
+
+    assert_eq!(screen.screen_headers.get(&screen_id), Some(&Points(44.0)));
+}
+
+#[test]
+fn remove_cleans_up_stacks_and_modals() {
+    let mut screen = Screen::default();
+    let stack_id = 10;
+    let screen1 = 11;
+    let modal_id = 20;
+
+    screen.apply_item(&MountItem::Create {
+        id: stack_id,
+        kind: ViewKind::Stack,
+    });
+    screen.apply_item(&MountItem::Create {
+        id: screen1,
+        kind: ViewKind::Screen,
+    });
+    screen.apply_item(&MountItem::Insert {
+        parent: stack_id,
+        child: screen1,
+        before: None,
+    });
+    assert_eq!(screen.stack_depth(stack_id), 1);
+
+    screen.apply_item(&MountItem::Remove { id: screen1 });
+    assert_eq!(screen.stack_depth(stack_id), 0);
+
+    screen.apply_item(&MountItem::Create {
+        id: modal_id,
+        kind: ViewKind::Modal,
+    });
+    screen.apply_item(&MountItem::Insert {
+        parent: 1,
+        child: modal_id,
+        before: None,
+    });
+    assert_eq!(screen.top_modal(), Some(modal_id));
+
+    screen.apply_item(&MountItem::Remove { id: modal_id });
+    assert_eq!(screen.top_modal(), None);
+}

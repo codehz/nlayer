@@ -286,20 +286,67 @@ export async function startPage(root, options = {}) {
           return wasm.nlayer_pump();
         });
       },
-      snap(offset, velocity, viewport, content, paging, snapInterval, snapOffsets, snapAlignment, disableIntervalMomentum, deceleration) {
+      snap(
+        offset,
+        velocity,
+        viewport,
+        content,
+        paging,
+        snapInterval,
+        snapOffsets,
+        snapAlignment,
+        disableIntervalMomentum,
+        deceleration,
+      ) {
         if (!wasm) return -1.0;
         if (!snapOffsets || snapOffsets.length === 0) {
-          return wasm.nlayer_snap(offset, velocity, viewport, content, paging, snapInterval, 0, 0, snapAlignment, disableIntervalMomentum, deceleration);
+          return wasm.nlayer_snap(
+            offset,
+            velocity,
+            viewport,
+            content,
+            paging,
+            snapInterval,
+            0,
+            0,
+            snapAlignment,
+            disableIntervalMomentum,
+            deceleration,
+          );
         }
         // Copy offsets to wasm memory temporarily
         const bytes = snapOffsets.length * 4;
         const ptr = wasm.nlayer_alloc(bytes) ?? 0;
         if (ptr === 0) {
-          return wasm.nlayer_snap(offset, velocity, viewport, content, paging, snapInterval, 0, 0, snapAlignment, disableIntervalMomentum, deceleration);
+          return wasm.nlayer_snap(
+            offset,
+            velocity,
+            viewport,
+            content,
+            paging,
+            snapInterval,
+            0,
+            0,
+            snapAlignment,
+            disableIntervalMomentum,
+            deceleration,
+          );
         }
         const view = new Float32Array(wasm.memory.buffer, ptr, snapOffsets.length);
         view.set(snapOffsets);
-        const result = wasm.nlayer_snap(offset, velocity, viewport, content, paging, snapInterval, ptr, snapOffsets.length, snapAlignment, disableIntervalMomentum, deceleration);
+        const result = wasm.nlayer_snap(
+          offset,
+          velocity,
+          viewport,
+          content,
+          paging,
+          snapInterval,
+          ptr,
+          snapOffsets.length,
+          snapAlignment,
+          disableIntervalMomentum,
+          deceleration,
+        );
         wasm.nlayer_dealloc(ptr, bytes);
         return result;
       },

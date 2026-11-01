@@ -24,6 +24,7 @@ function App() {
         <View style={{ width: 390, height: 844 }}>
             <Scroll style={{ width: 390, height: 400 }} testID="scroll">
                 <List
+                    testID="vp-list"
                     each={Array.from({ length: 20 }, (_, i) => i)}
                     style={{ width: 390 }}
                     viewport="parent"
@@ -39,18 +40,40 @@ function App() {
 mount(App);
 "#;
     let mut app = app(source);
-    
+
     assert!(app.wait_for("Item 0", Duration::from_secs(1)));
-    
+
     // Verify items render
     let screen = app.screen();
-    let item_count = screen.views()
-        .filter(|(_, v)| v.test_id.as_deref().map_or(false, |t| t.starts_with("item-")))
+    let item_count = screen
+        .views()
+        .filter(|(_, v)| {
+            v.test_id
+                .as_deref()
+                .map_or(false, |t| t.starts_with("item-"))
+        })
         .count();
-    
+
     assert!(item_count > 0, "Should render some items");
     assert!(item_count < 20, "Should not render all items (windowing)");
-    
+
+    // The list is as long as its content and clips: the scroll view around
+    // it scrolls over the whole list.
+    let list = screen
+        .views()
+        .find_map(|(_, v)| (v.test_id.as_deref() == Some("vp-list")).then_some(v))
+        .expect("the list");
+    assert_eq!(list.kind, ViewKind::View);
+    assert_eq!(list.frame.size.height.0, 1000.0);
+    let scroll = screen
+        .views()
+        .find_map(|(_, v)| (v.test_id.as_deref() == Some("scroll")).then_some(v))
+        .expect("the scroll view");
+    assert_eq!(
+        scroll.scroll_content.expect("content size").height.0,
+        1000.0
+    );
+
     app.stop();
 }
 
@@ -80,15 +103,20 @@ function App() {
 mount(App);
 "#;
     let mut app = app(source);
-    
+
     assert!(app.wait_for("Item 0", Duration::from_secs(1)));
-    
+
     // Count rendered items (should be viewport + overscan)
     let screen = app.screen();
-    let rendered_count = screen.views()
-        .filter(|(_, v)| v.test_id.as_deref().map_or(false, |t| t.starts_with("item-")))
+    let rendered_count = screen
+        .views()
+        .filter(|(_, v)| {
+            v.test_id
+                .as_deref()
+                .map_or(false, |t| t.starts_with("item-"))
+        })
         .count();
-    
+
     // With 400px viewport and 50px items, visible = 8 items
     // With overscan (1.0 viewport = 400px = 8 more items), total ~16 items
     assert!(
@@ -101,7 +129,7 @@ mount(App);
         "Should render at least visible items: rendered {}",
         rendered_count
     );
-    
+
     app.stop();
 }
 
@@ -131,29 +159,32 @@ function App() {
 mount(App);
 "#;
     let mut app = app(source);
-    
+
     assert!(app.wait_for("Item 0", Duration::from_secs(1)));
-    
+
     let screen = app.screen();
-    
+
     // Find the parent scroll view
-    let scroll_id = screen.views()
+    let scroll_id = screen
+        .views()
         .find_map(|(id, v)| {
             (v.kind == ViewKind::Scroll && v.test_id.as_deref() == Some("scroll")).then_some(id)
         })
         .expect("scroll");
-    
+
     // Scroll the parent
     app.scroll(scroll_id, 0.0, 300.0);
     std::thread::sleep(Duration::from_millis(100));
     app.refresh();
-    
+
     // Should now see items further down
     assert!(
-        app.texts().iter().any(|t| t.contains("Item 6") || t.contains("Item 7") || t.contains("Item 8")),
+        app.texts()
+            .iter()
+            .any(|t| t.contains("Item 6") || t.contains("Item 7") || t.contains("Item 8")),
         "Should see items further down after scrolling: {:?}",
         app.texts()
     );
-    
+
     app.stop();
 }

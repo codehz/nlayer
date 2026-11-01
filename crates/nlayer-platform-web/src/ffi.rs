@@ -560,7 +560,8 @@ pub unsafe extern "C" fn nlayer_snap(
     };
     let offset = Points(finite(offset));
     let velocity = finite(velocity);
-    let projected = nlayer_core::snap::projected(offset, velocity, nlayer_core::snap::rate(&behavior));
+    let projected =
+        nlayer_core::snap::projected(offset, velocity, nlayer_core::snap::rate(&behavior));
     match nlayer_core::snap::snap_target(
         &behavior,
         offset,

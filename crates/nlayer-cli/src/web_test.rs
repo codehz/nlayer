@@ -332,13 +332,13 @@ impl HostedApp for WebApp {
                 }
             }
         }
-        
+
         // Wait for core to process scroll events and commit frame updates.
         // Poll tree() to detect when rendering stabilizes (for viewport=parent lists).
-        
+
         // First wait for browser's requestAnimationFrame to fire (nlayer.js queues reportScroll via rAF)
         thread::sleep(Duration::from_millis(20));
-        
+
         let settle_deadline = Instant::now() + Duration::from_millis(1000);
         let initial_tree = self.tree()?;
         loop {
@@ -391,7 +391,7 @@ impl HostedApp for WebApp {
         let center_y = cy as f64;
         let end_x = center_x + x as f64;
         let end_y = center_y + y as f64;
-        
+
         self.mouse("mousePressed", center_x, center_y, 1)?;
         for i in 1..=5 {
             let t = i as f64 / 5.0;
@@ -411,7 +411,7 @@ impl HostedApp for WebApp {
         let (cx, cy) = self.point("point", selector)?;
         let center_x = cx as f64;
         let center_y = cy as f64;
-        
+
         self.mouse("mousePressed", center_x, center_y, 1)?;
         for i in 1..=5 {
             let t = i as f64 / 5.0;
@@ -429,7 +429,6 @@ impl HostedApp for WebApp {
     fn back(&mut self) -> Result<(), String> {
         self.call("back", &[]).map(|_| ())
     }
-
 
     fn close(&mut self) {
         if let Some(page) = self.page.take()

@@ -115,12 +115,12 @@ class Box extends ViewGroup {
   @Override
   public boolean onTouchEvent(android.view.MotionEvent e) {
     if (disabled || pointerEvents == 1) return false;
-    
+
     // Gestures handled by Gestures class (nsh transplant)
     if (gestures != null && gestures.onTouchEvent(e)) {
       return true;
     }
-    
+
     // Then press handling
     int action = e.getActionMasked();
     boolean press = (pressMask & 1) != 0;

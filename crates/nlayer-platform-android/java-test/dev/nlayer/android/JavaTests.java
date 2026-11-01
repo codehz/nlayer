@@ -401,7 +401,11 @@ public final class JavaTests extends Instrumentation {
 
   /** SCROLL_CONTENT for a size only: no refresh, paging or snapping. */
   private static void scrollContent(Batch b, int id, float w, float h) {
-    b.word(10).word(id).real(w).real(h).real(-1) // refresh indicator: none
+    b.word(10)
+        .word(id)
+        .real(w)
+        .real(h)
+        .real(-1) // refresh indicator: none
         .word(0) // paging
         .real(-1) // snap interval: none
         .word(-1) // snap offsets: none

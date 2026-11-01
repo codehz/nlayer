@@ -480,10 +480,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_scroll(
             .unwrap_or_else(|err| err.into_inner())
             .as_ref()
         {
-            control.update_scroll_position(
-                id as NodeId,
-                Point::new(Points(x), Points(y)),
-            );
+            control.update_scroll_position(id as NodeId, Point::new(Points(x), Points(y)));
         }
     }
     // Then dispatch the event for onScroll listeners

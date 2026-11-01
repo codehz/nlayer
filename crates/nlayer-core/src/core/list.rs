@@ -167,6 +167,9 @@ pub(super) struct ListState {
     pub(super) inverted: bool,
     /// Uses parent's scroll view.
     pub(super) viewport_parent: bool,
+    /// Parent mode: the layout node that holds the content's length, so
+    /// the scroll view around the list scrolls over all of it.
+    pub(super) spacer: Option<(taffy::NodeId, f32)>,
     /// Viewability config and last reported range.
     pub(super) viewability: Option<crate::ops::Viewability>,
     pub(super) viewable_range: Option<(u32, u32)>,
@@ -203,6 +206,7 @@ impl ListState {
             sticky_indices: Box::new([]),
             inverted: false,
             viewport_parent: false,
+            spacer: None,
             viewability: None,
             viewable_range: None,
             maintain_position: None,

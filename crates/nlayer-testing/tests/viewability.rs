@@ -46,28 +46,33 @@ function App() {
 mount(App);
 "#;
     let mut app = app(source);
-    
+
     // Wait for initial render - at offset 0, items 0-7 should be visible (400px / 50px = 8 items)
     assert!(app.wait_for("Item 0", Duration::from_secs(1)));
-    
+
     // Give time for viewability event to fire
     std::thread::sleep(Duration::from_millis(100));
     app.refresh();
-    
+
     // Should have initial viewable range
     let texts = app.texts();
-    assert!(texts.iter().any(|t| t.contains("0-")), "Should report initial viewable range: {:?}", texts);
-    
+    assert!(
+        texts.iter().any(|t| t.contains("0-")),
+        "Should report initial viewable range: {:?}",
+        texts
+    );
+
     let screen = app.screen();
-    let list_id = screen.views()
+    let list_id = screen
+        .views()
         .find_map(|(id, v)| (v.kind == ViewKind::Scroll).then_some(id))
         .expect("list");
-    
+
     // Scroll down to middle
     app.scroll(list_id, 0.0, 1000.0);
     std::thread::sleep(Duration::from_millis(100));
     app.refresh();
-    
+
     // Should have new viewable range in middle (around items 20-27)
     let texts = app.texts();
     let has_middle_range = texts.iter().any(|t| {
@@ -86,8 +91,12 @@ mount(App);
             false
         }
     });
-    assert!(has_middle_range, "Should report middle range after scroll: {:?}", texts);
-    
+    assert!(
+        has_middle_range,
+        "Should report middle range after scroll: {:?}",
+        texts
+    );
+
     app.stop();
 }
 
@@ -122,49 +131,59 @@ function App() {
 mount(App);
 "#;
     let mut app = app(source);
-    
+
     assert!(app.wait_for("Item 0", Duration::from_secs(1)));
     std::thread::sleep(Duration::from_millis(100));
     app.refresh();
-    
+
     // Get initial count
-    let initial_count = app.texts().iter()
+    let initial_count = app
+        .texts()
+        .iter()
         .find(|t| t.starts_with("Events:"))
         .and_then(|t| t.strip_prefix("Events: "))
         .and_then(|n| n.parse::<u32>().ok())
         .unwrap_or(0);
-    
+
     assert!(initial_count > 0, "Should have at least one initial event");
-    
+
     let screen = app.screen();
-    let list_id = screen.views()
+    let list_id = screen
+        .views()
         .find_map(|(id, v)| (v.kind == ViewKind::Scroll).then_some(id))
         .expect("list");
-    
+
     // Scroll to a position
     app.scroll(list_id, 0.0, 500.0);
     std::thread::sleep(Duration::from_millis(100));
     app.refresh();
-    
-    let after_scroll = app.texts().iter()
+
+    let after_scroll = app
+        .texts()
+        .iter()
         .find(|t| t.starts_with("Events:"))
         .and_then(|t| t.strip_prefix("Events: "))
         .and_then(|n| n.parse::<u32>().ok())
         .unwrap_or(0);
-    
+
     // Scroll to same position again (should not trigger new event)
     app.scroll(list_id, 0.0, 500.0);
     std::thread::sleep(Duration::from_millis(100));
     app.refresh();
-    
-    let after_same_scroll = app.texts().iter()
+
+    let after_same_scroll = app
+        .texts()
+        .iter()
         .find(|t| t.starts_with("Events:"))
         .and_then(|t| t.strip_prefix("Events: "))
         .and_then(|n| n.parse::<u32>().ok())
         .unwrap_or(0);
-    
-    assert_eq!(after_scroll, after_same_scroll, "Should not fire duplicate events at same position");
-    
+
+    assert_eq!(
+        after_scroll, after_same_scroll,
+        "Should not fire duplicate events at same position"
+    );
+
     app.stop();
 }
 
@@ -197,31 +216,39 @@ function App() {
 mount(App);
 "#;
     let mut app = app(source);
-    
+
     assert!(app.wait_for("Item 0", Duration::from_secs(1)));
-    
+
     // Wait for initial viewability event
-    assert!(app.wait_for("Range: 0-", Duration::from_secs(1)), "Should get initial viewable range");
-    
+    assert!(
+        app.wait_for("Range: 0-", Duration::from_secs(1)),
+        "Should get initial viewable range"
+    );
+
     let screen = app.screen();
-    let list_id = screen.views()
+    let list_id = screen
+        .views()
         .find_map(|(id, v)| (v.kind == ViewKind::Scroll).then_some(id))
         .expect("list");
-    
+
     // Scroll down
     app.scroll(list_id, 0.0, 1500.0);
     std::thread::sleep(Duration::from_millis(100));
     app.refresh();
-    
+
     // Scroll back to top
     app.scroll(list_id, 0.0, 0.0);
     std::thread::sleep(Duration::from_millis(100));
     app.refresh();
-    
+
     // Should show first=0 again
     let texts = app.texts();
-    assert!(texts.iter().any(|t| t.contains("Range: 0-")), "Should return to first=0 at top: {:?}", texts);
-    
+    assert!(
+        texts.iter().any(|t| t.contains("Range: 0-")),
+        "Should return to first=0 at top: {:?}",
+        texts
+    );
+
     app.stop();
 }
 
@@ -256,17 +283,17 @@ function App() {
 mount(App);
 "#;
     let mut app = app(source);
-    
+
     assert!(app.wait_for("Item 0", Duration::from_secs(1)));
     std::thread::sleep(Duration::from_millis(100));
     app.refresh();
-    
+
     // With 100px items and 400px viewport, viewAreaCoverageThreshold 0.5 means
     // item must cover >= 200px of viewport. Only items fully within viewport
     // (or covering at least 50%) should be viewable.
     let texts = app.texts();
     let has_range = texts.iter().any(|t| t.starts_with("Range: "));
     assert!(has_range, "Should report viewable range: {:?}", texts);
-    
+
     app.stop();
 }

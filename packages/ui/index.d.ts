@@ -357,7 +357,7 @@ export interface NavStackProps<R> {
   style?: StyleProp<ViewStyle>;
   class?: string;
   /** Renders a route; return a `<NavPage>` for options. */
-  children: (route: R, index: Accessor<number>) => JSX.Element;
+  children: (route: R, index: Accessor<number>) => unknown;
 }
 
 export interface NavPageProps {
@@ -365,17 +365,17 @@ export interface NavPageProps {
   /** The page's title. */
   title?: string;
   /** The app's header (desktops and web). */
-  header?: JSX.Element;
+  header?: unknown;
   /** Whether the header is visible (default true). */
   headerVisible?: boolean;
   /** Whether the back button is visible (default true). */
   headerBackVisible?: boolean;
   /** Custom left header content. */
-  headerLeft?: JSX.Element;
+  headerLeft?: unknown;
   /** Custom right header content. */
-  headerRight?: JSX.Element;
+  headerRight?: unknown;
   /** Custom title header content. */
-  headerTitle?: JSX.Element;
+  headerTitle?: unknown;
   /** Header style properties. */
   headerStyle?: {
     backgroundColor?: ColorValue;
@@ -398,7 +398,7 @@ export interface NavPageProps {
   onInsets?: (insets: { top: number; right: number; bottom: number; left: number }) => void;
   style?: StyleProp<ViewStyle>;
   class?: string;
-  children?: JSX.Element;
+  children?: unknown;
 }
 
 /** What closed a dialog: Escape or the back button (`"cancel"`), a press
@@ -432,7 +432,7 @@ export interface DialogProps {
   closeOnBackdropPress?: boolean;
   closeOnSwipe?: boolean;
   closeOnEscape?: boolean;
-  children?: JSX.Element;
+  children?: unknown;
 }
 
 /** Creates a navigation stack state. */
@@ -501,6 +501,14 @@ export interface SpringConfig {
   velocity?: number;
 }
 
+/** `timing`'s config without the target: `v.timing(1, options)`.
+ * `v.timing({ toValue: 1, ...options })` is the same. */
+export type TimingOptions = Omit<TimingConfig, "toValue">;
+
+/** `spring`'s config without the target: `v.spring(1, options)`, as
+ * `v.spring({ toValue: 1, ...options })`. */
+export type SpringOptions = Omit<SpringConfig, "toValue">;
+
 /** A value the animation graph drives. Put it in `opacity`,
  * `backgroundColor`, `borderColor` or a transform step; JS never runs a
  * frame. */
@@ -508,7 +516,9 @@ export interface AnimatedValue {
   readonly __av: number;
   interpolate(config: InterpolateConfig): AnimatedValue;
   set(value: number): void;
+  timing(to: number, options?: TimingOptions): Promise<AnimationResult>;
   timing(config: TimingConfig): Promise<AnimationResult>;
+  spring(to: number, options?: SpringOptions): Promise<AnimationResult>;
   spring(config: SpringConfig): Promise<AnimationResult>;
   /** Holds the current value; resolves with it. */
   stop(): Promise<{ value: number }>;
@@ -521,7 +531,9 @@ export function createAnimatedValue(value?: number): AnimatedValue;
 
 /** The same drivers, as functions. */
 export const Animated: {
+  timing(value: AnimatedValue, to: number, options?: TimingOptions): Promise<AnimationResult>;
   timing(value: AnimatedValue, config: TimingConfig): Promise<AnimationResult>;
+  spring(value: AnimatedValue, to: number, options?: SpringOptions): Promise<AnimationResult>;
   spring(value: AnimatedValue, config: SpringConfig): Promise<AnimationResult>;
 };
 

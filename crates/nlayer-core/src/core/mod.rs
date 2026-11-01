@@ -77,6 +77,9 @@ mod dirty {
     pub(super) const MODAL: u32 = 1 << 15;
     /// Emit [`crate::MountItem::Refreshing`].
     pub(super) const REFRESHING: u32 = 1 << 16;
+    /// Emit [`crate::MountItem::PanBinding`] and its pinch and rotation
+    /// siblings.
+    pub(super) const PAN: u32 = 1 << 17;
 }
 
 /// Host kind.
@@ -210,6 +213,8 @@ impl ApplyError {
 #[derive(Debug, Default)]
 struct ScrollState {
     horizontal: bool,
+    /// The offset the platform last reported.
+    offset: Point<Points>,
     taps: KeyboardTaps,
     dismiss: KeyboardDismiss,
     /// Last content size sent.
@@ -278,6 +283,25 @@ struct RootState {
     slot: crate::ops::HeaderSlot,
 }
 
+/// Animation nodes the platform's gestures drive on a view: pan X and Y,
+/// pinch scale and rotation angle.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct GestureValues {
+    pan_x: Option<NodeId>,
+    pan_y: Option<NodeId>,
+    pinch: Option<NodeId>,
+    rotation: Option<NodeId>,
+}
+
+impl GestureValues {
+    fn is_empty(self) -> bool {
+        self.pan_x.is_none()
+            && self.pan_y.is_none()
+            && self.pinch.is_none()
+            && self.rotation.is_none()
+    }
+}
+
 struct Node {
     id: NodeId,
     kind: Kind,
@@ -293,6 +317,8 @@ struct Node {
     /// Visual properties driven by animation nodes; they override the
     /// static values while bound.
     animated: Vec<(crate::animation::AnimationProp, crate::animation::NodeId)>,
+    /// Animation nodes the platform's gestures drive.
+    gestures: GestureValues,
     text_style: TextStyle,
     /// `numberOfLines` (`Some(0)`: no clamp).
     number_of_lines: Option<u32>,
@@ -360,6 +386,7 @@ impl Node {
             base_layout: None,
             view_style: ViewStyle::default(),
             animated: Vec::new(),
+            gestures: GestureValues::default(),
             text_style: TextStyle::default(),
             number_of_lines: None,
             ellipsize: None,
@@ -463,6 +490,8 @@ pub struct Core<M: TextEngine> {
     /// Text blocks whose final layout must be sent.
     pending_text: Vec<Key>,
     needs_layout: bool,
+    /// A parent-viewport list's spacer changed length this round.
+    spacer_changed: bool,
     /// Device pixels per point. Bundled image variants are picked from it.
     pixel_ratio: f32,
     /// Safe-area insets of the surface. `env(safe-area-inset-*)` on
@@ -522,6 +551,7 @@ impl<M: TextEngine> Core<M> {
             queue: Vec::new(),
             pending_text: Vec::new(),
             needs_layout: true,
+            spacer_changed: false,
             pixel_ratio: 1.0,
             safe_area: Edges::default(),
             keyboard_inset: Points::ZERO,
@@ -717,15 +747,16 @@ impl<M: TextEngine> Core<M> {
     /// scroll the core issued is replayed onto it.
     pub fn set_scroll_offset(&mut self, id: NodeId, offset: Point<Points>) {
         let Ok(key) = self.key(id) else { return };
-        
+
         // Update list's own offset if this is a list node
         if let Some(list) = self.nodes[key as usize].list.as_mut() {
             list.reported(offset.y.0);
             self.mark(key, dirty::LIST);
         }
-        
+
         // If this is a scroll node, recompute list offsets, sticky, and viewport_parent
-        if self.nodes[key as usize].scroll.is_some() {
+        if let Some(scroll) = self.nodes[key as usize].scroll.as_mut() {
+            scroll.offset = offset;
             self.recompute_scroll_lists(key, offset);
         }
     }
@@ -737,6 +768,7 @@ impl<M: TextEngine> Core<M> {
         let Some(scroll) = self.nodes[key as usize].scroll.as_mut() else {
             return;
         };
+        scroll.offset = offset;
 
         // Calculate pull distance (negative offset means pulling down)
         let pull_distance = if offset.y.0 < 0.0 { -offset.y.0 } else { 0.0 };
@@ -778,7 +810,7 @@ impl<M: TextEngine> Core<M> {
             return;
         };
         let horizontal = scroll.horizontal;
-        
+
         // Update list offset if this scroll view has a list (for scroll+list nodes)
         if let Some(list) = self.nodes[key as usize].list.as_mut() {
             let new_offset = if horizontal { offset.x.0 } else { offset.y.0 };
@@ -788,7 +820,7 @@ impl<M: TextEngine> Core<M> {
                 self.mark(key, dirty::LIST);
             }
         }
-        
+
         // Update child lists that use viewport="parent"
         let children = self.nodes[key as usize].children.clone();
         for &child_key in &children {
@@ -796,44 +828,61 @@ impl<M: TextEngine> Core<M> {
         }
     }
 
-    fn update_viewport_parent_list_offset(&mut self, key: Key, offset: Point<Points>, horizontal: bool) {
+    fn update_viewport_parent_list_offset(
+        &mut self,
+        key: Key,
+        offset: Point<Points>,
+        horizontal: bool,
+    ) {
         // Check if this node has a viewport_parent list
         let is_viewport_parent = self.nodes[key as usize]
             .list
             .as_ref()
             .map_or(false, |l| l.viewport_parent);
-        
+
         if is_viewport_parent {
             // Calculate cumulative position from list up to parent scroll
             let mut cumulative_pos = 0.0;
             let mut current_key = key;
-            
+
             // Walk up the parent chain until we find the scroll node
             loop {
-                // Add this node's layout position
+                // Add this node's layout position; the list's own border
+                // and padding come before its content.
                 if let Some(layout) = self.nodes[current_key as usize].layout {
-                    let loc = self.rounded_layout(layout).location;
-                    cumulative_pos += if horizontal { loc.x } else { loc.y };
+                    let l = self.rounded_layout(layout);
+                    cumulative_pos += if horizontal {
+                        l.location.x
+                    } else {
+                        l.location.y
+                    };
+                    if current_key == key {
+                        cumulative_pos += if horizontal {
+                            l.border.left + l.padding.left
+                        } else {
+                            l.border.top + l.padding.top
+                        };
+                    }
                 }
-                
+
                 // Move to parent
                 let parent_key = self.nodes[current_key as usize].parent;
                 if parent_key == NO_KEY {
                     break;
                 }
-                
+
                 // Stop if parent is a scroll node (this is our viewport parent)
                 if self.nodes[parent_key as usize].kind == Kind::Scroll {
                     break;
                 }
-                
+
                 current_key = parent_key;
             }
-            
+
             // List offset = parent scroll offset - list's cumulative position in scroll content
             let parent_offset = if horizontal { offset.x.0 } else { offset.y.0 };
             let new_offset = parent_offset - cumulative_pos;
-            
+
             if let Some(list) = self.nodes[key as usize].list.as_mut() {
                 if list.offset != new_offset {
                     list.offset = new_offset;
@@ -841,12 +890,94 @@ impl<M: TextEngine> Core<M> {
                 }
             }
         }
-        
+
         // Recursively check children
         let children = self.nodes[key as usize].children.clone();
         for &child_key in &children {
             self.update_viewport_parent_list_offset(child_key, offset, horizontal);
         }
+    }
+
+    /// `viewport` of list `key`: `Parent` virtualizes it against the scroll
+    /// view around it and gives that view the list's full length. The mode
+    /// is fixed when the list's native view is made; a later change is
+    /// ignored, as in nsh.
+    fn set_list_viewport(&mut self, key: Key, parent: bool) {
+        let Some(list) = self.nodes[key as usize].list.as_ref() else {
+            return;
+        };
+        if list.viewport_parent == parent {
+            return;
+        }
+        if self.nodes[key as usize].created {
+            log::warn!(
+                "List {}: `viewport` is fixed when the list is made; the change is ignored (render a new list)",
+                self.nodes[key as usize].id
+            );
+            return;
+        }
+        self.nodes[key as usize]
+            .list
+            .as_mut()
+            .expect("list")
+            .viewport_parent = parent;
+        let Some(layout) = self.nodes[key as usize].layout else {
+            return;
+        };
+        if parent {
+            let len = self.nodes[key as usize]
+                .list
+                .as_ref()
+                .expect("list")
+                .content_len();
+            let spacer = self.layout.new_leaf(spacer_style(len));
+            self.layout.add_child(layout, spacer);
+            self.nodes[key as usize].list.as_mut().expect("list").spacer = Some((spacer, len));
+        } else if let Some((spacer, _)) = self.nodes[key as usize]
+            .list
+            .as_mut()
+            .expect("list")
+            .spacer
+            .take()
+        {
+            self.layout.remove(spacer);
+        }
+        self.sync_scroll_style(key);
+        self.needs_layout = true;
+        self.mark(key, dirty::LIST);
+    }
+
+    /// Gives a parent-viewport list's spacer the new content length: the
+    /// scroll view around it scrolls over the whole list.
+    fn sync_list_spacer(&mut self, key: Key) {
+        let Some(list) = self.nodes[key as usize].list.as_ref() else {
+            return;
+        };
+        let Some((spacer, was)) = list.spacer else {
+            return;
+        };
+        let len = list.content_len();
+        if len == was {
+            return;
+        }
+        self.nodes[key as usize].list.as_mut().expect("list").spacer = Some((spacer, len));
+        self.layout.set_style(spacer, spacer_style(len));
+        self.needs_layout = true;
+        self.spacer_changed = true;
+    }
+
+    /// The offset the scroll view around `key` is at, and its axis.
+    fn outer_scroll_offset(&self, key: Key) -> Option<(Point<Points>, bool)> {
+        let mut at = self.nodes[key as usize].parent;
+        while at != NO_KEY {
+            let node = &self.nodes[at as usize];
+            if node.kind == Kind::Scroll || node.kind == Kind::List {
+                let scroll = node.scroll.as_ref()?;
+                return Some((scroll.offset, scroll.horizontal));
+            }
+            at = node.parent;
+        }
+        None
     }
 
     /// Moves the cells the runtime must render before the frame shows.
@@ -1006,6 +1137,31 @@ impl<M: TextEngine> Core<M> {
     /// when nothing changed.
     pub fn commit(&mut self) -> Option<MountBatch> {
         self.flush_dirty();
+        self.layout_round();
+        self.update_lists();
+        // A parent-viewport list gives the page its content length after
+        // measuring it: lay the page out again with that length, until it
+        // settles.
+        for _ in 0..4 {
+            if !mem::take(&mut self.spacer_changed) {
+                break;
+            }
+            self.needs_layout = true;
+            self.layout_round();
+            self.update_lists();
+        }
+        self.flush_text();
+        if self.mount.is_empty() {
+            None
+        } else {
+            Some(MountBatch {
+                items: mem::take(&mut self.mount),
+            })
+        }
+    }
+
+    /// Lays the changed trees out and emits their frames.
+    fn layout_round(&mut self) {
         if mem::take(&mut self.needs_layout) {
             let relaid = self.relayout_boundaries();
             if self.layout_main() {
@@ -1024,15 +1180,6 @@ impl<M: TextEngine> Core<M> {
             }
         }
         self.layout_cells();
-        self.update_lists();
-        self.flush_text();
-        if self.mount.is_empty() {
-            None
-        } else {
-            Some(MountBatch {
-                items: mem::take(&mut self.mount),
-            })
-        }
     }
 
     fn key(&self, id: NodeId) -> Result<Key, ApplyError> {
@@ -1487,10 +1634,7 @@ impl<M: TextEngine> Core<M> {
                 }
             }
             Prop::Viewport(viewport) => {
-                if let Some(list) = self.nodes[key as usize].list.as_mut() {
-                    list.viewport_parent = matches!(viewport, crate::ops::ListViewport::Parent);
-                    self.mark(key, dirty::LIST);
-                }
+                self.set_list_viewport(key, matches!(viewport, crate::ops::ListViewport::Parent));
             }
             Prop::ViewabilityConfig(config) => {
                 if let Some(list) = self.nodes[key as usize].list.as_mut() {
@@ -1677,15 +1821,17 @@ impl<M: TextEngine> Core<M> {
                 }
             }
             Prop::Pan { x, y } => {
-                self.mount.push(crate::MountItem::PanBinding { id, x, y });
+                self.nodes[key as usize].gestures.pan_x = x;
+                self.nodes[key as usize].gestures.pan_y = y;
+                self.mark(key, dirty::PAN);
             }
             Prop::Pinch { scale } => {
-                self.mount
-                    .push(crate::MountItem::PinchBinding { id, scale });
+                self.nodes[key as usize].gestures.pinch = scale;
+                self.mark(key, dirty::PAN);
             }
             Prop::Rotation { angle } => {
-                self.mount
-                    .push(crate::MountItem::RotationBinding { id, angle });
+                self.nodes[key as usize].gestures.rotation = angle;
+                self.mark(key, dirty::PAN);
             }
             Prop::HeaderSlot(slot) => {
                 if let Some(root) = self.nodes[key as usize].root.as_mut() {
@@ -1812,8 +1958,14 @@ impl<M: TextEngine> Core<M> {
                 let parent_layout = self.nodes[parent as usize]
                     .layout
                     .expect("block parent has layout");
+                // Layout roots (a screen's header items) are children of
+                // the screen, not of its layout.
+                let layout_pos = self.nodes[parent as usize].children[..pos]
+                    .iter()
+                    .filter(|&&c| !self.nodes[c as usize].kind.is_layout_root())
+                    .count();
                 self.layout
-                    .insert_child_at_index(parent_layout, pos, child_layout);
+                    .insert_child_at_index(parent_layout, layout_pos, child_layout);
             }
             self.needs_layout = true;
             if parent_created {
@@ -1999,12 +2151,17 @@ impl<M: TextEngine> Core<M> {
         node.frame = Bounds::UNSET;
         let id = node.id;
         let kind = node.kind;
+        let parent_list =
+            kind == Kind::List && node.list.as_ref().is_some_and(|list| list.viewport_parent);
         let mut flags = 0;
         if node.view_style != ViewStyle::default() {
             flags |= dirty::VIEW;
         }
         if !node.animated.is_empty() {
             flags |= dirty::ANIMATION;
+        }
+        if !node.gestures.is_empty() {
+            flags |= dirty::PAN;
         }
         if !node.events.is_empty() || node.long_press_delay.is_some() {
             flags |= dirty::EVENTS;
@@ -2015,7 +2172,7 @@ impl<M: TextEngine> Core<M> {
         if node.image.as_ref().is_some_and(|source| source.is_some()) {
             flags |= dirty::IMAGE;
         }
-        if matches!(kind, Kind::Scroll | Kind::List) {
+        if matches!(kind, Kind::Scroll | Kind::List) && !parent_list {
             // A new native view has not been told its content size.
             node.scroll.as_mut().expect("scroll").content = None;
             flags |= dirty::SCROLL;
@@ -2056,7 +2213,11 @@ impl<M: TextEngine> Core<M> {
         }
         self.mount.push(MountItem::Create {
             id,
-            kind: kind.view_kind(),
+            kind: if parent_list {
+                ViewKind::View
+            } else {
+                kind.view_kind()
+            },
         });
         self.mark(key, flags);
         if !kind.is_container() {
@@ -2124,6 +2285,22 @@ impl<M: TextEngine> Core<M> {
                 let bindings = self.nodes[key as usize].animated.clone();
                 self.mount
                     .push(MountItem::AnimationBindings { id, bindings });
+            }
+            if flags & dirty::PAN != 0 {
+                let gestures = self.nodes[key as usize].gestures;
+                self.mount.push(MountItem::PanBinding {
+                    id,
+                    x: gestures.pan_x,
+                    y: gestures.pan_y,
+                });
+                self.mount.push(MountItem::PinchBinding {
+                    id,
+                    scale: gestures.pinch,
+                });
+                self.mount.push(MountItem::RotationBinding {
+                    id,
+                    angle: gestures.rotation,
+                });
             }
             if flags & dirty::EVENTS != 0 {
                 let events = self.nodes[key as usize].events;
@@ -3145,6 +3322,19 @@ fn env_term(safe: Edges<Points>, keyboard: Points, term: style::EnvTerm) -> Poin
     }
 }
 
+/// The layout of a parent-viewport list's spacer: as long as the list's
+/// content along the main axis.
+fn spacer_style(len: f32) -> taffy::Style {
+    taffy::Style {
+        size: taffy::Size {
+            width: taffy::Dimension::auto(),
+            height: taffy::Dimension::length(len.max(0.0)),
+        },
+        flex_shrink: 0.0,
+        ..Default::default()
+    }
+}
+
 /// Adds point insets to padding and margin lengths. Percentages and `auto`
 /// margins cannot take an addition, as in nsh.
 fn add_insets(layout: &mut TaffyStyle, padding: Edges<Points>, margin: Edges<Points>) {
@@ -3246,6 +3436,20 @@ impl<M: TextEngine> Core<M> {
         // right-to-left row is laid out left to right.
         if let Some((_, applied)) = self.nodes[key as usize].env.as_deref() {
             add_insets(&mut style, applied[0], applied[1]);
+        }
+        if self.nodes[key as usize].kind == Kind::List
+            && self.nodes[key as usize]
+                .list
+                .as_ref()
+                .is_some_and(|list| list.viewport_parent)
+        {
+            style.overflow = taffy::Point {
+                x: taffy::Overflow::Hidden,
+                y: taffy::Overflow::Hidden,
+            };
+            self.layout.set_style(layout, style);
+            self.needs_layout = true;
+            return;
         }
         if horizontal {
             style.flex_direction = taffy::FlexDirection::Row;
@@ -3717,11 +3921,25 @@ impl<M: TextEngine> Core<M> {
                 .as_ref()
                 .expect("list")
                 .content_len();
-            let max_offset = (content_len - viewport).max(0.0);
-            if self.nodes[key as usize].list.as_ref().expect("list").offset > max_offset {
-                let list = self.nodes[key as usize].list.as_mut().expect("list");
-                list.jump(max_offset);
-                scrolls.push((max_offset, false));
+            let parent_mode = self.nodes[key as usize]
+                .list
+                .as_ref()
+                .expect("list")
+                .viewport_parent;
+            if parent_mode {
+                // The page around it learns the list's length, and the
+                // list follows where that page is scrolled to.
+                self.sync_list_spacer(key);
+                if let Some((offset, horizontal)) = self.outer_scroll_offset(key) {
+                    self.update_viewport_parent_list_offset(key, offset, horizontal);
+                }
+            } else {
+                let max_offset = (content_len - viewport).max(0.0);
+                if self.nodes[key as usize].list.as_ref().expect("list").offset > max_offset {
+                    let list = self.nodes[key as usize].list.as_mut().expect("list");
+                    list.jump(max_offset);
+                    scrolls.push((max_offset, false));
+                }
             }
 
             let mut binds = Vec::new();
@@ -6774,54 +6992,6 @@ mod tests {
         c.commit();
     }
 
-    // TODO: Re-enable when env() is fully implemented in v3
-    #[test]
-    #[ignore]
-    fn inset_accounting() {
-        let mut c = core();
-
-        // Create a view with env() padding.
-        c.apply(Op::Create {
-            id: 2,
-            tag: Tag::View,
-        })
-        .unwrap();
-        c.apply(Op::Insert {
-            parent: ROOT_ID,
-            child: 2,
-            before: None,
-        })
-        .unwrap();
-
-        // Set style with env(safe-area-inset-top).
-        // use crate::style::*;
-        // let mut style = Style::default();
-        // style.pending.env.padding[0] = Some(crate::style::EnvTerm::SafeAreaTop);
-        // c.apply(Op::SetStyle {
-        //     id: 2,
-        //     patch: style,
-        // })
-        // .unwrap();
-        c.commit();
-
-        // Update safe area insets.
-        c.set_safe_area(crate::geometry::Edges {
-            top: Points(20.0),
-            right: Points(0.0),
-            bottom: Points(0.0),
-            left: Points(0.0),
-        });
-
-        // Commit should apply insets to padding.
-        c.commit();
-
-        // Update keyboard inset.
-        c.set_keyboard_inset(Points(300.0));
-
-        // Verify layout update is triggered.
-        c.commit();
-    }
-
     #[test]
     fn modal_config_emission() {
         let mut c = core();
@@ -7444,6 +7614,56 @@ mod tests {
     }
 
     #[test]
+    fn content_after_a_header_item_lays_out() {
+        let mut c = Core::new(FakeEngine, size_pt(400.0, 800.0));
+        c.set_header_heights(Points::ZERO, Points::ZERO);
+        for (id, tag) in [(2, Tag::Stack), (3, Tag::Screen), (4, Tag::HeaderItem)] {
+            c.apply(Op::Create { id, tag }).unwrap();
+        }
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 4,
+            prop: Prop::HeaderSlot(crate::ops::HeaderSlot::Header),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 3,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+
+        // The header item is a layout root of its own: the content after it
+        // is the screen layout's first child.
+        c.apply(Op::Create {
+            id: 5,
+            tag: Tag::View,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 3,
+            child: 5,
+            before: None,
+        })
+        .unwrap();
+        c.commit().expect("the screen lays out");
+
+        let view = c.nodes.iter().find(|(_, node)| node.id == 5).unwrap().1;
+        assert_eq!(view.frame.size.width.0, 400.0);
+    }
+
+    #[test]
     fn header_slot_replacement_updates_screen_config() {
         let mut c = Core::new(FakeEngine, size_pt(400.0, 800.0));
         c.set_header_heights(Points::ZERO, Points::ZERO);
@@ -7834,6 +8054,19 @@ mod tests {
             )),
             "PanBinding should be emitted with both axes"
         );
+        // Bindings applied before the view was made still come after it
+        // (a platform ignores them for a view it does not have yet).
+        let made = batch
+            .items
+            .iter()
+            .position(|item| matches!(item, MountItem::Create { id: 2, .. }))
+            .expect("the view is made");
+        let bound = batch
+            .items
+            .iter()
+            .position(|item| matches!(item, MountItem::PanBinding { id: 2, .. }))
+            .expect("the pan is bound");
+        assert!(made < bound, "the view is made before its pan is bound");
 
         // Pan with only x
         c.apply(Op::SetProp {

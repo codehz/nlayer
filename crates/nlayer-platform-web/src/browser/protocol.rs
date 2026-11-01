@@ -4,11 +4,11 @@
 use std::cell::RefCell;
 
 use nlayer_core::{
-    AccessibilityProp, AccessibilityRole, AccessibilityState, AccessibilityValue, CellSlot, Checked,
-    Color, HeaderSlot, ImageScales, ImageSource, Interaction, KeyboardDismiss, KeyboardTaps,
-    DecelerationRate, KeyboardType, ListViewport, MaintainPosition, ModalAnimation,
-    ModalPresentation, ModalProp, NodeId, Op, Prop, ScreenAnimation, ScreenProp, SnapAlignment, Tag,
-    Viewability,
+    AccessibilityProp, AccessibilityRole, AccessibilityState, AccessibilityValue, CellSlot,
+    Checked, Color, DecelerationRate, HeaderSlot, ImageScales, ImageSource, Interaction,
+    KeyboardDismiss, KeyboardTaps, KeyboardType, ListViewport, MaintainPosition, ModalAnimation,
+    ModalPresentation, ModalProp, NodeId, Op, Prop, ScreenAnimation, ScreenProp, SnapAlignment,
+    Tag, Viewability,
     animation::AnimationProp,
     geometry::{Points, Size},
     style::{
@@ -192,14 +192,9 @@ pub(super) fn decode_prop(
             };
             Prop::SnapToInterval((interval > 0.0).then(|| interval as f32))
         }
-        (Some(Tag::Scroll | Tag::List), "snapToOffsets") => {
-            Prop::SnapToOffsets(values(value).map(|offsets| {
-                offsets
-                    .iter()
-                    .map(|n| *n as f32)
-                    .collect::<Box<[f32]>>()
-            }))
-        }
+        (Some(Tag::Scroll | Tag::List), "snapToOffsets") => Prop::SnapToOffsets(
+            values(value).map(|offsets| offsets.iter().map(|n| *n as f32).collect::<Box<[f32]>>()),
+        ),
         (Some(Tag::Scroll | Tag::List), "snapToAlignment") => {
             Prop::SnapToAlignment(match string(value).as_str() {
                 "center" => SnapAlignment::Center,
@@ -231,39 +226,40 @@ pub(super) fn decode_prop(
         (Some(Tag::List), "stickyHeaderIndices") => Prop::StickyHeaderIndices(indices(value)),
         (Some(Tag::List), "inverted") => Prop::Inverted(value.bool()),
         (Some(Tag::List), "maintainVisibleContentPosition") => {
-            Prop::MaintainVisibleContentPosition(
-                value
-                    .get("minIndexForVisible")
-                    .ok()
-                    .map(|index| MaintainPosition {
+            Prop::MaintainVisibleContentPosition(value.get("minIndexForVisible").ok().map(
+                |index| {
+                    MaintainPosition {
                         min_index_for_visible: index.number_value().unwrap_or(0.0).max(0.0) as u32,
                         autoscroll_to_bottom_threshold: value
                             .get("autoscrollToBottomThreshold")
                             .ok()
                             .and_then(|t| t.number_value())
                             .and_then(|t| (t >= 0.0).then_some(t as f32)),
-                    }),
-            )
+                    }
+                },
+            ))
         }
         (Some(Tag::List), "viewport") => Prop::Viewport(if string(value) == "parent" {
             ListViewport::Parent
         } else {
             ListViewport::Own
         }),
-        (Some(Tag::List), "viewabilityConfig") => Prop::ViewabilityConfig(
-            (!nullish(value)).then(|| Viewability {
-                view_area_coverage_threshold: value
-                    .get("viewAreaCoverageThreshold")
-                    .ok()
-                    .and_then(|c| c.number_value())
-                    .map(|c| c.clamp(0.0, 1.0) as f32),
-                item_visible_threshold: value
-                    .get("itemVisibleThreshold")
-                    .ok()
-                    .and_then(|v| v.number_value())
-                    .map(|v| v.clamp(0.0, 1.0) as f32),
-            }),
-        ),
+        (Some(Tag::List), "viewabilityConfig") => {
+            Prop::ViewabilityConfig((!nullish(value)).then(|| {
+                Viewability {
+                    view_area_coverage_threshold: value
+                        .get("viewAreaCoverageThreshold")
+                        .ok()
+                        .and_then(|c| c.number_value())
+                        .map(|c| c.clamp(0.0, 1.0) as f32),
+                    item_visible_threshold: value
+                        .get("itemVisibleThreshold")
+                        .ok()
+                        .and_then(|v| v.number_value())
+                        .map(|v| v.clamp(0.0, 1.0) as f32),
+                }
+            }))
+        }
         (Some(Tag::Cell), "slot") => {
             let slot = if let Some(n) = value.number_value() {
                 CellSlot::Item(n.max(0.0) as u32)
@@ -290,8 +286,12 @@ pub(super) fn decode_prop(
         (Some(Tag::Screen), "headerBackVisible") => {
             Prop::Screen(ScreenProp::HeaderBackVisible(unless_false(value)))
         }
-        (Some(Tag::Screen), "popOnSwipe") => Prop::Screen(ScreenProp::PopOnSwipe(unless_false(value))),
-        (Some(Tag::Screen), "popOnBack") => Prop::Screen(ScreenProp::PopOnBack(unless_false(value))),
+        (Some(Tag::Screen), "popOnSwipe") => {
+            Prop::Screen(ScreenProp::PopOnSwipe(unless_false(value)))
+        }
+        (Some(Tag::Screen), "popOnBack") => {
+            Prop::Screen(ScreenProp::PopOnBack(unless_false(value)))
+        }
         (Some(Tag::Screen), "animation") => {
             let name = string(value);
             match name.as_str() {
@@ -306,13 +306,11 @@ pub(super) fn decode_prop(
                 }
             }
         }
-        (Some(Tag::Screen), "headerStyle") => {
-            Prop::Screen(ScreenProp::HeaderStyle {
-                background_color: style_color(value, "backgroundColor"),
-                title_color: style_color(value, "color"),
-                tint_color: style_color(value, "tintColor"),
-            })
-        }
+        (Some(Tag::Screen), "headerStyle") => Prop::Screen(ScreenProp::HeaderStyle {
+            background_color: style_color(value, "backgroundColor"),
+            title_color: style_color(value, "color"),
+            tint_color: style_color(value, "tintColor"),
+        }),
         (Some(Tag::Modal), "animation") => {
             let name = string(value);
             match name.as_str() {
@@ -349,7 +347,9 @@ pub(super) fn decode_prop(
         (Some(Tag::Modal), "closeOnBackdropPress") => {
             Prop::Modal(ModalProp::CloseOnBackdropPress(unless_false(value)))
         }
-        (Some(Tag::Modal), "closeOnSwipe") => Prop::Modal(ModalProp::CloseOnSwipe(unless_false(value))),
+        (Some(Tag::Modal), "closeOnSwipe") => {
+            Prop::Modal(ModalProp::CloseOnSwipe(unless_false(value)))
+        }
         (Some(Tag::HeaderItem), "headerSlot") => {
             let name = string(value);
             match name.as_str() {

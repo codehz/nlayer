@@ -40,6 +40,9 @@
     "packages/ui": {
       "name": "@nlayer/ui",
       "version": "0.2.2",
+      "dependencies": {
+        "@nlayer/runtime": "workspace:*",
+      },
     },
   },
   "packages": {

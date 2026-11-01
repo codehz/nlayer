@@ -335,8 +335,7 @@ final class Tree {
   static void move(HostView host, float xDp, float yDp) {
     float x = xDp * host.density, y = yDp * host.density;
     long now = android.os.SystemClock.uptimeMillis();
-    MotionEvent event =
-        MotionEvent.obtain(host.downTime, now, MotionEvent.ACTION_MOVE, x, y, 0);
+    MotionEvent event = MotionEvent.obtain(host.downTime, now, MotionEvent.ACTION_MOVE, x, y, 0);
     host.dispatchTouchEvent(event);
     event.recycle();
   }
