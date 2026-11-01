@@ -14,7 +14,6 @@ use std::time::{Duration, Instant};
 use dispatch2::DispatchQueue;
 use objc2::{MainThreadMarker, msg_send};
 use objc2_core_foundation::{CGFloat, CGPoint};
-use objc2_foundation::{NSDate, NSDefaultRunLoopMode, NSRunLoop};
 use objc2_ui_kit::{UIView, UIWindow};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -155,29 +154,19 @@ fn step(line: &str) -> String {
 /// layout passes complete before returning. This ensures test operations see
 /// a consistent view hierarchy state.
 fn drain_main_queue() {
-    // Drain the main run loop to process all pending async blocks scheduled by
-    // host.rs:220 batch applications. Run the loop in short bursts with a limit
-    // to avoid hanging if work keeps being scheduled.
-    const MAX_ITERATIONS: u32 = 50;
+    // Drain the main dispatch queue by giving it time to process pending async
+    // blocks scheduled by host.rs:220 batch applications. Use a brief fixed
+    // delay: batch application is fast once scheduled, and multiple short waits
+    // catch work that schedules more work (e.g., scroll events triggering frames).
+    const DRAIN_ITERATIONS: u32 = 10;
+    const DRAIN_DELAY_MS: u64 = 20;
     
-    for _ in 0..MAX_ITERATIONS {
-        // Run one iteration of the main run loop with a short timeout.
-        // Returns true if work was processed, false if the loop timed out.
-        let processed_work = on_ui(|| {
-            // NSRunLoop.currentRunLoop() can only be called on the main thread
-            let run_loop = NSRunLoop::currentRunLoop();
-            // Run the loop for a very short time (1ms). If there's pending work,
-            // it processes it and returns true. If nothing pending, times out quickly.
-            unsafe {
-                let mode = objc2_foundation::NSDefaultRunLoopMode;
-                run_loop.runMode_beforeDate(mode, &objc2_foundation::NSDate::distantPast())
-            }
-        }).unwrap_or(false);
-        
-        if !processed_work {
-            // No work was processed in this iteration, queue is likely drained
-            break;
-        }
+    for _ in 0..DRAIN_ITERATIONS {
+        on_ui(|| {
+            // Being on the main thread allows one turn of the dispatch queue
+            // to execute any pending async blocks.
+        }).ok();
+        thread::sleep(Duration::from_millis(DRAIN_DELAY_MS));
     }
 }
 
@@ -347,6 +336,8 @@ fn scroll(selector: String, distance: f32) -> Result<Value, String> {
             };
             let _: () = unsafe { msg_send![&*delegate, scrollViewDidEndDecelerating: scroll] };
         }
+        // Brief settle to let the scroll event propagate and trigger a frame update
+        thread::sleep(Duration::from_millis(50));
         Ok(json!(null))
     })?
 }
