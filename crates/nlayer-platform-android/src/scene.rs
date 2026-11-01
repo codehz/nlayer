@@ -159,6 +159,8 @@ pub(crate) enum Query {
 pub(crate) struct Scene {
     nodes: Vec<Option<Node>>,
     root: u32,
+    /// All root nodes (parent==None): host root + modals
+    roots: Vec<u32>,
     width: f32,
     height: f32,
 }
@@ -167,11 +169,12 @@ impl Scene {
     /// `nodes` in any order. Children left empty are filled from `parent`,
     /// in the vector's order.
     pub(crate) fn from_nodes(nodes: Vec<Node>, width: f32, height: f32) -> Self {
-        let root = nodes
+        let roots: Vec<u32> = nodes
             .iter()
-            .find(|node| node.parent.is_none())
+            .filter(|node| node.parent.is_none())
             .map(|node| node.id)
-            .unwrap_or(1);
+            .collect();
+        let root = roots.first().copied().unwrap_or(1);
         let mut fill = nodes.iter().all(|node| node.children.is_empty());
         if nodes.len() == 1 {
             fill = false;
@@ -199,6 +202,7 @@ impl Scene {
         Self {
             nodes: indexed,
             root,
+            roots,
             width,
             height,
         }
@@ -766,7 +770,10 @@ fn collect(scene: &Scene, matcher: Matcher<'_>, scope: Option<&[Match]>, out: &m
         }
         return;
     }
-    walk(scene, scene.root, &mut |id| push(scene, id, matcher, out));
+    // Walk all roots (host root + modals)
+    for &root in &scene.roots {
+        walk(scene, root, &mut |id| push(scene, id, matcher, out));
+    }
 }
 
 fn walk(scene: &Scene, id: u32, f: &mut impl FnMut(u32)) {
