@@ -717,11 +717,21 @@ impl<M: TextEngine> Core<M> {
     /// scroll the core issued is replayed onto it.
     pub fn set_scroll_offset(&mut self, id: NodeId, offset: Point<Points>) {
         let Ok(key) = self.key(id) else { return };
-        let Some(list) = self.nodes[key as usize].list.as_mut() else {
-            return;
-        };
-        list.reported(offset.y.0);
-        self.mark(key, dirty::LIST);
+        
+        // Update list's own offset if this is a list node
+        if let Some(list) = self.nodes[key as usize].list.as_mut() {
+            list.reported(offset.y.0);
+            self.mark(key, dirty::LIST);
+        }
+        
+        // If this is a scroll node, update child lists with viewport="parent"
+        if let Some(scroll) = self.nodes[key as usize].scroll.as_ref() {
+            let horizontal = scroll.horizontal;
+            let children = self.nodes[key as usize].children.clone();
+            for &child_key in &children {
+                self.update_viewport_parent_list_offset(child_key, offset, horizontal);
+            }
+        }
     }
 
     /// The platform scrolled a scroll view to `offset`. Checks for pull-to-refresh
