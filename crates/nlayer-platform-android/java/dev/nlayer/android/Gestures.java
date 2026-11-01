@@ -34,7 +34,7 @@ final class Gestures {
   // nsh Box.java line 416-423
   private boolean pannable() {
     int mask = mounter.events.get(id, 0);
-    return ((mask >> 17) & 1) != 0 || ((mask >> 18) & 1) != 0 || mounter.panBindings.get(id, false);
+    return ((mask >> 17) & 1) != 0 || ((mask >> 18) & 1) != 0 || mounter.panBindings.get(id, 0) != 0;
   }
 
   private boolean twoFinger() {
@@ -149,6 +149,7 @@ final class Gestures {
         if (panning) {
           float dx = e.getRawX() - downRawX, dy = e.getRawY() - downRawY;
           Native.panMove(mounter.host.handle(), id, dx / density, dy / density);
+          mounter.host.flushAnimation();
         } else if (transforming && e.getPointerCount() >= 2) {
           updateTransform(e);
         } else if (tracking && !panning && pannable) {
@@ -195,6 +196,7 @@ final class Gestures {
   private void startPan(float dx, float dy) {
     Native.panStart(mounter.host.handle(), id);
     Native.panMove(mounter.host.handle(), id, dx, dy);
+    mounter.host.flushAnimation();
   }
 
   // nsh Box.java lines 578-605: end pan with velocity
@@ -244,6 +246,7 @@ final class Gestures {
     
     Native.pinchMove(mounter.host.handle(), id, scale);
     Native.rotationMove(mounter.host.handle(), id, rotation);
+    mounter.host.flushAnimation();
   }
 
   // nsh Box.java lines 637-648: end transform

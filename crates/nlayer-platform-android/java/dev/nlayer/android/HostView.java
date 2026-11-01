@@ -86,6 +86,18 @@ public final class HostView extends FrameLayout {
     Choreographer.getInstance().postFrameCallback(animationFrame);
   }
 
+  /**
+   * Paints the animation graph now. A gesture moved a bound value, which is
+   * not a running animation, so the frame callback would not schedule one.
+   * Called on the UI thread from the touch handling.
+   */
+  void flushAnimation() {
+    if (handle == 0) return;
+    byte[] bytes = Native.tick(handle, System.nanoTime());
+    if (bytes != null && bytes.length > 0) mounter.apply(bytes, NO_OBJECTS);
+    animationChanged();
+  }
+
   /** `env(keyboard-inset-height)`, in points. A test pin replaces the live IME. */
   float keyboardInsetPoints() {
     if (pin != null) return pin.keyboard;
@@ -307,6 +319,16 @@ public final class HostView extends FrameLayout {
         new Main<Void>() {
           public Void run() {
             Tree.tap(HostView.this, x, y, up);
+            return null;
+          }
+        });
+  }
+
+  public void move(final float x, final float y) {
+    onMain(
+        new Main<Void>() {
+          public Void run() {
+            Tree.move(HostView.this, x, y);
             return null;
           }
         });
