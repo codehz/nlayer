@@ -554,8 +554,10 @@ fn point_of(
                 bounds.origin.x + bounds.size.width / 2.0,
                 bounds.origin.y + bounds.size.height / 2.0,
             );
-            // Calculate absolute window coordinates by walking up the scene tree
-            absolute_point(&scene, id, local_center.x, local_center.y)?
+            // Hybrid approach: accumulate within scene tree, then use UIKit to convert
+            // from the topmost scene node to window coordinates
+            let (root_view, scene_point) = absolute_point_hybrid(mounter, &scene, id, local_center.x, local_center.y)?;
+            to_window(&root_view, scene_point)
         }
         Press::Span { view, start, end } => {
             let text = mounter
@@ -565,39 +567,52 @@ fn point_of(
                 let bounds = text.bounds();
                 CGPoint::new(bounds.size.width / 2.0, bounds.size.height / 2.0)
             });
-            // Calculate absolute window coordinates by walking up the scene tree
-            absolute_point(&scene, view, local.x, local.y)?
+            // Hybrid approach: accumulate within scene tree, then use UIKit to convert
+            let (root_view, scene_point) = absolute_point_hybrid(mounter, &scene, view, local.x, local.y)?;
+            to_window(&root_view, scene_point)
         }
     };
-    Ok((window, point))
+    Ok((
+        window,
+        Point {
+            x: point.x,
+            y: point.y,
+        },
+    ))
 }
 
-/// Calculate absolute window coordinates by accumulating frames up the parent chain,
-/// subtracting scroll offsets from scroll view ancestors. This matches the logic in
-/// headless tests and the `locate()` helper in App.test.tsx.
-fn absolute_point(
+/// Hybrid coordinate calculation: accumulate frames and scroll offsets within the scene tree
+/// to get a point relative to the topmost scene node, then let UIKit handle the final conversion
+/// to window coordinates (which includes navigation bars, safe areas, transforms, etc).
+fn absolute_point_hybrid(
+    mounter: &Mounter,
     scene: &crate::scene::Scene,
     mut id: u32,
     local_x: f64,
     local_y: f64,
-) -> Result<Point, String> {
+) -> Result<(objc2::rc::Retained<objc2_ui_kit::UIView>, CGPoint), String> {
     let mut x = local_x;
     let mut y = local_y;
     
+    // Accumulate coordinates within scene tree
     loop {
         let node = scene.node(id).ok_or_else(|| "node not in scene".to_owned())?;
         
-        // Add this node's frame offset relative to its parent (convert f32 to f64)
+        // Add this node's frame offset relative to its parent
         x += node.frame.x as f64;
         y += node.frame.y as f64;
         
         // Move to parent
         let Some(parent_id) = node.parent else {
-            // Reached root, return accumulated coordinates
-            break;
+            // Reached the topmost node in scene tree. Get its UIView and return
+            // the accumulated point in that view's coordinate system.
+            let root_view = mounter
+                .view_of(id)
+                .ok_or_else(|| format!("root scene node {} has no UIView", id))?;
+            return Ok((root_view, CGPoint::new(x as CGFloat, y as CGFloat)));
         };
         
-        // If parent is a scroll view, subtract its contentOffset (convert f32 to f64)
+        // If parent is a scroll view, subtract its contentOffset
         let parent_node = scene.node(parent_id).ok_or_else(|| "parent not in scene".to_owned())?;
         if let Some(scroll) = &parent_node.scroll {
             x -= scroll.x as f64;
@@ -606,8 +621,12 @@ fn absolute_point(
         
         id = parent_id;
     }
-    
-    Ok(Point { x, y })
+}
+
+fn to_window(view: &objc2_ui_kit::UIView, point: CGPoint) -> CGPoint {
+    // SAFETY: `convertPoint:toView:` with a nil view converts to window coordinates.
+    // This handles navigation bars, safe areas, and all UIKit hierarchy above the scene root.
+    unsafe { msg_send![view, convertPoint: point, toView: Option::<&objc2_ui_kit::UIView>::None] }
 }
 
 
