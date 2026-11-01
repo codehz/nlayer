@@ -269,6 +269,40 @@ pub(crate) unsafe extern "C" fn list(
     }
 }
 
+
+/// Effect that watches a single List prop and sets it on the node when it changes.
+unsafe extern "C" fn prop_effect_run(
+    cx: *mut JsContext,
+    _this: JsValue,
+    _argc: c_int,
+    _argv: *mut JsValue,
+    _magic: c_int,
+    data: *mut JsValue,
+) -> JsValue {
+    // SAFETY: three data values: node, props, prop_name
+    let (node, props, prop_name_val) = (*data, *data.add(1), *data.add(2));
+    
+    // Get the property name as a string
+    let name_ptr = qjs::JS_ToCString(cx, prop_name_val);
+    if name_ptr.is_null() {
+        return UNDEFINED;
+    }
+    let name = std::ffi::CStr::from_ptr(name_ptr).to_str().unwrap_or("");
+    
+    // Get the current value from props
+    let value = get(cx, props, name);
+    
+    // Set it on the node (this goes through set_prop -> decode_prop -> Op::SetProp)
+    let result = set(cx, node, name, value);
+    
+    qjs::JS_FreeCString(cx, name_ptr);
+    
+    if result.is_err() {
+        qjs::JS_FreeValue(cx, result.unwrap_err());
+    }
+    
+    UNDEFINED
+}
 fn render(cx: *mut JsContext, props: JsValue) -> Result<JsValue, JsValue> {
     let node = dom::create_element(cx, Tag::List);
     let id = dom::node_id(cx, node).expect("a node");
@@ -292,6 +326,7 @@ fn render(cx: *mut JsContext, props: JsValue) -> Result<JsValue, JsValue> {
     // SAFETY: the effect keeps its own value.
     unsafe { qjs::JS_FreeValue(cx, r) };
     // Every other prop goes to the scroll view (style, testID, events).
+    // Exclude all second-layer props that need special handling.
     dom::spread_props_except(
         cx,
         node,
@@ -314,9 +349,20 @@ fn render(cx: *mut JsContext, props: JsValue) -> Result<JsValue, JsValue> {
             "maintainVisibleContentPosition",
             "viewport",
             "viewabilityConfig",
+            "snapToInterval",
+            "snapToOffsets",
+            "snapToAlignment",
+            "pagingEnabled",
+            "disableIntervalMomentum",
+            "decelerationRate",
+            "refreshing",
+            "refreshIndicator",
+            "pullValue",
         ],
     )
     .map_err(fail)?;
+    
+    // Numeric props with defaults
     for (name, fallback) in [
         ("estimatedItemSize", 50.0),
         ("numColumns", 1.0),
@@ -329,41 +375,40 @@ fn render(cx: *mut JsContext, props: JsValue) -> Result<JsValue, JsValue> {
         set_number(cx, node, name, n).map_err(fail)?;
     }
     
-    // List structure props
-    let inverted = get(cx, props, "inverted");
-    if unsafe { qjs::JS_ToBool(cx, inverted) == 1 } {
-        set(cx, node, "inverted", inverted).map_err(fail)?;
-    } else {
-        unsafe { qjs::JS_FreeValue(cx, inverted) };
+    // Make second-layer props reactive with effects
+    for prop_name in [
+        "stickyHeaderIndices",
+        "inverted",
+        "maintainVisibleContentPosition",
+        "viewport",
+        "viewabilityConfig",
+        "snapToInterval",
+        "snapToOffsets",
+        "snapToAlignment",
+        "pagingEnabled",
+        "disableIntervalMomentum",
+        "decelerationRate",
+        "refreshing",
+        "refreshIndicator",
+        "pullValue",
+    ] {
+        // Create effect that watches prop and sets it on node
+        let name_val = new_string(cx, prop_name);
+        let func = unsafe {
+            qjs::JS_NewCFunctionData(
+                cx,
+                Some(prop_effect_run),
+                0,
+                0,
+                3,
+                [node, props, name_val].as_mut_ptr(),
+            )
+        };
+        let r = reactive::render_effect(cx, func);
+        // SAFETY: the effect keeps its own value.
+        unsafe { qjs::JS_FreeValue(cx, r) };
     }
     
-    let sticky = get(cx, props, "stickyHeaderIndices");
-    if !unsafe { qjs::JS_IsUndefined(sticky) } {
-        set(cx, node, "stickyHeaderIndices", sticky).map_err(fail)?;
-    } else {
-        unsafe { qjs::JS_FreeValue(cx, sticky) };
-    }
-    
-    let maintain = get(cx, props, "maintainVisibleContentPosition");
-    if !unsafe { qjs::JS_IsUndefined(maintain) } {
-        set(cx, node, "maintainVisibleContentPosition", maintain).map_err(fail)?;
-    } else {
-        unsafe { qjs::JS_FreeValue(cx, maintain) };
-    }
-    
-    let viewport_prop = get(cx, props, "viewport");
-    if !unsafe { qjs::JS_IsUndefined(viewport_prop) } {
-        set(cx, node, "viewport", viewport_prop).map_err(fail)?;
-    } else {
-        unsafe { qjs::JS_FreeValue(cx, viewport_prop) };
-    }
-    
-    let viewability = get(cx, props, "viewabilityConfig");
-    if !unsafe { qjs::JS_IsUndefined(viewability) } {
-        set(cx, node, "viewabilityConfig", viewability).map_err(fail)?;
-    } else {
-        unsafe { qjs::JS_FreeValue(cx, viewability) };
-    }
     // Header and footer cells always; the empty one only without items.
     for (role, key) in [("header", "header"), ("footer", "footer")] {
         if has(cx, props, key) {
