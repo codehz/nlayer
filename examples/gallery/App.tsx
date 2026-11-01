@@ -751,32 +751,131 @@ function GestureCardPage(props: { nav: NavStackHandle }) {
   const translateX = createAnimatedValue(0);
   const translateY = createAnimatedValue(0);
   const panEndX = signal(0);
+  const panEndY = signal(0);
+  
+  const scale = createAnimatedValue(1);
+  const pinchEndScale = signal(1);
+  
+  const angle = createAnimatedValue(0);
+  const rotationEndAngle = signal(0);
   
   return (
-    <View testID="gesture-page" style={{ flex: 1, backgroundColor: "#fff", padding: 16 }}>
-      <Text style={{ fontSize: 20, fontWeight: "700", marginBottom: 16 }}>Gesture Card</Text>
-      <Text testID="gesture-back" onPress={() => props.nav.pop()} style={{ color: "#3b82f6", marginBottom: 16 }}>
-        ← Back
-      </Text>
-      <Text testID="pan-end" style={{ marginBottom: 16 }}>Translation X: {panEndX()}</Text>
-      
-      <View
-        testID="gesture-card"
-        pan={{ x: translateX, y: translateY }}
-        onPanEnd={(e) => panEndX.set(Math.round(e.translation.x))}
-        style={{
-          width: 200,
-          height: 200,
-          backgroundColor: "#3b82f6",
-          borderRadius: 12,
-          justifyContent: "center",
-          alignItems: "center",
-          transform: [{ translateX }, { translateY }],
-        }}
-      >
-        <Text style={{ color: "#fff", fontSize: 16, fontWeight: "600" }}>Drag Me</Text>
+    <Scroll testID="gesture-page" style={{ flex: 1, backgroundColor: "#fff" }}>
+      <View style={{ padding: 16 }}>
+        <Text style={{ fontSize: 20, fontWeight: "700", marginBottom: 16 }}>Gestures</Text>
+        <Text testID="gesture-back" onPress={() => props.nav.pop()} style={{ color: "#3b82f6", marginBottom: 16 }}>
+          ← Back
+        </Text>
+        
+        <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8 }}>Pan (drag)</Text>
+        <Text testID="pan-end" style={{ marginBottom: 8, fontSize: 12, color: "#64748b" }}>
+          Translation: ({panEndX()}, {panEndY()})
+        </Text>
+        <View
+          testID="gesture-card"
+          pan={{ x: translateX, y: translateY }}
+          onPanEnd={(e) => {
+            panEndX.set(Math.round(e.translation.x));
+            panEndY.set(Math.round(e.translation.y));
+            translateX.spring(0, { velocity: e.velocity.x });
+            translateY.spring(0, { velocity: e.velocity.y });
+          }}
+          style={{
+            width: 200,
+            height: 120,
+            backgroundColor: "#3b82f6",
+            borderRadius: 12,
+            justifyContent: "center",
+            alignItems: "center",
+            transform: [{ translateX }, { translateY }],
+            marginBottom: 24,
+          }}
+        >
+          <Text style={{ color: "#fff", fontSize: 14, fontWeight: "600" }}>Drag Me</Text>
+        </View>
+        
+        <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8 }}>Pinch (scale)</Text>
+        <Text testID="pinch-end" style={{ marginBottom: 8, fontSize: 12, color: "#64748b" }}>
+          Scale: {pinchEndScale().toFixed(2)}
+        </Text>
+        <View
+          testID="pinch-card"
+          pinch={{ scale }}
+          onPinchEnd={(e) => {
+            pinchEndScale.set(e.scale);
+            scale.spring(1, { velocity: e.velocity });
+          }}
+          style={{
+            width: 200,
+            height: 120,
+            backgroundColor: "#8b5cf6",
+            borderRadius: 12,
+            justifyContent: "center",
+            alignItems: "center",
+            transform: [{ scale }],
+            marginBottom: 24,
+          }}
+        >
+          <Text style={{ color: "#fff", fontSize: 14, fontWeight: "600" }}>Pinch Me</Text>
+          <Text style={{ color: "#e0e7ff", fontSize: 10 }}>Two fingers</Text>
+        </View>
+        
+        <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8 }}>Rotation (angle)</Text>
+        <Text testID="rotation-end" style={{ marginBottom: 8, fontSize: 12, color: "#64748b" }}>
+          Angle: {rotationEndAngle().toFixed(0)}°
+        </Text>
+        <View
+          testID="rotation-card"
+          rotation={{ angle }}
+          onRotationEnd={(e) => {
+            rotationEndAngle.set(e.angle);
+            angle.spring(0, { velocity: e.velocity });
+          }}
+          style={{
+            width: 200,
+            height: 120,
+            backgroundColor: "#ec4899",
+            borderRadius: 12,
+            justifyContent: "center",
+            alignItems: "center",
+            transform: [{ rotate: angle }],
+            marginBottom: 24,
+          }}
+        >
+          <Text style={{ color: "#fff", fontSize: 14, fontWeight: "600" }}>Rotate Me</Text>
+          <Text style={{ color: "#fce7f3", fontSize: 10 }}>Two fingers</Text>
+        </View>
+        
+        <Text style={{ fontSize: 16, fontWeight: "600", marginBottom: 8 }}>Horizontal pan in vertical scroll</Text>
+        <Text style={{ marginBottom: 8, fontSize: 12, color: "#64748b" }}>
+          Swipe left/right on the card (scroll negotiation)
+        </Text>
+        <View
+          testID="scroll-pan-card"
+          pan={{ x: translateX }}
+          onPanEnd={(e) => {
+            translateX.spring(0, { velocity: e.velocity.x });
+          }}
+          style={{
+            width: 200,
+            height: 80,
+            backgroundColor: "#10b981",
+            borderRadius: 12,
+            justifyContent: "center",
+            alignItems: "center",
+            transform: [{ translateX }],
+            marginBottom: 24,
+          }}
+        >
+          <Text style={{ color: "#fff", fontSize: 14, fontWeight: "600" }}>Swipe Horizontal</Text>
+        </View>
+        
+        <Text style={{ fontSize: 12, color: "#64748b", marginTop: 16 }}>
+          Note: Pinch and rotation require two fingers on real devices.{"\n"}
+          Headless tests only cover pan (drag). Manual testing required for pinch/rotation.
+        </Text>
       </View>
-    </View>
+    </Scroll>
   );
 }
 
