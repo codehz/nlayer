@@ -323,6 +323,15 @@ fn scroll(selector: String, distance: f32) -> Result<Value, String> {
             (scroll, x, y)
         };
         scroll.setContentOffset(CGPoint::new(x as CGFloat, y as CGFloat));
+        
+        // Reset pan gesture recognizer state to prevent it from blocking subsequent touches.
+        // After programmatic setContentOffset, the pan recognizer may still be in tracking/
+        // delay state, which can swallow tap gestures on child views. Toggling isEnabled
+        // forces it back to .possible state.
+        let pan = scroll.panGestureRecognizer();
+        pan.setEnabled(false);
+        pan.setEnabled(true);
+        
         // The offset is the end of a drag that glides. The delegate reports
         // the same callbacks a finger would. The mounter borrow is gone, so
         // the delegate's `try_borrow` succeeds.
