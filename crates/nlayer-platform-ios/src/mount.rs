@@ -104,6 +104,7 @@ struct Slot {
     /// Scroll view cooperation: a cooperating pan sees only scrolls between
     /// its view and the touch.
     pan_scroll: Option<PanScroll>,
+    refresh_indicator: Option<f32>,
     /// A dashed or dotted uniform border, above the children.
     dash: Option<Retained<CAShapeLayer>>,
     /// Clip shape when the four radii differ. Reused across paints.
@@ -219,8 +220,6 @@ define_class!(
             let velocity = gesture.velocityInView(Some(&superview));
             let id = view.tag() as NodeId;
             let state = gesture.state();
-            // Note: UIPanGestureRecognizer doesn't expose touches() in objc2_ui_kit
-            // Pan scroll cooperation is disabled for now
             with_mounter(move |m| {
                 m.handle_pan(id, state, translation, velocity);
             });
@@ -253,11 +252,28 @@ define_class!(
         #[unsafe(method(gestureRecognizer:shouldRecognizeSimultaneouslyWithGestureRecognizer:))]
         fn should_recognize_simultaneously(
             &self,
-            _gesture: &UIGestureRecognizer,
-            _other: &UIGestureRecognizer,
-        ) -> bool {
-            // Allow pan/pinch/rotation to run simultaneously
-            true
+            gesture: &UIGestureRecognizer,
+            other: &UIGestureRecognizer,
+        ) -> Bool {
+            if let Some(mounter) = self.ivars().mounter.borrow().upgrade()
+                && let Ok(mounter) = mounter.try_borrow()
+                && (mounter.pan_shares_scroll(gesture, other)
+                    || mounter.pan_shares_scroll(other, gesture))
+            {
+                return true.into();
+            }
+            let transform = |recognizer: &UIGestureRecognizer| {
+                recognizer.isKindOfClass(UIPanGestureRecognizer::class())
+                    || recognizer.isKindOfClass(UIPinchGestureRecognizer::class())
+                    || recognizer.isKindOfClass(UIRotationGestureRecognizer::class())
+            };
+            match (gesture.view(), other.view()) {
+                (Some(a), Some(b)) => {
+                    (std::ptr::eq::<UIView>(&*a, &*b) && transform(gesture) && transform(other))
+                        .into()
+                }
+                _ => false.into(),
+            }
         }
 
         #[unsafe(method(edited:))]
@@ -365,6 +381,16 @@ define_class!(
         fn scroll_view_did_scroll(&self, scroll: &UIScrollView) {
             let offset = scroll.contentOffset();
             let id = scroll.tag() as NodeId;
+
+            if let Some(shared) = self.ivars().mounter.borrow().upgrade()
+                && let Ok(mounter) = shared.try_borrow()
+            {
+                let clamped = mounter.pan_scroll_offset(scroll, offset);
+                if clamped != offset {
+                    scroll.setContentOffset(clamped);
+                    return;
+                }
+            }
 
             // Always update core's scroll position to keep tree() offset in sync
             if let Some(shared) = self.ivars().mounter.borrow().upgrade() {
@@ -517,6 +543,21 @@ define_class!(
     unsafe impl UIGestureRecognizerDelegate for Relay {
         #[unsafe(method(gestureRecognizerShouldBegin:))]
         fn should_begin(&self, recognizer: &UIGestureRecognizer) -> Bool {
+            if recognizer.isKindOfClass(UIPanGestureRecognizer::class()) {
+                let Some(view) = recognizer.view() else {
+                    return true.into();
+                };
+                let velocity = recognizer
+                    .downcast_ref::<UIPanGestureRecognizer>()
+                    .map_or(CGPoint::ZERO, |pan| pan.velocityInView(Some(&view)));
+                let Some(mounter) = self.ivars().mounter.borrow().upgrade() else {
+                    return true.into();
+                };
+                let Ok(mounter) = mounter.try_borrow() else {
+                    return true.into();
+                };
+                return mounter.pan_should_begin(view.tag() as NodeId, velocity).into();
+            }
             if !recognizer.isKindOfClass(UILongPressGestureRecognizer::class()) {
                 return true.into();
             }
@@ -539,6 +580,15 @@ define_class!(
             recognizer: &UIGestureRecognizer,
             touch: &UITouch,
         ) -> Bool {
+            if recognizer.isKindOfClass(UIPanGestureRecognizer::class()) {
+                if let (Some(view), Some(touched)) = (recognizer.view(), touch.view())
+                    && let Some(mounter) = self.ivars().mounter.borrow().upgrade()
+                    && let Ok(mut mounter) = mounter.try_borrow_mut()
+                {
+                    mounter.pan_touch(view.tag() as NodeId, &touched);
+                }
+                return true.into();
+            }
             if !recognizer.isKindOfClass(UITapGestureRecognizer::class()) {
                 return true.into();
             }
@@ -1419,7 +1469,7 @@ impl Mounter {
             MountItem::ScrollContent {
                 id,
                 size,
-                refresh_indicator: _,
+                refresh_indicator,
                 paging,
                 snap_interval,
                 snap_offsets,
@@ -1447,7 +1497,6 @@ impl Mounter {
                     self.content_sizes.push((id, height as CGFloat));
                 }
 
-                // Store snap configuration in the slot
                 if let Some(slot) = self.slot_mut(id) {
                     slot.snap_paging = paging;
                     slot.snap_interval = snap_interval;
@@ -1455,7 +1504,9 @@ impl Mounter {
                     slot.snap_alignment = snap_alignment;
                     slot.snap_one_step = disable_interval_momentum;
                     slot.snap_deceleration = deceleration;
+                    slot.refresh_indicator = refresh_indicator.map(|points| points.0);
                 }
+                self.sync_refresh(id);
 
                 // Now set scroll view properties
                 let Some(Native::Scroll(scroll)) = self.native(id) else {
@@ -2876,7 +2927,6 @@ impl Mounter {
         };
         slot.pan_scroll = None;
         let (pan_x, pan_y) = slot.pan_nodes;
-        // Only cooperate if we have a single-axis pan
         if !(pan_x.is_some() ^ pan_y.is_some()) {
             return;
         }
@@ -2886,18 +2936,38 @@ impl Mounter {
             if &*view == panel {
                 break;
             }
-            if let Some(scroll) = view.downcast_ref::<UIScrollView>() {
-                let offset = scroll.contentOffset();
-                if let Some(slot) = self.slot_mut(id) {
-                    slot.pan_scroll = Some(PanScroll {
-                        view: scroll.retain(),
-                        offset: offset.y as f32,
-                    });
-                }
+            if let Some(scroll) = view.downcast_ref::<UIScrollView>()
+                && scroll.isScrollEnabled()
+                && (scroll.contentSize().height > scroll.bounds().size.height
+                    || scroll.alwaysBounceVertical())
+            {
+                slot.pan_scroll = Some(PanScroll {
+                    view: scroll.retain(),
+                    offset: (scroll.contentOffset().y + scroll.adjustedContentInset().top).max(0.0)
+                        as f32,
+                });
                 break;
             }
             current = view.superview();
         }
+    }
+
+    fn pan_shares_scroll(&self, pan: &UIGestureRecognizer, other: &UIGestureRecognizer) -> bool {
+        let Some(view) = pan.view() else { return false };
+        let Some(slot) = self.slot(view.tag() as NodeId) else {
+            return false;
+        };
+        slot.pan_nodes.0.is_some() ^ slot.pan_nodes.1.is_some()
+            && slot
+                .pan_recognizer
+                .as_deref()
+                .is_some_and(|own| std::ptr::eq(own as &UIGestureRecognizer, pan))
+            && slot.pan_scroll.as_ref().is_some_and(|scroll| {
+                std::ptr::eq(
+                    &*scroll.view.panGestureRecognizer() as &UIGestureRecognizer,
+                    other,
+                )
+            })
     }
 
     fn pan_scroll_offset(&self, scroll: &UIScrollView, offset: CGPoint) -> CGPoint {
@@ -3075,11 +3145,11 @@ impl Mounter {
             return;
         };
 
-        let wants_refresh = slot.events.contains(EventKind::Refresh);
+        let wants_refresh =
+            slot.events.contains(EventKind::Refresh) && slot.refresh_indicator.is_none();
         let has_control = slot.refresh_control.is_some();
 
         if wants_refresh && !has_control {
-            // Capture needed values before creating control
             let mtm = self.mtm;
             let relay = self.relay.clone();
 
@@ -3092,20 +3162,22 @@ impl Mounter {
                 );
             }
 
-            // Now get scroll again and set control
             if let Some(slot) = self.slot_mut(id) {
                 if let Native::Scroll(scroll) = &slot.native {
                     scroll.setRefreshControl(Some(&control));
                     slot.refresh_control = Some(control);
                 }
             }
-        } else if !wants_refresh && has_control {
+        } else if !wants_refresh {
+            if has_control
+                && let Some(slot) = self.slot_mut(id)
+                && let Native::Scroll(scroll) = &slot.native
+            {
+                scroll.setRefreshControl(None);
+                slot.refresh_control = None;
+            }
             if let Some(slot) = self.slot_mut(id) {
-                if let Native::Scroll(scroll) = &slot.native {
-                    scroll.setRefreshControl(None);
-                    slot.refresh_control = None;
-                    slot.refreshing = false;
-                }
+                slot.refreshing = false;
             }
         }
     }
@@ -3295,6 +3367,7 @@ impl Slot {
             rotation_node: None,
             gesture_start: [0.0; 4],
             pan_scroll: None,
+            refresh_indicator: None,
             dash: None,
             mask: None,
             sides: [None, None, None, None],
@@ -4101,6 +4174,18 @@ pub(crate) mod tests {
                 an_image_records_its_source_and_fit as fn(),
             ),
             (
+                "mount::pan_handoff_respects_axis_binding",
+                pan_handoff_respects_axis_binding as fn(),
+            ),
+            (
+                "mount::pan_touch_tracks_only_single_axis_scrolls",
+                pan_touch_tracks_only_single_axis_scrolls as fn(),
+            ),
+            (
+                "mount::refresh_indicator_hides_native_refresh_control",
+                refresh_indicator_hides_native_refresh_control as fn(),
+            ),
+            (
                 "mount::an_image_decodes_and_clips_to_its_radius",
                 an_image_decodes_and_clips_to_its_radius as fn(),
             ),
@@ -4125,6 +4210,142 @@ pub(crate) mod tests {
                 the_modal_presents_over_the_root as fn(),
             ),
         ]
+    }
+
+    fn pan_handoff_respects_axis_binding() {
+        let mounter = mounter();
+        apply(
+            &mounter,
+            [
+                child(2, ViewKind::View, frame(0.0, 0.0, 100.0, 100.0)),
+                vec![MountItem::PanBinding {
+                    id: 2,
+                    x: Some(1),
+                    y: None,
+                }],
+            ]
+            .concat(),
+        );
+        let m = mounter.borrow();
+        assert!(m.pan_should_begin(2, CGPoint::new(80.0, 10.0)));
+        assert!(!m.pan_should_begin(2, CGPoint::new(10.0, 80.0)));
+        drop(m);
+
+        apply(
+            &mounter,
+            vec![MountItem::PanBinding {
+                id: 2,
+                x: Some(1),
+                y: Some(2),
+            }],
+        );
+        assert!(
+            mounter
+                .borrow()
+                .pan_should_begin(2, CGPoint::new(10.0, 80.0))
+        );
+        apply(
+            &mounter,
+            vec![MountItem::PanBinding {
+                id: 2,
+                x: None,
+                y: None,
+            }],
+        );
+        assert!(
+            mounter
+                .borrow()
+                .pan_should_begin(2, CGPoint::new(10.0, 80.0))
+        );
+    }
+
+    fn pan_touch_tracks_only_single_axis_scrolls() {
+        let mounter = mounter();
+        apply(
+            &mounter,
+            [
+                child(2, ViewKind::View, frame(0.0, 0.0, 200.0, 200.0)),
+                vec![MountItem::PanBinding {
+                    id: 2,
+                    x: None,
+                    y: Some(1),
+                }],
+            ]
+            .concat(),
+        );
+        let panel = mounter.borrow().view_of(2).expect("pan view");
+        let mtm = MainThreadMarker::new().expect("main thread");
+        let scroll = UIScrollView::new(mtm);
+        scroll.setFrame(CGRect::new(CGPoint::ZERO, CGSize::new(100.0, 100.0)));
+        scroll.setContentSize(CGSize::new(100.0, 300.0));
+        panel.addSubview(&scroll);
+        let touched = UIView::new(mtm);
+        touched.setFrame(CGRect::new(CGPoint::ZERO, CGSize::new(100.0, 300.0)));
+        scroll.addSubview(&touched);
+        mounter.borrow_mut().pan_touch(2, &touched);
+        {
+            let m = mounter.borrow();
+            let tracked = m
+                .slot(2)
+                .and_then(|slot| slot.pan_scroll.as_ref())
+                .expect("tracked scroll");
+            assert!(std::ptr::eq(&*tracked.view, &*scroll));
+        }
+
+        apply(
+            &mounter,
+            vec![MountItem::PanBinding {
+                id: 2,
+                x: Some(1),
+                y: Some(2),
+            }],
+        );
+        mounter.borrow_mut().pan_touch(2, &touched);
+        assert!(mounter.borrow().slot(2).unwrap().pan_scroll.is_none());
+    }
+
+    fn refresh_indicator_hides_native_refresh_control() {
+        let mounter = mounter();
+        let mut events = EventMask::default();
+        events.set(EventKind::Refresh, true);
+        apply(
+            &mounter,
+            [
+                child(2, ViewKind::Scroll, frame(0.0, 0.0, 320.0, 200.0)),
+                vec![MountItem::Events { id: 2, events }],
+            ]
+            .concat(),
+        );
+        apply(
+            &mounter,
+            vec![MountItem::ScrollContent {
+                id: 2,
+                size: size(px(320.0), px(600.0)),
+                refresh_indicator: Some(px(60.0)),
+                paging: false,
+                snap_interval: None,
+                snap_offsets: None,
+                snap_alignment: 0,
+                disable_interval_momentum: false,
+                deceleration: 0.998,
+            }],
+        );
+        assert!(mounter.borrow().slot(2).unwrap().refresh_control.is_none());
+        apply(
+            &mounter,
+            vec![MountItem::ScrollContent {
+                id: 2,
+                size: size(px(320.0), px(600.0)),
+                refresh_indicator: None,
+                paging: false,
+                snap_interval: None,
+                snap_offsets: None,
+                snap_alignment: 0,
+                disable_interval_momentum: false,
+                deceleration: 0.998,
+            }],
+        );
+        assert!(mounter.borrow().slot(2).unwrap().refresh_control.is_some());
     }
 
     fn a_batch_frames_paints_and_names_a_view() {
