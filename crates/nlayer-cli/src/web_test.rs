@@ -49,7 +49,7 @@ impl WebHost {
 
     fn browser(&mut self) -> Result<Arc<Mutex<Browser>>, String> {
         if self.browser.is_none() {
-            self.browser = Some(Arc::new(Mutex::new(Browser::launch()?)));
+            self.browser = Some(Arc::new(Mutex::new(Browser::start()?)));
         }
         Ok(Arc::clone(self.browser.as_ref().expect("browser")))
     }
