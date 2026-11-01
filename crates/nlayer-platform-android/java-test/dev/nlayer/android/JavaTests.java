@@ -399,6 +399,17 @@ public final class JavaTests extends Instrumentation {
 
   // --- ScrollBox -----------------------------------------------------------
 
+  /** SCROLL_CONTENT for a size only: no refresh, paging or snapping. */
+  private static void scrollContent(Batch b, int id, float w, float h) {
+    b.word(10).word(id).real(w).real(h).real(-1) // refresh indicator: none
+        .word(0) // paging
+        .real(-1) // snap interval: none
+        .word(-1) // snap offsets: none
+        .word(0) // snap alignment: start
+        .word(0) // disable interval momentum
+        .real(0.998f); // deceleration
+  }
+
   void testScrollAxisAndOffsets() {
     HostView host = host();
     float d = host.density;
@@ -406,7 +417,7 @@ public final class JavaTests extends Instrumentation {
     b.word(0).word(3).word(3);
     b.word(1).word(1).word(3).word(-1);
     b.word(4).word(3).real(0).real(0).real(200).real(300);
-    b.word(10).word(3).real(600).real(900);
+    scrollContent(b, 3, 600, 900);
     main(
         () -> {
           host.mounter.apply(b.bytes(), b.objects());
@@ -465,7 +476,7 @@ public final class JavaTests extends Instrumentation {
     b.word(0).word(3).word(3);
     b.word(1).word(1).word(3).word(-1);
     b.word(4).word(3).real(0).real(0).real(200).real(300);
-    b.word(10).word(3).real(150).real(200);
+    scrollContent(b, 3, 150, 200);
     main(
         () -> {
           host.mounter.apply(b.bytes(), b.objects());
