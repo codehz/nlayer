@@ -95,19 +95,23 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
   function NavPage(props) {
     const node = rt.element("screen");
     pages.add(node);
-    rt.spread(
-      node,
-      except(props, [
-        "children",
-        "header",
-        "headerLeft",
-        "headerRight",
-        "headerTitle",
-        "onDismiss",
-        "onBackPress",
-        "onInsets",
-      ]),
-    );
+    // popOnBack must be reactive too (separate from spread): the gallery
+    // computes it from detailInterceptBack signal.
+    const restProps = except(props, [
+      "children",
+      "header",
+      "headerLeft",
+      "headerRight",
+      "headerTitle",
+      "onDismiss",
+      "onBackPress",
+      "onInsets",
+      "popOnBack",
+    ]);
+    rt.spread(node, restProps);
+    if ("popOnBack" in props) {
+      rt.bindProp(node, "popOnBack", () => props.popOnBack);
+    }
     const [insets, onInsets] = nativeInsets(true);
     rt.prop(node, "onInsets", onInsets);
     // `prop`, not `listen`: the engine only emits Dismiss to a screen that
@@ -116,9 +120,9 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
       popped.get(node)?.();
       props.onDismiss?.();
     });
-    if (props.onBackPress != null) {
-      rt.prop(node, "onBackPress", () => props.onBackPress?.());
-    }
+    // onBackPress must be reactive: the gallery toggles popOnBack at runtime,
+    // and the engine's prevent_back needs to update.
+    rt.bindProp(node, "onBackPress", () => props.onBackPress ?? null);
     const parts = [
       ["left", "headerLeft"],
       ["right", "headerRight"],
@@ -156,18 +160,24 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
     if (off) cleanup(off);
     const rows = rt.each(entries, (read, index) => {
       const entry = untracked(read);
-      const rendered = untracked(() => props.children(entry.route, index));
-      const screenFor = (rendered) => {
-        const page = pages.has(rendered) ? rendered : NavPage({ children: rendered });
-        popped.set(page, () => entries.set(untracked(entries).filter((value) => value !== entry)));
-        return page;
-      };
-      return typeof rendered === "function"
-        ? computed(() => {
-            const value = rendered();
-            return untracked(() => screenFor(value));
-          })
-        : screenFor(rendered);
+      // The children callback must be reactive: the gallery computes popOnBack
+      // from signals, and NavPage props need to update when those change.
+      return computed(() => {
+        const rendered = props.children(entry.route, index);
+        return untracked(() => {
+          const screenFor = (rendered) => {
+            const page = pages.has(rendered) ? rendered : NavPage({ children: rendered });
+            popped.set(page, () => entries.set(untracked(entries).filter((value) => value !== entry)));
+            return page;
+          };
+          return typeof rendered === "function"
+            ? computed(() => {
+                const value = rendered();
+                return untracked(() => screenFor(value));
+              })
+            : screenFor(rendered);
+        });
+      });
     });
     rt.insert(node, rows);
     return node;

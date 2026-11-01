@@ -127,6 +127,24 @@ mount(App);
     assert!(app.wait_for("Inverted: off", Duration::from_secs(1)));
     assert!(app.wait_for("Row 0", Duration::from_millis(500)));
     
+    // Get baseline positions before toggle (normal order: item-0 above item-2)
+    let screen = app.screen();
+    let item0_y_before = screen.views()
+        .find(|(_, v)| v.test_id.as_deref() == Some("item-0"))
+        .and_then(|(_, v)| v.parent)
+        .and_then(|parent_id| screen.frame(parent_id))
+        .map(|f| f.origin.y.0)
+        .expect("item-0 before toggle");
+    let item2_y_before = screen.views()
+        .find(|(_, v)| v.test_id.as_deref() == Some("item-2"))
+        .and_then(|(_, v)| v.parent)
+        .and_then(|parent_id| screen.frame(parent_id))
+        .map(|f| f.origin.y.0)
+        .expect("item-2 before toggle");
+    
+    assert!(item0_y_before < item2_y_before, 
+        "Before inverted: item-0 should be above item-2");
+    
     // Toggle inverted ON via signal
     assert!(app.press_text("Inverted: off"));
     std::thread::sleep(Duration::from_millis(200));
@@ -134,8 +152,24 @@ mount(App);
     
     assert!(app.wait_for("Inverted: on", Duration::from_millis(500)));
     
-    // The prop was set reactively (no crash, items still visible)
-    assert!(app.wait_for("Row 0", Duration::from_millis(500)));
+    // After toggle: inverted order (item-0 below item-2)
+    let screen = app.screen();
+    let item0_y_after = screen.views()
+        .find(|(_, v)| v.test_id.as_deref() == Some("item-0"))
+        .and_then(|(_, v)| v.parent)
+        .and_then(|parent_id| screen.frame(parent_id))
+        .map(|f| f.origin.y.0)
+        .expect("item-0 after toggle");
+    let item2_y_after = screen.views()
+        .find(|(_, v)| v.test_id.as_deref() == Some("item-2"))
+        .and_then(|(_, v)| v.parent)
+        .and_then(|parent_id| screen.frame(parent_id))
+        .map(|f| f.origin.y.0)
+        .expect("item-2 after toggle");
+    
+    assert!(item0_y_after > item2_y_after, 
+        "After inverted toggle: item-0 ({}) should be below item-2 ({})", 
+        item0_y_after, item2_y_after);
     
     app.stop();
 }

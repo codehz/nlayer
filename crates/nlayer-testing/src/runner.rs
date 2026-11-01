@@ -894,6 +894,13 @@ impl AppHost for HeadlessHost {
             nudges += 1;
         }
         settle(&mut app, nudges);
+        // Always wait for at least one frame to ensure initial mount completes,
+        // even if nudges=0 (no insets). The settle() above waits for inset-triggered
+        // frames, but the mount frame may arrive later or interleave.
+        if nudges == 0 {
+            app.next_frame(Duration::from_millis(100));
+        }
+        app.refresh();
         Ok(Box::new(HeadlessApp { app: Some(app) }))
     }
 }
