@@ -400,6 +400,10 @@ impl HostedApp for WebApp {
             self.mouse("mouseMoved", curr_x, curr_y, 1)?;
         }
         self.mouse("mouseReleased", end_x, end_y, 0)?;
+        thread::sleep(Duration::from_millis(100));
+        // Pump to ensure events and reactive updates process
+        let _ = self.eval("globalThis.nlayer_pump?.()");
+        thread::sleep(Duration::from_millis(50));
         Ok(())
     }
 

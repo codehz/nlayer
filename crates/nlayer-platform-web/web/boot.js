@@ -274,11 +274,17 @@ export async function startPage(root, options = {}) {
       },
       pan(id, phase, tx, ty, vx, vy, value_x, value_y) {
         if (!wasm) return;
-        enter(() => wasm.nlayer_pan(id, phase, tx, ty, vx, vy, value_x, value_y));
+        enter(() => {
+          wasm.nlayer_pan(id, phase, tx, ty, vx, vy, value_x, value_y);
+          return wasm.nlayer_pump();
+        });
       },
-      transformGesture(id, rotation, phase, amount, value) {
+      transformGesture(id, rotation, phase, amount, velocity, value) {
         if (!wasm) return;
-        enter(() => wasm.nlayer_transform_gesture(id, rotation, phase, amount, value));
+        enter(() => {
+          wasm.nlayer_transform_gesture(id, rotation, phase, amount, velocity, value);
+          return wasm.nlayer_pump();
+        });
       },
       snap(offset, velocity, viewport, content, paging, snapInterval, snapOffsets, snapAlignment, disableIntervalMomentum, deceleration) {
         if (!wasm) return -1.0;

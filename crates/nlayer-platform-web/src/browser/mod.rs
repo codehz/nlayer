@@ -180,6 +180,18 @@ impl Bridge for Runtime {
                     Ok(object) => object,
                     Err(_) => return,
                 };
+                let translation_obj = match Value::object() {
+                    Ok(obj) => obj,
+                    Err(_) => return,
+                };
+                let velocity_obj = match Value::object() {
+                    Ok(obj) => obj,
+                    Err(_) => return,
+                };
+                let values_obj = match Value::object() {
+                    Ok(obj) => obj,
+                    Err(_) => return,
+                };
                 let (Ok(tx), Ok(ty), Ok(vx), Ok(vy), Ok(val_x), Ok(val_y)) = (
                     Value::number(f64::from(translation.0)),
                     Value::number(f64::from(translation.1)),
@@ -190,12 +202,18 @@ impl Bridge for Runtime {
                 ) else {
                     return;
                 };
-                if object.set("translationX", tx).is_err()
-                    || object.set("translationY", ty).is_err()
-                    || object.set("velocityX", vx).is_err()
-                    || object.set("velocityY", vy).is_err()
-                    || object.set("valueX", val_x).is_err()
-                    || object.set("valueY", val_y).is_err()
+                if translation_obj.set("x", tx).is_err() || translation_obj.set("y", ty).is_err() {
+                    return;
+                }
+                if velocity_obj.set("x", vx).is_err() || velocity_obj.set("y", vy).is_err() {
+                    return;
+                }
+                if values_obj.set("x", val_x).is_err() || values_obj.set("y", val_y).is_err() {
+                    return;
+                }
+                if object.set("translation", translation_obj).is_err()
+                    || object.set("velocity", velocity_obj).is_err()
+                    || object.set("values", values_obj).is_err()
                 {
                     return;
                 }

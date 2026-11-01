@@ -146,6 +146,30 @@ export class Player {
     root.addEventListener("pointercancel", (event) => this.pointerCancel(event), true);
     root.addEventListener("pointermove", (event) => this.pointerMove(event), true);
     root.addEventListener("pointerup", (event) => this.pointerUp(event), true);
+    // CDP's Input.dispatchMouseEvent doesn't synthesize pointer events in headless mode,
+    // so we listen to mouse events and call gesture handlers directly.
+    root.addEventListener("mousedown", (event) => {
+      // Only handle if this is a real mouse event without pointer properties
+      if (event.pointerId === undefined) {
+        event.pointerId = 1;
+        event.pointerType = 'mouse';
+        this.pointerDown(event);
+      }
+    }, true);
+    root.addEventListener("mousemove", (event) => {
+      if (event.pointerId === undefined && event.buttons > 0) {
+        event.pointerId = 1;
+        event.pointerType = 'mouse';
+        this.pointerMove(event);
+      }
+    }, true);
+    root.addEventListener("mouseup", (event) => {
+      if (event.pointerId === undefined) {
+        event.pointerId = 1;
+        event.pointerType = 'mouse';
+        this.pointerUp(event);
+      }
+    }, true);
     root.addEventListener("touchend", this.onTouchEnd);
     root.addEventListener("touchcancel", this.onTouchEnd);
     const view = this.doc.defaultView;
