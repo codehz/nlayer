@@ -141,9 +141,26 @@ struct Request {
 }
 
 fn step(line: &str) -> String {
-    match dispatch(line) {
+    let result = match dispatch(line) {
         Ok(value) => ok(value),
         Err(error) => fail(&error),
+    };
+    // Drain pending work on main queue to ensure batches are applied
+    drain_main_queue();
+    result
+}
+
+/// Drain the main dispatch queue to ensure all pending batch applications and
+/// layout passes complete before returning. This ensures test operations see
+/// a consistent view hierarchy state.
+fn drain_main_queue() {
+    // Drain pending work on main queue by running multiple iterations
+    // This ensures async batch applications from host.rs:220 complete
+    for _ in 0..10 {
+        on_ui(|| {
+            // Just being on the main thread allows pending async blocks to execute
+        }).ok();
+        thread::sleep(Duration::from_millis(20));
     }
 }
 
@@ -305,6 +322,8 @@ fn scroll(selector: String, distance: f32) -> Result<Value, String> {
         // the delegate's `try_borrow` succeeds.
         if let Some(delegate) = scroll.delegate() {
             let scroll = &*scroll;
+            // First notify that scrolling occurred - this updates engine state
+            let _: () = unsafe { msg_send![&*delegate, scrollViewDidScroll: scroll] };
             let _: () = unsafe { msg_send![&*delegate, scrollViewWillBeginDragging: scroll] };
             let _: () = unsafe {
                 msg_send![&*delegate, scrollViewDidEndDragging: scroll, willDecelerate: true]
