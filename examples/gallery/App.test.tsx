@@ -442,14 +442,31 @@ test("pan velocity feeds spring animation", () => {
   app.press("open-gesture");
   app.waitFor("gesture-card");
   
-  // Drag gesture triggers onPanEnd
+  // Drag gesture triggers onPanEnd with translation
   app.drag("gesture-card", 80, 0);
   
-  // Check that onPanEnd fired (translation text should exist)
+  // Check that onPanEnd recorded translation
   let texts = app.texts();
   const translationText = texts.find(t => t.startsWith("Translation:"));
   if (!translationText) {
     expect("Translation: text").toBe("should exist after drag");
+  }
+  
+  // Parse translation value - expect x ≈ 80
+  const match = translationText?.match(/Translation: \((-?\d+), (-?\d+)\)/);
+  if (match) {
+    const x = parseInt(match[1]);
+    const y = parseInt(match[2]);
+    
+    // Assert translation.x is approximately 80 (within ±2px)
+    if (Math.abs(x - 80) > 2) {
+      expect(`translation.x=${x}`).toBe("should be ≈80");
+    }
+    
+    // Y should be 0 since we dragged horizontally
+    if (Math.abs(y) > 2) {
+      expect(`translation.y=${y}`).toBe("should be ≈0");
+    }
   }
 });
 
@@ -518,9 +535,15 @@ test("list with snapToInterval and stickyHeaderIndices", () => {
   app.press("toggle-snap");
   app.press("toggle-sticky");
   
-  // Verify sticky toggle works
+  // Verify sticky toggle updates the UI text
   texts = app.texts();
   expect(texts).toContain("stickyHeaderIndices: [0, 10, 20]");
+  
+  // NOTE: Sticky headers set via reactive prop update (toggle) don't take effect
+  // in subsequent scroll operations. This is a known engine bug where dirty::LIST
+  // mark after prop update doesn't trigger sticky layout recalculation during scroll.
+  // Sticky headers work correctly when set at mount time (verified in core tests).
+  // Gallery test only verifies the toggle UI, not the actual sticky behavior.
 });
 
 test("list with inverted and onViewableItemsChange", () => {
