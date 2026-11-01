@@ -335,7 +335,7 @@ impl HostedApp for WebApp {
         
         // Wait for core to process scroll events and commit frame updates.
         // Poll tree() to detect when rendering stabilizes (for viewport=parent lists).
-        let settle_deadline = Instant::now() + Duration::from_millis(500);
+        let settle_deadline = Instant::now() + Duration::from_millis(1000);
         let initial_tree = self.tree()?;
         loop {
             thread::sleep(Duration::from_millis(16));
