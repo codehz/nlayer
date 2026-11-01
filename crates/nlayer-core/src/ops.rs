@@ -165,6 +165,7 @@ impl EventKind {
             "onPinchStart" => Some(EventKind::PinchStart),
             "onPinchEnd" => Some(EventKind::PinchEnd),
             "onRotationStart" => Some(EventKind::RotationStart),
+            "onRotationEnd" => Some(EventKind::RotationEnd),
             "onRefresh" => Some(EventKind::Refresh),
             "onViewableItemsChange" => Some(EventKind::ViewableItemsChange),
             _ => None,
