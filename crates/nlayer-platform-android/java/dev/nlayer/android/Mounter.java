@@ -790,7 +790,7 @@ final class Mounter {
       s.setSnapBehavior(paging, snapInterval, snapOffsets, snapAlignment, 
                         disableIntervalMomentum, deceleration);
     }
-
+  }
   private void scrollBy(ByteBuffer b) {
     View v = views.get(b.getInt());
     float x = b.getFloat(), y = b.getFloat();
