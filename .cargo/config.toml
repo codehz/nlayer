@@ -10,3 +10,12 @@ AR_wasm32_unknown_unknown = "llvm-ar"
 # 8 MiB: a QuickJS wasm build trips its own stack check on the 1 MiB default.
 # The browser host keeps the same stack; deep layout runs on it too.
 rustflags = ["-C", "link-arg=-zstack-size=8388608", "--cfg", 'getrandom_backend="custom"']
+
+[target.aarch64-linux-android]
+linker = "aarch64-linux-android34-clang"
+
+[target.armv7-linux-androideabi]
+linker = "armv7a-linux-androideabi34-clang"
+
+[target.x86_64-linux-android]
+linker = "x86_64-linux-android34-clang"
