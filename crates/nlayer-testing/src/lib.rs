@@ -867,6 +867,11 @@ impl Headless {
             now: 0.0,
         };
         app.refresh();
+        // Initialize root view frame to viewport size for hit testing
+        if let Some(root) = app.screen.views.get_mut(&nlayer_core::ROOT_ID) {
+            use nlayer_core::geometry::{Bounds, Point, Points};
+            root.frame = Bounds::new(Point::new(Points(0.0), Points(0.0)), viewport);
+        }
         Ok(app)
     }
 
