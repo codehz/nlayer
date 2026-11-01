@@ -248,7 +248,9 @@ impl Encoder {
                 if let Some(offsets) = snap_offsets {
                     out.s.push('[');
                     for (i, off) in offsets.iter().enumerate() {
-                        if i > 0 { out.s.push(','); }
+                        if i > 0 {
+                            out.s.push(',');
+                        }
                         write!(out.s, "{}", off).unwrap();
                     }
                     out.s.push(']');
@@ -464,7 +466,8 @@ impl Encoder {
                 out.s.push_str("],\"inverted\":");
                 out.s.push_str(if *inverted { "true" } else { "false" });
                 out.s.push_str(",\"viewportParent\":");
-                out.s.push_str(if *viewport_parent { "true" } else { "false" });
+                out.s
+                    .push_str(if *viewport_parent { "true" } else { "false" });
                 if let Some(v) = viewability {
                     out.s.push_str(",\"viewability\":{");
                     if let Some(coverage) = v.view_area_coverage_threshold {

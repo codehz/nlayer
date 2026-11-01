@@ -664,6 +664,9 @@ impl Screen {
             MountItem::ListContent { .. } => {
                 // List content not tracked in testing
             }
+            MountItem::Refreshing { .. } => {
+                // Pull-to-refresh state not tracked in testing
+            }
         }
     }
 
