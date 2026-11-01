@@ -539,11 +539,10 @@ test("list with snapToInterval and stickyHeaderIndices", () => {
   texts = app.texts();
   expect(texts).toContain("stickyHeaderIndices: [0, 10, 20]");
   
-  // NOTE: Sticky headers set via reactive prop update (toggle) don't take effect
-  // in subsequent scroll operations. This is a known engine bug where dirty::LIST
-  // mark after prop update doesn't trigger sticky layout recalculation during scroll.
-  // Sticky headers work correctly when set at mount time (verified in core tests).
-  // Gallery test only verifies the toggle UI, not the actual sticky behavior.
+  // Note: Sticky frame positioning after reactive toggle doesn't work because
+  // the prop update isn't sent from runtime to engine (Prop::StickyHeaderIndices
+  // handler never called). This is a runtime/reactive-system issue, not core.
+  // Core tests verify sticky works correctly when set at mount time.
 });
 
 test("list with inverted and onViewableItemsChange", () => {
