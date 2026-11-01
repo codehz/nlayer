@@ -102,6 +102,12 @@ export class GestureGate {
       if (this.twoFinger.pinchId) {
         const scale = dist / Math.max(1, this.twoFinger.dist);
         const currentValue = this.twoFinger.pinchStart * scale;
+        const dt = Math.max(0.001, (now - this.twoFinger.startTime) / 1000);
+        const velocity = (currentValue - this.twoFinger.pinchStart) / dt;
+        
+        // Save last values for end()
+        this.twoFinger.lastPinchValue = currentValue;
+        this.twoFinger.lastPinchVelocity = velocity;
         
         if (this.twoFinger.animation) {
           const node = this.twoFinger.pinchNode ?? this.twoFinger.pinchId;
@@ -121,6 +127,12 @@ export class GestureGate {
       if (this.twoFinger.rotationId) {
         const rotation = ((angle - this.twoFinger.angle) * 180) / Math.PI;
         const currentValue = this.twoFinger.rotationStart + rotation;
+        const dt = Math.max(0.001, (now - this.twoFinger.startTime) / 1000);
+        const velocity = (currentValue - this.twoFinger.rotationStart) / dt;
+        
+        // Save last values for end()
+        this.twoFinger.lastRotationValue = currentValue;
+        this.twoFinger.lastRotationVelocity = velocity;
         
         if (this.twoFinger.animation) {
           const node = this.twoFinger.rotationNode ?? this.twoFinger.rotationId;
@@ -187,6 +199,12 @@ export class GestureGate {
           if (panNodes[1] != null) p.animation.stop?.(panNodes[1]);
         }
         
+        // Save initial values for end() in case no more moves occur
+        p.lastTx = tx;
+        p.lastTy = ty;
+        p.lastVx = 0;
+        p.lastVy = 0;
+        
         return {
           consumed: true,
           phase: 0,
@@ -204,6 +222,13 @@ export class GestureGate {
       const dt = Math.max(1, now - p.t0);
       const vx = tx / dt;
       const vy = ty / dt;
+      
+      // Save last values for end() to use
+      p.lastTx = tx;
+      p.lastTy = ty;
+      p.lastVx = vx;
+      p.lastVy = vy;
+      
       
       // Update animation values during pan
       if (p.animation && p.panStartValues && p.pan) {
@@ -249,15 +274,18 @@ export class GestureGate {
         const angle = Math.atan2(dy, dx);
 
         if (this.twoFinger.pinchId) {
-          const scale = dist / Math.max(1, this.twoFinger.dist);
-          const currentValue = this.twoFinger.pinchStart * scale;
-          const dt = Math.max(0.001, (now - this.twoFinger.startTime) / 1000);
-          const velocity = (currentValue - this.twoFinger.pinchStart) / dt;
+          // Use last saved values from move(), or recalculate if no move occurred
+          const currentValue = this.twoFinger.lastPinchValue !== undefined 
+            ? this.twoFinger.lastPinchValue 
+            : this.twoFinger.pinchStart * (dist / Math.max(1, this.twoFinger.dist));
+          const velocity = this.twoFinger.lastPinchVelocity !== undefined 
+            ? this.twoFinger.lastPinchVelocity 
+            : 0;
           results.push({
             transform: true,
             rotation: false,
             phase: 2,
-            amount: scale,
+            amount: currentValue / this.twoFinger.pinchStart,
             value: currentValue,
             velocity,
             targetId: this.twoFinger.pinchId,
@@ -265,15 +293,18 @@ export class GestureGate {
         }
 
         if (this.twoFinger.rotationId) {
-          const rotation = ((angle - this.twoFinger.angle) * 180) / Math.PI;
-          const currentValue = this.twoFinger.rotationStart + rotation;
-          const dt = Math.max(0.001, (now - this.twoFinger.startTime) / 1000);
-          const velocity = (currentValue - this.twoFinger.rotationStart) / dt;
+          // Use last saved values from move(), or recalculate if no move occurred
+          const currentValue = this.twoFinger.lastRotationValue !== undefined
+            ? this.twoFinger.lastRotationValue
+            : this.twoFinger.rotationStart + ((angle - this.twoFinger.angle) * 180) / Math.PI;
+          const velocity = this.twoFinger.lastRotationVelocity !== undefined
+            ? this.twoFinger.lastRotationVelocity
+            : 0;
           results.push({
             transform: true,
             rotation: true,
             phase: 2,
-            amount: rotation,
+            amount: currentValue - this.twoFinger.rotationStart,
             value: currentValue,
             velocity,
             targetId: this.twoFinger.rotationId,
@@ -290,11 +321,12 @@ export class GestureGate {
 
     // Pan end
     if (p.mode === "pan") {
-      const tx = p.x - p.startX;
-      const ty = p.y - p.startY;
-      const dt = Math.max(1, now - p.t0);
-      const vx = tx / dt;
-      const vy = ty / dt;
+      // Use last saved values from move(), or calculate if no move occurred
+      const tx = p.lastTx !== undefined ? p.lastTx : p.x - p.startX;
+      const ty = p.lastTy !== undefined ? p.lastTy : p.y - p.startY;
+      const vx = p.lastVx !== undefined ? p.lastVx : 0;
+      const vy = p.lastVy !== undefined ? p.lastVy : 0;
+      
       
       // Get current animation values for end event
       let valueX = 0;

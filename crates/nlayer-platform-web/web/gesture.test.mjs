@@ -555,3 +555,28 @@ test("GestureGate: single-axis horizontal pan, vertical drag does not consume", 
   assert.equal(result.consumed, false);
   assert.equal(result.preventDefault, false);
 });
+
+test("GestureGate: pan end returns correct translation after move", () => {
+  const gate = new GestureGate();
+  const now = performance.now();
+  
+  gate.begin(1, {
+    x: 100,
+    y: 100,
+    pan: { id: 2, panNodes: [10, 11] },
+    scroll: null,
+    pinch: null,
+    rotation: null,
+  });
+  
+  // Move 80px horizontally (triggers pan mode at ~6px, then continues)
+  gate.move(1, 180, 100, now + 10);
+  
+  // End
+  const endResult = gate.end(1, now + 20);
+  
+  assert.equal(endResult.phase, 2);
+  assert.equal(endResult.tx, 80);
+  assert.equal(endResult.ty, 0);
+  assert.equal(endResult.panId, 2);
+});
