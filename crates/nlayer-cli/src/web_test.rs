@@ -873,6 +873,198 @@ mod tests {
         static LOCK: Mutex<()> = Mutex::new(());
         LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+    struct StaticServer {
+        address: std::net::SocketAddr,
+        stopped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        thread: Option<thread::JoinHandle<()>>,
+    }
+
+    impl StaticServer {
+        fn start(root: PathBuf) -> std::io::Result<Self> {
+            use std::sync::atomic::{AtomicBool, Ordering};
+
+            let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
+            listener.set_nonblocking(true)?;
+            let address = listener.local_addr()?;
+            let stopped = Arc::new(AtomicBool::new(false));
+            let thread_stopped = Arc::clone(&stopped);
+            let thread = thread::spawn(move || {
+                while !thread_stopped.load(Ordering::Relaxed) {
+                    match listener.accept() {
+                        Ok((mut stream, _)) => {
+                            let root = root.clone();
+                            thread::spawn(move || serve_static_request(&mut stream, &root));
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+            Ok(Self {
+                address,
+                stopped,
+                thread: Some(thread),
+            })
+        }
+
+        fn url(&self) -> String {
+            format!("http://{}/", self.address)
+        }
+    }
+
+    impl Drop for StaticServer {
+        fn drop(&mut self) {
+            self.stopped
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            if let Some(thread) = self.thread.take() {
+                let _ = thread.join();
+            }
+        }
+    }
+
+    fn serve_static_request(stream: &mut std::net::TcpStream, root: &Path) {
+        let _ = stream.set_nonblocking(false);
+        let mut request = [0; 8192];
+        let Ok(count) = stream.read(&mut request) else {
+            return;
+        };
+        let request = String::from_utf8_lossy(&request[..count]);
+        let mut fields = request
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .split_whitespace();
+        let method = fields.next().unwrap_or_default();
+        let url_path = fields
+            .next()
+            .unwrap_or_default()
+            .split('?')
+            .next()
+            .unwrap_or_default();
+        let path = url_path
+            .split('/')
+            .filter(|component| !component.is_empty())
+            .map(|component| {
+                if component == ".." {
+                    None
+                } else {
+                    Some(component)
+                }
+            })
+            .collect::<Option<Vec<_>>>();
+        let file = path.and_then(|components| {
+            let mut path = root.to_path_buf();
+            for component in components {
+                path.push(component);
+            }
+            if url_path.ends_with('/') || path.is_dir() {
+                path.push("index.html");
+            }
+            path.strip_prefix(root).ok()?;
+            let body = fs::read(&path).ok()?;
+            Some((path, body))
+        });
+        let (status, content_type, body) = if method == "GET" {
+            match file {
+                Some((path, body)) => ("200 OK", static_content_type(&path), body),
+                None => (
+                    "404 Not Found",
+                    "text/plain; charset=utf-8",
+                    b"Not Found".to_vec(),
+                ),
+            }
+        } else {
+            (
+                "405 Method Not Allowed",
+                "text/plain; charset=utf-8",
+                b"Method Not Allowed".to_vec(),
+            )
+        };
+        let headers = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        let _ = stream.write_all(headers.as_bytes());
+        let _ = stream.write_all(&body);
+    }
+
+    fn static_content_type(path: &Path) -> &'static str {
+        match path.extension().and_then(|extension| extension.to_str()) {
+            Some("html") => "text/html; charset=utf-8",
+            Some("js") => "text/javascript; charset=utf-8",
+            Some("css") => "text/css; charset=utf-8",
+            Some("wasm") => "application/wasm",
+            Some("png") => "image/png",
+            Some("json") => "application/json",
+            Some("map") => "application/json",
+            _ => "application/octet-stream",
+        }
+    }
+
+    struct TestDir(PathBuf);
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    struct TestPage {
+        browser: Browser,
+        page: Page,
+    }
+
+    impl Drop for TestPage {
+        fn drop(&mut self) {
+            self.browser.close_page(&self.page);
+        }
+    }
+
+    #[test]
+    fn the_packaged_web_app_loads() {
+        let _guard = exclusive();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let dir = TestDir(std::env::temp_dir().join(format!(
+            "nlayer-packaged-web-{}-{stamp}",
+            std::process::id()
+        )));
+        fs::create_dir_all(&dir.0).expect("the package directory is created");
+        let output = dir.0.join("site");
+        let gallery = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/gallery");
+        crate::package_web(&gallery, &output).expect("the gallery is packaged");
+        let server = StaticServer::start(output).expect("the packaged site is served");
+        let mut browser = Browser::start().expect("the headless browser starts");
+        let page = browser
+            .open_page(&server.url(), 390.0, 844.0)
+            .expect("the browser opens the packaged app");
+        let mut page = TestPage { browser, page };
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let text = loop {
+            let text = page
+                .browser
+                .eval(&page.page.session_id, "document.body.innerText")
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .unwrap_or_default();
+            if text.contains("Gallery") || Instant::now() >= deadline {
+                break text;
+            }
+            thread::sleep(Duration::from_millis(50));
+        };
+        assert!(
+            text.contains("Gallery"),
+            "the packaged app did not load: {text:?}"
+        );
+        assert!(
+            text.contains("Detail"),
+            "the navigation link is missing: {text:?}"
+        );
+    }
 
     const APP: &str = r#"
 import { mount, signal } from "@nlayer/runtime";

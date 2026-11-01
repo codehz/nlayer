@@ -282,6 +282,55 @@ fn aapt2() -> PathBuf {
     builds.pop().expect("Android build-tools").join("aapt2")
 }
 
+/// The SDK's `adb`.
+fn adb() -> PathBuf {
+    let root = ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
+        .iter()
+        .find_map(std::env::var_os)
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Android/sdk"))
+        })
+        .expect("the Android SDK (ANDROID_HOME)");
+    let tool = root.join("platform-tools/adb");
+    if tool.is_file() {
+        tool
+    } else {
+        PathBuf::from("adb")
+    }
+}
+
+fn android_serial(adb: &Path) -> String {
+    let output = Command::new(adb)
+        .arg("devices")
+        .output()
+        .expect("adb devices");
+    let text = String::from_utf8_lossy(&output.stdout);
+    text.lines()
+        .skip(1)
+        .find_map(|line| {
+            let mut parts = line.split_whitespace();
+            let serial = parts.next()?;
+            (parts.next() == Some("device")).then(|| serial.to_owned())
+        })
+        .expect("a booted Android emulator or device")
+}
+
+fn adb_output(adb: &Path, serial: &str, args: &[&str]) -> String {
+    let output = Command::new(adb)
+        .arg("-s")
+        .arg(serial)
+        .args(args)
+        .output()
+        .unwrap_or_else(|error| panic!("adb {args:?}: {error}"));
+    assert!(
+        output.status.success(),
+        "adb {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
 #[test]
 fn packages_build_for_each_target() {
     let _guard = lock();
@@ -340,6 +389,51 @@ fn packages_build_for_each_target() {
     assert!(
         !bundle.join("_CodeSignature").exists(),
         "the .app is unsigned"
+    );
+
+    let _ = fs::remove_dir_all(&out);
+}
+
+#[test]
+fn the_packaged_android_app_launches() {
+    let _guard = lock();
+    let entry = gallery();
+    let dir = entry.parent().expect("the gallery directory").to_path_buf();
+    let out = scratch("packaged-launch");
+    let apk = out.join("app.apk");
+    nlayer_cli::package_android(&nlayer_cli::AndroidPackageOptions {
+        entry: dir,
+        out: apk.clone(),
+        keystore: None,
+        alias: None,
+        store_pass: None,
+    })
+    .expect("the Android package");
+
+    let adb = adb();
+    let serial = android_serial(&adb);
+    let installed = adb_output(&adb, &serial, &["install", "-r", &apk.to_string_lossy()]);
+    assert!(installed.contains("Success"), "{installed}");
+    let started = adb_output(
+        &adb,
+        &serial,
+        &[
+            "shell",
+            "am",
+            "start",
+            "-W",
+            "-n",
+            "dev.nlayer.gallery/dev.nlayer.android.HostActivity",
+        ],
+    );
+    assert!(started.contains("Status: ok"), "{started}");
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    let pid = adb_output(&adb, &serial, &["shell", "pidof", "dev.nlayer.gallery"]);
+    assert!(!pid.trim().is_empty(), "the packaged app did not start");
+    let _ = adb_output(
+        &adb,
+        &serial,
+        &["shell", "am", "force-stop", "dev.nlayer.gallery"],
     );
 
     let _ = fs::remove_dir_all(&out);
