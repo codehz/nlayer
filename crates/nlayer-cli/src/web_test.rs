@@ -335,9 +335,15 @@ impl HostedApp for WebApp {
         
         // Wait for core to process scroll events and commit frame updates.
         // Poll tree() to detect when rendering stabilizes (for viewport=parent lists).
+        
+        // First wait for browser's requestAnimationFrame to fire (nlayer.js queues reportScroll via rAF)
+        thread::sleep(Duration::from_millis(20));
+        
         let settle_deadline = Instant::now() + Duration::from_millis(1000);
         let initial_tree = self.tree()?;
         loop {
+            // Pump engine to process scroll messages (update_scroll_position, dispatch_event)
+            let _ = self.eval("nlayer_pump()");
             thread::sleep(Duration::from_millis(16));
             let current_tree = self.tree()?;
             // Tree changed (frame committed with new items) - good to proceed

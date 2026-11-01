@@ -22,7 +22,7 @@ use std::{
 
 use nlayer_core::{
     EventKind, NO_NATIVE_HEADER, NodeId,
-    geometry::{Edges, Points, Size},
+    geometry::{Edges, Point, Points, Size},
     text::ApproxTextEngine,
 };
 use nlayer_engine::{EngineConfig, EngineError, EventPayload, LocalEngine, MountSink, Wake};
@@ -154,6 +154,13 @@ impl PageSession {
         ) {
             return;
         }
+        // Update core's scroll position for list windowing, sticky headers, and viewport=parent
+        // (same as headless does in nlayer-testing/src/lib.rs)
+        self.engine.control().update_scroll_position(
+            id,
+            Point::new(Points(x), Points(y)),
+        );
+        // Then dispatch the event for onScroll listeners
         self.engine.control().dispatch_event(
             id,
             kind,
