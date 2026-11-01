@@ -996,7 +996,7 @@ function ListDemoPage(props: { nav: NavStackHandle }) {
       >
         {(index) => (
           <View
-            testID={index() === 0 ? "first-item" : undefined}
+            testID={index() === 0 ? "first-item" : index() === 4 ? "item-4" : undefined}
             style={{
               height: 32,
               justifyContent: "center",
