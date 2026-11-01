@@ -31,6 +31,14 @@ impl Animator {
         self.graph.eval(node)
     }
 
+    pub(crate) fn value(&self, node: u32) -> f32 {
+        self.graph.eval(node).number()
+    }
+
+    pub(crate) fn set(&mut self, node: u32, value: f32) {
+        self.graph.set(node, value, &mut self.finished);
+    }
+
     pub(crate) fn take_finished(&mut self) -> Vec<Finished> {
         std::mem::take(&mut self.finished)
     }
