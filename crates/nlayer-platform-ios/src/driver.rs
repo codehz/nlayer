@@ -437,32 +437,29 @@ fn back() -> Result<Value, String> {
 }
 
 fn advance(ms: f64) -> Result<Value, String> {
-    // Advance the test clock by simulating frame ticks at 60 Hz
+    // Advance the test clock by simulating frame ticks at 60 Hz. Each tick
+    // runs as its own main-queue hop; the socket thread sleeps between them
+    // so the main run loop can deliver injected touches and engine batches.
     let frame_duration = 1.0 / 60.0; // 16.67ms per frame in seconds
     let duration_secs = ms / 1000.0;
     let num_frames = (duration_secs / frame_duration).ceil() as usize;
-    
-    on_ui(move || -> Result<(), String> {
-        let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
-        let mut mounter = mounter.borrow_mut();
-        
-        // Get the current time as baseline
-        let start_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs_f64();
-        
-        // Tick through frames, accumulating time
-        for i in 0..num_frames {
-            let elapsed = (i + 1) as f64 * frame_duration;
-            let frame_time = start_time + elapsed;
-            mounter.tick_animation(frame_time);
-        }
-        Ok(())
-    })??;
-    
-    // Allow a brief settle time after advancing
-    thread::sleep(Duration::from_millis(16));
+
+    let start_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64();
+
+    for i in 0..num_frames {
+        let frame_time = start_time + (i + 1) as f64 * frame_duration;
+        on_ui(move || -> Result<(), String> {
+            let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
+            mounter.borrow_mut().tick_animation(frame_time);
+            Ok(())
+        })??;
+        // Let the main run loop process touches and engine batches.
+        thread::sleep(Duration::from_millis(16));
+    }
+
     Ok(Value::Null)
 }
 
