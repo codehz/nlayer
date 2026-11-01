@@ -316,7 +316,7 @@ fn scroll(selector: String, distance: f32) -> Result<Value, String> {
 }
 
 fn drag(selector: String, x: f32, y: f32) -> Result<Value, String> {
-    // Find element by testID without requiring it to be pressable
+    // Find element by testID without requiring it to be pressable.
     let start_point = on_ui(move || -> Result<Point, String> {
         let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
         let mounter = mounter.borrow();
@@ -329,18 +329,18 @@ fn drag(selector: String, x: f32, y: f32) -> Result<Value, String> {
         Ok(point)
     })??;
     thread::sleep(Duration::from_millis(20));
-    
+
     // Move to target position
     let end_x = start_point.x + x as f64;
     let end_y = start_point.y + y as f64;
-    
+
     // Generate intermediate move events
     let steps = 5;
     for i in 1..=steps {
         let t = i as f64 / steps as f64;
         let curr_x = start_point.x + (end_x - start_point.x) * t;
         let curr_y = start_point.y + (end_y - start_point.y) * t;
-        
+
         on_ui(move || -> Result<(), String> {
             let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
             let window = window_of(&mounter.borrow())?;
@@ -351,8 +351,8 @@ fn drag(selector: String, x: f32, y: f32) -> Result<Value, String> {
         })??;
         thread::sleep(Duration::from_millis(10));
     }
-    
-    // Lift finger
+
+    // Lift finger. No settle: the caller's `advance` measures the release.
     on_ui(move || -> Result<Value, String> {
         let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
         let window = window_of(&mounter.borrow())?;
@@ -361,7 +361,8 @@ fn drag(selector: String, x: f32, y: f32) -> Result<Value, String> {
         }
         Ok(json!(null))
     })??;
-    thread::sleep(SETTLE);
+    // Let the release reach the engine and start the spring.
+    thread::sleep(Duration::from_millis(16));
     Ok(Value::Null)
 }
 
@@ -379,18 +380,18 @@ fn drag_and_hold(selector: String, x: f32, y: f32) -> Result<Value, String> {
         Ok(point)
     })??;
     thread::sleep(Duration::from_millis(20));
-    
+
     // Move to target position
     let end_x = start_point.x + x as f64;
     let end_y = start_point.y + y as f64;
-    
+
     // Generate intermediate move events
     let steps = 5;
     for i in 1..=steps {
         let t = i as f64 / steps as f64;
         let curr_x = start_point.x + (end_x - start_point.x) * t;
         let curr_y = start_point.y + (end_y - start_point.y) * t;
-        
+
         on_ui(move || -> Result<(), String> {
             let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
             let window = window_of(&mounter.borrow())?;
@@ -401,12 +402,12 @@ fn drag_and_hold(selector: String, x: f32, y: f32) -> Result<Value, String> {
         })??;
         thread::sleep(Duration::from_millis(10));
     }
-    
+
     // Store final position for drop()
     if let Ok(mut state) = DRAG_STATE.lock() {
         *state = Some((end_x, end_y));
     }
-    
+
     thread::sleep(Duration::from_millis(50));
     Ok(Value::Null)
 }
@@ -417,7 +418,7 @@ fn drop_touch() -> Result<Value, String> {
         .ok()
         .and_then(|mut state| state.take())
         .ok_or_else(|| "no drag in progress".to_string())?;
-    
+
     on_ui(move || -> Result<Value, String> {
         let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
         let window = window_of(&mounter.borrow())?;
@@ -437,29 +438,19 @@ fn back() -> Result<Value, String> {
 }
 
 fn advance(ms: f64) -> Result<Value, String> {
-    // Advance the test clock by simulating frame ticks at 60 Hz. Each tick
-    // runs as its own main-queue hop; the socket thread sleeps between them
-    // so the main run loop can deliver injected touches and engine batches.
-    let frame_duration = 1.0 / 60.0; // 16.67ms per frame in seconds
-    let duration_secs = ms / 1000.0;
-    let num_frames = (duration_secs / frame_duration).ceil() as usize;
-
-    let start_time = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs_f64();
-
-    for i in 0..num_frames {
-        let frame_time = start_time + (i + 1) as f64 * frame_duration;
-        on_ui(move || -> Result<(), String> {
+    // The host's CADisplayLink drives animation frames with the platform's
+    // own clock; ticking here with a different clock would jump the graph.
+    // Wait real time in short slices, nudging the engine each frame so
+    // pending frames and finished animations settle.
+    let deadline = Instant::now() + Duration::from_secs_f64((ms.max(0.0)) / 1000.0);
+    while Instant::now() < deadline {
+        on_ui(|| -> Result<(), String> {
             let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
-            mounter.borrow_mut().tick_animation(frame_time);
+            mounter.borrow_mut().request_frame();
             Ok(())
         })??;
-        // Let the main run loop process touches and engine batches.
         thread::sleep(Duration::from_millis(16));
     }
-
     Ok(Value::Null)
 }
 
