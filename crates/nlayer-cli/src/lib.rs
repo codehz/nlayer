@@ -21,7 +21,7 @@ mod runtime;
 mod types_version;
 mod web_assets;
 mod web_package;
-mod web_test;
+pub mod web_test;
 
 use std::{
     fs,

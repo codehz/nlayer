@@ -107,14 +107,14 @@ impl WebHost {
     }
 }
 
-struct WebApp {
+pub struct WebApp {
     browser: Arc<Mutex<Browser>>,
     page: Option<Page>,
     server: Option<crate::DevServer>,
 }
 
 impl WebApp {
-    fn eval(&mut self, expression: &str) -> Result<Value, String> {
+    pub fn eval(&mut self, expression: &str) -> Result<Value, String> {
         let session = self
             .page
             .as_ref()
@@ -144,7 +144,7 @@ impl WebApp {
     }
 
     /// A DevTools protocol call in this page.
-    fn dispatch(&mut self, method: &str, params: Value) -> Result<Value, String> {
+    pub fn dispatch(&mut self, method: &str, params: Value) -> Result<Value, String> {
         let session = self
             .page
             .as_ref()
@@ -155,7 +155,7 @@ impl WebApp {
         browser.call(Some(&session), method, params)
     }
 
-    fn mouse(&mut self, kind: &str, x: f64, y: f64, buttons: u32) -> Result<(), String> {
+    pub fn mouse(&mut self, kind: &str, x: f64, y: f64, buttons: u32) -> Result<(), String> {
         self.dispatch(
             "Input.dispatchMouseEvent",
             json!({
@@ -504,7 +504,7 @@ struct Page {
     session_id: String,
 }
 
-struct Browser {
+pub struct Browser {
     child: Child,
     socket: Socket,
     next_id: u64,
@@ -512,7 +512,7 @@ struct Browser {
 }
 
 impl Browser {
-    fn launch() -> Result<Self, String> {
+    pub fn start() -> Result<Self, String> {
         let bin = browser_bin()?;
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

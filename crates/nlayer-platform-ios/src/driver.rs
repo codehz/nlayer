@@ -598,19 +598,20 @@ fn absolute_point_hybrid(
     loop {
         let node = scene.node(id).ok_or_else(|| "node not in scene".to_owned())?;
         
-        // Add this node's frame offset relative to its parent
-        x += node.frame.x as f64;
-        y += node.frame.y as f64;
-        
         // Move to parent
         let Some(parent_id) = node.parent else {
-            // Reached the topmost node in scene tree. Get its UIView and return
-            // the accumulated point in that view's coordinate system.
+            // Reached the topmost node in scene tree. The accumulated (x, y) is now
+            // relative to this node's coordinate system. Return its UIView and let
+            // UIKit's convertPoint handle the rest (navigation bars, safe areas, etc).
             let root_view = mounter
                 .view_of(id)
                 .ok_or_else(|| format!("root scene node {} has no UIView", id))?;
             return Ok((root_view, CGPoint::new(x as CGFloat, y as CGFloat)));
         };
+        
+        // Add this node's frame offset relative to its parent
+        x += node.frame.x as f64;
+        y += node.frame.y as f64;
         
         // If parent is a scroll view, subtract its contentOffset
         let parent_node = scene.node(parent_id).ok_or_else(|| "parent not in scene".to_owned())?;
