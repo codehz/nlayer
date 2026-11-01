@@ -146,6 +146,44 @@ export class Player {
     root.addEventListener("pointercancel", (event) => this.pointerCancel(event), true);
     root.addEventListener("pointermove", (event) => this.pointerMove(event), true);
     root.addEventListener("pointerup", (event) => this.pointerUp(event), true);
+    // Forward mouse events to pointer handlers for test compatibility (CDP uses mouse events)
+    root.addEventListener("mousedown", (event) => {
+      // Forward mouse events from CDP test driver (mouse events don't have pointerId)
+      if (event.pointerId == null) {
+        const pointerEvent = new PointerEvent('pointerdown', {
+          bubbles: true, cancelable: true,
+          clientX: event.clientX, clientY: event.clientY,
+          button: event.button, buttons: event.buttons,
+          pointerType: 'mouse', isPrimary: true, pointerId: 1
+        });
+        event.target.dispatchEvent(pointerEvent);
+        if (pointerEvent.defaultPrevented) event.preventDefault();
+      }
+    }, true);
+    root.addEventListener("mousemove", (event) => {
+      if (event.pointerId == null) {
+        const pointerEvent = new PointerEvent('pointermove', {
+          bubbles: true, cancelable: true,
+          clientX: event.clientX, clientY: event.clientY,
+          button: event.button, buttons: event.buttons,
+          pointerType: 'mouse', isPrimary: true, pointerId: 1
+        });
+        event.target.dispatchEvent(pointerEvent);
+        if (pointerEvent.defaultPrevented) event.preventDefault();
+      }
+    }, true);
+    root.addEventListener("mouseup", (event) => {
+      if (event.pointerId == null) {
+        const pointerEvent = new PointerEvent('pointerup', {
+          bubbles: true, cancelable: true,
+          clientX: event.clientX, clientY: event.clientY,
+          button: event.button, buttons: event.buttons,
+          pointerType: 'mouse', isPrimary: true, pointerId: 1
+        });
+        event.target.dispatchEvent(pointerEvent);
+        if (pointerEvent.defaultPrevented) event.preventDefault();
+      }
+    }, true);
     root.addEventListener("touchend", this.onTouchEnd);
     root.addEventListener("touchcancel", this.onTouchEnd);
     const view = this.doc.defaultView;
