@@ -1589,6 +1589,10 @@ impl Mounter {
                 }
                 self.sync_gestures(id);
             }
+            MountItem::Refreshing { id, refreshing } => self.set_refreshing(id, refreshing),
+            MountItem::ListContent { .. } => {
+                // List content is handled by the engine via events
+            }
         }
     }
 
