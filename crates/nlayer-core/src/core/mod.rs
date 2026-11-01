@@ -724,13 +724,9 @@ impl<M: TextEngine> Core<M> {
             self.mark(key, dirty::LIST);
         }
         
-        // If this is a scroll node, update child lists with viewport="parent"
-        if let Some(scroll) = self.nodes[key as usize].scroll.as_ref() {
-            let horizontal = scroll.horizontal;
-            let children = self.nodes[key as usize].children.clone();
-            for &child_key in &children {
-                self.update_viewport_parent_list_offset(child_key, offset, horizontal);
-            }
+        // If this is a scroll node, recompute list offsets, sticky, and viewport_parent
+        if self.nodes[key as usize].scroll.is_some() {
+            self.recompute_scroll_lists(key, offset);
         }
     }
 
@@ -771,17 +767,28 @@ impl<M: TextEngine> Core<M> {
             }
         }
 
-        // Update list offset if this scroll view has a list
+        // Recompute list offsets, sticky positions, and viewport_parent children
+        self.recompute_scroll_lists(key, offset);
+    }
+
+    /// Recompute list offsets, sticky positions, and windowing when a scroll view moves.
+    /// Used by both `set_scroll_offset` (platform events) and `update_scroll_position` (messages).
+    fn recompute_scroll_lists(&mut self, key: Key, offset: Point<Points>) {
+        let Some(scroll) = self.nodes[key as usize].scroll.as_ref() else {
+            return;
+        };
         let horizontal = scroll.horizontal;
+        
+        // Update list offset if this scroll view has a list (for scroll+list nodes)
         if let Some(list) = self.nodes[key as usize].list.as_mut() {
             let new_offset = if horizontal { offset.x.0 } else { offset.y.0 };
             if list.offset != new_offset {
                 list.offset = new_offset;
-                // Mark dirty so sticky headers recompute
+                // Mark dirty so sticky headers recompute and window items update
                 self.mark(key, dirty::LIST);
             }
         }
-
+        
         // Update child lists that use viewport="parent"
         let children = self.nodes[key as usize].children.clone();
         for &child_key in &children {
