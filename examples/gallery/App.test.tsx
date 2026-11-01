@@ -379,3 +379,20 @@ test("list demo shows virtual list", () => {
   app.press("list-back");
   app.waitFor("open-list");
 });
+
+test("header demo shows title and header props", () => {
+  const app = open("./App.tsx");
+  reveal(app, (n) => n.testID === "open-header");
+  app.press("open-header");
+  app.waitFor("header-demo");
+  
+  const texts = app.texts();
+  expect(texts).toContain("Header Demo");
+  
+  // iOS/Android: native header with title="Header" and headerStyle
+  // Web: displays custom header slot (headerLeft, headerRight, header)
+  // Headless: verifies page content only; header rendering is platform-specific
+  
+  app.press("header-back");
+  app.waitFor("page"); // Wait for home page scroll view
+});

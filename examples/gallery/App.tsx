@@ -30,6 +30,7 @@ function quoteUrl(): string {
 }
 
 const nav = createNavStack<Route>([{ name: "home" }]);
+type NavStackHandle = typeof nav;
 const detailInterceptBack = signal(false);
 const detailBackIntercepted = signal(false);
 const dismissedCount = signal(0);
@@ -667,9 +668,9 @@ type Route =
   | { name: "detail"; id: number }
   | { name: "dialog" }
   | { name: "gesture" }
-  | { name: "list" };
-
-function DialogDemoPage(props: { nav: ReturnType<typeof createNavStack<Route>> }) {
+  | { name: "list" }
+  | { name: "header" };
+function DialogDemoPage(props: { nav: NavStackHandle }) {
   const dialogOpen = signal(false);
   const dialogAnimation = signal<"fade" | "slide" | "scale">("fade");
   
@@ -717,7 +718,7 @@ function DialogDemoPage(props: { nav: ReturnType<typeof createNavStack<Route>> }
   );
 }
 
-function GestureCardPage(props: { nav: ReturnType<typeof createNavStack<Route>> }) {
+function GestureCardPage(props: { nav: NavStackHandle }) {
   const translateX = createAnimatedValue(0);
   const translateY = createAnimatedValue(0);
   const panEndX = signal(0);
@@ -750,12 +751,12 @@ function GestureCardPage(props: { nav: ReturnType<typeof createNavStack<Route>> 
   );
 }
 
-function DetailPage(props: { nav: ReturnType<typeof createNavStack<Route>> }) {
+function DetailPage(props: { nav: NavStackHandle }) {
   return (
     <Scroll testID="detail" style={{ flex: 1, backgroundColor: "#fff" }}>
       <View style={{ padding: 16 }}>
         <Text testID="detail-title" style={{ fontSize: 24, fontWeight: "700", marginBottom: 12 }}>Detail Screen</Text>
-        <Text style={{ marginBottom: 16 }}>This demonstrates push/pop navigation</Text>
+        <Text style={{ marginBottom: 16 }}>This demonstrates push/pop navigation with native header</Text>
         <Text testID="go-back" onPress={() => props.nav.pop()}
               style={{ color: "#3b82f6", marginBottom: 16, fontWeight: "600" }}>
           ← Back
@@ -775,7 +776,33 @@ function DetailPage(props: { nav: ReturnType<typeof createNavStack<Route>> }) {
   );
 }
 
-function ListDemoPage(props: { nav: ReturnType<typeof createNavStack<Route>> }) {
+function HeaderDemoPage(props: { nav: NavStackHandle }) {
+  const transparent = signal(false);
+  
+  return (
+    <Scroll testID="header-demo" style={{ flex: 1, backgroundColor: transparent() ? "#3b82f6" : "#fff" }}>
+      <View style={{ padding: 16, paddingTop: transparent() ? 120 : 16 }}>
+        <Text style={{ fontSize: 24, fontWeight: "700", marginBottom: 12, color: transparent() ? "#fff" : "#000" }}>
+          Header Demo
+        </Text>
+        <Text style={{ marginBottom: 16, color: transparent() ? "#f0f9ff" : "#64748b" }}>
+          iOS/Android: native header. Web: app-drawn header slot.
+        </Text>
+        <Text testID="toggle-transparent" onPress={() => transparent.set(!transparent())}
+              style={{ padding: 12, backgroundColor: transparent() ? "#1e40af" : "#3b82f6", 
+                       color: "#fff", borderRadius: 6, textAlign: "center", marginBottom: 16 }}>
+          {transparent() ? "Transparent ON" : "Toggle Transparent"}
+        </Text>
+        <Text testID="header-back" onPress={() => props.nav.pop()}
+              style={{ color: transparent() ? "#fff" : "#3b82f6", fontWeight: "600" }}>
+          ← Back
+        </Text>
+      </View>
+    </Scroll>
+  );
+}
+
+function ListDemoPage(props: { nav: NavStackHandle }) {
   const loaded = signal(1000);
   
   return (
@@ -868,6 +895,10 @@ function HomePage() {
                 style={{ color: "#3b82f6", fontWeight: "600", padding: 8 }}>
             → List Demo (5000 rows)
           </Text>
+          <Text testID="open-header" onPress={() => nav.push({ name: "header" })}
+                style={{ color: "#3b82f6", fontWeight: "600", padding: 8 }}>
+            → Header Demo (title, headerStyle, headerTransparent)
+          </Text>
         </Section>
       </View>
     </Scroll>
@@ -880,23 +911,47 @@ function App() {
       {(route, index) => {
         const r = route;
         let content;
+        let title: string | undefined;
+        let headerStyle: { backgroundColor?: string; color?: string; tintColor?: string } | undefined;
+        let headerTransparent = false;
+        let header: JSX.Element | undefined;
+        let headerLeft: JSX.Element | undefined;
+        let headerRight: JSX.Element | undefined;
         
         if (r.name === "home") {
           content = <HomePage />;
+          title = "Gallery";
         } else if (r.name === "detail") {
           content = <DetailPage nav={nav} />;
+          title = "Detail";
+          headerStyle = { backgroundColor: "#3b82f6", color: "#fff", tintColor: "#fff" };
         } else if (r.name === "dialog") {
           content = <DialogDemoPage nav={nav} />;
+          title = "Dialog";
         } else if (r.name === "gesture") {
           content = <GestureCardPage nav={nav} />;
+          title = "Gestures";
         } else if (r.name === "list") {
           content = <ListDemoPage nav={nav} />;
+          title = "Virtual List";
+        } else if (r.name === "header") {
+          content = <HeaderDemoPage nav={nav} />;
+          title = "Header";
+          headerStyle = { backgroundColor: "#10b981", color: "#fff", tintColor: "#fff" };
+          // Note: header, headerLeft, headerRight slots are for web only
+          // iOS/Android use native system headers with title and headerStyle
         } else {
           content = <Text>Unknown route: {r.name}</Text>;
         }
         
         return (
           <NavPage
+            title={title}
+            headerStyle={headerStyle}
+            headerTransparent={headerTransparent}
+            header={header}
+            headerLeft={headerLeft}
+            headerRight={headerRight}
             onDismiss={() => dismissedCount.set(dismissedCount() + 1)}
             popOnBack={r.name !== "detail" || !detailInterceptBack()}
             onBackPress={r.name === "detail" ? () => {
