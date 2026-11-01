@@ -287,14 +287,14 @@ export async function startPage(root, options = {}) {
         }
         // Copy offsets to wasm memory temporarily
         const bytes = snapOffsets.length * 4;
-        const ptr = wasm.malloc?.(bytes) ?? 0;
+        const ptr = wasm.nlayer_alloc(bytes) ?? 0;
         if (ptr === 0) {
           return wasm.nlayer_snap(offset, velocity, viewport, content, paging, snapInterval, 0, 0, snapAlignment, disableIntervalMomentum, deceleration);
         }
         const view = new Float32Array(wasm.memory.buffer, ptr, snapOffsets.length);
         view.set(snapOffsets);
         const result = wasm.nlayer_snap(offset, velocity, viewport, content, paging, snapInterval, ptr, snapOffsets.length, snapAlignment, disableIntervalMomentum, deceleration);
-        wasm.free?.(ptr);
+        wasm.nlayer_dealloc(ptr, bytes);
         return result;
       },
       change(id, value) {

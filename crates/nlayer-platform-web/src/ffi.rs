@@ -11,7 +11,8 @@ use std::cell::RefCell;
 
 use nlayer_core::{
     EventKind, NodeId,
-    geometry::{Edges, Size, px},
+    geometry::{Edges, Points, Size, px},
+    snap::{SnapAlignment, SnapBehavior},
 };
 use nlayer_engine::EventPayload;
 
@@ -515,4 +516,60 @@ pub extern "C" fn nlayer_transform_gesture(
         value: finite(value),
         velocity: finite(velocity),
     });
+}
+
+/// The offset a scroll snaps to once its glide ends, or -1 when its
+/// configuration does not snap. `offsets` is `snapToOffsets` (an empty array
+/// with `offsets_len` 0 for none). `velocity` is in CSS pixels per
+/// millisecond.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn nlayer_snap(
+    offset: f32,
+    velocity: f32,
+    viewport: f32,
+    content: f32,
+    paging: u32,
+    snap_interval: f32,
+    offsets: *const f32,
+    offsets_len: usize,
+    snap_alignment: u32,
+    one_step: u32,
+    deceleration: f32,
+) -> f64 {
+    let offsets: Vec<Points> = if offsets.is_null() || offsets_len == 0 {
+        Vec::new()
+    } else {
+        // SAFETY: the page passes `offsets_len` floats it allocated.
+        unsafe { std::slice::from_raw_parts(offsets, offsets_len) }
+            .iter()
+            .map(|&value| Points(finite(value)))
+            .collect()
+    };
+    let behavior = SnapBehavior {
+        paging: paging != 0,
+        snap_interval: Points(finite(snap_interval)),
+        snap_offsets: offsets,
+        snap_alignment: match snap_alignment {
+            1 => SnapAlignment::Center,
+            2 => SnapAlignment::End,
+            _ => SnapAlignment::Start,
+        },
+        deceleration: finite(deceleration),
+        one_step: one_step != 0,
+    };
+    let offset = Points(finite(offset));
+    let velocity = finite(velocity);
+    let projected = nlayer_core::snap::projected(offset, velocity, nlayer_core::snap::rate(&behavior));
+    match nlayer_core::snap::snap_target(
+        &behavior,
+        offset,
+        projected,
+        velocity,
+        Points(finite(viewport)),
+        Points(finite(content)),
+    ) {
+        Some(target) => f64::from(target.0),
+        None => -1.0,
+    }
 }
