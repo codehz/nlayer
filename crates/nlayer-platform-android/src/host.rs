@@ -938,9 +938,8 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_snapTarget(
         let arr = unsafe { jni::objects::JFloatArray::from_raw(snap_offsets_pt) };
         match env.get_array_elements(&arr, jni::objects::ReleaseMode::NoCopyBack) {
             Ok(elements) => {
-                let slice = unsafe {
-                    std::slice::from_raw_parts(elements.as_ptr(), elements.len())
-                };
+                let slice =
+                    unsafe { std::slice::from_raw_parts(elements.as_ptr(), elements.len()) };
                 slice.iter().map(|&v| Points(v)).collect()
             }
             Err(_) => Vec::new(),
