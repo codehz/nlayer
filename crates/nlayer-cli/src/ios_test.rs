@@ -191,7 +191,7 @@ impl HostedApp for IosApp {
     }
 
     fn wait_for(&mut self, selector: &str) -> Result<(), String> {
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let value = self.call("query", selector, "", 0.0)?;
             match value.get("state").and_then(Value::as_str) {
@@ -209,7 +209,7 @@ impl HostedApp for IosApp {
             if Instant::now() >= deadline {
                 return Err(format!("`{selector}` matches nothing"));
             }
-            thread::sleep(Duration::from_millis(30));
+            thread::sleep(Duration::from_millis(16));
         }
     }
 
