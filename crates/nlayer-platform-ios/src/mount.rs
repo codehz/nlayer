@@ -363,27 +363,24 @@ define_class!(
     unsafe impl UIScrollViewDelegate for Relay {
         #[unsafe(method(scrollViewDidScroll:))]
         fn scroll_view_did_scroll(&self, scroll: &UIScrollView) {
-            // Check for pull-to-refresh
             let offset = scroll.contentOffset();
-            let inset = scroll.adjustedContentInset();
-            let pull_distance = -(offset.y + inset.top);
-            if pull_distance > 0.0 {
-                // Pulling down beyond top
-                let id = scroll.tag() as NodeId;
-                if let Some(shared) = self.ivars().mounter.borrow().upgrade() {
-                    if let Ok(mounter) = shared.try_borrow() {
-                        if let Some(control) = &mounter.control {
-                            control.update_scroll_position(
-                                id,
-                                Point {
-                                    x: Points(offset.x as f32),
-                                    y: Points(offset.y as f32),
-                                },
-                            );
-                        }
+            let id = scroll.tag() as NodeId;
+            
+            // Always update core's scroll position to keep tree() offset in sync
+            if let Some(shared) = self.ivars().mounter.borrow().upgrade() {
+                if let Ok(mounter) = shared.try_borrow() {
+                    if let Some(control) = &mounter.control {
+                        control.update_scroll_position(
+                            id,
+                            Point {
+                                x: Points(offset.x as f32),
+                                y: Points(offset.y as f32),
+                            },
+                        );
                     }
                 }
             }
+            
             self.scroll_event(scroll, EventKind::Scroll);
         }
 
