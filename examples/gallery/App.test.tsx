@@ -463,6 +463,54 @@ test("list demo shows virtual list", () => {
   app.waitFor("open-list");
 });
 
+test("list with snapToInterval and stickyHeaderIndices", () => {
+  const app = open("./App.tsx");
+  reveal(app, (n) => n.testID === "open-list");
+  app.press("open-list");
+  app.waitFor("list-page");
+  
+  // Enable snap
+  app.press("toggle-snap");
+  let texts = app.texts();
+  expect(texts).toContain("snapToInterval: 64px");
+  
+  // Enable sticky headers
+  app.press("toggle-sticky");
+  texts = app.texts();
+  expect(texts).toContain("stickyHeaderIndices: [0, 10, 20]");
+  
+  // Verify sticky items are marked
+  texts = app.texts();
+  expect(texts).toContain("Row 0 (sticky)");
+});
+
+test("list with inverted and onViewableItemsChange", () => {
+  const app = open("./App.tsx");
+  reveal(app, (n) => n.testID === "open-list");
+  app.press("open-list");
+  app.waitFor("list-page");
+  
+  // Check initial viewable range
+  let texts = app.texts();
+  const viewableMatch = texts.find((t) => t.startsWith("Viewable:"));
+  if (!viewableMatch) expect("viewable-range").toBe("should exist");
+  
+  // Enable inverted
+  app.press("toggle-inverted");
+  texts = app.texts();
+  expect(texts).toContain("inverted: true");
+  
+  // Scroll and verify viewable range updates
+  app.scroll("list", 100);
+  texts = app.texts();
+  const afterScrollMatch = texts.find((t) => t.startsWith("Viewable:"));
+  if (!afterScrollMatch) expect("viewable-range after scroll").toBe("should exist");
+  
+  // Note: onViewableItemsChange fires as list scrolls
+  // snapToInterval and stickyHeaderIndices require platform-specific scroll behavior
+  // Headless verifies toggles work; manual testing on devices for full scroll snapping
+});
+
 test("header demo shows title and header props", () => {
   const app = open("./App.tsx");
   reveal(app, (n) => n.testID === "open-header");

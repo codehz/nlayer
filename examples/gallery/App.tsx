@@ -932,21 +932,61 @@ function HeaderDemoPage(props: { nav: NavStackHandle }) {
 
 function ListDemoPage(props: { nav: NavStackHandle }) {
   const loaded = signal(1000);
+  const refreshing = signal(false);
+  const snapEnabled = signal(false);
+  const stickyEnabled = signal(false);
+  const invertedEnabled = signal(false);
+  const viewableFirst = signal(0);
+  const viewableLast = signal(0);
+  
+  const handleRefresh = () => {
+    refreshing.set(true);
+    setTimeout(() => {
+      refreshing.set(false);
+    }, 1000);
+  };
   
   return (
     <View testID="list-page" style={{ flex: 1, backgroundColor: "#fff" }}>
       <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: "#e2e8f0" }}>
         <Text style={{ fontSize: 20, fontWeight: "700" }}>Virtual List</Text>
         <Text testID="list-back" onPress={() => props.nav.pop()}
-              style={{ color: "#3b82f6", marginTop: 8, fontWeight: "600" }}>
+              style={{ color: "#3b82f6", marginTop: 8, marginBottom: 8, fontWeight: "600" }}>
           ← Back
         </Text>
+        
+        <View style={{ gap: 8, marginTop: 8 }}>
+          <Text testID="toggle-snap" onPress={() => snapEnabled.set(!snapEnabled())}
+                style={{ padding: 6, backgroundColor: snapEnabled() ? "#10b981" : "#cbd5e1", borderRadius: 4, fontSize: 12 }}>
+            snapToInterval: {snapEnabled() ? "64px" : "off"}
+          </Text>
+          <Text testID="toggle-sticky" onPress={() => stickyEnabled.set(!stickyEnabled())}
+                style={{ padding: 6, backgroundColor: stickyEnabled() ? "#10b981" : "#cbd5e1", borderRadius: 4, fontSize: 12 }}>
+            stickyHeaderIndices: {stickyEnabled() ? "[0, 10, 20]" : "off"}
+          </Text>
+          <Text testID="toggle-inverted" onPress={() => invertedEnabled.set(!invertedEnabled())}
+                style={{ padding: 6, backgroundColor: invertedEnabled() ? "#10b981" : "#cbd5e1", borderRadius: 4, fontSize: 12 }}>
+            inverted: {invertedEnabled() ? "true" : "false"}
+          </Text>
+          <Text testID="viewable-range" style={{ fontSize: 11, color: "#64748b" }}>
+            Viewable: {viewableFirst()} - {viewableLast()}
+          </Text>
+        </View>
       </View>
       <List
         testID="list"
         style={{ flex: 1 }}
         each={Array.from({ length: loaded() }, (_, i) => i)}
         estimatedItemSize={32}
+        refreshing={refreshing()}
+        onRefresh={handleRefresh}
+        snapToInterval={snapEnabled() ? 64 : undefined}
+        stickyHeaderIndices={stickyEnabled() ? [0, 10, 20] : undefined}
+        inverted={invertedEnabled()}
+        onViewableItemsChange={(e) => {
+          viewableFirst.set(e.first);
+          viewableLast.set(e.last);
+        }}
         onLoadMore={() => {
           if (loaded() < 5000) {
             loaded.set(Math.min(5000, loaded() + 1000));
@@ -955,15 +995,19 @@ function ListDemoPage(props: { nav: NavStackHandle }) {
       >
         {(index) => (
           <View
+            testID={index() === 0 ? "first-item" : undefined}
             style={{
               height: 32,
               justifyContent: "center",
               paddingHorizontal: 16,
               borderBottomWidth: 1,
               borderBottomColor: "#f1f5f9",
+              backgroundColor: [0, 10, 20].includes(index()) && stickyEnabled() ? "#e0f2fe" : "#fff",
             }}
           >
-            <Text testID={index() === 0 ? "first" : undefined}>Row {index()}</Text>
+            <Text testID={index() === 0 ? "first" : undefined}>
+              Row {index()} {[0, 10, 20].includes(index()) && stickyEnabled() ? "(sticky)" : ""}
+            </Text>
           </View>
         )}
       </List>
