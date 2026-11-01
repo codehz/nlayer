@@ -6,4 +6,30 @@
 # runs this too.
 set -eu
 cd "$(dirname "$0")/.."
+
+# Android: the NDK's clang is the linker for the Rust target builds. The CLI
+# sets it per build; the PATH here lets `.cargo/config.toml`'s linker names
+# resolve for a bare `cargo build --target`. Found from ANDROID_HOME or the
+# SDK's default location when ANDROID_NDK_HOME is unset.
+if [ -z "${ANDROID_NDK_HOME:-}" ]; then
+  for root in "${ANDROID_HOME:-}" "$HOME/Library/Android/sdk" "${ANDROID_SDK_ROOT:-}"; do
+    [ -n "$root" ] && [ -d "$root/ndk" ] || continue
+    newest=$(ls -1 "$root/ndk" 2>/dev/null | sort -V | tail -n 1)
+    if [ -n "$newest" ]; then
+      ANDROID_NDK_HOME="$root/ndk/$newest"
+      export ANDROID_NDK_HOME
+      break
+    fi
+  done
+fi
+if [ -n "${ANDROID_NDK_HOME:-}" ]; then
+  # The prebuilt directory is darwin-x86_64 on Apple silicon too.
+  case "$(uname -s)" in
+    Darwin) host=darwin-x86_64 ;;
+    *) host=linux-x86_64 ;;
+  esac
+  PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/$host/bin:$PATH"
+  export PATH
+fi
+
 exec cargo test -p nlayer-cli --test targets -- --test-threads=1
