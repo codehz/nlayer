@@ -335,6 +335,20 @@ fn scroll(selector: String, distance: f32) -> Result<Value, String> {
 }
 
 fn drag(selector: String, x: f32, y: f32) -> Result<Value, String> {
+    // UIPanGestureRecognizer has a ~10pt threshold before recognizing gestures.
+    // Compensate by adding extra distance to match the requested translation.
+    const PAN_THRESHOLD: f32 = 10.0;
+    let compensated_x = if x.abs() > 0.1 {
+        x + x.signum() * PAN_THRESHOLD
+    } else {
+        x
+    };
+    let compensated_y = if y.abs() > 0.1 {
+        y + y.signum() * PAN_THRESHOLD
+    } else {
+        y
+    };
+    
     // Find element by testID without requiring it to be pressable.
     let start_point = on_ui(move || -> Result<Point, String> {
         let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
@@ -349,9 +363,9 @@ fn drag(selector: String, x: f32, y: f32) -> Result<Value, String> {
     })??;
     thread::sleep(Duration::from_millis(20));
 
-    // Move to target position
-    let end_x = start_point.x + x as f64;
-    let end_y = start_point.y + y as f64;
+    // Move to target position using compensated distance
+    let end_x = start_point.x + compensated_x as f64;
+    let end_y = start_point.y + compensated_y as f64;
 
     // Generate intermediate move events
     let steps = 5;
@@ -386,6 +400,20 @@ fn drag(selector: String, x: f32, y: f32) -> Result<Value, String> {
 }
 
 fn drag_and_hold(selector: String, x: f32, y: f32) -> Result<Value, String> {
+    // UIPanGestureRecognizer has a ~10pt threshold before recognizing gestures.
+    // Compensate by adding extra distance to match the requested translation.
+    const PAN_THRESHOLD: f32 = 10.0;
+    let compensated_x = if x.abs() > 0.1 {
+        x + x.signum() * PAN_THRESHOLD
+    } else {
+        x
+    };
+    let compensated_y = if y.abs() > 0.1 {
+        y + y.signum() * PAN_THRESHOLD
+    } else {
+        y
+    };
+    
     // Find element by testID without requiring it to be pressable
     let start_point = on_ui(move || -> Result<Point, String> {
         let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
@@ -400,9 +428,9 @@ fn drag_and_hold(selector: String, x: f32, y: f32) -> Result<Value, String> {
     })??;
     thread::sleep(Duration::from_millis(20));
 
-    // Move to target position
-    let end_x = start_point.x + x as f64;
-    let end_y = start_point.y + y as f64;
+    // Move to target position using compensated distance
+    let end_x = start_point.x + compensated_x as f64;
+    let end_y = start_point.y + compensated_y as f64;
 
     // Generate intermediate move events
     let steps = 5;
