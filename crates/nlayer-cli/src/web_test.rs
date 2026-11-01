@@ -300,7 +300,7 @@ impl HostedApp for WebApp {
             };
             // Browsers round the offset they keep.
             if remaining.abs() < 1.0 {
-                return Ok(());
+                break;
             }
             if Instant::now() >= deadline || tries >= points.len() * 3 {
                 return Err(format!("`{selector}` did not scroll"));
@@ -332,11 +332,22 @@ impl HostedApp for WebApp {
                 }
             }
         }
-        // Wait for core to commit and update list windowing after scroll settles.
-        // Poll for up to 300ms to allow queueScroll + commit cycle to complete.
-        let settle_deadline = Instant::now() + Duration::from_millis(300);
-        while Instant::now() < settle_deadline {
+        
+        // Wait for core to process scroll events and commit frame updates.
+        // Poll tree() to detect when rendering stabilizes (for viewport=parent lists).
+        let settle_deadline = Instant::now() + Duration::from_millis(500);
+        let initial_tree = self.tree()?;
+        loop {
             thread::sleep(Duration::from_millis(16));
+            let current_tree = self.tree()?;
+            // Tree changed (frame committed with new items) - good to proceed
+            if current_tree != initial_tree {
+                break;
+            }
+            // Timeout - proceed anyway (non-viewport tests don't change tree)
+            if Instant::now() >= settle_deadline {
+                break;
+            }
         }
         Ok(())
     }
