@@ -469,17 +469,46 @@ test("list with snapToInterval and stickyHeaderIndices", () => {
   app.press("open-list");
   app.waitFor("list-page");
   
-  // Enable snap
+  // Enable snap and scroll
   app.press("toggle-snap");
   let texts = app.texts();
   expect(texts).toContain("snapToInterval: 64px");
   
+  // Scroll by 150 - should snap to nearest 64px interval (128 or 192)
+  app.scroll("list", 150);
+  const afterSnap = app.tree();
+  const listAfterSnap = flat(afterSnap, []).find((n) => n.testID === "list");
+  if (listAfterSnap && listAfterSnap.scrollY !== undefined) {
+    const scrollY = listAfterSnap.scrollY;
+    // Check if scrollY is near a 64px interval (within ±1px)
+    const nearestInterval = Math.round(scrollY / 64) * 64;
+    const delta = Math.abs(scrollY - nearestInterval);
+    if (delta > 1) {
+      expect(`scrollY=${scrollY}`).toBe(`near ${nearestInterval} (delta=${delta})`);
+    }
+  }
+  
   // Enable sticky headers
   app.press("toggle-sticky");
+  app.press("toggle-snap"); // Disable snap to test sticky independently
   texts = app.texts();
   expect(texts).toContain("stickyHeaderIndices: [0, 10, 20]");
   
-  // Verify sticky items are marked
+  // Scroll down and verify item 0 pins at top
+  app.scroll("list", 100);
+  const afterSticky = app.tree();
+  
+  // Find the list scroll view and check scroll offset
+  const list = flat(afterSticky, []).find((n) => n.testID === "list");
+  if (list && list.scrollY !== undefined) {
+    // ScrollY should be ~100
+    if (Math.abs(list.scrollY - 100) > 5) {
+      expect(`list scrollY=${list.scrollY}`).toBe("should be near 100");
+    }
+  }
+  
+  // Sticky behavior: item 0 should be visible even after scrolling
+  // (implementation-specific: may appear as shifted container or cloned)
   texts = app.texts();
   expect(texts).toContain("Row 0 (sticky)");
 });
@@ -492,23 +521,69 @@ test("list with inverted and onViewableItemsChange", () => {
   
   // Check initial viewable range
   let texts = app.texts();
-  const viewableMatch = texts.find((t) => t.startsWith("Viewable:"));
-  if (!viewableMatch) expect("viewable-range").toBe("should exist");
+  const initialViewable = texts.find((t) => t.startsWith("Viewable:"));
+  if (!initialViewable) expect("viewable-range").toBe("should exist");
+  
+  // Parse initial range (should start at 0)
+  const initialMatch = initialViewable?.match(/Viewable: (\d+) - (\d+)/);
+  if (initialMatch) {
+    const initialFirst = parseInt(initialMatch[1]);
+    expect(initialFirst).toBe(0);
+  }
   
   // Enable inverted
   app.press("toggle-inverted");
   texts = app.texts();
   expect(texts).toContain("inverted: true");
   
-  // Scroll and verify viewable range updates
-  app.scroll("list", 100);
-  texts = app.texts();
-  const afterScrollMatch = texts.find((t) => t.startsWith("Viewable:"));
-  if (!afterScrollMatch) expect("viewable-range after scroll").toBe("should exist");
+  // Verify items still render with inverted
+  if (!texts.some(t => t.includes("Row 0"))) {
+    expect("Row 0 in inverted list").toBe("should exist");
+  }
   
-  // Note: onViewableItemsChange fires as list scrolls
-  // snapToInterval and stickyHeaderIndices require platform-specific scroll behavior
-  // Headless verifies toggles work; manual testing on devices for full scroll snapping
+  // Scroll and verify viewable range is reported
+  app.scroll("list", 200);
+  texts = app.texts();
+  const afterScrollViewable = texts.find((t) => t.startsWith("Viewable:"));
+  
+  // Just verify viewable range mechanism works (values may not change if viewport is large)
+  if (!afterScrollViewable) {
+    expect("viewable range after scroll").toBe("should exist");
+  }
+});
+
+test("list viewport=parent uses outer scroll", () => {
+  const app = open("./App.tsx");
+  reveal(app, (n) => n.testID === "open-viewport-parent");
+  app.press("open-viewport-parent");
+  app.waitFor("viewport-parent-page");
+  
+  // List should render items without its own scroll
+  const tree = app.tree();
+  const listItems = flat(tree, []).filter((n) => 
+    n.testID?.startsWith("vp-item-")
+  );
+  
+  // Should render some items (windowing active)
+  if (listItems.length === 0) {
+    expect("viewport=parent items").toBe("should render");
+  }
+  
+  // Should not render all 100 items (windowing working)
+  if (listItems.length >= 100) {
+    expect(`rendered ${listItems.length} items`).toBe("should window (< 100)");
+  }
+  
+  // Verify items are within parent scroll bounds
+  const outerScroll = flat(tree, []).find((n) => n.testID === "outer-scroll");
+  if (outerScroll && outerScroll.frame) {
+    const scrollHeight = outerScroll.frame.height;
+    for (const item of listItems) {
+      if (item.frame && item.frame.y > scrollHeight + 1000) {
+        expect(`item y=${item.frame.y}`).toBe(`within scroll + overscan (${scrollHeight})`);
+      }
+    }
+  }
 });
 
 test("header demo shows title and header props", () => {

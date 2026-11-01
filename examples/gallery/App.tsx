@@ -669,7 +669,8 @@ type Route =
   | { name: "dialog" }
   | { name: "gesture" }
   | { name: "list" }
-  | { name: "header" };
+  | { name: "header" }
+  | { name: "viewport-parent" };
 function DialogDemoPage(props: { nav: NavStackHandle }) {
   const dialogOpen = signal(false);
   const dialogAnimation = signal<"fade" | "slide" | "none">("fade");
@@ -1014,6 +1015,56 @@ function ListDemoPage(props: { nav: NavStackHandle }) {
     </View>
   );
 }
+
+function ViewportParentPage(props: { nav: NavStackHandle }) {
+  return (
+    <View testID="viewport-parent-page" style={{ flex: 1, backgroundColor: "#fff" }}>
+      <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: "#e2e8f0" }}>
+        <Text style={{ fontSize: 20, fontWeight: "700" }}>List viewport="parent"</Text>
+        <Text testID="vp-back" onPress={() => props.nav.pop()}
+              style={{ color: "#3b82f6", marginTop: 8, fontWeight: "600" }}>
+          ← Back
+        </Text>
+        <Text style={{ fontSize: 12, color: "#64748b", marginTop: 8 }}>
+          List uses outer Scroll's viewport (no nested scroll)
+        </Text>
+      </View>
+      <Scroll testID="outer-scroll" style={{ flex: 1 }}>
+        <View style={{ padding: 16 }}>
+          <Text style={{ fontSize: 14, fontWeight: "600", marginBottom: 8 }}>
+            Content before list
+          </Text>
+        </View>
+        <List
+          testID="vp-list"
+          viewport="parent"
+          each={Array.from({ length: 100 }, (_, i) => i)}
+          estimatedItemSize={40}
+        >
+          {(index) => (
+            <View
+              testID={`vp-item-${index()}`}
+              style={{
+                height: 40,
+                paddingHorizontal: 16,
+                justifyContent: "center",
+                borderBottomWidth: 1,
+                borderBottomColor: "#f1f5f9",
+              }}
+            >
+              <Text>Item {index()}</Text>
+            </View>
+          )}
+        </List>
+        <View style={{ padding: 16 }}>
+          <Text style={{ fontSize: 14, fontWeight: "600", marginTop: 8 }}>
+            Content after list
+          </Text>
+        </View>
+      </Scroll>
+    </View>
+  );
+}
 function HomePage() {
   return (
     <Scroll testID="page" style={{ flex: 1, backgroundColor: "#f8fafc" }}>
@@ -1071,6 +1122,10 @@ function HomePage() {
                 style={{ color: "#3b82f6", fontWeight: "600", padding: 8 }}>
             → Header Demo (title, headerStyle, headerTransparent)
           </Text>
+          <Text testID="open-viewport-parent" onPress={() => nav.push({ name: "viewport-parent" })}
+                style={{ color: "#3b82f6", fontWeight: "600", padding: 8 }}>
+            → List viewport="parent" (nested in Scroll)
+          </Text>
         </Section>
       </View>
     </Scroll>
@@ -1112,6 +1167,9 @@ function App() {
           headerStyle = { backgroundColor: "#10b981", color: "#fff", tintColor: "#fff" };
           // Note: header, headerLeft, headerRight slots are for web only
           // iOS/Android use native system headers with title and headerStyle
+        } else if (r.name === "viewport-parent") {
+          content = <ViewportParentPage nav={nav} />;
+          title = "Viewport Parent";
         } else {
           content = <Text>Unknown route: {r.name}</Text>;
         }
