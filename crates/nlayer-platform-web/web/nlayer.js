@@ -146,23 +146,6 @@ export class Player {
     root.addEventListener("pointercancel", (event) => this.pointerCancel(event), true);
     root.addEventListener("pointermove", (event) => this.pointerMove(event), true);
     root.addEventListener("pointerup", (event) => this.pointerUp(event), true);
-    // Forward mouse events to pointer handlers for test compatibility (CDP uses mouse events)
-    // Call handlers directly instead of dispatching synthetic PointerEvents to avoid event loss
-    root.addEventListener("mousedown", (event) => {
-      if (event.pointerId == null) {
-        this.pointerDown(event);
-      }
-    }, true);
-    root.addEventListener("mousemove", (event) => {
-      if (event.pointerId == null) {
-        this.pointerMove(event);
-      }
-    }, true);
-    root.addEventListener("mouseup", (event) => {
-      if (event.pointerId == null) {
-        this.pointerUp(event);
-      }
-    }, true);
     root.addEventListener("touchend", this.onTouchEnd);
     root.addEventListener("touchcancel", this.onTouchEnd);
     const view = this.doc.defaultView;
