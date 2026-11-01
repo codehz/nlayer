@@ -144,6 +144,20 @@ impl AndroidApp {
         text: &str,
         distance: f32,
     ) -> Result<Value, String> {
+        self.call_ex(op, selector, text, distance, 0.0, 0.0, 0.0)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn call_ex(
+        &mut self,
+        op: &str,
+        selector: &str,
+        text: &str,
+        distance: f32,
+        x: f32,
+        y: f32,
+        ms: f64,
+    ) -> Result<Value, String> {
         if !self.open {
             return Err("the app is closed".into());
         }
@@ -152,6 +166,9 @@ impl AndroidApp {
             "selector": selector,
             "text": text,
             "distance": distance,
+            "x": x,
+            "y": y,
+            "ms": ms,
         });
         writeln!(self.writer, "{line}").map_err(|error| error.to_string())?;
         self.writer.flush().map_err(|error| error.to_string())?;
@@ -223,11 +240,13 @@ impl HostedApp for AndroidApp {
     }
 
     fn drag(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String> {
-        self.call("drag", selector, "", 0.0).map(|_| ())
+        self.call_ex("drag", selector, "", 0.0, x, y, 0.0)
+            .map(|_| ())
     }
 
     fn drag_and_hold(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String> {
-        self.call("dragAndHold", selector, "", 0.0).map(|_| ())
+        self.call_ex("dragAndHold", selector, "", 0.0, x, y, 0.0)
+            .map(|_| ())
     }
 
     fn drop(&mut self) -> Result<(), String> {
@@ -238,9 +257,9 @@ impl HostedApp for AndroidApp {
     }
 
     fn advance(&mut self, ms: f64) -> Result<(), String> {
-        self.call("advance", "", "", ms as f32).map(|_| ())
+        self.call_ex("advance", "", "", 0.0, 0.0, 0.0, ms)
+            .map(|_| ())
     }
-
 
     fn close(&mut self) {
         if !self.open {
