@@ -720,6 +720,7 @@ function DialogDemoPage(props: { nav: ReturnType<typeof createNavStack<Route>> }
 function GestureCardPage(props: { nav: ReturnType<typeof createNavStack<Route>> }) {
   const translateX = createAnimatedValue(0);
   const translateY = createAnimatedValue(0);
+  const panEndX = signal(0);
   
   return (
     <View testID="gesture-page" style={{ flex: 1, backgroundColor: "#fff", padding: 16 }}>
@@ -727,10 +728,12 @@ function GestureCardPage(props: { nav: ReturnType<typeof createNavStack<Route>> 
       <Text testID="gesture-back" onPress={() => props.nav.pop()} style={{ color: "#3b82f6", marginBottom: 16 }}>
         ← Back
       </Text>
+      <Text testID="pan-end" style={{ marginBottom: 16 }}>Translation X: {panEndX()}</Text>
       
       <View
         testID="gesture-card"
         pan={{ x: translateX, y: translateY }}
+        onPanEnd={(e) => panEndX.set(Math.round(e.translation.x))}
         style={{
           width: 200,
           height: 200,

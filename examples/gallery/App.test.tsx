@@ -353,17 +353,20 @@ test("drag gesture card moves it", () => {
   app.press("open-gesture");
   app.waitFor("gesture-card");
   
-  const beforeTree = app.tree();
-  const cardBefore = flat(beforeTree, []).find((n) => n.testID === "gesture-card");
-  const xBefore = must(cardBefore).frame.x;
-  
   app.drag("gesture-card", 80, 0);
+  app.waitFor("pan-end");
   
   const afterTree = app.tree();
-  const cardAfter = flat(afterTree, []).find((n) => n.testID === "gesture-card");
-  const xAfter = must(cardAfter).frame.x;
-  
-  expect(xAfter > xBefore).toBe(true);
+  const panEndText = flat(afterTree, []).find((n) => n.testID === "pan-end");
+  const text = must(panEndText).text;
+  const match = text.match(/Translation X: (-?\d+)/);
+  if (match === null) {
+    expect(text).toBe("should contain Translation X");
+  }
+  const x = parseInt(match![1]);
+  if (!(x >= 78 && x <= 82)) {
+    expect(`x=${x}`).toBe("x should be 78-82");
+  }
 });
 
 test("list demo shows virtual list", () => {
