@@ -790,27 +790,42 @@ impl<M: TextEngine> Core<M> {
     }
 
     fn update_viewport_parent_list_offset(&mut self, key: Key, offset: Point<Points>, horizontal: bool) {
-        // Check if this node has a viewport_parent list and get its position first
-        let (is_viewport_parent, list_pos) = {
-            let node = &self.nodes[key as usize];
-            let is_vp = node.list.as_ref().map_or(false, |l| l.viewport_parent);
-            let pos = if is_vp {
-                node.layout
-                    .map(|layout| {
-                        let loc = self.rounded_layout(layout).location;
-                        if horizontal { loc.x } else { loc.y }
-                    })
-                    .unwrap_or(0.0)
-            } else {
-                0.0
-            };
-            (is_vp, pos)
-        };
+        // Check if this node has a viewport_parent list
+        let is_viewport_parent = self.nodes[key as usize]
+            .list
+            .as_ref()
+            .map_or(false, |l| l.viewport_parent);
         
         if is_viewport_parent {
-            // List offset = parent scroll offset - list's position in parent
+            // Calculate cumulative position from list up to parent scroll
+            let mut cumulative_pos = 0.0;
+            let mut current_key = key;
+            
+            // Walk up the parent chain until we find the scroll node
+            loop {
+                // Add this node's layout position
+                if let Some(layout) = self.nodes[current_key as usize].layout {
+                    let loc = self.rounded_layout(layout).location;
+                    cumulative_pos += if horizontal { loc.x } else { loc.y };
+                }
+                
+                // Move to parent
+                let parent_key = self.nodes[current_key as usize].parent;
+                if parent_key == NO_KEY {
+                    break;
+                }
+                
+                // Stop if parent is a scroll node (this is our viewport parent)
+                if self.nodes[parent_key as usize].kind == Kind::Scroll {
+                    break;
+                }
+                
+                current_key = parent_key;
+            }
+            
+            // List offset = parent scroll offset - list's cumulative position in scroll content
             let parent_offset = if horizontal { offset.x.0 } else { offset.y.0 };
-            let new_offset = parent_offset - list_pos;
+            let new_offset = parent_offset - cumulative_pos;
             
             if let Some(list) = self.nodes[key as usize].list.as_mut() {
                 if list.offset != new_offset {
