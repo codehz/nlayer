@@ -432,8 +432,15 @@ fn drop_touch() -> Result<Value, String> {
 }
 
 fn back() -> Result<Value, String> {
-    // iOS doesn't have a system back button like Android
-    // This is a no-op for iOS
+    // iOS has no system back button, so this is what the header's back
+    // button asks: the engine pops the top screen (or a screen that keeps
+    // the user hears the press first) and the mounter follows its ops.
+    on_ui(|| -> Result<(), String> {
+        let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
+        mounter.borrow().back();
+        Ok(())
+    })??;
+    thread::sleep(SETTLE);
     Ok(Value::Null)
 }
 

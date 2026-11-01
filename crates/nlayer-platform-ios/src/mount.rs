@@ -2813,6 +2813,15 @@ impl Mounter {
         }
     }
 
+    /// The platform's back: the engine pops the top screen (or a screen that
+    /// keeps the user hears `onBackPress` first) and the mounter follows the
+    /// ops.
+    pub(crate) fn back(&self) {
+        if let Some(control) = &self.control {
+            control.back();
+        }
+    }
+
     /// Sends a payload-less event to the engine.
     pub(crate) fn dispatch(&self, id: NodeId, kind: EventKind) {
         if let Some(control) = &self.control {
