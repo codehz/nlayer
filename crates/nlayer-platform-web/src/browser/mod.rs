@@ -237,6 +237,22 @@ impl Bridge for Runtime {
                 }
                 object
             }
+            EventPayload::ViewableItemsChange { first, last } => {
+                let object = match Value::object() {
+                    Ok(object) => object,
+                    Err(_) => return,
+                };
+                let (Ok(f), Ok(l)) = (
+                    Value::number(f64::from(*first)),
+                    Value::number(f64::from(*last)),
+                ) else {
+                    return;
+                };
+                if object.set("first", f).is_err() || object.set("last", l).is_err() {
+                    return;
+                }
+                object
+            }
         };
         let Ok(id) = Value::number(id as f64) else {
             return;

@@ -26,6 +26,11 @@ pub(crate) const FILES: &[(&str, &str, &str)] = &[
         include_str!("../../nlayer-platform-web/web/host.js"),
     ),
     (
+        "gesture.js",
+        JS,
+        include_str!("../../nlayer-platform-web/web/gesture.js"),
+    ),
+    (
         "base.css",
         CSS,
         include_str!("../../nlayer-platform-web/web/base.css"),

@@ -85,6 +85,13 @@ pub enum EventPayload {
         /// Current animation value.
         value: f32,
     },
+    /// The range of viewable list items changed (`onViewableItemsChange`).
+    ViewableItemsChange {
+        /// First visible item index.
+        first: u32,
+        /// Last visible item index.
+        last: u32,
+    },
 }
 
 /// The operating system a surface runs on (`platform.os`).
