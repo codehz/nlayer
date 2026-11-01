@@ -67,7 +67,7 @@ final class Mounter {
   final float density;
   final SparseArray<View> views = new SparseArray<>();
   final SparseArray<Integer> events = new SparseArray<>();
-  final SparseArray<Boolean> panBindings = new SparseArray<>();
+  final SparseArray<Integer> panBindings = new SparseArray<>();
   final SparseArray<Boolean> pinchBindings = new SparseArray<>();
   final SparseArray<Boolean> rotationBindings = new SparseArray<>();
   final SparseArray<String> testIds = new SparseArray<>();
@@ -107,7 +107,8 @@ final class Mounter {
   void apply(byte[] bytes, Object[] objects) {
     ByteBuffer b = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
     while (b.hasRemaining()) {
-      switch (b.getInt()) {
+      int opcode = b.getInt();
+      switch (opcode) {
         case CREATE:
           create(b.getInt(), b.getInt());
           break;
@@ -193,7 +194,7 @@ final class Mounter {
           refreshing(b);
           break;
         default:
-          throw new IllegalArgumentException("Unknown nlayer opcode");
+          throw new IllegalArgumentException("Unknown nlayer opcode " + opcode);
       }
     }
     finishNavigation();
@@ -239,9 +240,10 @@ final class Mounter {
     if (axis == 0) {
       panBindings.remove(id);
     } else {
-      panBindings.put(id, true);
+      panBindings.put(id, axis);
     }
-    // Set panAxis on Box: 0=free, 1=horizontal, 2=vertical
+    // Set panAxis on Box: 0=free, 1=horizontal, 2=vertical. The binding can
+    // arrive before the view exists; updateGestureBox sets it then.
     View v = views.get(id);
     if (v instanceof Box) {
       Box box = (Box) v;
@@ -252,7 +254,7 @@ final class Mounter {
 
   private void pinchBinding(ByteBuffer b) {
     int id = b.getInt();
-    boolean hasScale = b.get() != 0;
+    boolean hasScale = b.getInt() != 0;
     if (hasScale) {
       pinchBindings.put(id, true);
     } else {
@@ -263,7 +265,7 @@ final class Mounter {
 
   private void rotationBinding(ByteBuffer b) {
     int id = b.getInt();
-    boolean hasAngle = b.get() != 0;
+    boolean hasAngle = b.getInt() != 0;
     if (hasAngle) {
       rotationBindings.put(id, true);
     } else {
@@ -276,13 +278,16 @@ final class Mounter {
     View v = views.get(id);
     if (!(v instanceof Box)) return;
     Box box = (Box) v;
-    
+    int panAxis = panBindings.get(id, 0);
+    box.panAxis = (panAxis == 1) ? 1 : (panAxis == 2) ? 2 : 0;
+
     // Gesture box needed if: bindings OR events (17-22)
     int mask = events.get(id, 0);
     boolean hasEvents = (mask & (0x3F << 17)) != 0;
-    boolean hasBindings = panBindings.get(id, false) 
-        || pinchBindings.get(id, false) 
-        || rotationBindings.get(id, false);
+    boolean hasBindings =
+        panAxis != 0
+            || pinchBindings.get(id, false)
+            || rotationBindings.get(id, false);
     
     if ((hasEvents || hasBindings) && box.gestures == null) {
       box.gestures = new Gestures(box, id, this);
