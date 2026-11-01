@@ -96,6 +96,36 @@ pub(super) fn decode_prop(
             prop: Prop::LongPressDelay(delay),
         }));
     }
+    if name == "pan" {
+        let axis = |key: &str| value.get(key).ok().and_then(|axis| animated_node(&axis));
+        return Ok(Some(Op::SetProp {
+            id,
+            prop: Prop::Pan {
+                x: axis("x"),
+                y: axis("y"),
+            },
+        }));
+    }
+    if name == "pinch" {
+        let scale = value
+            .get("scale")
+            .ok()
+            .and_then(|scale| animated_node(&scale));
+        return Ok(Some(Op::SetProp {
+            id,
+            prop: Prop::Pinch { scale },
+        }));
+    }
+    if name == "rotation" {
+        let angle = value
+            .get("angle")
+            .ok()
+            .and_then(|angle| animated_node(&angle));
+        return Ok(Some(Op::SetProp {
+            id,
+            prop: Prop::Rotation { angle },
+        }));
+    }
     if let Some(prop) = accessibility_prop(name, value, warnings)? {
         return Ok(Some(Op::SetProp { id, prop }));
     }
