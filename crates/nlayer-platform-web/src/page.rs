@@ -57,6 +57,7 @@ pub trait Page: Send + Sync + 'static {
 /// The engine of one page, driven by the page.
 pub struct PageSession {
     engine: LocalEngine<ApproxTextEngine>,
+    page: Arc<dyn Page>,
 }
 
 impl PageSession {
@@ -82,7 +83,10 @@ impl PageSession {
             sink,
             wake,
         )?;
-        Ok(PageSession { engine })
+        Ok(PageSession { 
+            engine,
+            page,
+        })
     }
 
     /// How long until the next timer (`None`: only input, and a finished fetch on the QuickJS host).
@@ -173,6 +177,8 @@ impl PageSession {
                 height,
             },
         );
+        // Request pump to process list windowing updates from update_scroll_position
+        self.page.request_pump();
     }
 
     /// The browser's back button was pressed (popstate event). The browser has
