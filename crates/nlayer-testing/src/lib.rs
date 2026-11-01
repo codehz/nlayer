@@ -387,14 +387,13 @@ impl Screen {
                 let view = self.views.get(&screen_id);
                 let screen_cfg = view.and_then(|v| v.screen.as_ref());
                 
-                // If depth > 1
+                // If screen has onBackPress listener, always ask it
+                if view.is_some_and(|v| v.events.contains(EventKind::BackRequest)) {
+                    return Back::Ask(screen_id);
+                }
+                
+                // If depth > 1 and !prevent_back, can pop
                 if state.screens.len() > 1 {
-                    // If screen has onBackPress listener, always ask it first
-                    if view.is_some_and(|v| v.events.contains(EventKind::BackRequest)) {
-                        return Back::Ask(screen_id);
-                    }
-                    
-                    // No listener, check prevent_back
                     let prevent_back = screen_cfg.map_or(false, |cfg| cfg.prevent_back);
                     if !prevent_back {
                         return Back::Pop(screen_id);
