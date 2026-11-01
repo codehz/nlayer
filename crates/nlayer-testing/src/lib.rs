@@ -1255,6 +1255,10 @@ impl Headless {
         self.now = start_time + (frames as f32 * FRAME as f32) as f64;
         self.pointer_up(self.now);
         
+        // Synchronize to process the PanEnd event and update signals
+        self.control().synchronize().map_err(|e| format!("sync failed: {e}"))?;
+        self.refresh();
+        
         Ok(())
     }
 
@@ -1384,12 +1388,24 @@ impl Headless {
         self.require_visible(selector, target)?;
         let id = selector::scroll_of(&self.screen, target)
             .ok_or_else(|| format!("`{selector}` is not in a scroll view"))?;
+        
+        
         selector::scroll_by(&mut self.screen, id, distance)
             .map_err(|_| format!("`{selector}` is not in a scroll view"))?;
+        
+        // Tell engine about new scroll position so it can recompute layout
         let view = self
             .screen
             .view(id)
             .ok_or_else(|| format!("`{selector}` is not in a scroll view"))?;
+        self.control().update_scroll_position(
+            id,
+            nlayer_core::geometry::Point::new(
+                nlayer_core::geometry::Points(view.scroll_x), 
+                nlayer_core::geometry::Points(view.scroll_y)
+            )
+        );
+        
         let content = view.scroll_content.unwrap_or(view.frame.size);
         let payload = EventPayload::Scroll {
             x: view.scroll_x,
@@ -1400,23 +1416,27 @@ impl Headless {
             height: view.frame.size.height.0,
         };
         // A test scroll is a finished drag that glides to this offset, so
-        // the six callbacks run with the offset the tree reports. The
-        // engine applies one event per frame; `waitFor` pumps them.
-        for event in [
-            EventKind::ScrollDragStart,
-            EventKind::Scroll,
-            EventKind::ScrollDragEnd,
-            EventKind::MomentumStart,
-            EventKind::MomentumEnd,
-            EventKind::ScrollEnd,
-        ] {
+        // dispatch Scroll and ScrollEnd events (matching the scroll() method)
+        for event in [EventKind::Scroll, EventKind::ScrollEnd] {
             self.engine
                 .control()
                 .dispatch_event(id, event, payload.clone());
         }
+        
+        // Drain frames until engine settles (sticky rows may take multiple passes)
+        // Add timeout to prevent infinite loops
+        let settle_start = Instant::now();
+        while self.next_frame(Duration::from_millis(30)) {
+            if settle_start.elapsed() > Duration::from_secs(2) {
+                break; // Timeout to prevent infinite loop
+            }
+        }
+        
+        // Final refresh to ensure screen reflects latest state
+        self.refresh();
+        
         Ok(())
     }
-
     /// Scrolls the scroll view to the given offset. Waits for the engine to
     /// settle (multiple layout passes may occur for sticky headers).
     pub fn scroll(&mut self, id: NodeId, x: f32, y: f32) {
