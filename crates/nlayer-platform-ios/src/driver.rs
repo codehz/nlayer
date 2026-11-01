@@ -169,6 +169,7 @@ fn dispatch(line: &str) -> Result<Value, String> {
         "drop" => drop_touch(),
         "back" => back(),
         "advance" => advance(request.ms),
+        other => Err(format!("unknown test op `{other}`")),
     }
 }
 
