@@ -517,18 +517,14 @@ test("list with snapToInterval and stickyHeaderIndices", () => {
   let texts = app.texts();
   expect(texts).toContain("snapToInterval: 64px");
   
-  // Scroll by 150 - should snap to nearest 64px interval (128 or 192)
+  // Scroll by 150: the offset must match the scroll distance. Snapping is
+  // applied by the platform host (iOS/Android/web) when a gesture ends, not
+  // by core, so headless asserts propagation only (offset follows the scroll).
   app.scroll("list", 150);
   const afterSnap = app.tree();
   const listAfterSnap = flat(afterSnap, []).find((n) => n.testID === "list");
-  if (listAfterSnap && listAfterSnap.scrollY !== undefined) {
-    const scrollY = listAfterSnap.scrollY;
-    // Check if scrollY is near a 64px interval (within ±1px)
-    const nearestInterval = Math.round(scrollY / 64) * 64;
-    const delta = Math.abs(scrollY - nearestInterval);
-    if (delta > 1) {
-      expect(`scrollY=${scrollY}`).toBe(`near ${nearestInterval} (delta=${delta})`);
-    }
+  if (listAfterSnap && listAfterSnap.offset && Math.abs(listAfterSnap.offset.y - 150) > 5) {
+    expect(`list offset.y=${listAfterSnap.offset.y}`).toBe("should be ≈150");
   }
   
   // Disable snap, enable sticky headers
@@ -539,10 +535,28 @@ test("list with snapToInterval and stickyHeaderIndices", () => {
   texts = app.texts();
   expect(texts).toContain("stickyHeaderIndices: [0, 10, 20]");
   
-  // Note: Sticky frame positioning after reactive toggle doesn't work because
-  // the prop update isn't sent from runtime to engine (Prop::StickyHeaderIndices
-  // handler never called). This is a runtime/reactive-system issue, not core.
-  // Core tests verify sticky works correctly when set at mount time.
+  // Reset scroll to 0, then scroll down 100px
+  app.scroll("list", -1000);
+  app.scroll("list", 100);
+  
+  const afterSticky = app.tree();
+  const afterList = flat(afterSticky, []).find((n) => n.testID === "list");
+  
+  // Verify scroll offset
+  if (afterList && afterList.offset && Math.abs(afterList.offset.y - 100) > 5) {
+    expect(`list offset.y=${afterList.offset.y}`).toBe("should be ≈100");
+  }
+  
+  // Verify sticky header is pinned at top (y≈100)
+  const item0After = flat(afterSticky, []).find((n) => n.testID === "first-item");
+  if (item0After) {
+    const item0Parent = flat(afterSticky, []).find((n) => n.children?.includes(item0After));
+    if (item0Parent && item0Parent.frame) {
+      if (Math.abs(item0Parent.frame.y - 100) > 2) {
+        expect(`item0 parent y=${item0Parent.frame.y}`).toBe("should be ≈100 (sticky pinned)");
+      }
+    }
+  }
 });
 
 test("list with inverted and onViewableItemsChange", () => {
@@ -551,12 +565,37 @@ test("list with inverted and onViewableItemsChange", () => {
   app.press("open-list");
   app.waitFor("list-page");
   
+  // Get baseline: item-0 position before inverted (should be at top, y=0)
+  let tree = app.tree();
+  const item0Before = flat(tree, []).find((n) => n.testID === "first-item");
+  if (!item0Before) {
+    expect("first-item before inverted").toBe("should exist");
+  }
+  const item0ParentBefore = flat(tree, []).find((n) => n.children?.includes(item0Before));
+  
   // Enable inverted
   app.press("toggle-inverted");
   
   // Verify toggle works
   let texts = app.texts();
   expect(texts).toContain("inverted: true");
+  
+  // Verify inverted layout: item-0 moves from top (y=0) to bottom (large y)
+  tree = app.tree();
+  const item0After = flat(tree, []).find((n) => n.testID === "first-item");
+  if (!item0After) {
+    expect("first-item after inverted").toBe("should exist");
+  }
+  const item0ParentAfter = flat(tree, []).find((n) => n.children?.includes(item0After));
+  
+  if (item0ParentBefore?.frame && item0ParentAfter?.frame) {
+    // Before inverted: item-0 at top (y=0)
+    expect(item0ParentBefore.frame.y).toBe(0);
+    // After inverted: item-0 at bottom of 1000-item list (y > 1000)
+    if (item0ParentAfter.frame.y <= 1000) {
+      expect("item0 y=" + item0ParentAfter.frame.y).toBe("inverted: item0 should be at bottom (y > 1000)");
+    }
+  }
   
   // Verify onViewableItemsChange fires
   const viewableText = texts.find((t) => t.startsWith("Viewable:"));
