@@ -139,6 +139,7 @@ fn dispatch(host: &Host, line: &str) -> Result<Value, String> {
         "type" => type_text(host, request.selector, request.text),
         "scroll" => scroll(host, request.selector, request.distance),
         "advance" => advance(host, request.ms),
+        other => Err(format!("unknown test op `{other}`")),
     }
 }
 
@@ -201,7 +202,7 @@ fn scroll(host: &Host, selector: String, distance: f32) -> Result<Value, String>
     Ok(Value::Null)
 }
 
-fn advance(_host: &Host, ms: f64) -> Result<Value, String> {
+fn advance(host: &Host, ms: f64) -> Result<Value, String> {
     // Advance the test clock by simulating frame ticks at 60 Hz
     let frame_duration = 1.0 / 60.0; // 16.67ms per frame in seconds
     let duration_secs = ms / 1000.0;
@@ -222,13 +223,15 @@ fn advance(_host: &Host, ms: f64) -> Result<Value, String> {
         
         // Report finished animations back to the engine
         if !finished.is_empty() {
-            if let Some(control) = crate::host::control() {
+            if let Some(control) = host
+                .control
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .as_ref()
+            {
                 control.animations_finished(finished);
             }
         }
-        
-        // Small sleep to simulate frame timing
-        thread::sleep(Duration::from_millis(1));
     }
     
     thread::sleep(SETTLE);

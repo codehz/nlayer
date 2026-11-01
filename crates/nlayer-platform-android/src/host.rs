@@ -22,8 +22,8 @@ use crate::text::{AndroidTextEngine, Density};
 
 pub(crate) struct Host {
     pub(crate) view: jni::objects::GlobalRef,
-    engine: Mutex<Option<Engine>>,
-    control: Mutex<Option<EngineControl>>,
+    pub(crate) engine: Mutex<Option<Engine>>,
+    pub(crate) control: Mutex<Option<EngineControl>>,
     density: Density,
     size: Mutex<Size<Points>>,
     insets: Mutex<Option<(Edges<Points>, Points)>>,
