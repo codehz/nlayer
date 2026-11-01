@@ -135,6 +135,24 @@ export function createFacade(wasm, requestPump, options = {}) {
     if (name === "children" || name === "ref") return;
     const id = values.nodeIds.get(target);
     if (id === undefined) throw new TypeError("nlayer: not a node");
+    
+    // Handle gesture props: extract animation node IDs from animated values
+    if (name === "pan" || name === "pinch" || name === "rotation") {
+      if (value != null && typeof value === "object") {
+        const serialized = {};
+        for (const [key, val] of Object.entries(value)) {
+          // Extract __av if present, otherwise pass through
+          if (val != null && typeof val === "object" && "__av" in val) {
+            serialized[key] = { __av: val.__av };
+          } else if (val != null) {
+            serialized[key] = val;
+          }
+        }
+        call(303, target, name, serialized);
+        return;
+      }
+    }
+    
     if (name.startsWith("on")) {
       let table = handlers.get(id);
       if (!table) handlers.set(id, (table = new Map()));
