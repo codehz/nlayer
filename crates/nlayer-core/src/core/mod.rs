@@ -771,6 +771,50 @@ impl<M: TextEngine> Core<M> {
                 self.mark(key, dirty::LIST);
             }
         }
+
+        // Update child lists that use viewport="parent"
+        let children = self.nodes[key as usize].children.clone();
+        for &child_key in &children {
+            self.update_viewport_parent_list_offset(child_key, offset, horizontal);
+        }
+    }
+
+    fn update_viewport_parent_list_offset(&mut self, key: Key, offset: Point<Points>, horizontal: bool) {
+        // Check if this node has a viewport_parent list and get its position first
+        let (is_viewport_parent, list_pos) = {
+            let node = &self.nodes[key as usize];
+            let is_vp = node.list.as_ref().map_or(false, |l| l.viewport_parent);
+            let pos = if is_vp {
+                node.layout
+                    .map(|layout| {
+                        let loc = self.rounded_layout(layout).location;
+                        if horizontal { loc.x } else { loc.y }
+                    })
+                    .unwrap_or(0.0)
+            } else {
+                0.0
+            };
+            (is_vp, pos)
+        };
+        
+        if is_viewport_parent {
+            // List offset = parent scroll offset - list's position in parent
+            let parent_offset = if horizontal { offset.x.0 } else { offset.y.0 };
+            let new_offset = parent_offset - list_pos;
+            
+            if let Some(list) = self.nodes[key as usize].list.as_mut() {
+                if list.offset != new_offset {
+                    list.offset = new_offset;
+                    self.mark(key, dirty::LIST);
+                }
+            }
+        }
+        
+        // Recursively check children
+        let children = self.nodes[key as usize].children.clone();
+        for &child_key in &children {
+            self.update_viewport_parent_list_offset(child_key, offset, horizontal);
+        }
     }
 
     /// Moves the cells the runtime must render before the frame shows.
