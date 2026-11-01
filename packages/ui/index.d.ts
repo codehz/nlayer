@@ -205,6 +205,26 @@ export interface ScrollProps extends ViewProps {
   /** `none` (default) leaves a drag alone. `on-drag` and `interactive` both
    * resign when the drag passes the platform slop. */
   keyboardDismissMode?: "none" | "on-drag" | "interactive";
+  /** The refresh indicator shows while true. */
+  refreshing?: boolean;
+  /** Pull-to-refresh triggered. Fires once until `refreshing` goes false. */
+  onRefresh?: () => void;
+  /** Animated value driven by pull distance (0 at rest), in points. */
+  pullValue?: AnimatedValue;
+  /** App draws its own refresh indicator of this height; platform spinner is hidden. */
+  refreshIndicator?: { height: number };
+  /** Snaps to viewport-sized pages. */
+  pagingEnabled?: boolean;
+  /** Snaps to multiples of this interval (points). */
+  snapToInterval?: number;
+  /** Snaps to these specific offsets (points). */
+  snapToOffsets?: number[];
+  /** Where the snap target aligns in the viewport: `"start"` (default), `"center"`, or `"end"`. */
+  snapToAlignment?: "start" | "center" | "end";
+  /** One interval per swipe (no momentum). */
+  disableIntervalMomentum?: boolean;
+  /** How fast momentum decays: `"normal"` (default), `"fast"`, or a number (0 to 1). */
+  decelerationRate?: "normal" | "fast" | number;
   onScroll?: (e: ScrollEvent) => void;
   onScrollEnd?: (e: ScrollEvent) => void;
   onScrollDragStart?: (e: ScrollEvent) => void;
@@ -285,6 +305,28 @@ export interface ListProps<T> extends Omit<ScrollProps, "children"> {
   initialScrollIndex?: number;
   /** How close to the end (in viewports) `onLoadMore` fires; default 1. */
   loadMoreThreshold?: number;
+  /** Item indices that pin to the top (single-column, non-inverted). */
+  stickyHeaderIndices?: number[];
+  /** List flows bottom-to-top (chat-style). */
+  inverted?: boolean;
+  /** Keep the first visible item in place when prepending. */
+  maintainVisibleContentPosition?: {
+    /** The first item index to anchor (default 0). */
+    minIndexForVisible?: number;
+    /** Auto-scroll to bottom when the first item is within this threshold of the end (points). */
+    autoscrollToBottomThreshold?: number;
+  };
+  /** Whether the list has its own scroll view (`"self"`, default) or uses the parent's (`"parent"`). */
+  viewport?: "self" | "parent";
+  /** Thresholds for viewable items. */
+  viewabilityConfig?: {
+    /** How much of the viewport an item must cover to count as viewable (0 to 1). */
+    viewAreaCoveragePercentThreshold?: number;
+    /** How much of an item must be visible to count as viewable (0 to 1). */
+    itemVisiblePercentThreshold?: number;
+  };
+  /** The range of viewable list items changed. */
+  onViewableItemsChanged?: (e: { first: number; last: number }) => void;
   /** The end came near; load the next page. Fires once per item count. */
   onLoadMore?: () => void;
   ref?: ((handle: ListHandle) => void) | { current?: ListHandle };

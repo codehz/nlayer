@@ -44,7 +44,7 @@ use objc2_ui_kit::{
     UIAccessibilityTraitSearchField, UIAccessibilityTraitSelected, UIAccessibilityTraitStaticText,
     UIAccessibilityTraitSummaryElement, UIAccessibilityTraitUpdatesFrequently, UIGestureRecognizer,
     UIGestureRecognizerDelegate, UIGestureRecognizerState, UIHoverGestureRecognizer,
-    UILongPressGestureRecognizer, UIPanGestureRecognizer, UIPinchGestureRecognizer,
+    UILongPressGestureRecognizer, UIPanGestureRecognizer, UIPinchGestureRecognizer, UIRefreshControl,
     UIRotationGestureRecognizer, UIScreen, UIScrollView,
     UIScrollViewContentInsetAdjustmentBehavior, UIScrollViewDelegate, UITapGestureRecognizer,
     UITextField, UITextFieldDelegate, UITextView, UITextViewDelegate, UITouch, UIView,
@@ -134,6 +134,10 @@ struct Slot {
     snap_alignment: u8,
     snap_one_step: bool,
     snap_deceleration: f32,
+    /// Pull-to-refresh control (only on scroll views).
+    refresh_control: Option<Retained<UIRefreshControl>>,
+    /// Whether refresh is currently active.
+    refreshing: bool,
 }
 
 struct Paint {
@@ -294,6 +298,20 @@ define_class!(
         #[unsafe(method(dismissKeyboard:))]
         fn dismiss_keyboard(&self, _gesture: &UITapGestureRecognizer) {
             let Some(shared) = self.ivars().mounter.borrow().upgrade() else {
+
+        #[unsafe(method(handleRefresh:))]
+        fn handle_refresh(&self, control: &UIRefreshControl) {
+            if let Some(scroll) = control.superview() {
+                let id = scroll.tag() as NodeId;
+                with_mounter(move |mounter| {
+                    mounter.control.as_ref().map(|c| c.dispatch_event(
+                        id,
+                        EventKind::Refresh,
+                        EventPayload::None,
+                    ));
+                });
+            }
+        }
                 return;
             };
             resign_keyboard(&shared);
@@ -3173,6 +3191,8 @@ impl Slot {
             snap_alignment: 0,
             snap_one_step: false,
             snap_deceleration: 0.0,
+            refresh_control: None,
+            refreshing: false,
         }
     }
 }

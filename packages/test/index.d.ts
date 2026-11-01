@@ -172,6 +172,7 @@ export interface App {
   /** Drags `selector` by (`x`, `y`) but keeps the pointer down. */
   dragAndHold(selector: string, x: number, y: number): void;
   /** Releases the held pointer from `dragAndHold`. */
+  drop(): void;
   /** Navigates back through the navigation stack or closes modals. */
   back(): void;
   /** Advances the headless test clock by `ms` milliseconds in 60 Hz frames
