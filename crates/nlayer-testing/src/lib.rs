@@ -387,13 +387,14 @@ impl Screen {
                 let view = self.views.get(&screen_id);
                 let screen_cfg = view.and_then(|v| v.screen.as_ref());
                 
-                // If screen has onBackPress listener, ask it first
-                if view.is_some_and(|v| v.events.contains(EventKind::BackRequest)) {
-                    return Back::Ask(screen_id);
-                }
-                
-                // If depth > 1 and !prevent_back, can pop
+                // If depth > 1
                 if state.screens.len() > 1 {
+                    // If screen has onBackPress listener, always ask it first
+                    if view.is_some_and(|v| v.events.contains(EventKind::BackRequest)) {
+                        return Back::Ask(screen_id);
+                    }
+                    
+                    // No listener, check prevent_back
                     let prevent_back = screen_cfg.map_or(false, |cfg| cfg.prevent_back);
                     if !prevent_back {
                         return Back::Pop(screen_id);
@@ -979,9 +980,19 @@ impl Headless {
                 Ok(())
             }
             Back::Ask(screen_id) => {
-                // Only send BackRequest event, let app decide
+                // Send BackRequest event to let callback handle it
                 self.engine.control().dispatch_event(screen_id, EventKind::BackRequest, EventPayload::None);
                 let _ = self.next_frame(Duration::from_millis(100));
+                
+                // If popOnBack is true (prevent_back is false), also pop after callback
+                let prevent_back = self.screen.view(screen_id)
+                    .and_then(|v| v.screen.as_ref())
+                    .map_or(false, |cfg| cfg.prevent_back);
+                if !prevent_back {
+                    // Callback was notified, now do the pop
+                    self.engine.control().dispatch_event(screen_id, EventKind::Dismiss, EventPayload::None);
+                    let _ = self.next_frame(Duration::from_millis(100));
+                }
                 Ok(())
             }
             Back::Close { modal, close_on_escape } => {

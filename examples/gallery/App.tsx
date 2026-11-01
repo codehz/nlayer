@@ -30,6 +30,8 @@ function quoteUrl(): string {
 }
 
 const nav = createNavStack<Route>([{ name: "home" }]);
+const detailInterceptBack = signal(false);
+const detailBackIntercepted = signal(false);
 const dismissedCount = signal(0);
 
 function Section(props: { title: string; children?: unknown }) {
@@ -746,10 +748,6 @@ function GestureCardPage(props: { nav: ReturnType<typeof createNavStack<Route>> 
 }
 
 function DetailPage(props: { nav: ReturnType<typeof createNavStack<Route>> }) {
-  const interceptBack = signal(false);
-  const backIntercepted = signal(false);
-  
-  
   return (
     <Scroll testID="detail" style={{ flex: 1, backgroundColor: "#fff" }}>
       <View style={{ padding: 16 }}>
@@ -759,12 +757,12 @@ function DetailPage(props: { nav: ReturnType<typeof createNavStack<Route>> }) {
               style={{ color: "#3b82f6", marginBottom: 16, fontWeight: "600" }}>
           ← Back
         </Text>
-        <Text testID="intercept-back" onPress={() => interceptBack.set(!interceptBack())}
-              style={{ padding: 12, backgroundColor: interceptBack() ? "#10b981" : "#cbd5e1", 
+        <Text testID="intercept-back" onPress={() => detailInterceptBack.set(!detailInterceptBack())}
+              style={{ padding: 12, backgroundColor: detailInterceptBack() ? "#10b981" : "#cbd5e1", 
                        borderRadius: 6, textAlign: "center", marginBottom: 16 }}>
-          {interceptBack() ? "Back Interception ON" : "Enable Back Interception"}
+          {detailInterceptBack() ? "Back Interception ON" : "Enable Back Interception"}
         </Text>
-        {backIntercepted() && (
+        {detailBackIntercepted() && (
           <Text testID="back-intercepted" style={{ color: "#10b981", fontWeight: "600" }}>
             Back intercepted!
           </Text>
@@ -879,15 +877,35 @@ function App() {
       {(route, index) => {
         const r = route;
         let content;
-        if (r.name === "home") content = <HomePage />;
-        else if (r.name === "detail") content = <DetailPage nav={nav} />;
-        else if (r.name === "dialog") content = <DialogDemoPage nav={nav} />;
-        else if (r.name === "gesture") content = <GestureCardPage nav={nav} />;
-        else if (r.name === "list") content = <ListDemoPage nav={nav} />;
-        else content = <Text>Unknown route: {r.name}</Text>;
+        let navPageProps: { onDismiss: () => void; popOnBack?: boolean; onBackPress?: () => boolean } = {
+          onDismiss: () => dismissedCount.set(dismissedCount() + 1)
+        };
+        
+        if (r.name === "home") {
+          content = <HomePage />;
+        } else if (r.name === "detail") {
+          content = <DetailPage nav={nav} />;
+          if (detailInterceptBack()) {
+            navPageProps.popOnBack = false;
+          }
+          navPageProps.onBackPress = () => {
+            if (detailInterceptBack()) {
+              detailBackIntercepted.set(true);
+              setTimeout(() => detailBackIntercepted.set(false), 1000);
+            }
+          };
+        } else if (r.name === "dialog") {
+          content = <DialogDemoPage nav={nav} />;
+        } else if (r.name === "gesture") {
+          content = <GestureCardPage nav={nav} />;
+        } else if (r.name === "list") {
+          content = <ListDemoPage nav={nav} />;
+        } else {
+          content = <Text>Unknown route: {r.name}</Text>;
+        }
         
         return (
-          <NavPage onDismiss={() => dismissedCount.set(dismissedCount() + 1)}>
+          <NavPage {...navPageProps}>
             {content}
           </NavPage>
         );
