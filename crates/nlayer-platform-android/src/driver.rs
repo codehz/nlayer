@@ -7,7 +7,7 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -110,6 +110,10 @@ struct Request {
     #[serde(default)]
     distance: f32,
     #[serde(default)]
+    x: f32,
+    #[serde(default)]
+    y: f32,
+    #[serde(default)]
     ms: f64,
 }
 
@@ -138,7 +142,11 @@ fn dispatch(host: &Host, line: &str) -> Result<Value, String> {
         "longPress" => long_press(host, request.selector),
         "type" => type_text(host, request.selector, request.text),
         "scroll" => scroll(host, request.selector, request.distance),
-        "advance" => advance(host, request.ms),
+        "advance" => advance(request.ms),
+        "drag" => drag(host, request.selector, request.x, request.y),
+        "dragAndHold" => drag_and_hold(host, request.selector, request.x, request.y),
+        "drop" => drop_touch(host),
+        "back" => back(host),
         other => Err(format!("unknown test op `{other}`")),
     }
 }
@@ -202,40 +210,90 @@ fn scroll(host: &Host, selector: String, distance: f32) -> Result<Value, String>
     Ok(Value::Null)
 }
 
-fn advance(host: &Host, ms: f64) -> Result<Value, String> {
-    // Advance the test clock by simulating frame ticks at 60 Hz
-    let frame_duration = 1.0 / 60.0; // 16.67ms per frame in seconds
-    let duration_secs = ms / 1000.0;
-    let num_frames = (duration_secs / frame_duration).ceil() as usize;
-    
-    // Get the current time as baseline
-    let start_time = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs_f64();
-    
-    // Tick through frames, accumulating time
-    for i in 0..num_frames {
-        let elapsed = (i + 1) as f64 * frame_duration;
-        let frame_time = start_time + elapsed;
-        let _batch = crate::animation::frame(frame_time);
-        let finished = crate::animation::take_finished();
-        
-        // Report finished animations back to the engine
-        if !finished.is_empty() {
-            if let Some(control) = host
-                .control
-                .lock()
-                .unwrap_or_else(|err| err.into_inner())
-                .as_ref()
-            {
-                control.animations_finished(finished);
-            }
-        }
+fn advance(ms: f64) -> Result<Value, String> {
+    // The host's Choreographer drives animation frames with the platform's
+    // clock; ticking here from the socket thread would race the UI thread.
+    // Wait real time, letting the view's frame callbacks run.
+    let deadline = std::time::Instant::now() + Duration::from_secs_f64(ms.max(0.0) / 1000.0);
+    while std::time::Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(16));
     }
-    
+    Ok(Value::Null)
+}
+
+/// Where a held finger is, for `drop`.
+static DRAG_STATE: Mutex<Option<(f32, f32)>> = Mutex::new(None);
+
+fn drag(host: &Host, selector: String, x: f32, y: f32) -> Result<Value, String> {
+    let scene = scene_of(&snapshot(host)?)?;
+    let (cx, cy) = scene.point_for(&selector)?;
+    tap(host, cx, cy, false);
+    thread::sleep(Duration::from_millis(20));
+    let steps = 5;
+    for i in 1..=steps {
+        let t = i as f32 / steps as f32;
+        move_to(host, cx + x * t, cy + y * t);
+        thread::sleep(Duration::from_millis(10));
+    }
+    tap(host, cx + x, cy + y, true);
+    thread::sleep(Duration::from_millis(16));
+    Ok(Value::Null)
+}
+
+fn drag_and_hold(host: &Host, selector: String, x: f32, y: f32) -> Result<Value, String> {
+    let scene = scene_of(&snapshot(host)?)?;
+    let (cx, cy) = scene.point_for(&selector)?;
+    tap(host, cx, cy, false);
+    thread::sleep(Duration::from_millis(20));
+    let steps = 5;
+    for i in 1..=steps {
+        let t = i as f32 / steps as f32;
+        move_to(host, cx + x * t, cy + y * t);
+        thread::sleep(Duration::from_millis(10));
+    }
+    *DRAG_STATE.lock().unwrap_or_else(|err| err.into_inner()) = Some((cx + x, cy + y));
+    Ok(Value::Null)
+}
+
+fn drop_touch(host: &Host) -> Result<Value, String> {
+    let (x, y) = DRAG_STATE
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .take()
+        .ok_or_else(|| "no drag in progress".to_string())?;
+    tap(host, x, y, true);
     thread::sleep(SETTLE);
     Ok(Value::Null)
+}
+
+fn back(host: &Host) -> Result<Value, String> {
+    let _ = with_env(|env| {
+        unsafe {
+            env.call_method_unchecked(
+                host.view.as_obj(),
+                java().view_back,
+                jni::signature::ReturnType::Primitive(jni::signature::Primitive::Boolean),
+                &[],
+            )?;
+        }
+        Ok(())
+    });
+    thread::sleep(SETTLE);
+    Ok(Value::Null)
+}
+
+fn move_to(host: &Host, x: f32, y: f32) {
+    let _ = with_env(|env| {
+        unsafe {
+            env.call_method_unchecked(
+                host.view.as_obj(),
+                java().view_move,
+                jni::signature::ReturnType::Primitive(jni::signature::Primitive::Void),
+                &[JValue::Float(x).as_jni(), JValue::Float(y).as_jni()],
+            )?;
+        }
+        Ok(())
+    });
 }
 
 fn snapshot(host: &Host) -> Result<String, String> {

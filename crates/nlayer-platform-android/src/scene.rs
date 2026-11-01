@@ -273,6 +273,18 @@ impl Scene {
         }
     }
 
+    /// Center of what `selector` names, in the root view's points, without
+    /// requiring the view to take a press. A drag starts there.
+    pub(crate) fn point_for(&self, selector: &str) -> Result<(f32, f32), String> {
+        let hit = self.resolve(selector)?;
+        if !self.visible(hit) {
+            return Err(format!("`{selector}` is not in view"));
+        }
+        self.absolute_frame(hit)
+            .map(|frame| frame.center())
+            .ok_or_else(|| format!("`{selector}` is gone"))
+    }
+
     /// Center of `press`, in the root view's points. The host turns this
     /// into a touch and hit-tests it.
     pub(crate) fn point(&self, press: Press) -> Result<(f32, f32), String> {
