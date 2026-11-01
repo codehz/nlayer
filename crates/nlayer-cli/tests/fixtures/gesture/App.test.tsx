@@ -56,7 +56,7 @@ test("horizontal pan in vertical scroll does not trigger scroll", () => {
 
   // Drag card horizontally inside scroll
   app.drag("scrollPanCard", 50, 0);
-  app.advance(0);
+  app.advance(50);
 
   // Scroll position should not change
   const afterY = mustFind(app.tree(), "scroll").offset?.y ?? 0;
