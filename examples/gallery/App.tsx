@@ -787,8 +787,8 @@ function ListDemoPage(props: { nav: ReturnType<typeof createNavStack<Route>> }) 
       <List
         testID="list"
         style={{ flex: 1 }}
-        of={Array.from({ length: loaded() }, (_, i) => i)}
-        estimated={32}
+        each={Array.from({ length: loaded() }, (_, i) => i)}
+        estimatedItemSize={32}
         onLoadMore={() => {
           if (loaded() < 5000) {
             loaded.set(Math.min(5000, loaded() + 1000));
