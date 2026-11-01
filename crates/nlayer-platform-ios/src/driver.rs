@@ -426,6 +426,13 @@ pub(crate) mod tests {
                 MountItem::ScrollContent {
                     id: 2,
                     size: size(px(600.0), px(200.0)),
+                    refresh_indicator: None,
+                    paging: false,
+                    snap_interval: None,
+                    snap_offsets: None,
+                    snap_alignment: 0,
+                    disable_interval_momentum: false,
+                    deceleration: 0.998,
                 },
                 MountItem::TestId {
                     id: 2,
