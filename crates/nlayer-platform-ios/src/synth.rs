@@ -155,6 +155,7 @@ fn enqueue(hid: &Hid, event: Event, window: &UIWindow, mtm: MainThreadMarker) {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Phase {
     Down,
+    Move,
     Up,
 }
 

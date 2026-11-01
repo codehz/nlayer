@@ -7,6 +7,7 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -24,6 +25,9 @@ use crate::synth::{self, Phase};
 
 const TAP: Duration = Duration::from_millis(60);
 const SETTLE: Duration = Duration::from_millis(300);
+
+// Global state for drag operations (dragAndHold/drop)
+static DRAG_STATE: Mutex<Option<(f64, f64)>> = Mutex::new(None);
 const KEY: Duration = Duration::from_millis(40);
 
 pub(crate) fn start(pin: Pin) {
@@ -128,6 +132,10 @@ struct Request {
     text: String,
     #[serde(default)]
     distance: f32,
+    #[serde(default)]
+    x: f32,
+    #[serde(default)]
+    y: f32,
 }
 
 fn step(line: &str) -> String {
@@ -154,7 +162,10 @@ fn dispatch(line: &str) -> Result<Value, String> {
         "longPress" => long_press(request.selector),
         "type" => type_text(request.selector, request.text),
         "scroll" => scroll(request.selector, request.distance),
-        other => Err(format!("unknown test op `{other}`")),
+        "drag" => drag(request.selector, request.x, request.y),
+        "dragAndHold" => drag_and_hold(request.selector, request.x, request.y),
+        "drop" => drop_touch(),
+        "back" => back(),
     }
 }
 
@@ -298,6 +309,127 @@ fn scroll(selector: String, distance: f32) -> Result<Value, String> {
         }
         Ok(json!(null))
     })?
+}
+
+fn drag(selector: String, x: f32, y: f32) -> Result<Value, String> {
+    // Press down at selector position
+    let start_point = on_ui(move || -> Result<Point, String> {
+        let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
+        let mounter = mounter.borrow();
+        let scene = mounter.scene();
+        let press = scene.press(&selector)?;
+        let (window, point) = point_of(&mounter, press)?;
+        if !synth::touch(&window, point.x, point.y, Phase::Down) {
+            return Err("the simulator did not take the touch".into());
+        }
+        Ok(point)
+    })??;
+    thread::sleep(Duration::from_millis(20));
+    
+    // Move to target position
+    let end_x = start_point.x + x as f64;
+    let end_y = start_point.y + y as f64;
+    
+    // Generate intermediate move events
+    let steps = 5;
+    for i in 1..=steps {
+        let t = i as f64 / steps as f64;
+        let curr_x = start_point.x + (end_x - start_point.x) * t;
+        let curr_y = start_point.y + (end_y - start_point.y) * t;
+        
+        on_ui(move || -> Result<(), String> {
+            let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
+            let window = window_of(&mounter.borrow())?;
+            if !synth::touch(&window, curr_x, curr_y, Phase::Move) {
+                return Err("the simulator did not take the touch".into());
+            }
+            Ok(())
+        })??;
+        thread::sleep(Duration::from_millis(10));
+    }
+    
+    // Lift finger
+    on_ui(move || -> Result<Value, String> {
+        let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
+        let window = window_of(&mounter.borrow())?;
+        if !synth::touch(&window, end_x, end_y, Phase::Up) {
+            return Err("the simulator did not take the touch".into());
+        }
+        Ok(json!(null))
+    })??;
+    thread::sleep(SETTLE);
+    Ok(Value::Null)
+}
+
+fn drag_and_hold(selector: String, x: f32, y: f32) -> Result<Value, String> {
+    // Press down at selector position
+    let start_point = on_ui(move || -> Result<Point, String> {
+        let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
+        let mounter = mounter.borrow();
+        let scene = mounter.scene();
+        let press = scene.press(&selector)?;
+        let (window, point) = point_of(&mounter, press)?;
+        if !synth::touch(&window, point.x, point.y, Phase::Down) {
+            return Err("the simulator did not take the touch".into());
+        }
+        Ok(point)
+    })??;
+    thread::sleep(Duration::from_millis(20));
+    
+    // Move to target position
+    let end_x = start_point.x + x as f64;
+    let end_y = start_point.y + y as f64;
+    
+    // Generate intermediate move events
+    let steps = 5;
+    for i in 1..=steps {
+        let t = i as f64 / steps as f64;
+        let curr_x = start_point.x + (end_x - start_point.x) * t;
+        let curr_y = start_point.y + (end_y - start_point.y) * t;
+        
+        on_ui(move || -> Result<(), String> {
+            let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
+            let window = window_of(&mounter.borrow())?;
+            if !synth::touch(&window, curr_x, curr_y, Phase::Move) {
+                return Err("the simulator did not take the touch".into());
+            }
+            Ok(())
+        })??;
+        thread::sleep(Duration::from_millis(10));
+    }
+    
+    // Store final position for drop()
+    if let Ok(mut state) = DRAG_STATE.lock() {
+        *state = Some((end_x, end_y));
+    }
+    
+    thread::sleep(Duration::from_millis(50));
+    Ok(Value::Null)
+}
+
+fn drop_touch() -> Result<Value, String> {
+    let position = DRAG_STATE
+        .lock()
+        .ok()
+        .and_then(|mut state| state.take())
+        .ok_or_else(|| "no drag in progress".to_string())?;
+    
+    on_ui(move || -> Result<Value, String> {
+        let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
+        let window = window_of(&mounter.borrow())?;
+        if !synth::touch(&window, position.0, position.1, Phase::Up) {
+            return Err("the simulator did not take the touch".into());
+        }
+        Ok(json!(null))
+    })??;
+    thread::sleep(SETTLE);
+    Ok(Value::Null)
+}
+
+fn back() -> Result<Value, String> {
+    // iOS doesn't have a system back button like Android
+    // This is a no-op for iOS
+    Ok(Value::Null)
 }
 
 struct Point {
