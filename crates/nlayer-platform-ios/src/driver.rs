@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 use dispatch2::DispatchQueue;
 use objc2::{MainThreadMarker, msg_send};
 use objc2_core_foundation::{CGFloat, CGPoint};
+use objc2_foundation::{NSDate, NSDefaultRunLoopMode, NSRunLoop};
 use objc2_ui_kit::{UIView, UIWindow};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -154,13 +155,29 @@ fn step(line: &str) -> String {
 /// layout passes complete before returning. This ensures test operations see
 /// a consistent view hierarchy state.
 fn drain_main_queue() {
-    // Drain pending work on main queue by running multiple iterations
-    // This ensures async batch applications from host.rs:220 complete
-    for _ in 0..10 {
-        on_ui(|| {
-            // Just being on the main thread allows pending async blocks to execute
-        }).ok();
-        thread::sleep(Duration::from_millis(20));
+    // Drain the main run loop to process all pending async blocks scheduled by
+    // host.rs:220 batch applications. Run the loop in short bursts with a limit
+    // to avoid hanging if work keeps being scheduled.
+    const MAX_ITERATIONS: u32 = 50;
+    
+    for _ in 0..MAX_ITERATIONS {
+        // Run one iteration of the main run loop with a short timeout.
+        // Returns true if work was processed, false if the loop timed out.
+        let processed_work = on_ui(|| {
+            // NSRunLoop.currentRunLoop() can only be called on the main thread
+            let run_loop = NSRunLoop::currentRunLoop();
+            // Run the loop for a very short time (1ms). If there's pending work,
+            // it processes it and returns true. If nothing pending, times out quickly.
+            unsafe {
+                let mode = objc2_foundation::NSDefaultRunLoopMode;
+                run_loop.runMode_beforeDate(mode, &objc2_foundation::NSDate::distantPast())
+            }
+        }).unwrap_or(false);
+        
+        if !processed_work {
+            // No work was processed in this iteration, queue is likely drained
+            break;
+        }
     }
 }
 
@@ -335,8 +352,16 @@ fn scroll(selector: String, distance: f32) -> Result<Value, String> {
 }
 
 fn drag(selector: String, x: f32, y: f32) -> Result<Value, String> {
-    // UIPanGestureRecognizer has a ~10pt threshold before recognizing gestures.
-    // Compensate by adding extra distance to match the requested translation.
+    // UIPanGestureRecognizer has a ~10pt recognition threshold: it accumulates
+    // touch movement but doesn't report the gesture until 10pt is crossed. Once
+    // recognized, translation is measured from the recognition point (after the
+    // threshold), not from the original touch-down point. This is standard iOS
+    // platform behavior documented in UIGestureRecognizer.
+    //
+    // This compensation affects only the test driver's synthesized touch sequence
+    // (via synth::touch with Phase::Move). The actual pan gesture handler in the
+    // app receives the correct translation value it expects. Without compensation,
+    // an 80pt test drag would be reported as ~70pt to the gesture handler.
     const PAN_THRESHOLD: f32 = 10.0;
     let compensated_x = if x.abs() > 0.1 {
         x + x.signum() * PAN_THRESHOLD
@@ -400,8 +425,16 @@ fn drag(selector: String, x: f32, y: f32) -> Result<Value, String> {
 }
 
 fn drag_and_hold(selector: String, x: f32, y: f32) -> Result<Value, String> {
-    // UIPanGestureRecognizer has a ~10pt threshold before recognizing gestures.
-    // Compensate by adding extra distance to match the requested translation.
+    // UIPanGestureRecognizer has a ~10pt recognition threshold: it accumulates
+    // touch movement but doesn't report the gesture until 10pt is crossed. Once
+    // recognized, translation is measured from the recognition point (after the
+    // threshold), not from the original touch-down point. This is standard iOS
+    // platform behavior documented in UIGestureRecognizer.
+    //
+    // This compensation affects only the test driver's synthesized touch sequence
+    // (via synth::touch with Phase::Move). The actual pan gesture handler in the
+    // app receives the correct translation value it expects. Without compensation,
+    // an 80pt test drag would be reported as ~70pt to the gesture handler.
     const PAN_THRESHOLD: f32 = 10.0;
     let compensated_x = if x.abs() > 0.1 {
         x + x.signum() * PAN_THRESHOLD
