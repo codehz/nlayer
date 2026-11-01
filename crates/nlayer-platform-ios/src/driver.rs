@@ -438,28 +438,31 @@ fn back() -> Result<Value, String> {
 
 fn advance(ms: f64) -> Result<Value, String> {
     // Advance the test clock by simulating frame ticks at 60 Hz
-    let frame_duration = 1.0 / 60.0; // 16.67ms per frame
-    let num_frames = (ms / 1000.0 / frame_duration).ceil() as usize;
+    let frame_duration = 1.0 / 60.0; // 16.67ms per frame in seconds
+    let duration_secs = ms / 1000.0;
+    let num_frames = (duration_secs / frame_duration).ceil() as usize;
     
     on_ui(move || -> Result<(), String> {
         let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
         let mut mounter = mounter.borrow_mut();
         
-        // Get current time and advance by ticking frames
+        // Get the current time as baseline
         let start_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs_f64();
         
+        // Tick through frames, accumulating time
         for i in 0..num_frames {
-            let frame_time = start_time + (i as f64 * frame_duration);
+            let elapsed = (i + 1) as f64 * frame_duration;
+            let frame_time = start_time + elapsed;
             mounter.tick_animation(frame_time);
         }
         Ok(())
     })??;
     
     // Allow a brief settle time after advancing
-    thread::sleep(Duration::from_millis(10));
+    thread::sleep(Duration::from_millis(16));
     Ok(Value::Null)
 }
 
