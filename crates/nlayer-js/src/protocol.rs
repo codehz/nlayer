@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use nlayer_core::{
     AccessibilityProp, AccessibilityRole, AccessibilityState, AccessibilityValue, CellSlot,
-    Checked, HeaderSlot, ImageScales, ImageSource, Interaction, KeyboardDismiss, KeyboardTaps,
-    KeyboardType, ModalAnimation, ModalPresentation, ModalProp, NodeId, Op, Prop, ScreenAnimation,
-    ScreenProp, Tag,
+    Checked, DecelerationRate, HeaderSlot, ImageScales, ImageSource, Interaction, KeyboardDismiss,
+    KeyboardTaps, KeyboardType, ModalAnimation, ModalPresentation, ModalProp, NodeId, Op, Prop,
+    ScreenAnimation, ScreenProp, SnapAlignment, Tag,
     animation::{AnimationOp, AnimationProp, Driver, Easing, Extrapolate, StepPosition},
     geometry::{Points, Size},
     style::{
@@ -185,6 +185,68 @@ pub(crate) fn decode_prop<'js>(
                     return Ok(None);
                 }
             }
+        }
+        (Some(Tag::Scroll | Tag::List), "pagingEnabled") => {
+            Prop::PagingEnabled(value.as_bool().unwrap_or(false))
+        }
+        (Some(Tag::Scroll | Tag::List), "snapToInterval") => {
+            if value.is_null() || value.is_undefined() {
+                Prop::SnapToInterval(None)
+            } else {
+                let interval = number(&value).unwrap_or(0.0);
+                Prop::SnapToInterval(if interval > 0.0 { Some(interval) } else { None })
+            }
+        }
+        (Some(Tag::Scroll | Tag::List), "snapToOffsets") => {
+            if let Some(array) = value.as_array() {
+                let mut offsets = Vec::new();
+                for i in 0..array.len() {
+                    if let Some(n) = array.get::<f64>(i).ok() {
+                        offsets.push(n as f32);
+                    }
+                }
+                Prop::SnapToOffsets(Some(offsets.into_boxed_slice()))
+            } else {
+                Prop::SnapToOffsets(None)
+            }
+        }
+        (Some(Tag::Scroll | Tag::List), "snapToAlignment") => {
+            let s = string(&value).unwrap_or_default();
+            let alignment = match s.as_str() {
+                "center" => SnapAlignment::Center,
+                "end" => SnapAlignment::End,
+                _ => SnapAlignment::Start,
+            };
+            Prop::SnapToAlignment(alignment)
+        }
+        (Some(Tag::Scroll | Tag::List), "disableIntervalMomentum") => {
+            Prop::DisableIntervalMomentum(value.as_bool().unwrap_or(false))
+        }
+        (Some(Tag::Scroll | Tag::List), "decelerationRate") => {
+            let rate = if let Some(n) = number(&value) {
+                DecelerationRate::Custom(n.clamp(0.0, 1.0))
+            } else {
+                let s = string(&value).unwrap_or_default();
+                match s.as_str() {
+                    "fast" => DecelerationRate::Fast,
+                    _ => DecelerationRate::Normal,
+                }
+            };
+            Prop::DecelerationRate(rate)
+        }
+        (Some(Tag::Scroll | Tag::List), "refreshing") => {
+            Prop::Refreshing(value.as_bool().unwrap_or(false))
+        }
+        (Some(Tag::Scroll | Tag::List), "refreshIndicator") => {
+            if value.is_null() || value.is_undefined() {
+                Prop::RefreshIndicator(None)
+            } else {
+                let height = number(&value).unwrap_or(0.0);
+                Prop::RefreshIndicator(if height > 0.0 { Some(Points(height)) } else { None })
+            }
+        }
+        (Some(Tag::Scroll | Tag::List), "pullValue") => {
+            Prop::PullValue(animated_node(&value))
         }
         (Some(Tag::List), "count") => Prop::Count(value.as_number().unwrap_or(0.0).max(0.0) as u32),
         (Some(Tag::List), "estimatedItemSize") => {
