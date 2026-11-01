@@ -136,6 +136,8 @@ struct Request {
     x: f32,
     #[serde(default)]
     y: f32,
+    #[serde(default)]
+    ms: f64,
 }
 
 fn step(line: &str) -> String {
@@ -166,7 +168,7 @@ fn dispatch(line: &str) -> Result<Value, String> {
         "dragAndHold" => drag_and_hold(request.selector, request.x, request.y),
         "drop" => drop_touch(),
         "back" => back(),
-        other => Err(format!("unknown test op `{other}`")),
+        "advance" => advance(request.ms),
     }
 }
 
@@ -430,6 +432,33 @@ fn drop_touch() -> Result<Value, String> {
 fn back() -> Result<Value, String> {
     // iOS doesn't have a system back button like Android
     // This is a no-op for iOS
+    Ok(Value::Null)
+}
+
+fn advance(ms: f64) -> Result<Value, String> {
+    // Advance the test clock by simulating frame ticks at 60 Hz
+    let frame_duration = 1.0 / 60.0; // 16.67ms per frame
+    let num_frames = (ms / 1000.0 / frame_duration).ceil() as usize;
+    
+    on_ui(move || -> Result<(), String> {
+        let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
+        let mut mounter = mounter.borrow_mut();
+        
+        // Get current time and advance by ticking frames
+        let start_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
+        
+        for i in 0..num_frames {
+            let frame_time = start_time + (i as f64 * frame_duration);
+            mounter.tick_animation(frame_time);
+        }
+        Ok(())
+    })??;
+    
+    // Allow a brief settle time after advancing
+    thread::sleep(Duration::from_millis(10));
     Ok(Value::Null)
 }
 

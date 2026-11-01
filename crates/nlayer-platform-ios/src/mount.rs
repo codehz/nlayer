@@ -1114,7 +1114,7 @@ impl Mounter {
 
     /// Runs one display frame: the graph moves, bound values are painted,
     /// and finished animations go back to the engine.
-    fn tick_animation(&mut self, now: f64) {
+    pub(crate) fn tick_animation(&mut self, now: f64) {
         if self.frame_pending {
             self.frame_pending = false;
             if let Some(control) = &self.control {
