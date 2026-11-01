@@ -1,6 +1,6 @@
-import { expect, open, test } from "@nlayer/test";
+import { expect, open, test, type Node } from "@nlayer/test";
 
-function find(node: any, name: string): any {
+function find(node: Node, name: string): Node | null {
   if (node.testID === name) return node;
   for (const child of node.children ?? []) {
     const found = find(child, name);
@@ -9,45 +9,58 @@ function find(node: any, name: string): any {
   return null;
 }
 
+function mustFind(node: Node, name: string): Node {
+  const found = find(node, name);
+  if (found === null) throw new Error(`\`${name}\` is not in the tree`);
+  return found;
+}
+
+// A pan drives the view's transform (its layout frame does not move); the
+// tree reports the live `translateX` step, as animated values last moved it.
+function translateX(node: Node): number {
+  for (const step of node.transform ?? []) {
+    if (step.translateX !== undefined) return step.translateX;
+  }
+  return 0;
+}
+
 test("pan drives animated value and springs back on release", () => {
   const app = open("App.tsx");
-  
+
   // Initial position
-  const initial = find(app.tree(), "panCard");
-  expect(initial.frame.x).toBe(0);
-  
+  const initial = mustFind(app.tree(), "panCard");
+  expect(translateX(initial)).toBe(0);
+
   // Drag horizontally
   app.drag("panCard", 120, 0);
   app.advance(50);
-  
+
   // Should have moved right
-  const dragged = find(app.tree(), "panCard");
-  expect(dragged.frame.x > 100).toBe(true);
-  
+  const dragged = mustFind(app.tree(), "panCard");
+  expect(translateX(dragged) > 100).toBe(true);
+
   // After release, spring back to 0
   app.advance(500);
-  const sprung = find(app.tree(), "panCard");
-  expect(Math.abs(sprung.frame.x) < 5).toBe(true);
-  
+  const sprung = mustFind(app.tree(), "panCard");
+  expect(Math.abs(translateX(sprung)) < 5).toBe(true);
+
   app.close();
 });
 
 test("horizontal pan in vertical scroll does not trigger scroll", () => {
   const app = open("App.tsx");
-  
+
   // Record initial scroll position
-  const initialScroll = find(app.tree(), "scroll");
-  const initialY = initialScroll.scrollY || 0;
-  
+  const initialY = mustFind(app.tree(), "scroll").offset?.y ?? 0;
+
   // Drag card horizontally inside scroll
   app.drag("scrollPanCard", 50, 0);
   app.advance(50);
-  
+
   // Scroll position should not change
-  const afterDrag = find(app.tree(), "scroll");
-  const afterY = afterDrag.scrollY || 0;
+  const afterY = mustFind(app.tree(), "scroll").offset?.y ?? 0;
   expect(afterY).toBe(initialY);
-  
+
   app.close();
 });
 
@@ -58,12 +71,12 @@ test("horizontal pan in vertical scroll does not trigger scroll", () => {
 // specific multi-touch injection APIs. This smoke just ensures bindings are present.
 test("pinch and rotation bindings present without errors", () => {
   const app = open("App.tsx");
-  
+
   // Verify views with bindings exist (toBeTruthy not available, check not null)
   const pinch = find(app.tree(), "pinchCard");
   const rotation = find(app.tree(), "rotationCard");
   expect(pinch !== null).toBe(true);
   expect(rotation !== null).toBe(true);
-  
+
   app.close();
 });
