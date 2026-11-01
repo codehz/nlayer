@@ -219,19 +219,8 @@ define_class!(
             let velocity = gesture.velocityInView(Some(&superview));
             let id = view.tag() as NodeId;
             let state = gesture.state();
-            // On began, record any scroll view that was touched
-            if state == UIGestureRecognizerState::Began {
-                if let Some(touch) = gesture.touches().first() {
-                    if let Some(touched) = touch.downcast_ref::<UITouch>() {
-                        let touched_view = touched.view();
-                        with_mounter(move |m| {
-                            if let Some(v) = touched_view {
-                                m.pan_touch(id, &v);
-                            }
-                        });
-                    }
-                }
-            }
+            // Note: UIPanGestureRecognizer doesn't expose touches() in objc2_ui_kit
+            // Pan scroll cooperation is disabled for now
             with_mounter(move |m| {
                 m.handle_pan(id, state, translation, velocity);
             });
@@ -298,6 +287,10 @@ define_class!(
         #[unsafe(method(dismissKeyboard:))]
         fn dismiss_keyboard(&self, _gesture: &UITapGestureRecognizer) {
             let Some(shared) = self.ivars().mounter.borrow().upgrade() else {
+                return;
+            };
+            resign_keyboard(&shared);
+        }
 
         #[unsafe(method(handleRefresh:))]
         fn handle_refresh(&self, control: &UIRefreshControl) {
@@ -311,10 +304,6 @@ define_class!(
                     ));
                 });
             }
-        }
-                return;
-            };
-            resign_keyboard(&shared);
         }
 
         #[unsafe(method(returned:))]
@@ -383,13 +372,15 @@ define_class!(
                 let id = scroll.tag() as NodeId;
                 if let Some(shared) = self.ivars().mounter.borrow().upgrade() {
                     if let Ok(mounter) = shared.try_borrow() {
-                        mounter.engine.control().update_scroll_position(
-                            id,
-                            nlayer_core::Point::new(
-                                nlayer_core::Points(offset.x as f32),
-                                nlayer_core::Points(offset.y as f32),
-                            ),
-                        );
+                        if let Some(control) = &mounter.control {
+                            control.update_scroll_position(
+                                id,
+                                Point {
+                                    x: Points(offset.x as f32),
+                                    y: Points(offset.y as f32),
+                                },
+                            );
+                        }
                     }
                 }
             }
@@ -4279,6 +4270,13 @@ pub(crate) mod tests {
                     MountItem::ScrollContent {
                         id: 2,
                         size: size(px(500.0), px(1000.0)),
+                        refresh_indicator: None,
+                        paging: false,
+                        snap_interval: None,
+                        snap_offsets: None,
+                        snap_alignment: 0,
+                        disable_interval_momentum: false,
+                        deceleration: 0.998,
                     },
                 ],
             ]
@@ -4323,6 +4321,13 @@ pub(crate) mod tests {
                     MountItem::ScrollContent {
                         id: 2,
                         size: size(px(600.0), px(100.0)),
+                        refresh_indicator: None,
+                        paging: false,
+                        snap_interval: None,
+                        snap_offsets: None,
+                        snap_alignment: 0,
+                        disable_interval_momentum: false,
+                        deceleration: 0.998,
                     },
                     MountItem::ScrollBy {
                         id: 2,
