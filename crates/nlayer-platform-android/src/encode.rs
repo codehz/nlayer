@@ -1025,10 +1025,10 @@ mod tests {
         assert_eq!(words.int(), super::SCROLL_CONTENT);
         assert_eq!(words.int(), 5);
         assert_eq!((words.float(), words.float()), (40.0, 10.0));
-        // Skip new ScrollContent fields: refresh_indicator, paging, snap_interval, 
+        // Skip new ScrollContent fields: refresh_indicator, paging, snap_interval,
         // snap_offsets (len + array), snap_alignment, disable_interval_momentum, deceleration
         words.float(); // refresh_indicator
-        words.int();   // paging
+        words.int(); // paging
         words.float(); // snap_interval
         let offsets_len = words.int(); // snap_offsets length
         if offsets_len >= 0 {
@@ -1036,8 +1036,8 @@ mod tests {
                 words.float();
             }
         }
-        words.int();   // snap_alignment
-        words.int();   // disable_interval_momentum
+        words.int(); // snap_alignment
+        words.int(); // disable_interval_momentum
         words.float(); // deceleration
         assert_eq!(words.int(), super::SCROLL_BY);
         assert_eq!(words.int(), 5);

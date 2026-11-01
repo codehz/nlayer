@@ -962,7 +962,6 @@ impl Default for MaintainPosition {
     }
 }
 
-
 /// What a list cell holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CellSlot {

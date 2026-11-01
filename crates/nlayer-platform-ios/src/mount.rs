@@ -44,8 +44,8 @@ use objc2_ui_kit::{
     UIAccessibilityTraitSearchField, UIAccessibilityTraitSelected, UIAccessibilityTraitStaticText,
     UIAccessibilityTraitSummaryElement, UIAccessibilityTraitUpdatesFrequently, UIGestureRecognizer,
     UIGestureRecognizerDelegate, UIGestureRecognizerState, UIHoverGestureRecognizer,
-    UILongPressGestureRecognizer, UIPanGestureRecognizer, UIPinchGestureRecognizer, UIRefreshControl,
-    UIRotationGestureRecognizer, UIScreen, UIScrollView,
+    UILongPressGestureRecognizer, UIPanGestureRecognizer, UIPinchGestureRecognizer,
+    UIRefreshControl, UIRotationGestureRecognizer, UIScreen, UIScrollView,
     UIScrollViewContentInsetAdjustmentBehavior, UIScrollViewDelegate, UITapGestureRecognizer,
     UITextField, UITextFieldDelegate, UITextView, UITextViewDelegate, UITouch, UIView,
     UIViewControllerTransitionCoordinator,
@@ -3013,12 +3013,16 @@ impl Mounter {
     }
 
     fn sync_refresh(&mut self, id: NodeId) {
-        let Some(slot) = self.slot_mut(id) else { return };
-        let Native::Scroll(scroll) = &slot.native else { return };
-        
+        let Some(slot) = self.slot_mut(id) else {
+            return;
+        };
+        let Native::Scroll(scroll) = &slot.native else {
+            return;
+        };
+
         let wants_refresh = slot.events.contains(EventKind::Refresh);
         let has_control = slot.refresh_control.is_some();
-        
+
         if wants_refresh && !has_control {
             let control = UIRefreshControl::new(self.mtm);
             unsafe {
@@ -3038,12 +3042,14 @@ impl Mounter {
     }
 
     fn set_refreshing(&mut self, id: NodeId, refreshing: bool) {
-        let Some(slot) = self.slot_mut(id) else { return };
+        let Some(slot) = self.slot_mut(id) else {
+            return;
+        };
         if slot.refreshing == refreshing {
             return;
         }
         slot.refreshing = refreshing;
-        
+
         if let Some(control) = &slot.refresh_control {
             if refreshing {
                 control.beginRefreshing();
