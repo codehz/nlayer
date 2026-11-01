@@ -366,26 +366,49 @@ fn scroll(selector: String, distance: f32) -> Result<Value, String> {
             thread::sleep(Duration::from_millis(16));
         }
         
-        // Touch up
+        // Hold finger at end position for 150ms to reduce velocity to ~0
+        // This prevents momentum scrolling that would overshoot the target
         let end_x = start_x + dx * steps as f64;
         let end_y = start_y + dy * steps as f64;
+        let hold_steps = 9; // 150ms ÷ 16ms ≈ 9
+        for _ in 0..hold_steps {
+            if !synth::touch(&window, end_x, end_y, Phase::Move) {
+                return Err("the simulator did not take the touch hold".into());
+            }
+            thread::sleep(Duration::from_millis(16));
+        }
+        
+        // Touch up with zero velocity
         if !synth::touch(&window, end_x, end_y, Phase::Up) {
             return Err("the simulator did not take the touch up".into());
         }
         
-        // Wait for scroll animation to settle
-        thread::sleep(Duration::from_millis(300));
+        // Wait for deceleration to complete and offset to stabilize
+        let mut last_offset = scroll.contentOffset();
+        let mut stable_frames = 0;
+        let deadline = Instant::now() + Duration::from_secs(2);
         
-        // Verify we reached the target (within tolerance)
-        let final_offset = scroll.contentOffset();
-        let actual = if horizontal { final_offset.x } else { final_offset.y };
-        let target = if horizontal { target_x } else { target_y };
-        let diff = (actual - target as CGFloat).abs();
-        
-        if diff > 10.0 {
-            // If not close enough, adjust with setContentOffset as fallback
-            scroll.setContentOffset(CGPoint::new(target_x as CGFloat, target_y as CGFloat));
-            thread::sleep(Duration::from_millis(50));
+        while Instant::now() < deadline {
+            if !scroll.isDecelerating() && !scroll.isDragging() {
+                // Check if offset is stable for 2 consecutive frames
+                let current_offset = scroll.contentOffset();
+                let offset_diff = if horizontal {
+                    (current_offset.x - last_offset.x).abs()
+                } else {
+                    (current_offset.y - last_offset.y).abs()
+                };
+                
+                if offset_diff < 0.1 {
+                    stable_frames += 1;
+                    if stable_frames >= 2 {
+                        break;
+                    }
+                } else {
+                    stable_frames = 0;
+                }
+                last_offset = current_offset;
+            }
+            thread::sleep(Duration::from_millis(16));
         }
         
         Ok(json!(null))
