@@ -712,7 +712,7 @@ export interface ListProps<T> extends Omit<ScrollProps, "children"> {
     itemVisiblePercentThreshold?: number;
   };
   /** The range of viewable list items changed. */
-  onViewableItemsChanged?: (e: { first: number; last: number }) => void;
+  onViewableItemsChange?: (e: { first: number; last: number }) => void;
   /** The end came near; load the next page. Fires once per item count. */
   onLoadMore?: () => void;
   ref?: ((handle: ListHandle) => void) | { current?: ListHandle };

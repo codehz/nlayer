@@ -312,3 +312,40 @@ Copied files:
   `crates/nsh-platform-ios/src/mount.rs` (recognizer installation lines 2717-2748,
   Slot fields lines 143-145) and `crates/nsh-platform-ios/src/target.rs`
   (handlePan/handlePinch/handleRotation lines 96-120 in nsh commit ca59368b)
+- `crates/nlayer-platform-android/java/dev/nlayer/android/Gestures.java` from
+  `crates/nsh-platform-android/java/com/longbridge/nsh/Box.java` (pan/pinch/rotation
+  gesture detection and velocity tracking, lines 395-648 in nsh commit ca59368b)
+- `crates/nlayer-platform-android/src/animation.rs` pan/pinch/rotation value
+  accounting from `crates/nsh-platform-android/src/animation.rs` (transform_began,
+  transform_moved gesture integration with animation graph)
+- `crates/nlayer-platform-web/web/nlayer.js` pointer event handlers for
+  pan/pinch/rotation from `crates/nsh-platform-web/web/nsh.js` (pointer gate and
+  gesture state machine for transform gestures)
+- Scroll refresh props (Refreshing/RefreshIndicator/PullValue) in
+  `crates/nlayer-core/src/ops.rs` from `crates/nsh-core/src/ops.rs` (ScrollProp
+  variants for pull-to-refresh, lines ~1122-1128 in v3)
+- Paging and snap props (PagingEnabled/SnapToInterval/SnapToOffsets/SnapToAlignment/
+  DisableIntervalMomentum/DecelerationRate) in `crates/nlayer-core/src/ops.rs` from
+  `crates/nsh-core/src/ops.rs` (ScrollProp variants, lines ~1129-1140 in v3)
+- List second-tier props (StickyHeaderIndices/Inverted/MaintainVisibleContentPosition/
+  Viewport/ViewabilityConfig) in `crates/nlayer-core/src/ops.rs` from
+  `crates/nsh-core/src/ops.rs` (ListProp variants, lines ~1141-1150 in v3)
+- `crates/nlayer-core/src/core/mod.rs` refresh state and pullValue animation node
+  integration from `crates/nsh-core/src/core/mod.rs` (refresh reporting, pull distance
+  calculation and animation value updates)
+- `crates/nlayer-core/src/core/list.rs` sticky headers, inverted layout, and
+  viewability from `crates/nsh-core/src/core/list.rs` (sticky index pinning,
+  inverted positioning, viewport parent measurement, viewability thresholds and
+  onViewableItemsChanged reporting)
+- `crates/nlayer-platform-android/java/dev/nlayer/android/ScrollBox.java` paging,
+  snap and refresh from `crates/nsh-platform-android/java/com/longbridge/nsh/ScrollBox.java`
+  (snap-to-interval/offsets logic, paging behavior, refresh indicator)
+- `crates/nlayer-platform-web/web/nlayer.js` pull-to-refresh from
+  `crates/nsh-platform-web/web/nsh.js` (pull gesture detection, refresh event
+  firing, lines ~3165-3290 in nsh commit ca59368b)
+- `crates/nlayer-testing/src/screen.rs` stack/screen/modal/insets model from
+  `crates/nsh-testing/src/screen.rs` (windowless navigation stack, screen layout
+  roots, modal presentation, back_target routing)
+- `crates/nlayer-testing/src/driver.rs` drag/dragAndHold/drop/back steps from
+  `crates/nsh-testing/src/driver.rs` (pointer sequence steps and back navigation,
+  lines ~363-513 in nsh commit ca59368b)
