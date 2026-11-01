@@ -877,23 +877,11 @@ function App() {
       {(route, index) => {
         const r = route;
         let content;
-        let navPageProps: { onDismiss: () => void; popOnBack?: boolean; onBackPress?: () => boolean } = {
-          onDismiss: () => dismissedCount.set(dismissedCount() + 1)
-        };
         
         if (r.name === "home") {
           content = <HomePage />;
         } else if (r.name === "detail") {
           content = <DetailPage nav={nav} />;
-          if (detailInterceptBack()) {
-            navPageProps.popOnBack = false;
-          }
-          navPageProps.onBackPress = () => {
-            if (detailInterceptBack()) {
-              detailBackIntercepted.set(true);
-              setTimeout(() => detailBackIntercepted.set(false), 1000);
-            }
-          };
         } else if (r.name === "dialog") {
           content = <DialogDemoPage nav={nav} />;
         } else if (r.name === "gesture") {
@@ -905,7 +893,16 @@ function App() {
         }
         
         return (
-          <NavPage {...navPageProps}>
+          <NavPage
+            onDismiss={() => dismissedCount.set(dismissedCount() + 1)}
+            popOnBack={r.name !== "detail" || !detailInterceptBack()}
+            onBackPress={r.name === "detail" ? () => {
+              if (detailInterceptBack()) {
+                detailBackIntercepted.set(true);
+                setTimeout(() => detailBackIntercepted.set(false), 1000);
+              }
+            } : undefined}
+          >
             {content}
           </NavPage>
         );
