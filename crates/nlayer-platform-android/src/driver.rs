@@ -109,6 +109,8 @@ struct Request {
     text: String,
     #[serde(default)]
     distance: f32,
+    #[serde(default)]
+    ms: f64,
 }
 
 fn step(host: &Host, line: &str) -> String {
@@ -136,7 +138,7 @@ fn dispatch(host: &Host, line: &str) -> Result<Value, String> {
         "longPress" => long_press(host, request.selector),
         "type" => type_text(host, request.selector, request.text),
         "scroll" => scroll(host, request.selector, request.distance),
-        other => Err(format!("unknown test op `{other}`")),
+        "advance" => advance(host, request.ms),
     }
 }
 
@@ -196,6 +198,40 @@ fn scroll(host: &Host, selector: String, distance: f32) -> Result<Value, String>
         )
     };
     scroll_to(host, id as jint, x, y);
+    Ok(Value::Null)
+}
+
+fn advance(_host: &Host, ms: f64) -> Result<Value, String> {
+    // Advance the test clock by simulating frame ticks at 60 Hz
+    let frame_duration = 1.0 / 60.0; // 16.67ms per frame in seconds
+    let duration_secs = ms / 1000.0;
+    let num_frames = (duration_secs / frame_duration).ceil() as usize;
+    
+    // Get the current time as baseline
+    let start_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64();
+    
+    // Tick through frames, accumulating time
+    for i in 0..num_frames {
+        let elapsed = (i + 1) as f64 * frame_duration;
+        let frame_time = start_time + elapsed;
+        let _batch = crate::animation::frame(frame_time);
+        let finished = crate::animation::take_finished();
+        
+        // Report finished animations back to the engine
+        if !finished.is_empty() {
+            if let Some(control) = crate::host::control() {
+                control.animations_finished(finished);
+            }
+        }
+        
+        // Small sleep to simulate frame timing
+        thread::sleep(Duration::from_millis(1));
+    }
+    
+    thread::sleep(SETTLE);
     Ok(Value::Null)
 }
 

@@ -237,6 +237,10 @@ impl HostedApp for AndroidApp {
         self.call("back", "", "", 0.0).map(|_| ())
     }
 
+    fn advance(&mut self, ms: f64) -> Result<(), String> {
+        self.call("advance", "", "", ms as f32).map(|_| ())
+    }
+
 
     fn close(&mut self) {
         if !self.open {
