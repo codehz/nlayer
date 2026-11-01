@@ -371,7 +371,9 @@ export function attachGestures(player) {
   player.pointerDown = function(event) {
     this.swallowTarget = null;
     this.noteKeyboardTap(event);
-    if (event.pointerType === "mouse" || event.button > 0) return;
+    // Allow mouse pans: the CLI test driver uses mouse events, and desktop
+    // users expect pointer drags to pan too. Right/middle buttons are ignored.
+    if (event.button > 0) return;
     
     let pan = null, pinch = null, rotation = null;
     for (let el = event.target; el && el._id != null; el = el.parentNode) {
