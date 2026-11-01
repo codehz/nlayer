@@ -166,6 +166,7 @@ fn dispatch(line: &str) -> Result<Value, String> {
         "dragAndHold" => drag_and_hold(request.selector, request.x, request.y),
         "drop" => drop_touch(),
         "back" => back(),
+        other => Err(format!("unknown test op `{other}`")),
     }
 }
 
