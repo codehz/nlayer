@@ -374,10 +374,30 @@ impl Scene {
                 center_x, center_y, self.width, self.height));
         }
         
-        // On iOS, we only check if the element's center is within the window bounds.
-        // UIKit's hit testing and touch delivery automatically handle scroll view clipping,
-        // so we don't need to manually check scroll viewport bounds like headless does.
-        // The element either receives touches or it doesn't, based on UIKit's rendering.
+        // Check scroll clipping to match headless semantics
+        let mut id = hit.view();
+        while let Some(parent) = self.nodes[id as usize]
+            .as_ref()
+            .and_then(|node| node.parent)
+        {
+            let Some(view) = self.nodes[parent as usize].as_ref() else {
+                break;
+            };
+            if view.kind == Kind::Scroll {
+                let origin = self
+                    .absolute_frame(Match::View(parent))
+                    .map(|frame| (frame.x, frame.y))
+                    .unwrap_or((0.0, 0.0));
+                let x = center_x - origin.0;
+                let y = center_y - origin.1;
+                if x < 0.0 || y < 0.0 || x > view.frame.w || y > view.frame.h {
+                    return Err(format!("clipped by scroll[{}]: local ({}, {}) not in (0, 0, {}, {})",
+                        parent, x, y, view.frame.w, view.frame.h));
+                }
+            }
+            id = parent;
+        }
+        
         Ok(())
     }
 
