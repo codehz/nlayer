@@ -922,7 +922,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_snapTarget(
         return -1.0;
     }
     let host = unsafe { host(handle) };
-    let density = host.density.0;
+    let density = host.density.get();
 
     // Convert px to points
     let offset = Points(offset_px / density);
@@ -936,7 +936,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_snapTarget(
         Vec::new()
     } else {
         let arr = unsafe { jni::objects::JFloatArray::from_raw(snap_offsets_pt) };
-        match env.get_float_array_elements(&arr, jni::objects::ReleaseMode::NoCopyBack) {
+        match env.get_array_elements(&arr, jni::objects::ReleaseMode::NoCopyBack) {
             Ok(elements) => {
                 let slice = unsafe {
                     std::slice::from_raw_parts(elements.as_ptr(), elements.len())
