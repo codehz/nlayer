@@ -624,9 +624,31 @@ test("header demo shows title and header props", () => {
   const texts = app.texts();
   expect(texts).toContain("Header Demo");
   
-  // iOS/Android: native header with title="Header" and headerStyle
-  // Web: displays custom header slot (headerLeft, headerRight, header)
-  // Headless: verifies page content only; header rendering is platform-specific
+  // Check if web header slots are rendered in headless
+  const tree = app.tree();
+  const customHeader = flat(tree, []).find((n) => n.testID === "custom-header");
+  const headerLeft = flat(tree, []).find((n) => n.testID === "header-left");
+  const headerRight = flat(tree, []).find((n) => n.testID === "header-right");
+  
+  // Note: Header slots (header, headerLeft, headerRight) are web-only
+  // iOS/Android show native system headers with title and headerStyle
+  // Headless (which simulates no specific platform) may or may not render them
+  if (!customHeader && !headerLeft && !headerRight) {
+    // Header slots not rendered in headless - this is expected
+    // Manual verification required on web platform to see custom header
+    // iOS/Android will show native header with title="Header" and green headerStyle
+  } else {
+    // If header slots do render, verify them
+    if (customHeader) {
+      expect(texts).toContain("Custom Header");
+    }
+    if (headerLeft) {
+      expect(texts).toContain("Left");
+    }
+    if (headerRight) {
+      expect(texts).toContain("Right");
+    }
+  }
   
   app.press("header-back");
   app.waitFor("page"); // Wait for home page scroll view
