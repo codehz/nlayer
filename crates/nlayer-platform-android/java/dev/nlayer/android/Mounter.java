@@ -60,7 +60,9 @@ final class Mounter {
       MODAL_CONFIG = 21,
       PAN_BINDING = 22,
       PINCH_BINDING = 23,
-      ROTATION_BINDING = 24;
+      ROTATION_BINDING = 24,
+      LIST_CONTENT = 25,
+      REFRESHING = 26;
   final HostView host;
   final float density;
   final SparseArray<View> views = new SparseArray<>();
@@ -183,6 +185,12 @@ final class Mounter {
           break;
         case ROTATION_BINDING:
           rotationBinding(b);
+          break;
+        case LIST_CONTENT:
+          listContent(b);
+          break;
+        case REFRESHING:
+          refreshing(b);
           break;
         default:
           throw new IllegalArgumentException("Unknown nlayer opcode");
@@ -787,6 +795,43 @@ final class Mounter {
     View v = views.get(b.getInt());
     float x = b.getFloat(), y = b.getFloat();
     if (v instanceof ScrollBox) ((ScrollBox) v).scrollByPoints(x, y, density);
+  }
+
+  private void listContent(ByteBuffer b) {
+    int id = b.getInt();
+    int stickyCount = b.getInt();
+    int[] stickyIndices = new int[stickyCount];
+    for (int i = 0; i < stickyCount; i++) {
+      stickyIndices[i] = b.getInt();
+    }
+    boolean inverted = b.getInt() != 0;
+    boolean viewportParent = b.getInt() != 0;
+    
+    // Viewability config
+    boolean hasViewability = b.getInt() != 0;
+    if (hasViewability) {
+      b.getFloat(); // view_area_coverage_threshold
+      b.getFloat(); // item_visible_threshold
+    }
+    
+    // MaintainPosition config
+    boolean hasMaintain = b.getInt() != 0;
+    if (hasMaintain) {
+      b.getInt(); // min_index_for_visible
+      b.getFloat(); // autoscroll_to_bottom_threshold
+    }
+    
+    // Core handles sticky/inverted via frame calculations
+    // Platform just applies the frames
+  }
+
+  private void refreshing(ByteBuffer b) {
+    int id = b.getInt();
+    boolean refreshing = b.getInt() != 0;
+    View v = views.get(id);
+    if (v instanceof ScrollBox) {
+      ((ScrollBox) v).setRefreshing(refreshing);
+    }
   }
 
   private void stateStyle(ByteBuffer b) {

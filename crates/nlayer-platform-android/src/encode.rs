@@ -47,6 +47,7 @@ const PAN_BINDING: i32 = 22;
 const PINCH_BINDING: i32 = 23;
 const ROTATION_BINDING: i32 = 24;
 const LIST_CONTENT: i32 = 25;
+const REFRESHING: i32 = 26;
 /// A `StaticLayout` measured on the engine thread and drawn on the UI thread.
 #[cfg(target_os = "android")]
 pub(crate) struct AndroidLayout(pub(crate) jni::objects::GlobalRef);
@@ -425,6 +426,11 @@ pub fn encode(batch: MountBatch) -> Encoded {
                     e.int(-1);
                     e.float(-1.0);
                 }
+            }
+            MountItem::Refreshing { id, refreshing } => {
+                e.int(REFRESHING);
+                e.id(id);
+                e.int(if refreshing { 1 } else { 0 });
             }
         }
     }
