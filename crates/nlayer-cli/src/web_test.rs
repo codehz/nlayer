@@ -332,6 +332,13 @@ impl HostedApp for WebApp {
                 }
             }
         }
+        // Wait for core to commit and update list windowing after scroll settles.
+        // Poll for up to 300ms to allow queueScroll + commit cycle to complete.
+        let settle_deadline = Instant::now() + Duration::from_millis(300);
+        while Instant::now() < settle_deadline {
+            thread::sleep(Duration::from_millis(16));
+        }
+        Ok(())
     }
 
     fn wait_for(&mut self, selector: &str) -> Result<(), String> {
