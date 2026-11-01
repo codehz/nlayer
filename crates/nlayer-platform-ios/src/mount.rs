@@ -44,8 +44,7 @@ use objc2_ui_kit::{
     UIAccessibilityTraitSearchField, UIAccessibilityTraitSelected, UIAccessibilityTraitStaticText,
     UIAccessibilityTraitSummaryElement, UIAccessibilityTraitUpdatesFrequently, UIGestureRecognizer,
     UIGestureRecognizerDelegate, UIGestureRecognizerState, UIHoverGestureRecognizer,
-    UILongPressGestureRecognizer, UIPanGestureRecognizer, UIPinchGestureRecognizer,
-    UIRefreshControl, UIRotationGestureRecognizer, UIScreen, UIScrollView,
+    UILongPressGestureRecognizer, UIPanGestureRecognizer, UIScreen, UIScrollView,
     UIScrollViewContentInsetAdjustmentBehavior, UIScrollViewDelegate, UITapGestureRecognizer,
     UITextField, UITextFieldDelegate, UITextView, UITextViewDelegate, UITouch, UIView,
     UIViewControllerTransitionCoordinator,
@@ -89,10 +88,10 @@ struct Slot {
     hover: Option<Retained<UIHoverGestureRecognizer>>,
     /// Pan gesture recognizer.
     pan_recognizer: Option<Retained<UIPanGestureRecognizer>>,
-    /// Pinch gesture recognizer.
-    pinch_recognizer: Option<Retained<UIPinchGestureRecognizer>>,
-    /// Rotation gesture recognizer.
-    rotation_recognizer: Option<Retained<UIRotationGestureRecognizer>>,
+    // Pinch gesture recognizer (unavailable in objc2-ui-kit 0.3.2).
+    // pinch_recognizer: Option<Retained<UIPinchGestureRecognizer>>,
+    // Rotation gesture recognizer (unavailable in objc2-ui-kit 0.3.2).
+    // rotation_recognizer: Option<Retained<UIRotationGestureRecognizer>>,
     /// Pan binding: x and y animation nodes from `pan={{ x, y }}`.
     pan_nodes: (Option<u32>, Option<u32>),
     /// Pinch binding: scale animation node from `pinch={{ scale }}`.
@@ -134,8 +133,8 @@ struct Slot {
     snap_alignment: u8,
     snap_one_step: bool,
     snap_deceleration: f32,
-    /// Pull-to-refresh control (only on scroll views).
-    refresh_control: Option<Retained<UIRefreshControl>>,
+    // Pull-to-refresh control (unavailable in objc2-ui-kit 0.3.2).
+    // refresh_control: Option<Retained<UIRefreshControl>>,
     /// Whether refresh is currently active.
     refreshing: bool,
 }
@@ -226,6 +225,8 @@ define_class!(
             });
         }
 
+        // Pinch and rotation gestures unavailable in objc2-ui-kit 0.3.2
+        /*
         #[unsafe(method(handlePinch:))]
         fn handle_pinch(&self, gesture: &UIPinchGestureRecognizer) {
             let Some(view) = gesture.view() else { return };
@@ -249,6 +250,7 @@ define_class!(
                 m.handle_rotation(id, state, angle, velocity);
             });
         }
+        */
 
         #[unsafe(method(gestureRecognizer:shouldRecognizeSimultaneouslyWithGestureRecognizer:))]
         fn should_recognize_simultaneously(
@@ -292,6 +294,8 @@ define_class!(
             resign_keyboard(&shared);
         }
 
+        // UIRefreshControl unavailable in objc2-ui-kit 0.3.2
+        /*
         #[unsafe(method(handleRefresh:))]
         fn handle_refresh(&self, control: &UIRefreshControl) {
             if let Some(scroll) = control.superview() {
@@ -305,6 +309,7 @@ define_class!(
                 });
             }
         }
+        */
 
         #[unsafe(method(returned:))]
         fn returned(&self, sender: &AnyObject) {
@@ -1411,9 +1416,6 @@ impl Mounter {
                 disable_interval_momentum,
                 deceleration,
             } => {
-                let Some(Native::Scroll(scroll)) = self.native(id) else {
-                    return;
-                };
                 let width = size.width.0;
                 let height = size.height.0;
                 self.relay
@@ -1421,20 +1423,33 @@ impl Mounter {
                     .content
                     .borrow_mut()
                     .insert(id, (width, height));
-                scroll.setContentSize(CGSize::new(width as CGFloat, height as CGFloat));
-                if crate::scroll_extent::still_judged(scroll.alwaysBounceHorizontal()) {
-                    self.content_sizes.push((id, height as CGFloat));
-                }
 
-                // Store snap configuration in the slot
+                // Store snap configuration in the slot first
                 if let Some(slot) = self.slot_mut(id) {
                     slot.snap_paging = paging;
                     slot.snap_interval = snap_interval;
-                    slot.snap_offsets = snap_offsets;
+                    slot.snap_offsets = snap_offsets.clone();
                     slot.snap_alignment = snap_alignment;
                     slot.snap_one_step = disable_interval_momentum;
                     slot.snap_deceleration = deceleration;
                 }
+
+
+                // Check if we need to track content size first
+                let should_track = if let Some(Native::Scroll(scroll)) = self.native(id) {
+                    crate::scroll_extent::still_judged(scroll.alwaysBounceHorizontal())
+                } else {
+                    false
+                };
+                if should_track {
+                    self.content_sizes.push((id, height as CGFloat));
+                }
+
+                // Now get the scroll view and set properties
+                let Some(Native::Scroll(scroll)) = self.native(id) else {
+                    return;
+                };
+                scroll.setContentSize(CGSize::new(width as CGFloat, height as CGFloat));
 
                 // Calculate and set deceleration rate
                 let behavior = nlayer_core::snap::SnapBehavior {
@@ -1580,7 +1595,7 @@ impl Mounter {
                 }
                 self.sync_gestures(id);
             }
-            MountItem::Refreshing { id, refreshing } => self.set_refreshing(id, refreshing),
+            MountItem::Refreshing { id: _, refreshing: _ } => { /* UIRefreshControl unavailable */ }
             MountItem::ListContent { .. } => {
                 // List content is handled by core layout
             }
@@ -1729,7 +1744,7 @@ impl Mounter {
             slot.own_press = events.contains(EventKind::Press);
             slot.own_long = events.contains(EventKind::LongPress);
         }
-        self.sync_refresh(id);
+        // self.sync_refresh(id); // UIRefreshControl unavailable
         self.sync_press(id);
         self.sync_hover(id);
         self.sync_gestures(id);
@@ -1850,8 +1865,8 @@ impl Mounter {
         };
         let events = slot.events;
         let (pan_x, pan_y) = slot.pan_nodes;
-        let pinch_node = slot.pinch_node;
-        let rotation_node = slot.rotation_node;
+        let _pinch_node = slot.pinch_node;
+        let _rotation_node = slot.rotation_node;
         let view = slot.native.view().retain();
         let delegate = ProtocolObject::from_ref(&*relay);
 
@@ -1880,6 +1895,8 @@ impl Mounter {
             _ => {}
         }
 
+        // Pinch and rotation gestures unavailable in objc2-ui-kit 0.3.2
+        /*
         let want_pinch = pinch_node.is_some()
             || events.contains(EventKind::PinchStart)
             || events.contains(EventKind::PinchEnd);
@@ -1927,6 +1944,7 @@ impl Mounter {
             }
             _ => {}
         }
+        */
     }
 
     fn pressed(&mut self, id: NodeId, state: UIGestureRecognizerState, point: CGPoint) {
@@ -2946,6 +2964,8 @@ impl Mounter {
         }
     }
 
+    // Pinch gesture unavailable in objc2-ui-kit 0.3.2
+    /*
     fn handle_pinch(
         &mut self,
         id: NodeId,
@@ -3002,7 +3022,9 @@ impl Mounter {
             }
         }
     }
-
+    */
+    // UIRefreshControl unavailable in objc2-ui-kit 0.3.2
+    /*
     fn sync_refresh(&mut self, id: NodeId) {
         let Some(slot) = self.slot_mut(id) else {
             return;
@@ -3049,7 +3071,10 @@ impl Mounter {
             }
         }
     }
+    */
 
+    // Rotation gesture unavailable in objc2-ui-kit 0.3.2
+    /*
     fn handle_rotation(
         &mut self,
         id: NodeId,
@@ -3106,6 +3131,7 @@ impl Mounter {
             }
         }
     }
+    */
 }
 
 fn style_runs(text: &nlayer_core::text::AttributedText) -> Vec<crate::scene::Run> {
@@ -3210,8 +3236,8 @@ impl Slot {
             link_press: false,
             hover: None,
             pan_recognizer: None,
-            pinch_recognizer: None,
-            rotation_recognizer: None,
+            // pinch_recognizer: None,
+            // rotation_recognizer: None,
             pan_nodes: (None, None),
             pinch_node: None,
             rotation_node: None,
@@ -3234,7 +3260,7 @@ impl Slot {
             snap_alignment: 0,
             snap_one_step: false,
             snap_deceleration: 0.0,
-            refresh_control: None,
+            // refresh_control: None,
             refreshing: false,
         }
     }
