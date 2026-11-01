@@ -731,10 +731,10 @@ impl<M: TextEngine> Core<M> {
         let Some(scroll) = self.nodes[key as usize].scroll.as_mut() else {
             return;
         };
-        
+
         // Calculate pull distance (negative offset means pulling down)
         let pull_distance = if offset.y.0 < 0.0 { -offset.y.0 } else { 0.0 };
-        
+
         // Update pullValue animation node
         if let Some(pull_node) = scroll.pull_value_node {
             let value = if scroll.refreshing {
@@ -743,12 +743,13 @@ impl<M: TextEngine> Core<M> {
             } else {
                 pull_distance
             };
-            self.mount.push(MountItem::Animation(crate::animation::AnimationOp::Set {
-                node: pull_node,
-                value,
-            }));
+            self.mount
+                .push(MountItem::Animation(crate::animation::AnimationOp::Set {
+                    node: pull_node,
+                    value,
+                }));
         }
-        
+
         // Check for pull-to-refresh trigger
         if let Some(indicator_height) = scroll.refresh_indicator {
             if pull_distance >= indicator_height.0 {
@@ -759,7 +760,7 @@ impl<M: TextEngine> Core<M> {
                 }
             }
         }
-        
+
         // Update list offset if this scroll view has a list
         let horizontal = scroll.horizontal;
         if let Some(list) = self.nodes[key as usize].list.as_mut() {
@@ -3514,7 +3515,7 @@ impl<M: TextEngine> Core<M> {
                 // Find parent scroll view and use its viewport
                 let mut parent_key = self.nodes[key as usize].parent;
                 let mut parent_viewport = 0.0;
-                
+
                 while parent_key != NO_KEY {
                     if self.nodes[parent_key as usize].kind == Kind::Scroll {
                         parent_viewport = self.nodes[parent_key as usize]
@@ -3525,7 +3526,7 @@ impl<M: TextEngine> Core<M> {
                     }
                     parent_key = self.nodes[parent_key as usize].parent;
                 }
-                
+
                 parent_viewport
             } else {
                 self.nodes[key as usize]
@@ -3533,12 +3534,12 @@ impl<M: TextEngine> Core<M> {
                     .map(|layout| self.rounded_layout(layout).size.height)
                     .unwrap_or(0.0)
             };
-            
+
             let cross = self.nodes[key as usize]
                 .layout
                 .map(|layout| self.rounded_layout(layout).size.width)
                 .unwrap_or(0.0);
-            
+
             self.nodes[key as usize]
                 .list
                 .as_mut()
@@ -3685,15 +3686,15 @@ impl<M: TextEngine> Core<M> {
                     .iter()
                     .filter_map(|s| s.ready().map(|i| (i, s.cell))),
             );
-            
+
             // Keep sticky indices in ready even if outside window (non-inverted only)
             {
                 let list = self.nodes[key as usize].list.as_ref().expect("list");
                 if !list.inverted && !list.sticky_indices.is_empty() {
                     for &sticky_index in list.sticky_indices.iter() {
-                        if let Some(slot) = list.slots.iter().find(|s| {
-                            s.ready() == Some(sticky_index)
-                        }) {
+                        if let Some(slot) =
+                            list.slots.iter().find(|s| s.ready() == Some(sticky_index))
+                        {
                             if !ready.iter().any(|(i, _)| *i == sticky_index) {
                                 ready.push((sticky_index, slot.cell));
                             }
@@ -3701,15 +3702,15 @@ impl<M: TextEngine> Core<M> {
                     }
                 }
             }
-            
+
             // Keep sticky indices in ready even if outside window (non-inverted only)
             {
                 let list = self.nodes[key as usize].list.as_ref().expect("list");
                 if !list.inverted && !list.sticky_indices.is_empty() {
                     for &sticky_index in list.sticky_indices.iter() {
-                        if let Some(slot) = list.slots.iter().find(|s| {
-                            s.ready() == Some(sticky_index)
-                        }) {
+                        if let Some(slot) =
+                            list.slots.iter().find(|s| s.ready() == Some(sticky_index))
+                        {
                             if !ready.iter().any(|(i, _)| *i == sticky_index) {
                                 ready.push((sticky_index, slot.cell));
                             }
@@ -3774,11 +3775,11 @@ impl<M: TextEngine> Core<M> {
                     .as_ref()
                     .expect("list")
                     .item_at(index);
-                
+
                 // Apply sticky shift for sticky headers (single-column, non-inverted only)
                 let adjusted_at = {
                     let list = self.nodes[key as usize].list.as_ref().expect("list");
-                    
+
                     // Apply inverted layout first
                     let base_at = if list.inverted {
                         // Inverted: position from bottom (total_len - item_start - item_size)
@@ -3787,14 +3788,17 @@ impl<M: TextEngine> Core<M> {
                     } else {
                         at
                     };
-                    
-                    
+
                     // Apply sticky shift (only for non-inverted)
                     if !list.sticky_indices.is_empty() && !list.inverted {
-                        if let Some(_sticky_pos) = list.sticky_indices.iter().position(|&i| i == index) {
+                        if let Some(_sticky_pos) =
+                            list.sticky_indices.iter().position(|&i| i == index)
+                        {
                             let offset = list.offset;
                             let start = base_at;
-                            let end = list.sticky_indices.iter()
+                            let end = list
+                                .sticky_indices
+                                .iter()
                                 .skip_while(|&&i| i <= index)
                                 .next()
                                 .map(|&next_i| list.item_at(next_i))
@@ -3808,7 +3812,7 @@ impl<M: TextEngine> Core<M> {
                         base_at
                     }
                 };
-                
+
                 let frame = rect(column, adjusted_at, width, size.height);
                 self.set_frame(cell, frame);
                 if std::mem::take(&mut self.nodes[cell as usize].relaid) {
@@ -3880,7 +3884,7 @@ impl<M: TextEngine> Core<M> {
                 .as_ref()
                 .expect("list")
                 .viewport_parent;
-            
+
             if !viewport_parent {
                 // Only set scroll content if list has its own scroll view
                 if anchor != 0.0 {
@@ -3929,7 +3933,22 @@ impl<M: TextEngine> Core<M> {
     }
 
     fn set_scroll_content(&mut self, key: Key, size: Size<Points>) {
-        let (id, rtl, kind, viewport, horizontal, old, content_item, refresh_indicator, paging, snap_interval, snap_offsets, snap_alignment, disable_interval_momentum, deceleration) = {
+        let (
+            id,
+            rtl,
+            kind,
+            viewport,
+            horizontal,
+            old,
+            content_item,
+            refresh_indicator,
+            paging,
+            snap_interval,
+            snap_offsets,
+            snap_alignment,
+            disable_interval_momentum,
+            deceleration,
+        ) = {
             let node = &mut self.nodes[key as usize];
             let Some(scroll) = node.scroll.as_mut() else {
                 return;
@@ -7920,7 +7939,11 @@ mod tests {
         c.update_scroll_position(2, Point::new(Points(0.0), Points(-70.0)));
         events.clear();
         c.take_events(&mut events);
-        assert_eq!(events.len(), 0, "refresh should not fire twice in same cycle");
+        assert_eq!(
+            events.len(),
+            0,
+            "refresh should not fire twice in same cycle"
+        );
 
         // Set refreshing to true then false - resets the cycle
         c.apply(Op::SetProp {
@@ -7940,7 +7963,11 @@ mod tests {
         c.update_scroll_position(2, Point::new(Points(0.0), Points(-60.0)));
         events.clear();
         c.take_events(&mut events);
-        assert_eq!(events.len(), 1, "refresh should fire again after cycle reset");
+        assert_eq!(
+            events.len(),
+            1,
+            "refresh should fire again after cycle reset"
+        );
         assert_eq!(events[0].1, EventKind::Refresh);
     }
 
@@ -7980,8 +8007,8 @@ mod tests {
 
     #[test]
     fn pull_value_updates_with_pull_distance() {
-        use crate::animation::{AnimationOp, AnimationId};
-        
+        use crate::animation::{AnimationId, AnimationOp};
+
         let mut c = core();
         c.apply(Op::Create {
             id: 2,
@@ -8038,7 +8065,7 @@ mod tests {
     #[test]
     fn pull_value_clamps_to_indicator_height_when_refreshing() {
         use crate::animation::AnimationOp;
-        
+
         let mut c = core();
         c.apply(Op::Create {
             id: 2,
@@ -8091,7 +8118,11 @@ mod tests {
             MountItem::Animation(AnimationOp::Set { node, value }) if *node == 100 => Some(*value),
             _ => None,
         });
-        assert_eq!(anim_set, Some(50.0), "pullValue should clamp to indicator height (50.0) when refreshing");
+        assert_eq!(
+            anim_set,
+            Some(50.0),
+            "pullValue should clamp to indicator height (50.0) when refreshing"
+        );
 
         // Set refreshing to false - should reset refresh_reported
         c.apply(Op::SetProp {
@@ -8105,6 +8136,10 @@ mod tests {
         c.update_scroll_position(2, Point::new(Points(0.0), Points(-60.0)));
         let mut events = vec![];
         c.take_events(&mut events);
-        assert_eq!(events.len(), 1, "refresh should fire again after refreshing becomes false");
+        assert_eq!(
+            events.len(),
+            1,
+            "refresh should fire again after refreshing becomes false"
+        );
     }
 }

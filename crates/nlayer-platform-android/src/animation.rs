@@ -266,7 +266,7 @@ pub(crate) fn transform_moved(id: NodeId, rotation: bool, amount: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     // Tests share global state(), so must run serially
     static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     use nlayer_core::animation::NodeId as AnimationNode;

@@ -171,7 +171,11 @@ impl Bridge for Runtime {
                 Ok(value) => value,
                 Err(_) => return,
             },
-            EventPayload::Pan { translation, velocity, values } => {
+            EventPayload::Pan {
+                translation,
+                velocity,
+                values,
+            } => {
                 let object = match Value::object() {
                     Ok(object) => object,
                     Err(_) => return,
@@ -197,7 +201,11 @@ impl Bridge for Runtime {
                 }
                 object
             }
-            EventPayload::Pinch { scale, velocity, value } => {
+            EventPayload::Pinch {
+                scale,
+                velocity,
+                value,
+            } => {
                 let object = match Value::object() {
                     Ok(object) => object,
                     Err(_) => return,
@@ -217,7 +225,11 @@ impl Bridge for Runtime {
                 }
                 object
             }
-            EventPayload::Rotation { angle, velocity, value } => {
+            EventPayload::Rotation {
+                angle,
+                velocity,
+                value,
+            } => {
                 let object = match Value::object() {
                     Ok(object) => object,
                     Err(_) => return,

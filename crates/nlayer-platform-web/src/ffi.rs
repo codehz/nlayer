@@ -473,7 +473,16 @@ pub extern "C" fn nlayer_root_size(
 /// Pan gesture phase on view `id` (`phase`: 0 = start, 1 = move, 2 = end, 3 = cancel).
 /// Translation in CSS pixels. Applied at the next [`nlayer_pump`].
 #[unsafe(no_mangle)]
-pub extern "C" fn nlayer_pan(id: u32, phase: u32, tx: f32, ty: f32, vx: f32, vy: f32, value_x: f32, value_y: f32) {
+pub extern "C" fn nlayer_pan(
+    id: u32,
+    phase: u32,
+    tx: f32,
+    ty: f32,
+    vx: f32,
+    vy: f32,
+    value_x: f32,
+    value_y: f32,
+) {
     push(Pending::Pan {
         id,
         phase,
@@ -490,7 +499,14 @@ pub extern "C" fn nlayer_pan(id: u32, phase: u32, tx: f32, ty: f32, vx: f32, vy:
 /// `phase`: 0 = start, 1 = move, 2 = end). Amount is scale or degrees.
 /// Applied at the next [`nlayer_pump`].
 #[unsafe(no_mangle)]
-pub extern "C" fn nlayer_transform_gesture(id: u32, rotation: u32, phase: u32, amount: f32, velocity: f32, value: f32) {
+pub extern "C" fn nlayer_transform_gesture(
+    id: u32,
+    rotation: u32,
+    phase: u32,
+    amount: f32,
+    velocity: f32,
+    value: f32,
+) {
     push(Pending::Transform {
         id,
         rotation: rotation != 0,

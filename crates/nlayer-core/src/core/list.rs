@@ -279,7 +279,7 @@ impl ListState {
         }
         self.items_changed = true;
         self.pin = None;
-        
+
         // Check if we should autoscroll to bottom after inserting
         let was_near_bottom = self.maintain_position.as_ref().and_then(|m| {
             m.autoscroll_to_bottom_threshold.and_then(|threshold| {
@@ -288,13 +288,13 @@ impl ListState {
                 (content_len - bottom_edge <= threshold).then_some(threshold)
             })
         });
-        
+
         // Only maintain position if splice is at/before min_index_for_visible
         let should_maintain = self.maintain_position.as_ref().map_or(
             true, // Default: always maintain (backwards compat)
-            |m| at <= m.min_index_for_visible
+            |m| at <= m.min_index_for_visible,
         );
-        
+
         let anchor = (should_maintain && self.count > 0 && self.viewport > 0.0).then(|| {
             let row = self
                 .rows
@@ -354,7 +354,7 @@ impl ListState {
         if self.load_more_at.is_some() {
             self.load_more_at = None;
         }
-        
+
         // Auto-scroll to bottom if we were near bottom and items were inserted
         if was_near_bottom.is_some() && inserted > 0 {
             let content_len = self.content_len();
@@ -749,7 +749,9 @@ impl ListState {
             }
 
             // If neither threshold is set, any visibility counts
-            if config.view_area_coverage_threshold.is_none() && config.item_visible_threshold.is_none() {
+            if config.view_area_coverage_threshold.is_none()
+                && config.item_visible_threshold.is_none()
+            {
                 is_viewable = true;
             }
 
