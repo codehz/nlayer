@@ -139,6 +139,22 @@ fn dispatch(host: &Host, line: &str) -> Result<Value, String> {
             })
         }
         "press" => press(host, request.selector),
+        "selectionOwner" => {
+            let scene = scene_of(&snapshot(host)?)?;
+            let owner = scene
+                .view_of(&request.selector)
+                .ok()
+                .and_then(|id| scene.selection_owner(id));
+            Ok(json!(owner))
+        }
+        "openedUrls" => {
+            let text = snapshot(host)?;
+            let value: Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+            Ok(value
+                .get("openedUrls")
+                .cloned()
+                .unwrap_or_else(|| json!([])))
+        }
         "longPress" => long_press(host, request.selector),
         "type" => type_text(host, request.selector, request.text),
         "scroll" => scroll(host, request.selector, request.distance),

@@ -875,6 +875,9 @@ pub(crate) struct Mounter {
         std::collections::HashMap<NodeId, Vec<(nlayer_core::animation::AnimationProp, u32)>>,
     /// Selectable views and the responder that owns each selection.
     areas: Vec<(NodeId, Retained<crate::selectable_view::AreaResponder>)>,
+    /// URLs short presses on a `Text` `href` opened, in order. A pinned
+    /// (`nlayer test`) app records them without leaving.
+    opened_urls: Vec<String>,
 }
 
 impl Mounter {
@@ -915,6 +918,7 @@ impl Mounter {
             pending_rotation: std::collections::HashMap::new(),
             pending_bindings: std::collections::HashMap::new(),
             areas: Vec::new(),
+            opened_urls: Vec::new(),
         }));
         CURRENT.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&mounter)));
         relay.bind(Rc::downgrade(&mounter));
@@ -2181,8 +2185,18 @@ impl Mounter {
         }
     }
 
-    /// Opens `url` with the system. One way: no result comes back.
-    fn open_url(&self, url: &str) {
+    /// The URLs short presses on `Text` `href`s opened, in order.
+    pub(crate) fn opened_urls(&self) -> &[String] {
+        &self.opened_urls
+    }
+
+    /// Opens `url` with the system. One way: no result comes back. A test
+    /// run (a pin) records it instead of leaving the app.
+    fn open_url(&mut self, url: &str) {
+        self.opened_urls.push(url.to_owned());
+        if self.pin.is_some() {
+            return;
+        }
         let Some(url) =
             objc2_foundation::NSURL::URLWithString(&objc2_foundation::NSString::from_str(url))
         else {
@@ -2548,6 +2562,9 @@ impl Mounter {
                 hidden: slot.style.hidden,
                 opacity: slot.style.opacity,
                 pressable: slot.own_press,
+                text_selectable: None,
+                selection_color: None,
+                selectable: self.areas.iter().any(|(area, _)| *area == id),
                 input: None,
                 runs: Vec::new(),
                 spans: Vec::new(),
@@ -2559,6 +2576,8 @@ impl Mounter {
                 && let Some(attributed) = text.attributed()
             {
                 node.text = Some(attributed.text.clone());
+                node.text_selectable = attributed.selectable;
+                node.selection_color = attributed.selection_color.map(|color| color.0);
                 node.runs = style_runs(&attributed);
                 node.spans = selector_spans(text, &attributed);
             }

@@ -393,3 +393,12 @@ Copied files:
   `crates/nlayer-platform-ios/src/text.rs` and `text_view.rs` from
   `crates/nsh-platform-ios/src/text.rs` and `text_view.rs` (custom fonts,
   strikethrough and span backgrounds are not copied)
+- the inline attachments and `href` ranges of
+  `crates/nlayer-platform-web/web/nlayer.js` from
+  `crates/nsh-platform-web/web/nsh.js`'s text mount (the run text is the
+  block's first child, so a U+FFFC placeholder's view paints over it; the
+  view takes the frame the core laid out) and its span press ranges (a
+  span's `href` wins over its block's; nsh has no `href` on text). The
+  desktop `.nsh-desktop .nsh-autoselect` idiom, its double-click,
+  triple-click and Shift+click selection, and the `openUrl` capability
+  grant are not copied)

@@ -23,6 +23,13 @@ pub(crate) struct Node {
     pub hidden: bool,
     pub opacity: f32,
     pub pressable: bool,
+    /// Resolved `userSelect`: `Some(true)` asks for selection, `Some(false)`
+    /// is `"none"`, `None` is unset (not selectable on its own).
+    pub text_selectable: Option<bool>,
+    /// `selectionColor` of the text's selection, packed.
+    pub selection_color: Option<u32>,
+    /// `selectable` on the view: one selection across its texts.
+    pub selectable: bool,
     /// This view, or a field inside it, has focus.
     pub focused: bool,
     pub input: Option<InputSnap>,
@@ -232,6 +239,31 @@ impl Scene {
 
     pub(crate) fn tree(&self) -> Value {
         self.node_json(self.root).unwrap_or(Value::Null)
+    }
+
+    /// The view `selector` names (a span's own view).
+    pub(crate) fn view_of(&self, selector: &str) -> Result<u32, String> {
+        Ok(self.resolve(selector)?.view())
+    }
+
+    /// What owns the selection of view `id`: the outermost `selectable` view
+    /// around it, else the text itself when its `userSelect` asks for
+    /// selection, else none. A `"none"` text has no owner.
+    pub(crate) fn selection_owner(&self, id: u32) -> Option<u32> {
+        let text = self.node(id)?;
+        if text.text_selectable == Some(false) {
+            return None;
+        }
+        let mut owner = None;
+        let mut at = text.parent;
+        while let Some(parent) = at {
+            let view = self.node(parent)?;
+            if view.selectable {
+                owner = Some(parent);
+            }
+            at = view.parent;
+        }
+        owner.or((text.text_selectable == Some(true)).then_some(id))
     }
 
     pub(crate) fn node(&self, id: u32) -> Option<&Node> {
@@ -479,6 +511,7 @@ impl Scene {
     fn node_json(&self, id: u32) -> Option<Value> {
         let node = self.nodes.get(id as usize)?.as_ref()?;
         let mut map = serde_json::Map::new();
+        map.insert("id".into(), node.id.into());
         map.insert("kind".into(), node.kind.name().into());
         map.insert(
             "frame".into(),
@@ -494,6 +527,15 @@ impl Scene {
         }
         if let Some(test_id) = &node.test_id {
             map.insert("testID".into(), test_id.clone().into());
+        }
+        if let Some(selectable) = node.text_selectable {
+            map.insert("userSelect".into(), selectable.into());
+        }
+        if let Some(color) = node.selection_color {
+            map.insert("selectionColor".into(), format!("#{color:08x}").into());
+        }
+        if node.selectable {
+            map.insert("selectable".into(), true.into());
         }
         let a = &node.accessibility;
         if a.role != nlayer_core::AccessibilityRole::None {
@@ -878,6 +920,9 @@ mod tests {
             hidden: false,
             opacity: 1.0,
             pressable: false,
+            text_selectable: None,
+            selection_color: None,
+            selectable: false,
             focused: false,
             input: None,
             runs: Vec::new(),

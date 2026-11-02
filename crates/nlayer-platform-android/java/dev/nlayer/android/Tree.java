@@ -25,6 +25,9 @@ final class Tree {
       JSONArray nodes = new JSONArray();
       for (int i = 0; i < m.views.size(); i++) nodes.put(node(m, m.views.keyAt(i), d));
       root.put("nodes", nodes);
+      JSONArray opened = new JSONArray();
+      for (String url : m.openedUrls) opened.put(url);
+      root.put("openedUrls", opened);
       return root.toString();
     } catch (Exception e) {
       return "{\"width\":0,\"height\":0,\"error\":"
@@ -90,6 +93,7 @@ final class Tree {
       o.put("transform", ops);
     }
     if (v instanceof TextBox) text((TextBox) v, o, density);
+    if (m.selectable(id)) o.put("selectable", true);
     if (v instanceof InputBox) input((InputBox) v, o);
     if (v instanceof ScrollBox) scroll((ScrollBox) v, o, density);
     if (v instanceof ImageBox) image((ImageBox) v, o, density);
@@ -99,6 +103,12 @@ final class Tree {
   private static void text(TextBox box, JSONObject o, float density) throws Exception {
     String value = box.layout == null ? "" : box.layout.getText().toString();
     o.put("text", value);
+    // `userSelect` as written: true text, false none, absent unset.
+    if (box.userSelect != 2) o.put("userSelect", box.userSelect == 1);
+    if (box.selectionColor != null) {
+      int argb = box.selectionColor;
+      o.put("selectionColor", ((argb & 0x00ffffffL) << 8) | ((argb >>> 24) & 0xff));
+    }
     JSONArray runs = new JSONArray();
     for (int i = 0; i < box.runStart.length; i++) {
       JSONObject run = new JSONObject();

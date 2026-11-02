@@ -16,7 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use nlayer_testing::{AppHost, HostOpen, HostedApp};
+use nlayer_testing::{AppHost, HostOpen, HostedApp, NodeId};
 use serde_json::{Value, json};
 
 use crate::{RunOptions, serve};
@@ -386,6 +386,22 @@ impl HostedApp for WebApp {
 
     fn tree(&mut self) -> Result<Value, String> {
         self.call("tree", &[])
+    }
+
+    fn selection_owner(&mut self, selector: &str) -> Result<Option<NodeId>, String> {
+        match self.call("selectionOwner", &[json!(selector)])? {
+            Value::Null => Ok(None),
+            Value::Number(number) => number
+                .as_u64()
+                .and_then(|id| u32::try_from(id).ok())
+                .map(Some)
+                .ok_or_else(|| format!("the page returned {number}")),
+            other => Err(format!("the page returned {other}")),
+        }
+    }
+
+    fn opened_urls(&mut self) -> Result<Vec<String>, String> {
+        strings(self.call("openedUrls", &[])?)
     }
 
     fn drag(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String> {

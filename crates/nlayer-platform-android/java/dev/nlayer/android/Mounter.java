@@ -98,6 +98,14 @@ final class Mounter {
   /** Selectable views, by view id. */
   private final SparseArray<SelectableView> selectableViews = new SparseArray<>();
 
+  /** URLs `Text` `href` presses opened, in order. A pin records without leaving. */
+  final java.util.ArrayList<String> openedUrls = new java.util.ArrayList<>();
+
+  /** Whether view {@code id} is a selectable view. */
+  boolean selectable(int id) {
+    return selectableViews.get(id) != null;
+  }
+
   /** Monotonic counter for modal show order (topmost determination). */
   int modalShowOrder;
 
@@ -403,9 +411,15 @@ final class Mounter {
         .setPrimaryClip(android.content.ClipData.newPlainText("text", text == null ? "" : text));
   }
 
-  /** `Command::OpenUrl`: one `ACTION_VIEW`, no event and no grant. */
-  static void openUrl(android.content.Context context, String url) {
+  /**
+   * `Command::OpenUrl`: one `ACTION_VIEW`, no event and no grant. A pinned ({@code nlayer test})
+   * app records the address instead of leaving.
+   */
+  void openUrl(String url) {
     if (url == null || url.isEmpty()) return;
+    openedUrls.add(url);
+    if (host.pin != null) return;
+    android.content.Context context = host.getContext();
     android.content.Intent intent =
         new android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url));
     if (!(context instanceof android.app.Activity)) {
@@ -1166,7 +1180,7 @@ final class Mounter {
     if (cmd == 3) {
       int index = b.getInt();
       if (index >= 0 && index < objects.length && objects[index] instanceof String) {
-        openUrl(host.getContext(), (String) objects[index]);
+        openUrl((String) objects[index]);
       }
       return;
     }

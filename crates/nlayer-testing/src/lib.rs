@@ -15,6 +15,7 @@
 mod runner;
 mod selector;
 
+pub use nlayer_core::NodeId;
 pub use runner::{
     AppHost, CaseResult, FileResult, HostInsets, HostOpen, HostedApp, Report, RunError,
     fixture_file_port, run, run_with, with_fixture_origin,
@@ -28,7 +29,7 @@ use std::{
 use crossbeam_channel::{Receiver, unbounded};
 use nlayer_core::{
     Accessibility, Command, EventKind, EventMask, ImageSource, InputConfig, ModalConfig,
-    MountBatch, MountItem, NodeId, ResizeMode, ScreenConfig, ViewKind,
+    MountBatch, MountItem, ResizeMode, ScreenConfig, ViewKind,
     animation::{AnimationProp, Finished, Graph, NodeId as AnimationNode},
     geometry::{Bounds, Points, Size},
     style::{Color, ViewStyle},

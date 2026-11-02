@@ -135,6 +135,14 @@ pub(super) fn decode_prop(
     }
     let prop = match (tag, name) {
         (Some(Tag::Image), "src") => Prop::Source(image_source(value)?),
+        (Some(Tag::View), "selectable") => Prop::Selectable(value.bool()),
+        (Some(Tag::Text), "href") => {
+            if nullish(value) {
+                Prop::Href(None)
+            } else {
+                Prop::Href(Some(string(value)))
+            }
+        }
         (Some(Tag::Scroll), "horizontal") => Prop::Horizontal(value.bool()),
         (Some(Tag::Scroll), "keyboardShouldPersistTaps") => match keyboard_taps(value) {
             Some(taps) => Prop::KeyboardTaps(taps),

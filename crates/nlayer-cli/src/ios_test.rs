@@ -12,7 +12,7 @@ use std::{
 };
 
 use nlayer_bundler::{BundleOptions, bundle};
-use nlayer_testing::{AppHost, HostInsets, HostOpen, HostedApp};
+use nlayer_testing::{AppHost, HostInsets, HostOpen, HostedApp, NodeId};
 use serde_json::{Value, json};
 
 use crate::ios::{self, BUNDLE_ID};
@@ -216,6 +216,22 @@ impl HostedApp for IosApp {
 
     fn tree(&mut self) -> Result<Value, String> {
         self.call("tree", "", "", 0.0)
+    }
+
+    fn selection_owner(&mut self, selector: &str) -> Result<Option<NodeId>, String> {
+        match self.call("selectionOwner", selector, "", 0.0)? {
+            Value::Null => Ok(None),
+            Value::Number(number) => number
+                .as_u64()
+                .and_then(|id| u32::try_from(id).ok())
+                .map(Some)
+                .ok_or_else(|| format!("the simulator returned {number}")),
+            other => Err(format!("the simulator returned {other}")),
+        }
+    }
+
+    fn opened_urls(&mut self) -> Result<Vec<String>, String> {
+        strings(self.call("openedUrls", "", "", 0.0)?)
     }
 
     fn drag(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String> {

@@ -457,6 +457,7 @@ export class Player {
     el._noselect = selectable === false;
     if (selection) el.style.setProperty?.("--nl-selection", selection);
     else el.style.removeProperty?.("--nl-selection");
+    el._selection = selection || null;
   }
 
   /** `selectable` on a view: its texts select as one area. */

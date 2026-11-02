@@ -14,6 +14,7 @@
  * @param {Element} root
  */
 export function installHost(player, root) {
+  const opened = recordOpened(player);
   const host = {
     texts() {
       return textsOf(player);
@@ -23,6 +24,23 @@ export function installHost(player, root) {
     },
     tree() {
       return nodeJson(root, null, root);
+    },
+    /**
+     * What owns the selection of the text `selector` names: the outermost
+     * `selectable` view around it, else the text itself when its
+     * `userSelect` asks for selection, else null.
+     */
+    selectionOwner(selector) {
+      const el = one(player, root, selector).el;
+      if (el._noselect) return null;
+      let area = null;
+      for (let node = el; node; node = node.parentNode) if (node._area) area = node;
+      if (area) return area._id;
+      return el._selectable ? el._id : null;
+    },
+    /** The URLs short presses on `Text` `href`s opened, in order. */
+    openedUrls() {
+      return [...opened];
     },
     point(selector) {
       const target = one(player, root, selector);
@@ -85,6 +103,27 @@ export function installHost(player, root) {
   };
   globalThis.__nlayerHost = host;
   return host;
+}
+
+/**
+ * The URLs the page hands `window.open` (`Command::OpenUrl`), in order. The
+ * call still goes through: a blocked popup is the browser's answer, not an
+ * error the app sees.
+ */
+function recordOpened(player) {
+  const opened = [];
+  const window = player.window;
+  if (!window || typeof window.open !== "function") return opened;
+  const open = window.open;
+  try {
+    window.open = function (url, ...rest) {
+      opened.push(String(url));
+      return open.call(this, url, ...rest);
+    };
+  } catch {
+    // A window whose `open` cannot be replaced: nothing to record.
+  }
+  return opened;
 }
 
 function textsOf(player) {
@@ -533,7 +572,13 @@ function nodeJson(el, parent, root) {
   };
   const text = textOf(el);
   if (text != null) node.text = text;
+  node.id = el._id;
   if (el._testId) node.testID = el._testId;
+  // `userSelect` is tri-state: `true` is `"text"`, `false` `"none"`, unset
+  // follows the views around it (and is not selectable).
+  if (el._selectable || el._noselect) node.userSelect = !!el._selectable;
+  if (el._area) node.selectable = true;
+  if (el._selection) node.selectionColor = selectionHex(el._selection);
   if (el._a11y) {
     const a = el._a11y;
     if (a.role) node.role = a.role;
@@ -636,6 +681,33 @@ function hexColor(value) {
   const alpha = spec.endsWith("%") ? (amount / 100) * 255 : amount <= 1 ? amount * 255 : amount;
   const a = Math.round(alpha);
   return a >= 255 ? `#${rgb}` : `#${rgb}${channel(a)}`;
+}
+
+/**
+ * A selection colour as `#rrggbbaa`, the shape the headless tree reports
+ * (`selectionColor` is a packed colour there).
+ */
+function selectionHex(value) {
+  const raw = String(value).trim();
+  const hex = raw.match(/^#([0-9a-f]{6}|[0-9a-f]{8})$/i);
+  if (hex) return hex[1].length === 6 ? `#${hex[1].toLowerCase()}ff` : `#${hex[1].toLowerCase()}`;
+  const rgba = raw.match(
+    /^rgba?\(\s*([0-9.]+)[,\s]+([0-9.]+)[,\s]+([0-9.]+)(?:(?:[,\s/]+)([0-9.]+%?))?\s*\)$/i,
+  );
+  if (!rgba) return raw;
+  const channel = (n) => {
+    const v = Math.round(Number(n));
+    return (v < 0 ? 0 : v > 255 ? 255 : v).toString(16).padStart(2, "0");
+  };
+  let alpha = 255;
+  if (rgba[4] != null) {
+    const spec = rgba[4];
+    const amount = Number(spec.endsWith("%") ? spec.slice(0, -1) : spec);
+    alpha = Math.round(
+      spec.endsWith("%") ? (amount / 100) * 255 : amount <= 1 ? amount * 255 : amount,
+    );
+  }
+  return `#${channel(rgba[1])}${channel(rgba[2])}${channel(rgba[3])}${channel(alpha)}`;
 }
 
 /**

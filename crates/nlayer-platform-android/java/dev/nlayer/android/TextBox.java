@@ -47,6 +47,9 @@ final class TextBox extends ViewGroup {
   /** {@code userSelect: "none"}: out of selectable views too. */
   boolean excluded;
 
+  /** {@code userSelect} as written: 1 text, 0 none, 2 unset. */
+  int userSelect = 2;
+
   /** The selectable view whose gesture this touch is, if any. */
   private SelectableView areaGesture;
 
@@ -54,7 +57,7 @@ final class TextBox extends ViewGroup {
   private int areaStart = -1, areaEnd = -1;
 
   /** {@code selectionColor}: the highlight and the handles' tint; null: the theme's. */
-  private Integer selectionColor;
+  Integer selectionColor;
 
   /** The selection (UTF-16 offsets), or -1 when there is none. */
   private int selStart = -1, selEnd = -1;
@@ -125,6 +128,7 @@ final class TextBox extends ViewGroup {
     boolean recolor = !java.util.Objects.equals(this.selectionColor, selectionColor);
     this.selectable = on;
     this.excluded = selectable == 0;
+    this.userSelect = selectable;
     this.selectionColor = selectionColor;
     if (recolor) {
       highlightPaint = null;

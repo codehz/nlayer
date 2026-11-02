@@ -187,6 +187,20 @@ fn dispatch(line: &str) -> Result<Value, String> {
             })
         })?,
         "press" => press(request.selector),
+        "selectionOwner" => on_ui(move || {
+            Ok(scene().map(|scene| {
+                let owner = scene
+                    .view_of(&request.selector)
+                    .ok()
+                    .and_then(|id| scene.selection_owner(id));
+                json!(owner)
+            })?)
+        })?,
+        "openedUrls" => on_ui(|| {
+            let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
+            let urls = mounter.borrow().opened_urls().to_vec();
+            Ok(json!(urls))
+        })?,
         "longPress" => long_press(request.selector),
         "type" => type_text(request.selector, request.text),
         "scroll" => scroll(request.selector, request.distance),

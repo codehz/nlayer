@@ -45,6 +45,12 @@ struct Wire {
     opacity: f32,
     #[serde(default)]
     pressable: bool,
+    #[serde(default, rename = "userSelect")]
+    user_select: Option<bool>,
+    #[serde(default, rename = "selectionColor")]
+    selection_color: Option<u32>,
+    #[serde(default)]
+    selectable: bool,
     #[serde(default)]
     focused: bool,
     #[serde(default)]
@@ -252,6 +258,9 @@ pub(crate) fn scene_of(text: &str) -> Result<Scene, String> {
                 hidden: wire.hidden,
                 opacity: wire.opacity,
                 pressable: wire.pressable,
+                text_selectable: wire.user_select,
+                selection_color: wire.selection_color,
+                selectable: wire.selectable,
                 focused: wire.focused,
                 input: wire.input.map(|input| InputSnap {
                     value: input.value,
