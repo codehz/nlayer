@@ -339,7 +339,13 @@ impl Encoder {
                 Command::Back | Command::GoBack => {
                     // Back routing handled by engine/page layer
                 }
+                Command::OpenUrl { .. } => {
+                    // M4 opens it with `window.open(url, "_blank")`.
+                }
             },
+            MountItem::Selectable { .. } => {
+                // M4 turns on `user-select: text`; M1 only carries the mark.
+            }
             MountItem::ScreenConfig { id, config } => {
                 out.item("scr").num(*id);
                 out.s.push_str(",{");

@@ -360,7 +360,13 @@ pub fn encode(batch: MountBatch) -> Encoded {
                     | Command::GoBack => {
                         // The engine handles navigation commands.
                     }
+                    Command::OpenUrl { .. } => {
+                        // M3 sends `Intent.ACTION_VIEW`.
+                    }
                 }
+            }
+            MountItem::Selectable { .. } => {
+                // M3 mounts `SelectableView`; M1 only carries the mark.
             }
             MountItem::ScreenConfig { id, config } => {
                 e.int(SCREEN_CONFIG);

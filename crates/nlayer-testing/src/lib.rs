@@ -80,6 +80,13 @@ pub struct View {
     pub span_ids: Vec<SpanTestId>,
     /// Nested spans that take presses, on the text view that draws them.
     pub links: Vec<TextLink>,
+    /// The resolved `userSelect`: `Some(true)` asks for selection,
+    /// `Some(false)` is `"none"`, `None` is unset.
+    pub text_selectable: Option<bool>,
+    /// `selectable` on this view: one selection across its texts.
+    pub selectable: bool,
+    /// `selectionColor` of the text's selection.
+    pub selection_color: Option<Color>,
     /// Content offset of a scroll view, toward the end of the content.
     pub scroll_x: f32,
     /// Content offset of a scroll view.
@@ -185,6 +192,8 @@ pub struct Screen {
     modals: Vec<NodeId>,
     /// Screen header heights (from ScreenConfig.header_height).
     screen_headers: HashMap<NodeId, Points>,
+    /// URLs opened by `Command::OpenUrl`, in order.
+    opened_urls: Vec<String>,
 }
 
 /// A node of [`Screen::tree`].
@@ -218,6 +227,32 @@ impl Screen {
     /// The viewport the screen was opened at.
     pub fn viewport(&self) -> Size<Points> {
         self.viewport
+    }
+
+    /// The URLs a short press on a `Text` `href` opened, in order.
+    pub fn opened_urls(&self) -> &[String] {
+        &self.opened_urls
+    }
+
+    /// What owns the selection of text view `id`: the outermost `selectable`
+    /// view around it, else the text itself when its resolved `userSelect`
+    /// asks for selection, else none. A text with `userSelect: "none"` has
+    /// no owner even inside a `selectable` view.
+    pub fn selection_owner(&self, id: NodeId) -> Option<NodeId> {
+        let text = self.views.get(&id)?;
+        if text.text_selectable == Some(false) {
+            return None;
+        }
+        let mut owner = None;
+        let mut at = text.parent;
+        while let Some(parent) = at {
+            let view = self.views.get(&parent)?;
+            if view.selectable {
+                owner = Some(parent);
+            }
+            at = view.parent;
+        }
+        owner.or((text.text_selectable == Some(true)).then_some(id))
     }
 
     /// Pins the viewport selectors judge visibility against.
@@ -436,6 +471,9 @@ impl Screen {
                     accessibility: Accessibility::default(),
                     span_ids: Vec::new(),
                     links: Vec::new(),
+                    text_selectable: None,
+                    selectable: false,
+                    selection_color: None,
                     scroll_x: 0.0,
                     scroll_y: 0.0,
                     text_content: Bounds::default(),
@@ -537,6 +575,8 @@ impl Screen {
                     view.text = Some(text.text.clone());
                     view.span_ids = text.test_ids.clone();
                     view.links = text.links.clone();
+                    view.text_selectable = text.selectable;
+                    view.selection_color = text.selection_color;
                     view.text_content = *content;
                     view.text_layout = Some(layout.clone());
                 }
@@ -617,8 +657,15 @@ impl Screen {
                 }
                 Command::ScrollToIndex { .. } | Command::ScrollToEnd { .. } | Command::GoBack => {}
                 Command::Back => {}
+                Command::OpenUrl { url } => self.opened_urls.push(url.clone()),
             },
             MountItem::LongPressDelay { .. } => {}
+            MountItem::Selectable { id, selectable } => {
+                self.ensure(*id, ViewKind::View);
+                if let Some(view) = self.views.get_mut(id) {
+                    view.selectable = *selectable;
+                }
+            }
             MountItem::Animation(op) => {
                 self.graph.apply(op.clone(), &mut self.finished);
                 self.apply_animated();
@@ -748,6 +795,9 @@ impl Screen {
             accessibility: Accessibility::default(),
             span_ids: Vec::new(),
             links: Vec::new(),
+            text_selectable: None,
+            selectable: false,
+            selection_color: None,
             scroll_x: 0.0,
             scroll_y: 0.0,
             text_content: Bounds::default(),
@@ -902,6 +952,13 @@ impl Headless {
             self.start_animations();
         }
         applied
+    }
+
+    /// The URLs short presses on `Text` `href`s opened so far, after
+    /// applying the frames that arrived.
+    pub fn opened_urls(&mut self) -> Vec<String> {
+        self.refresh();
+        self.screen.opened_urls().to_vec()
     }
 
     /// Starts animations that arrived at this turn's time. The first frame

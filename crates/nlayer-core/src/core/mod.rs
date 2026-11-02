@@ -7,8 +7,21 @@
 //! stored and sent to the platform; they do not change layout. `testID` is
 //! a name for tests: a view's is mounted, a nested span's is recorded on
 //! its block, and neither is drawn. A pressable nested span is a link in
-//! that block. Inline views inside text and text selection are not part of
-//! this slice.
+//! that block.
+//!
+//! v4 adds what the text is read through. `userSelect` resolves into a
+//! text's [`AttributedText::selectable`]: `"text"` asks for selection,
+//! `"none"` keeps it out, and `"auto"` (unset) follows the views around it
+//! and is not selectable when none says so. `selectable` on a `View` is one
+//! selection across its texts, in reading order, owned by the outermost
+//! such view; it is mounted as [`MountItem::Selectable`]. `selectionColor`
+//! is the block's highlight. Elements with layout inside a `<Text>` (views,
+//! images, scroll views, inputs, lists) are attachments: each is its own
+//! layout root, measured at its content size, with a U+FFFC placeholder in
+//! the text, placed from the final text layout and never a normal child of
+//! the text's parent. `href` on a `Text` (block or span) opens through
+//! [`crate::open_url::check_url`] as [`Command::OpenUrl`], one way, after
+//! the press's own listeners still run.
 
 mod fenwick;
 mod layout_tree;
@@ -27,8 +40,11 @@ use crate::{
         Accessibility, AccessibilityProp, CellSlot, Command, EventKind, EventMask, ImageSource,
         Interaction, KeyboardDismiss, KeyboardTaps, NodeId, Op, Prop, ROOT_ID, ResizeMode, Tag,
     },
-    style::{self, EllipsizeMode, EnvEdges, Style, TextAlign, TextStyle, ViewStyle},
-    text::{AttributedText, MeasureCache, ResolvedTextStyle, SpanTestId, TextEngine, TextLayout},
+    style::{self, EllipsizeMode, EnvEdges, Style, TextAlign, TextStyle, VerticalAlign, ViewStyle},
+    text::{
+        AttachmentAlignments, AttributedText, MeasureCache, ResolvedTextStyle, SpanTestId,
+        TextEngine, TextHref, TextLayout,
+    },
 };
 
 /// Slab index of a node. Internal links use keys, never ids.
@@ -80,6 +96,8 @@ mod dirty {
     /// Emit [`crate::MountItem::PanBinding`] and its pinch and rotation
     /// siblings.
     pub(super) const PAN: u32 = 1 << 17;
+    /// Emit [`crate::MountItem::Selectable`].
+    pub(super) const SELECTABLE: u32 = 1 << 18;
 }
 
 /// Host kind.
@@ -329,6 +347,18 @@ struct Node {
     number_of_lines: Option<u32>,
     /// `textOverflow`.
     ellipsize: Option<EllipsizeMode>,
+    /// `verticalAlign`: where it sits in its line as an attachment.
+    vertical_align: VerticalAlign,
+    /// `userSelect` as written: `Some(true)` is `"text"`, `Some(false)` is
+    /// `"none"`, `None` is `"auto"` (follow the views around it).
+    user_select: Option<bool>,
+    /// `selectable` on a `View`: one selection across its texts.
+    selectable: bool,
+    /// `href` on a `Text` (block or span): the address a short press opens.
+    href: Option<Arc<str>>,
+    /// A text block's attachments (inline views and images, in text order)
+    /// whose native views are inside its own.
+    attached: Vec<NodeId>,
     /// Raw text content.
     text: String,
     /// Start / end properties, if any, so a direction change can place them
@@ -395,6 +425,11 @@ impl Node {
             text_style: TextStyle::default(),
             number_of_lines: None,
             ellipsize: None,
+            vertical_align: VerticalAlign::Baseline,
+            user_select: None,
+            selectable: false,
+            href: None,
+            attached: Vec::new(),
             text: String::new(),
             logical: None,
             events: EventMask::default(),
@@ -433,6 +468,8 @@ impl Node {
 /// Taffy context of a text block.
 struct TextContext<P> {
     text: Arc<AttributedText>,
+    /// Optional `verticalAlign` of its attachments, beside the text.
+    alignments: AttachmentAlignments,
     /// `text.layout_hash()`, computed once per content.
     layout_hash: u64,
     /// Platform typesetting state, created on first use.
@@ -460,6 +497,7 @@ impl<P> TextContext<P> {
         Self {
             layout_hash: text.layout_hash(),
             text,
+            alignments: AttachmentAlignments::default(),
             prepared: None,
             min_content: None,
             cache: None,
@@ -494,6 +532,8 @@ pub struct Core<M: TextEngine> {
     queue: Vec<Key>,
     /// Text blocks whose final layout must be sent.
     pending_text: Vec<Key>,
+    /// Text blocks with attachments, whose rebuild waits for their size.
+    attachment_blocks: Vec<Key>,
     needs_layout: bool,
     /// A parent-viewport list's spacer changed length this round.
     spacer_changed: bool,
@@ -555,6 +595,7 @@ impl<M: TextEngine> Core<M> {
             mount: Vec::new(),
             queue: Vec::new(),
             pending_text: Vec::new(),
+            attachment_blocks: Vec::new(),
             needs_layout: true,
             spacer_changed: false,
             pixel_ratio: 1.0,
@@ -1075,6 +1116,95 @@ impl<M: TextEngine> Core<M> {
         out.append(&mut self.events);
     }
 
+    /// A short press on `id`: the innermost `href` at or around it is
+    /// checked ([`crate::open_url::check_url`]) and, when accepted, mounted
+    /// as [`Command::OpenUrl`] on the root. Returns the URL it opened.
+    /// The press's own listeners still run; this does not change hit
+    /// testing.
+    pub fn press(&mut self, id: NodeId) -> Option<String> {
+        let key = self.key(id).ok()?;
+        let block = self.text_block_of(key)?;
+        let layout = self.nodes[block as usize].layout?;
+        let mut nodes = vec![id];
+        let mut k = key;
+        while k != block {
+            k = self.nodes[k as usize].parent;
+            if k == NO_KEY {
+                break;
+            }
+            nodes.push(self.nodes[k as usize].id);
+        }
+        let url = {
+            let LeafContext::Text(cx) = self.layout.get_node_context_mut(layout)? else {
+                return None;
+            };
+            nodes
+                .iter()
+                .find_map(|&node| cx.text.href_of_node(node).map(|h| h.url.clone()))
+        }?;
+        self.open_checked(&url)
+    }
+
+    /// A short press at `point` (the text's content box, y down) on the
+    /// text node `id`: the `href` at the offset the point hits, innermost
+    /// first, then the ones around the node. Checked and mounted as
+    /// [`Command::OpenUrl`] when accepted; returns the URL it opened.
+    pub fn press_at(&mut self, id: NodeId, point: Point<Points>) -> Option<String> {
+        let key = self.key(id).ok()?;
+        let block = self.text_block_of(key)?;
+        let block_id = self.nodes[block as usize].id;
+        let layout = self.nodes[block as usize].layout?;
+        let engine = &self.text_engine;
+        let url = {
+            let LeafContext::Text(cx) = self.layout.get_node_context_mut(layout)? else {
+                return None;
+            };
+            let offset = cx
+                .laid_out
+                .as_ref()
+                .map_or(0, |laid| engine.hit_test(&laid.layout, point).offset);
+            cx.text
+                .href_at(offset)
+                .or_else(|| cx.text.href_of_node(id))
+                .or_else(|| cx.text.href_of_node(block_id))
+                .map(|h| h.url.clone())
+        }?;
+        self.open_checked(&url)
+    }
+
+    /// Checks `url` and mounts [`Command::OpenUrl`] for it. A refused URL
+    /// is not opened, and why is logged; the press still reports itself.
+    fn open_checked(&mut self, url: &Arc<str>) -> Option<String> {
+        match crate::open_url::check_url(url) {
+            Ok(()) => {
+                let url = url.to_string();
+                self.mount.push(MountItem::Command {
+                    id: ROOT_ID,
+                    command: Command::OpenUrl { url: url.clone() },
+                });
+                Some(url)
+            }
+            Err(reason) => {
+                log::warn!("{reason}");
+                None
+            }
+        }
+    }
+
+    /// The text block (not a span) around `key`.
+    fn text_block_of(&self, mut key: Key) -> Option<Key> {
+        loop {
+            let node = &self.nodes[key as usize];
+            if !node.inline {
+                return (node.kind == Kind::Text).then_some(key);
+            }
+            if node.parent == NO_KEY {
+                return None;
+            }
+            key = node.parent;
+        }
+    }
+
     /// Gets the viewable item range for a list (for ViewableItemsChange event payload).
     pub fn viewable_range(&self, id: NodeId) -> Option<(u32, u32)> {
         let key = self.key(id).ok()?;
@@ -1315,6 +1445,7 @@ impl<M: TextEngine> Core<M> {
             text,
             logical,
             z_index,
+            vertical_align,
             direction,
             animated,
             pending,
@@ -1337,6 +1468,8 @@ impl<M: TextEngine> Core<M> {
         let lines_changed = node.kind == Kind::Text
             && (node.number_of_lines != pending.number_of_lines
                 || node.ellipsize != pending.text_overflow);
+        let select_changed = node.user_select != pending.user_select;
+        let align_changed = node.vertical_align != vertical_align;
         let text_changed = node.text_style != text || span_background_changed || lines_changed;
         node.rtl = rtl;
         let view_changed = node.view_style != view;
@@ -1347,6 +1480,8 @@ impl<M: TextEngine> Core<M> {
         node.text_style = text;
         node.number_of_lines = pending.number_of_lines;
         node.ellipsize = pending.text_overflow;
+        node.user_select = pending.user_select;
+        node.vertical_align = vertical_align;
         node.z_index = z_index;
         let fit_changed = node.image.is_some() && node.object_fit != fit;
         if fit_changed {
@@ -1405,16 +1540,20 @@ impl<M: TextEngine> Core<M> {
         if fit_changed {
             self.mark(key, dirty::IMAGE);
         }
-        if text_changed || flipped {
+        if text_changed || flipped || select_changed {
             match self.nodes[key as usize].kind {
                 Kind::Text => self.mark_text_block(key),
                 Kind::Input => {
                     self.measure_input(key);
                     self.mark(key, dirty::INPUT);
                 }
-                _ if text_changed => self.mark_inheriting_text(key),
+                _ if text_changed || select_changed => self.mark_inheriting_text(key),
                 _ => {}
             }
+        }
+        if align_changed && self.nodes[key as usize].inline {
+            // Its line reserves its new place.
+            self.mark_text_block(key);
         }
         if flipped {
             self.update_children_direction(key);
@@ -1889,6 +2028,19 @@ impl<M: TextEngine> Core<M> {
                 self.nodes[key as usize].gestures.rotation = angle;
                 self.mark(key, dirty::PAN);
             }
+            Prop::Selectable(selectable) => {
+                if self.nodes[key as usize].selectable != selectable {
+                    self.nodes[key as usize].selectable = selectable;
+                    self.mark(key, dirty::SELECTABLE);
+                }
+            }
+            Prop::Href(href) => {
+                let href = href.map(Arc::from);
+                if self.nodes[key as usize].href != href {
+                    self.nodes[key as usize].href = href;
+                    self.mark_text_block(key);
+                }
+            }
             Prop::HeaderSlot(slot) => {
                 if let Some(root) = self.nodes[key as usize].root.as_mut() {
                     root.slot = slot;
@@ -2101,6 +2253,7 @@ impl<M: TextEngine> Core<M> {
         self.slots[id as usize] = 0;
         self.lists.retain(|&k| k != key);
         self.roots.retain(|&k| k != key);
+        self.attachment_blocks.retain(|&k| k != key);
         self.list_binds.retain(|b| b.list != id);
         for &c in &node.children {
             if let Some(child) = self.nodes.get_mut(c as usize) {
@@ -2218,6 +2371,7 @@ impl<M: TextEngine> Core<M> {
     /// Creates the native views of `key`'s subtree if needed, wiring up the
     /// children in order.
     fn ensure_created(&mut self, key: Key) {
+        let has_attachments = self.attachment_blocks.contains(&key);
         let node = &mut self.nodes[key as usize];
         if node.created || node.layout.is_none() {
             return;
@@ -2283,6 +2437,14 @@ impl<M: TextEngine> Core<M> {
         if node.test_id.is_some() {
             flags |= dirty::TEST_ID;
         }
+        if node.selectable {
+            flags |= dirty::SELECTABLE;
+        }
+        if kind == Kind::Text && has_attachments {
+            // Its attachments' views go inside the new view.
+            node.attached.clear();
+            flags |= dirty::TEXT_BUILD;
+        }
         if !node.accessibility.is_default() {
             flags |= dirty::ACCESSIBILITY;
         }
@@ -2334,6 +2496,19 @@ impl<M: TextEngine> Core<M> {
     }
 
     fn flush_dirty(&mut self) {
+        loop {
+            self.flush_dirty_once();
+            // Text blocks create the views of new attachments while
+            // flushing, which queues them; texts inside attachments built
+            // after their block resize them, which builds the block again.
+            self.check_attachments();
+            if self.queue.is_empty() {
+                break;
+            }
+        }
+    }
+
+    fn flush_dirty_once(&mut self) {
         let queue = mem::take(&mut self.queue);
         for key in queue {
             let (mut flags, has_layout) = {
@@ -2382,6 +2557,10 @@ impl<M: TextEngine> Core<M> {
                 self.mount.push(MountItem::Events { id, events });
                 let delay = self.nodes[key as usize].long_press_delay;
                 self.mount.push(MountItem::LongPressDelay { id, delay });
+            }
+            if flags & dirty::SELECTABLE != 0 {
+                let selectable = self.nodes[key as usize].selectable;
+                self.mount.push(MountItem::Selectable { id, selectable });
             }
             if flags & dirty::IMAGE != 0
                 && let Some(image) = &self.nodes[key as usize].image
@@ -2981,6 +3160,7 @@ impl<M: TextEngine> Core<M> {
         let max_lines = node.number_of_lines.unwrap_or(0);
         let ellipsize = node.ellipsize.unwrap_or_default();
         let inherited = self.inherited_text_style(key);
+        let selectable = self.resolved_user_select(key);
         let (align, physical) = node
             .text_style
             .text_align
@@ -2994,44 +3174,67 @@ impl<M: TextEngine> Core<M> {
             max_lines,
             ellipsize,
             shadow: node.text_style.shadow(),
+            selectable,
+            selection_color: node.text_style.selection_color,
             ..AttributedText::default()
         };
         let base = inherited.inherit(&node.text_style);
-        self.collect_text(key, base, &mut text);
+        let inserted = self.update_attachments(key);
+        let mut alignments = AttachmentAlignments::default();
+        self.collect_text(key, base, &mut text, &mut alignments);
+        // Its own `href` covers everything it draws.
+        if let Some(url) = self.nodes[key as usize].href.clone() {
+            text.hrefs.push(TextHref {
+                start: 0,
+                end: text.len_utf16(),
+                node: self.nodes[key as usize].id,
+                url,
+            });
+        }
         let layout = self.nodes[key as usize]
             .layout
             .expect("text block has layout");
-        let same_layout = {
-            let cx = self.text_cx(layout);
-            if *cx.text == text {
-                return false;
+        let cx = self.text_cx(layout);
+        if *cx.text == text && cx.alignments == alignments {
+            if inserted {
+                // New attachment views: placed with the next final layout.
+                cx.laid_out = None;
             }
-            // A test id is not a glyph: keep the layout and remount the text.
-            if cx.text.test_ids != text.test_ids && cx.text.rendering_eq(&text) {
-                cx.text = Arc::new(text);
-                cx.metadata_changed = true;
-                return true;
-            }
-            cx.metadata_changed = false;
-            let same_layout = cx.text.layout_eq(&text);
+            return inserted;
+        }
+        // A test id is not a glyph: keep the layout and remount the text.
+        if cx.text.test_ids != text.test_ids
+            && !inserted
+            && cx.alignments == alignments
+            && cx.text.rendering_eq(&text)
+        {
             cx.text = Arc::new(text);
-            cx.prepared = None;
-            cx.min_content = None;
-            cx.laid_out = None;
-            if !same_layout {
-                cx.layout_hash = cx.text.layout_hash();
-                cx.cache = None;
-            }
-            same_layout
-        };
+            cx.metadata_changed = true;
+            return true;
+        }
+        cx.metadata_changed = false;
+        let same_layout = cx.text.layout_eq(&text) && cx.alignments == alignments;
+        cx.alignments = alignments;
+        cx.text = Arc::new(text);
+        cx.prepared = None;
+        cx.min_content = None;
+        cx.laid_out = None;
         if !same_layout {
+            let has_alignments = !cx.alignments.is_empty();
+            cx.layout_hash = cx.alignments.layout_hash(&cx.text);
+            cx.cache = None;
+            // A text that measures as before leaves every layout standing:
+            // only the text is mounted again. Attachments are placed by its
+            // final layout, laid out again with the rest.
+            let attachments = has_alignments || !self.nodes[key as usize].attached.is_empty();
             let engine = &self.text_engine;
             let cache = &mut self.measure_cache;
-            if !self
-                .layout
-                .measures_as_before(layout, |input, _, cx, style| {
-                    measure_leaf(engine, cache, input, cx, style)
-                })
+            if attachments
+                || !self
+                    .layout
+                    .measures_as_before(layout, |input, _, cx, style| {
+                        measure_leaf(engine, cache, input, cx, style)
+                    })
             {
                 self.layout.mark_dirty(layout);
                 self.needs_layout = true;
@@ -3040,7 +3243,28 @@ impl<M: TextEngine> Core<M> {
         true
     }
 
-    fn collect_text(&self, key: Key, style: ResolvedTextStyle, out: &mut AttributedText) {
+    /// The `userSelect` of `key` and the views around it: `Some(true)` is
+    /// `"text"`, `Some(false)` is `"none"`, `None` is `"auto"` everywhere.
+    fn resolved_user_select(&self, key: Key) -> Option<bool> {
+        let mut k = key;
+        while k != NO_KEY {
+            if let Some(selectable) = self.nodes[k as usize].user_select {
+                return Some(selectable);
+            }
+            k = self.nodes[k as usize].parent;
+        }
+        None
+    }
+
+    /// Collects `key`'s characters into `out`: raw text, its spans and
+    /// their `href`s, and its attachments' placeholders.
+    fn collect_text(
+        &self,
+        key: Key,
+        style: ResolvedTextStyle,
+        out: &mut AttributedText,
+        alignments: &mut AttachmentAlignments,
+    ) {
         for &c in &self.nodes[key as usize].children {
             let child = &self.nodes[c as usize];
             match child.kind {
@@ -3054,27 +3278,188 @@ impl<M: TextEngine> Core<M> {
                     let events = child.events;
                     let id = child.id;
                     let test_id = child.test_id.clone();
-                    self.collect_text(c, inner, out);
+                    let href = child.href.clone();
+                    self.collect_text(c, inner, out, alignments);
+                    let end = out.len_utf16();
                     if events.contains(EventKind::Press) {
                         out.links.push(crate::text::TextLink {
                             start,
-                            end: out.len_utf16(),
+                            end,
                             node: id,
                             events,
+                        });
+                    }
+                    if let Some(url) = href {
+                        out.hrefs.push(TextHref {
+                            start,
+                            end,
+                            node: id,
+                            url,
                         });
                     }
                     if let Some(test_id) = test_id {
                         out.test_ids.push(SpanTestId {
                             start,
-                            end: out.len_utf16(),
+                            end,
                             test_id,
                         });
                     }
                 }
-                // Inline views are not part of v1.
+                // An attachment, laid out by `update_attachments`: one
+                // placeholder of its own size.
+                _ => {
+                    if let Some(layout) = child.layout {
+                        let size = self.rounded_layout(layout).size;
+                        alignments.push(
+                            out,
+                            crate::geometry::size_pt(size.width, size.height),
+                            child.vertical_align,
+                            style,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The attachments of text block `key` (views and images inside it,
+    /// also inside its spans), in text order.
+    fn attachments_of(&self, key: Key, out: &mut Vec<Key>) {
+        for &c in &self.nodes[key as usize].children {
+            let child = &self.nodes[c as usize];
+            match child.kind {
+                Kind::RawText => {}
+                Kind::Text => self.attachments_of(c, out),
+                _ if child.layout.is_some() => out.push(c),
                 _ => {}
             }
         }
+    }
+
+    /// The text block an attachment is in, if it is one.
+    fn attachment_block(&self, key: Key) -> Option<Key> {
+        let node = &self.nodes[key as usize];
+        if !node.inline || node.layout.is_none() || node.kind == Kind::Text {
+            return None;
+        }
+        let mut k = node.parent;
+        while k != NO_KEY {
+            let n = &self.nodes[k as usize];
+            if !n.inline {
+                return (n.kind == Kind::Text).then_some(k);
+            }
+            k = n.parent;
+        }
+        None
+    }
+
+    /// Lays out the attachments of text block `key` (each a layout root at
+    /// its own content size) and keeps their native views inside the
+    /// block's. Returns true if views were inserted (they need placing).
+    fn update_attachments(&mut self, key: Key) -> bool {
+        let mut keys = Vec::new();
+        self.attachments_of(key, &mut keys);
+        let block = &self.nodes[key as usize];
+        if keys.is_empty() && block.attached.is_empty() {
+            return false;
+        }
+        let (block_id, created) = (block.id, block.created);
+        let old = mem::take(&mut self.nodes[key as usize].attached);
+        let mut inserted = false;
+        for &a in &keys {
+            let id = self.nodes[a as usize].id;
+            let new = !old.contains(&id);
+            if created && new {
+                self.ensure_created(a);
+                self.mount.push(MountItem::Insert {
+                    parent: block_id,
+                    child: id,
+                    before: None,
+                });
+                inserted = true;
+            }
+            let layout = self.nodes[a as usize].layout.expect("attachment layout");
+            let dirty = self.layout.dirty(layout);
+            if dirty {
+                self.layout_root(
+                    layout,
+                    taffy::Size {
+                        width: AvailableSpace::MaxContent,
+                        height: AvailableSpace::MaxContent,
+                    },
+                );
+            }
+            if created && (dirty || new) {
+                // Its own frame follows the text; its subtree's now.
+                let children = mem::take(&mut self.nodes[a as usize].children);
+                for &child in &children {
+                    self.emit_frames(child);
+                }
+                self.nodes[a as usize].children = children;
+            }
+        }
+        // Views that left the block and were not moved natively elsewhere.
+        for id in old {
+            let Ok(k) = self.key(id) else { continue };
+            let n = &self.nodes[k as usize];
+            let moved = n.parent != NO_KEY && !n.inline && self.nodes[n.parent as usize].created;
+            if n.created && !moved && self.attachment_block(k).is_none() {
+                self.mount.push(MountItem::Remove { id });
+            }
+        }
+        let ids: Vec<NodeId> = keys.iter().map(|&a| self.nodes[a as usize].id).collect();
+        let has = !ids.is_empty();
+        self.nodes[key as usize].attached = if created { ids } else { Vec::new() };
+        match (has, self.attachment_blocks.contains(&key)) {
+            (true, false) => self.attachment_blocks.push(key),
+            (false, true) => self.attachment_blocks.retain(|&k| k != key),
+            _ => {}
+        }
+        inserted
+    }
+
+    /// Text blocks whose attachments' content changed are built again.
+    fn check_attachments(&mut self) {
+        let mut i = 0;
+        while i < self.attachment_blocks.len() {
+            let key = self.attachment_blocks[i];
+            i += 1;
+            let Some(node) = self.nodes.get(key as usize) else {
+                continue;
+            };
+            let dirty = node.attached.iter().any(|&id| {
+                self.key(id).is_ok_and(|k| {
+                    self.nodes[k as usize]
+                        .layout
+                        .is_some_and(|l| self.layout.dirty(l))
+                })
+            });
+            if dirty {
+                self.mark(key, dirty::TEXT_BUILD);
+            }
+        }
+    }
+
+    /// Moves the views of text block `key`'s attachments onto their
+    /// placeholders in `layout` (content box `content`); cut off ones out
+    /// of sight.
+    fn place_attachments(&mut self, key: Key, layout: &TextLayout, content: Bounds<Points>) {
+        let points = self.text_engine.attachments(layout);
+        let attached = mem::take(&mut self.nodes[key as usize].attached);
+        for (i, &id) in attached.iter().enumerate() {
+            let Ok(a) = self.key(id) else { continue };
+            let Some(l) = self.nodes[a as usize].layout else {
+                continue;
+            };
+            let size = self.rounded_layout(l).size;
+            let (x, y) = match points.get(i).copied().flatten() {
+                Some(p) => (content.origin.x.0 + p.x.0, content.origin.y.0 + p.y.0),
+                // Far away, like unbound list cells.
+                None => (-100_000.0, 0.0),
+            };
+            self.set_frame(a, rect(x, y, size.width, size.height));
+        }
+        self.nodes[key as usize].attached = attached;
     }
 
     #[inline]
@@ -3090,6 +3475,7 @@ impl<M: TextEngine> Core<M> {
     /// box changed, and emits it.
     fn flush_text(&mut self) {
         let pending = mem::take(&mut self.pending_text);
+        let mut placements: Vec<(Key, TextLayout, Bounds<Points>)> = Vec::new();
         for key in pending {
             let (align_vertical, id, layout) = {
                 let Some(node) = self.nodes.get_mut(key as usize) else {
@@ -3175,7 +3561,9 @@ impl<M: TextEngine> Core<M> {
                 Some(l) if l.content == content => continue,
                 Some(l) if l.content.size == size => l.layout.clone(),
                 _ => {
-                    let prepared = cx.prepared.get_or_insert_with(|| engine.prepare(&cx.text));
+                    let prepared = cx
+                        .prepared
+                        .get_or_insert_with(|| engine.prepare_aligned(&cx.text, &cx.alignments));
                     engine.layout(prepared, size)
                 }
             };
@@ -3183,12 +3571,18 @@ impl<M: TextEngine> Core<M> {
                 content,
                 layout: text_layout.clone(),
             });
+            if !cx.text.attachments.is_empty() {
+                placements.push((key, text_layout.clone(), content));
+            }
             self.mount.push(MountItem::Text {
                 id,
                 text: cx.text.clone(),
                 layout: text_layout,
                 content,
             });
+        }
+        for (key, layout, content) in placements {
+            self.place_attachments(key, &layout, content);
         }
     }
 }
@@ -3338,7 +3732,9 @@ fn measure_text<M: TextEngine>(
     let size = match cache.get(cx.layout_hash, typed) {
         Some(size) => size,
         None => {
-            let prepared = cx.prepared.get_or_insert_with(|| engine.prepare(&cx.text));
+            let prepared = cx
+                .prepared
+                .get_or_insert_with(|| engine.prepare_aligned(&cx.text, &cx.alignments));
             let size = engine.measure(prepared, typed);
             // Round up so rendering never truncates the last glyph.
             let size = size.map(Points::ceil);
@@ -4552,7 +4948,7 @@ mod tests {
         geometry::{px, size, size_pt},
         ops::{EventKind, ImageScales, ImageSource, Interaction, KeyboardType, Prop, ResizeMode},
         style::{Color, StylePatch, StyleValue, TextStyle, ViewStyle},
-        text::{AttributedText, TextEngine, TextLayout},
+        text::{ApproxTextEngine, AttributedText, TextEngine, TextLayout},
     };
 
     /// 8pt per character, 16pt per line, wrapping at `max_width`.
@@ -4623,7 +5019,7 @@ mod tests {
         style
     }
 
-    fn apply_style(core: &mut Core<FakeEngine>, id: NodeId, style: Style) {
+    fn apply_style<M: TextEngine>(core: &mut Core<M>, id: NodeId, style: Style) {
         core.apply(Op::SetStyle {
             id,
             style: Box::new(style),
@@ -8726,6 +9122,314 @@ mod tests {
             events.len(),
             1,
             "refresh should fire again after refreshing becomes false"
+        );
+    }
+    #[test]
+    fn user_select_resolves_from_views_and_defaults_off() {
+        let mut c = Core::new(ApproxTextEngine, size(px(200.0), px(200.0)));
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::View,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::Text,
+        })
+        .unwrap();
+        c.apply(Op::CreateText {
+            id: 4,
+            text: "read me".into(),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 3,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().expect("a frame");
+        assert_eq!(mounted_text(&batch, 3).selectable, None, "auto is off");
+
+        let mut style = Style::default();
+        style.set("userSelect", StyleValue::Str("text")).unwrap();
+        apply_style(&mut c, 2, style);
+        let batch = c.commit().expect("a frame");
+        assert_eq!(mounted_text(&batch, 3).selectable, Some(true));
+
+        let mut off = Style::default();
+        off.set("userSelect", StyleValue::Str("none")).unwrap();
+        apply_style(&mut c, 3, off);
+        let batch = c.commit().expect("a frame");
+        assert_eq!(mounted_text(&batch, 3).selectable, Some(false));
+
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Selectable(true),
+        })
+        .unwrap();
+        let batch = c.commit().expect("a frame");
+        assert!(batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::Selectable {
+                id: 2,
+                selectable: true
+            }
+        )));
+    }
+
+    #[test]
+    fn an_inline_view_is_measured_and_placed_on_the_baseline() {
+        let mut c = Core::new(ApproxTextEngine, size(px(100.0), px(200.0)));
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Text,
+        })
+        .unwrap();
+        c.apply(Op::CreateText {
+            id: 3,
+            text: "ab".into(),
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 4,
+            tag: Tag::View,
+        })
+        .unwrap();
+        apply_style(&mut c, 4, sized(18.0, 18.0));
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().expect("a frame");
+        let text = mounted_text(&batch, 2);
+        assert_eq!(text.text, "ab\u{FFFC}");
+        assert_eq!(text.attachments.len(), 1);
+        assert_eq!(
+            text.attachments[0].width,
+            Points(18.0),
+            "its own content size"
+        );
+        let baseline = frame(&batch, 4);
+        assert_eq!(baseline.size, size(px(18.0), px(18.0)));
+        assert_eq!(baseline.origin.x, Points(px(2.0).0 * 14.0 * 0.55));
+        assert_eq!(baseline.origin.y, Points(0.0));
+
+        let mut middle = sized(18.0, 18.0);
+        middle
+            .set("verticalAlign", StyleValue::Str("middle"))
+            .unwrap();
+        apply_style(&mut c, 4, middle);
+        let batch = c.commit().expect("a frame");
+        assert!(
+            frame(&batch, 4).origin.y > baseline.origin.y,
+            "middle sits lower than the baseline"
+        );
+    }
+
+    #[test]
+    fn attachments_cut_off_by_number_of_lines_are_out_of_sight() {
+        let mut c = Core::new(ApproxTextEngine, size(px(100.0), px(200.0)));
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Text,
+        })
+        .unwrap();
+        c.apply(Op::CreateText {
+            id: 3,
+            text: "a".repeat(20),
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 4,
+            tag: Tag::View,
+        })
+        .unwrap();
+        apply_style(&mut c, 4, sized(18.0, 18.0));
+        let mut one_line = Style::default();
+        one_line
+            .set("numberOfLines", StyleValue::Number(1.0))
+            .unwrap();
+        apply_style(&mut c, 2, one_line);
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().expect("a frame");
+        assert_eq!(mounted_text(&batch, 2).max_lines, 1);
+        assert!(
+            frame(&batch, 4).origin.x < Points(-99_000.0),
+            "the cut-off attachment has no place"
+        );
+    }
+
+    #[test]
+    fn a_short_press_opens_a_checked_href() {
+        let mut c = Core::new(ApproxTextEngine, size(px(200.0), px(200.0)));
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Text,
+        })
+        .unwrap();
+        c.apply(Op::CreateText {
+            id: 3,
+            text: "Terms".into(),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Href(Some("https://example.com/terms".into())),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.commit().expect("a frame");
+        assert_eq!(c.press(2).as_deref(), Some("https://example.com/terms"));
+        let batch = c.commit().expect("the open command");
+        assert!(batch.items.iter().any(|item| matches!(
+            item,
+            MountItem::Command {
+                command: Command::OpenUrl { url },
+                ..
+            } if url == "https://example.com/terms"
+        )));
+
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Href(Some("javascript:alert(1)".into())),
+        })
+        .unwrap();
+        c.commit().expect("a frame");
+        assert_eq!(c.press(2), None);
+        let batch = c.commit();
+        assert!(
+            batch.is_none_or(|batch| !batch.items.iter().any(|item| matches!(
+                item,
+                MountItem::Command {
+                    command: Command::OpenUrl { .. },
+                    ..
+                }
+            ))),
+            "a refused address opens nothing"
+        );
+    }
+    #[test]
+    fn the_href_at_a_point_is_the_innermost() {
+        let mut c = Core::new(ApproxTextEngine, size(px(200.0), px(200.0)));
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Text,
+        })
+        .unwrap();
+        c.apply(Op::CreateText {
+            id: 3,
+            text: "pre ".into(),
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 4,
+            tag: Tag::Text,
+        })
+        .unwrap();
+        c.apply(Op::CreateText {
+            id: 5,
+            text: "terms".into(),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 4,
+            child: 5,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Href(Some("https://example.com/block".into())),
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 4,
+            prop: Prop::Href(Some("https://example.com/span".into())),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.commit().expect("a frame");
+        let point = |x: f32| Point::new(Points(x), Points(1.0));
+        assert_eq!(
+            c.press_at(2, point(1.0)).as_deref(),
+            Some("https://example.com/block")
+        );
+        c.commit();
+        assert_eq!(
+            c.press_at(2, point(32.0)).as_deref(),
+            Some("https://example.com/span")
         );
     }
 }

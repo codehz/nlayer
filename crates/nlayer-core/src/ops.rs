@@ -1192,6 +1192,12 @@ pub enum Prop {
     Modal(ModalProp),
     /// Where a header item goes (`headerLeft`, `headerRight`, `headerTitle`, `header`).
     HeaderSlot(HeaderSlot),
+    /// `selectable` on a `View`: one selection across its texts, in reading
+    /// order. Not a style. A text inside it is not selectable on its own.
+    Selectable(bool),
+    /// `href` on a `Text` (block or span): the address a short press opens
+    /// ([`Command::OpenUrl`]). `None` clears it.
+    Href(Option<String>),
 }
 
 /// A mutation produced by the JS renderer.
@@ -1318,4 +1324,12 @@ pub enum Command {
     Back,
     /// Go back in a web view's history.
     GoBack,
+    /// Open `url` outside the app: the browser, the mail or phone app, the
+    /// app that registered its scheme. One way: the platform reports
+    /// nothing back. Produced by a short press on a `Text` `href` that
+    /// [`crate::open_url::check_url`] accepted.
+    OpenUrl {
+        /// The address, checked.
+        url: String,
+    },
 }

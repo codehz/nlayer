@@ -110,6 +110,10 @@ export interface ViewProps extends AccessibilityProps {
   children?: Children;
   /** A name tests use to find this view. The platform does not draw it. */
   testID?: string;
+  /** One selection across the texts in this view, in reading order. Not a
+   * style. `userSelect` text inside belongs to it, except `"none"`; nested
+   * `selectable` views are part of the outermost. */
+  selectable?: boolean;
   onPress?: () => void;
   /** The pointer stayed down (`delayLongPress`); releasing then does not
    * also fire `onPress`. */
@@ -152,6 +156,10 @@ export interface TextProps extends AccessibilityProps {
   children?: Children;
   /** A name tests use to find this span. The platform does not draw it. */
   testID?: string;
+  /** The address a short press opens (`https://…`, `mailto:…`). A block or
+   * a span; a press opens the innermost one at the hit, then reports the
+   * press's `onPress`. A refused address does not open. */
+  href?: string;
   onPress?: () => void;
   /** The pointer stayed down (`delayLongPress`); releasing then does not
    * also fire `onPress`. */

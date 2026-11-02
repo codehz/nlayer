@@ -365,6 +365,14 @@ pub(crate) fn decode_prop<'js>(
         }
         (Some(Tag::Input), "multiline") => Prop::Multiline(value.as_bool().unwrap_or(false)),
         (Some(Tag::Input), "selectedRange") => selected_range(&value)?,
+        (Some(Tag::View), "selectable") => Prop::Selectable(value.as_bool().unwrap_or(false)),
+        (Some(Tag::Text), "href") => {
+            if value.is_null() || value.is_undefined() {
+                Prop::Href(None)
+            } else {
+                Prop::Href(Some(string(&value)?))
+            }
+        }
         _ => {
             warnings.warn(format!("unsupported prop `{name}`"));
             return Ok(None);

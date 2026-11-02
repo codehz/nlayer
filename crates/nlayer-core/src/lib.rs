@@ -2,7 +2,8 @@
 //!
 //! Reactive graph, geometry, the style IR, text layout and the shadow tree
 //! (views, text, images, scroll views, virtualized lists and inputs) are extracted
-//! from nsh.
+//! from nsh. Text selection's model ([`selection`]) and the URL check a
+//! `Text` `href` opens through ([`open_url`]) are extracted too.
 
 pub mod animation;
 pub mod color;
@@ -14,10 +15,12 @@ pub mod geometry;
 mod grid;
 mod keyboard;
 mod mount;
+pub mod open_url;
 mod ops;
 pub mod platform;
 pub mod reactive;
 pub mod resource;
+pub mod selection;
 pub mod snap;
 pub mod storage;
 pub mod style;

@@ -787,6 +787,11 @@ impl<M: TextEngine> Session<M> {
                     self.core
                         .set_scroll_offset(id, Point::new(Points(*x), Points(*y)));
                 }
+                if event == EventKind::Press {
+                    // A `Text` `href` opens one way; the press still reports
+                    // itself to JS below.
+                    self.core.press(id);
+                }
                 self.host.dispatch_event(id, event, &payload);
             }
             Message::Input { id, text } => {

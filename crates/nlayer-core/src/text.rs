@@ -287,6 +287,9 @@ pub struct AttributedText {
     pub shadow: Option<TextShadow>,
     /// Nested `<text>` spans that take presses (they may nest).
     pub links: Vec<TextLink>,
+    /// Nested `<Text>` spans with an `href` (they may nest), and the block's
+    /// own: a short press on their characters opens the URL.
+    pub hrefs: Vec<TextHref>,
     /// Nested `<Text>` spans with a `testID` (they may nest). Platforms
     /// draw nothing from them. Tests name a span by its id.
     pub test_ids: Vec<SpanTestId>,
@@ -296,10 +299,10 @@ pub struct AttributedText {
     /// The block is laid out right to left: `auto` alignment is the right
     /// side.
     pub rtl: bool,
-    /// A long press copies the text (`userSelect: "text"` or `select-text`;
+    /// A long press selects the text (`userSelect: "text"` or `select-text`;
     /// drawing only): `Some(false)` when set off, `None` when not set, which
-    /// is not selectable except where text is by default (desktop
-    /// browsers). [`is_selectable`](Self::is_selectable) is whether it is asked for.
+    /// is not selectable by default. [`is_selectable`](Self::is_selectable)
+    /// is whether it is asked for.
     pub selectable: Option<bool>,
     /// The highlight of the selection of selectable text (`selectionColor`);
     /// the platform's tint when `None`.
@@ -459,6 +462,20 @@ pub struct TextLink {
     pub events: EventMask,
 }
 
+/// A nested `<Text>` span with an `href`, or the block's own: a short press
+/// on its characters opens the URL ([`crate::Command::OpenUrl`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextHref {
+    /// Start offset (UTF-16 units, inclusive).
+    pub start: u32,
+    /// End offset (UTF-16 units, exclusive).
+    pub end: u32,
+    /// The span's node, or the block's.
+    pub node: NodeId,
+    /// The address as written.
+    pub url: Arc<str>,
+}
+
 /// A nested `<Text>` span with a `testID` ([`AttributedText::test_ids`]).
 #[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
@@ -507,6 +524,23 @@ impl AttributedText {
             .min_by_key(|l| l.end - l.start)
     }
 
+    /// The innermost `href` containing the UTF-16 offset `index` (the
+    /// narrowest range, so a span's wins over its block's).
+    pub fn href_at(&self, index: u32) -> Option<&TextHref> {
+        self.hrefs
+            .iter()
+            .filter(|h| index >= h.start && index < h.end)
+            .min_by_key(|h| h.end - h.start)
+    }
+
+    /// The `href` of a node's range: `node`'s own, else the block's.
+    pub fn href_of_node(&self, node: NodeId) -> Option<&TextHref> {
+        self.hrefs
+            .iter()
+            .filter(|h| h.node == node)
+            .min_by_key(|h| h.end - h.start)
+    }
+
     /// Appends an attachment of `size` on the baseline.
     pub fn push_attachment(&mut self, size: Size<Points>, style: ResolvedTextStyle) {
         let index = self.len_utf16();
@@ -552,6 +586,7 @@ impl AttributedText {
             no_wrap,
             shadow,
             links,
+            hrefs,
             writing_direction,
             rtl,
             selectable,
@@ -567,6 +602,7 @@ impl AttributedText {
             && no_wrap == &other.no_wrap
             && shadow == &other.shadow
             && links == &other.links
+            && hrefs == &other.hrefs
             && writing_direction == &other.writing_direction
             && rtl == &other.rtl
             && selectable == &other.selectable
@@ -1016,17 +1052,21 @@ impl TextEngine for ApproxTextEngine {
     }
 
     fn layout(&self, prepared: &Self::Prepared, size: Size<Points>) -> TextLayout {
-        // On one line, each character as wide as the others.
-        let (chars, font, line, _, attachments, astral) = prepared;
+        // On one line, each character as wide as the others. A placeholder
+        // past the last line the text shows is cut off: it has no place (the
+        // core moves its view out of sight).
+        let (chars, font, line, max_lines, attachments, astral) = prepared;
         let line = *line;
         let advance = *font * 0.55;
         let attachments = attachments
             .iter()
             .map(|a| {
-                Some(point(
-                    Points(a.index as f32 * font.0 * 0.55),
-                    (line - a.height).max(Points::ZERO),
-                ))
+                let x = Points(a.index as f32 * font.0 * 0.55);
+                let past_boxes = size.width > Points::ZERO && *max_lines > 0 && {
+                    let at = (x / size.width).floor();
+                    at >= *max_lines as f32
+                };
+                (!past_boxes).then(|| point(x, (line - a.height).max(Points::ZERO)))
             })
             .collect();
         // Baseline at the bottom of the line: the ascent is the line and

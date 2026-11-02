@@ -349,3 +349,17 @@ Copied files:
 - `crates/nlayer-testing/src/driver.rs` drag/dragAndHold/drop/back steps from
   `crates/nsh-testing/src/driver.rs` (pointer sequence steps and back navigation,
   lines ~363-513 in nsh commit ca59368b)
+- `crates/nlayer-core/src/selection.rs` from `crates/nsh-core/src/selection.rs`
+  (the whole model: hit testing, word and paragraph boundaries, reading order,
+  handles, tabs and newlines when copying, kept list rows and autoscroll)
+- `crates/nlayer-core/src/open_url.rs` `MAX_URL_LEN`, `REFUSED_SCHEMES`,
+  `check_url` and its tests from `crates/nsh-core/src/open_url.rs` (the
+  `openUrl` capability, `not_granted`, the embedding host's first handling and
+  `EventKind::OpenUrl` are not copied)
+- v4 text selection and inline attachments in `crates/nlayer-core/src/core/mod.rs`
+  from `crates/nsh-core/src/core/mod.rs` (`inherited_text_props`,
+  `rebuild_text`'s `selectable` / `selection_color`, `collect_text`,
+  `attachments_of`, `attachment_block`, `update_attachments`,
+  `check_attachments` and `place_attachments`; `Prop::SelectableView` becomes
+  `Prop::Selectable` and the `href` press path is nlayer's, through the same
+  `check_url`)

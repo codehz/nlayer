@@ -242,6 +242,15 @@ pub enum MountItem {
         /// The delay; `None` clears it.
         delay: Option<f32>,
     },
+    /// `selectable` on a `View`: one selection across its texts, in reading
+    /// order, owned by the outermost such view. The native view draws
+    /// nothing from it; the platform's selection gestures do.
+    Selectable {
+        /// View.
+        id: NodeId,
+        /// Whether its texts are selected together.
+        selectable: bool,
+    },
     /// Set the source of an image view.
     Image {
         /// Image view.

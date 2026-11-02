@@ -1557,7 +1557,13 @@ impl Mounter {
                 | nlayer_core::Command::ScrollToEnd { .. }
                 | nlayer_core::Command::Back
                 | nlayer_core::Command::GoBack => {}
+                nlayer_core::Command::OpenUrl { .. } => {
+                    // M2 opens it with `UIApplication.open`.
+                }
             },
+            MountItem::Selectable { .. } => {
+                // M2 mounts `UITextInteraction`; M1 only carries the mark.
+            }
             MountItem::Image {
                 id,
                 source,
