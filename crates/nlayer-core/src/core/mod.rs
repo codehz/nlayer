@@ -1617,13 +1617,13 @@ impl<M: TextEngine> Core<M> {
             }
             Prop::StickyHeaderIndices(indices) => {
                 if let Some(list) = self.nodes[key as usize].list.as_mut() {
-                    list.sticky_indices = indices.unwrap_or_else(|| Box::new([]));
+                    list.set_sticky(indices.map(|b| b.into_vec()).unwrap_or_default());
                     self.mark(key, dirty::LIST);
                 }
             }
             Prop::Inverted(inverted) => {
                 if let Some(list) = self.nodes[key as usize].list.as_mut() {
-                    list.inverted = inverted;
+                    list.set_inverted(inverted);
                     self.mark(key, dirty::LIST);
                 }
             }
@@ -2102,6 +2102,21 @@ impl<M: TextEngine> Core<M> {
             before,
         });
     }
+    /// Sticky list cells paint above the rows scrolling under them. Only
+    /// the band this sets (`1`) is touched, so a style `zIndex` stays.
+    fn set_cell_sticky(&mut self, cell: Key, sticky: bool) {
+        const STICKY_Z: i32 = 1;
+        let node = &mut self.nodes[cell as usize];
+        let want = if sticky { STICKY_Z } else { 0 };
+        if node.z_index == want || (!sticky && node.z_index != STICKY_Z) {
+            return;
+        }
+        if sticky && node.z_index != 0 && node.z_index != STICKY_Z {
+            return;
+        }
+        node.z_index = want;
+        self.restack(cell);
+    }
 
     /// Moves `key` (and its subtree) into or out of an inline context.
     fn set_inline(&mut self, key: Key, inline: bool) {
@@ -2328,6 +2343,12 @@ impl<M: TextEngine> Core<M> {
                     taps: scroll.taps,
                     dismiss: scroll.dismiss,
                 });
+                // Snap, paging and deceleration ride on ScrollContent. A
+                // size-only send drops a later toggle (the gallery's
+                // snapToInterval switch).
+                if scroll.content.is_some() {
+                    self.refresh_scroll_content(key);
+                }
             }
             if flags & dirty::TEXT_MOUNT != 0 {
                 self.queue_text(key);
@@ -3866,6 +3887,9 @@ impl<M: TextEngine> Core<M> {
                 let list = self.nodes[key as usize].list.as_mut().expect("list");
                 list.offset += anchor;
                 anchor += list.take_splice_anchor();
+                // Inverted lists start at the end and keep that distance as
+                // content or the viewport changes. Item 0 stays in view.
+                anchor += list.anchor_end();
                 if let Some(target) = list.follow_pin() {
                     scrolls.push((target, true));
                 }
@@ -3883,21 +3907,19 @@ impl<M: TextEngine> Core<M> {
             for command in commands {
                 match command {
                     Command::ScrollToIndex { index, animated } => {
-                        // Special case: scrollToIndex(0) should always go to position 0
-                        if index == 0 {
-                            let list = self.nodes[key as usize].list.as_mut().expect("list");
-                            // Nothing to follow: the top is the top.
+                        let target = list::PinTarget::Index(index);
+                        let list = self.nodes[key as usize].list.as_mut().expect("list");
+                        let offset = list.target_offset(target);
+                        // The top of a normal list does not move as rows
+                        // measure. An inverted list's item 0 is at the end,
+                        // and that end does move.
+                        if index == 0 && !list.inverted {
                             list.pin(None, 0.0);
-                            list.jump(0.0);
-                            scrolls.push((0.0, animated));
                         } else {
-                            let target = list::PinTarget::Index(index);
-                            let list = self.nodes[key as usize].list.as_mut().expect("list");
-                            let offset = list.target_offset(target);
                             list.pin(Some(target), offset);
-                            list.jump(offset);
-                            scrolls.push((offset, animated));
                         }
+                        list.jump(offset);
+                        scrolls.push((offset, animated));
                     }
                     Command::ScrollToEnd { animated } => {
                         // The core owns the content length: the end is an
@@ -3981,37 +4003,6 @@ impl<M: TextEngine> Core<M> {
                     .filter_map(|s| s.ready().map(|i| (i, s.cell))),
             );
 
-            // Keep sticky indices in ready even if outside window (non-inverted only)
-            {
-                let list = self.nodes[key as usize].list.as_ref().expect("list");
-                if !list.inverted && !list.sticky_indices.is_empty() {
-                    for &sticky_index in list.sticky_indices.iter() {
-                        if let Some(slot) =
-                            list.slots.iter().find(|s| s.ready() == Some(sticky_index))
-                        {
-                            if !ready.iter().any(|(i, _)| *i == sticky_index) {
-                                ready.push((sticky_index, slot.cell));
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Keep sticky indices in ready even if outside window (non-inverted only)
-            {
-                let list = self.nodes[key as usize].list.as_ref().expect("list");
-                if !list.inverted && !list.sticky_indices.is_empty() {
-                    for &sticky_index in list.sticky_indices.iter() {
-                        if let Some(slot) =
-                            list.slots.iter().find(|s| s.ready() == Some(sticky_index))
-                        {
-                            if !ready.iter().any(|(i, _)| *i == sticky_index) {
-                                ready.push((sticky_index, slot.cell));
-                            }
-                        }
-                    }
-                }
-            }
             let (window_start, window_end) = self.nodes[key as usize]
                 .list
                 .as_ref()
@@ -4070,45 +4061,17 @@ impl<M: TextEngine> Core<M> {
                     .expect("list")
                     .item_at(index);
 
-                // Apply sticky shift for sticky headers (single-column, non-inverted only)
-                let adjusted_at = {
+                let (adjusted_at, sticky) = {
                     let list = self.nodes[key as usize].list.as_ref().expect("list");
-
-                    // Apply inverted layout first
-                    let base_at = if list.inverted {
-                        // Inverted: position from bottom (total_len - item_start - item_size)
-                        let total = list.content_len();
-                        total - at - size.height
-                    } else {
-                        at
-                    };
-
-                    // Apply sticky shift (only for non-inverted)
-                    if !list.sticky_indices.is_empty() && !list.inverted {
-                        if let Some(_sticky_pos) =
-                            list.sticky_indices.iter().position(|&i| i == index)
-                        {
-                            let offset = list.offset;
-                            let start = base_at;
-                            let end = list
-                                .sticky_indices
-                                .iter()
-                                .skip_while(|&&i| i <= index)
-                                .next()
-                                .map(|&next_i| list.item_at(next_i))
-                                .unwrap_or_else(|| list.content_len());
-                            let shift = (offset - start).clamp(0.0, (end - start).max(0.0));
-                            base_at + shift
-                        } else {
-                            base_at
-                        }
-                    } else {
-                        base_at
-                    }
+                    let base_at = list.to_content(at, size.height);
+                    let sticky =
+                        list.sticky_enabled() && list.sticky_indices.binary_search(&index).is_ok();
+                    (base_at + list.sticky_shift(index, size.height), sticky)
                 };
 
                 let frame = rect(column, adjusted_at, width, size.height);
                 self.set_frame(cell, frame);
+                self.set_cell_sticky(cell, sticky);
                 if std::mem::take(&mut self.nodes[cell as usize].relaid) {
                     let children = std::mem::take(&mut self.nodes[cell as usize].children);
                     for &child in &children {
@@ -4147,7 +4110,12 @@ impl<M: TextEngine> Core<M> {
                 }
                 if let Some(cell_layout) = self.nodes.get(cell as usize).and_then(|c| c.layout) {
                     let size = self.rounded_layout(cell_layout).size;
-                    let frame = rect(full_x, ats[i], full_width, size.height);
+                    let at = self.nodes[key as usize]
+                        .list
+                        .as_ref()
+                        .expect("list")
+                        .to_content(ats[i], size.height);
+                    let frame = rect(full_x, at, full_width, size.height);
                     self.set_frame(cell, frame);
                     if std::mem::take(&mut self.nodes[cell as usize].relaid) {
                         let children = std::mem::take(&mut self.nodes[cell as usize].children);
@@ -4227,6 +4195,23 @@ impl<M: TextEngine> Core<M> {
     }
 
     fn set_scroll_content(&mut self, key: Key, size: Size<Points>) {
+        self.write_scroll_content(key, size, false);
+    }
+
+    /// Sends the current content again so snap, paging and deceleration
+    /// reach the platform when the size did not change.
+    fn refresh_scroll_content(&mut self, key: Key) {
+        let Some(size) = self.nodes[key as usize]
+            .scroll
+            .as_ref()
+            .and_then(|scroll| scroll.content)
+        else {
+            return;
+        };
+        self.write_scroll_content(key, size, true);
+    }
+
+    fn write_scroll_content(&mut self, key: Key, size: Size<Points>, force: bool) {
         let (
             id,
             rtl,
@@ -4247,7 +4232,7 @@ impl<M: TextEngine> Core<M> {
             let Some(scroll) = node.scroll.as_mut() else {
                 return;
             };
-            if scroll.content == Some(size) {
+            if !force && scroll.content == Some(size) {
                 return;
             }
             let old = scroll.content.replace(size);

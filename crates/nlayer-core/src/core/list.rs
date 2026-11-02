@@ -8,10 +8,12 @@
 //! placed. Each cell is its own Taffy root, so scrolling relays out only
 //! the cells that changed.
 //!
-//! Extracted from `nsh-core/src/core/list.rs`, cut to v2: vertical lists,
-//! `numColumns`, header / footer / empty, measurement anchoring, load-more,
-//! and scroll commands. Parent-viewport lists, inverted lists, sticky
-//! headers, viewability and keep-rendered selections are not part of v2.
+//! Extracted from `nsh-core/src/core/list.rs`. Vertical lists, `numColumns`,
+//! header / footer / empty, measurement anchoring, load-more, and scroll
+//! commands. An inverted list lays the same content out from the end (item 0
+//! at the bottom) and keeps its distance from the end, like React Native.
+//! Sticky headers stick to the start until the next one pushes them out
+//! (one column, not inverted).
 
 use rustc_hash::FxHashMap;
 
@@ -161,10 +163,13 @@ pub(super) struct ListState {
     pending: Vec<PendingScroll>,
     /// The offset before the first pending scroll.
     before_pending: f32,
-    /// Sticky header indices (empty if none).
+    /// Sticky header indices, sorted (empty if none).
     pub(super) sticky_indices: Box<[u32]>,
-    /// List is inverted (bottom-to-top).
+    /// List is inverted (bottom-to-top, item 0 at the end).
     pub(super) inverted: bool,
+    /// `content_len - viewport` when the offset was last anchored
+    /// (inverted lists; NaN before the first layout, and after toggling).
+    anchored_end: f32,
     /// Uses parent's scroll view.
     pub(super) viewport_parent: bool,
     /// Parent mode: the layout node that holds the content's length, so
@@ -205,6 +210,7 @@ impl ListState {
             before_pending: 0.0,
             sticky_indices: Box::new([]),
             inverted: false,
+            anchored_end: f32::NAN,
             viewport_parent: false,
             spacer: None,
             viewability: None,
@@ -260,7 +266,9 @@ impl ListState {
         }
         let step = at - self.offset;
         if step.abs() > PIN_SLACK {
-            self.lead = step;
+            // Inverted content runs the other way: ahead is toward the
+            // natural end, opposite the scroll offset.
+            self.lead = if self.inverted { -step } else { step };
         }
         self.offset = at;
         self.dirty = true;
@@ -299,14 +307,17 @@ impl ListState {
             |m| at <= m.min_index_for_visible,
         );
 
-        let anchor = (should_maintain && self.count > 0 && self.viewport > 0.0).then(|| {
-            let row = self
-                .rows
-                .find((self.offset - self.blocks().body).max(0.0) as f64)
-                as u32;
-            let index = (row * self.columns).min(self.count - 1);
-            (index, self.item_at(index) - self.offset)
-        });
+        // Inverted lists keep their distance from the end (`anchor_end`)
+        // instead of pinning the first visible row.
+        let anchor = (!self.inverted && should_maintain && self.count > 0 && self.viewport > 0.0)
+            .then(|| {
+                let row = self
+                    .rows
+                    .find((self.offset - self.blocks().body).max(0.0) as f64)
+                    as u32;
+                let index = (row * self.columns).min(self.count - 1);
+                (index, self.item_at(index) - self.offset)
+            });
         let end = (at + removed) as usize;
         self.sizes.splice(
             at as usize..end,
@@ -359,8 +370,9 @@ impl ListState {
             self.load_more_at = None;
         }
 
-        // Auto-scroll to bottom if we were near bottom and items were inserted
-        if was_near_bottom.is_some() && inserted > 0 {
+        // Auto-scroll to bottom if we were near bottom and items were inserted.
+        // Inverted lists already follow the end.
+        if !self.inverted && was_near_bottom.is_some() && inserted > 0 {
             let content_len = self.content_len();
             let new_offset = (content_len - self.viewport).max(0.0);
             let delta = new_offset - self.offset;
@@ -443,9 +455,35 @@ impl ListState {
         }
     }
 
-    /// Total content length along the main axis.
+    /// Total content length along the main axis (what the platform
+    /// scrolls). An inverted list is at least a viewport tall so item 0
+    /// sits at the bottom when the content is shorter.
     pub(super) fn content_len(&self) -> f32 {
-        self.blocks().total
+        let total = self.blocks().total;
+        if self.inverted {
+            total.max(self.viewport)
+        } else {
+            total
+        }
+    }
+
+    /// Content coordinate of a span at natural position `at` of length
+    /// `size`. Inverted lists lay the same content out from the end.
+    pub(super) fn to_content(&self, at: f32, size: f32) -> f32 {
+        if self.inverted {
+            self.content_len() - at - size
+        } else {
+            at
+        }
+    }
+
+    /// The viewport's start in natural coordinates.
+    fn natural_offset(&self) -> f32 {
+        if self.inverted {
+            (self.content_len() - self.offset - self.viewport).max(0.0)
+        } else {
+            self.offset
+        }
     }
 
     /// Natural position of item `i` (its row's start).
@@ -505,9 +543,84 @@ impl ListState {
             self.dirty = true;
         }
     }
+    pub(super) fn set_inverted(&mut self, inverted: bool) {
+        if inverted != self.inverted {
+            self.inverted = inverted;
+            self.anchored_end = f32::NAN;
+            self.dirty = true;
+        }
+    }
+
+    /// `stickyHeaderIndices`, sorted. Unchanged input is a no-op.
+    pub(super) fn set_sticky(&mut self, mut sticky: Vec<u32>) {
+        sticky.sort_unstable();
+        sticky.dedup();
+        if sticky.as_slice() != self.sticky_indices.as_ref() {
+            self.sticky_indices = sticky.into_boxed_slice();
+            self.dirty = true;
+        }
+    }
+
+    /// Inverted lists keep their distance from the end of the content:
+    /// returns how far to scroll after content or viewport changes, and
+    /// starts at the end so item 0 is in view at the bottom.
+    pub(super) fn anchor_end(&mut self) -> f32 {
+        if !self.inverted || self.viewport <= 0.0 {
+            return 0.0;
+        }
+        let end = (self.content_len() - self.viewport).max(0.0);
+        let delta = if self.anchored_end.is_nan() {
+            end - self.offset
+        } else {
+            end - self.anchored_end
+        };
+        self.anchored_end = end;
+        self.offset += delta;
+        delta
+    }
+
+    /// Sticky items need one column and a list that is not inverted.
+    pub(super) fn sticky_enabled(&self) -> bool {
+        !self.sticky_indices.is_empty() && self.columns == 1 && !self.inverted
+    }
+
+    /// The sticky item currently pinned: the last one that has reached the
+    /// viewport's start.
+    fn active_sticky(&self) -> Option<u32> {
+        if !self.sticky_enabled() {
+            return None;
+        }
+        let at = self.natural_offset();
+        let mut active = None;
+        for &s in self.sticky_indices.iter() {
+            if s >= self.count || self.item_at(s) > at {
+                break;
+            }
+            active = Some(s);
+        }
+        active
+    }
+
+    /// How far sticky item `index` of `size` moves down at the current
+    /// offset. The next sticky item pushes it out so their edges meet.
+    pub(super) fn sticky_shift(&self, index: u32, size: f32) -> f32 {
+        if !self.sticky_enabled() || self.sticky_indices.binary_search(&index).is_err() {
+            return 0.0;
+        }
+        let start = self.item_at(index);
+        let end = self
+            .sticky_indices
+            .iter()
+            .find(|&&i| i > index && i < self.count)
+            .map(|&next| (self.item_at(next) - size).max(start))
+            .unwrap_or(f32::INFINITY);
+        (self.offset - start).clamp(0.0, (end - start).max(0.0))
+    }
 
     /// Records a measured size. Returns the scroll that keeps the visible
     /// content in place when the item is entirely before the viewport.
+    /// Inverted lists let [`Self::anchor_end`] keep the distance from the
+    /// end instead.
     pub(super) fn measured(&mut self, i: u32, size: f32) -> f32 {
         let idx = i as usize;
         if idx >= self.sizes.len() || self.sizes[idx] == size {
@@ -516,14 +629,19 @@ impl ListState {
         let row = self.row_of(i);
         let before = self.row_size(row);
         let row_start = self.item_at(i);
-        let above_viewport = row_start + before <= self.offset;
+        let natural = self.natural_offset();
+        let above_viewport = row_start < natural && row_start + before <= natural;
         self.sizes[idx] = size;
         let delta = self.row_size(row) - before;
         if delta != 0.0 {
             self.rows.add(row as usize, delta as f64);
         }
         self.dirty = true;
-        if above_viewport { delta } else { 0.0 }
+        if above_viewport && !self.inverted {
+            delta
+        } else {
+            0.0
+        }
     }
 
     /// Records the size of an extra cell; returns the anchoring change as
@@ -543,7 +661,8 @@ impl ListState {
             ExtraKind::Empty => blocks.body,
         };
         let old_end = at + size - delta;
-        if at < self.offset && old_end <= self.offset {
+        let natural = self.natural_offset();
+        if !self.inverted && at < natural && old_end <= natural {
             delta
         } else {
             0.0
@@ -643,12 +762,22 @@ impl ListState {
             }
             return false;
         }
-        let at = self.offset;
+        let at = self.natural_offset();
         let overscan = self.viewport * OVERSCAN;
         let range = self.items_in(at - overscan, at + self.viewport + overscan);
+        let sticky = self.active_sticky();
+        // And the one before it: scrolled back, it shows at once, pushed by
+        // the pinned one, before a round of binding could render it.
+        let before =
+            sticky.and_then(|s| self.sticky_indices.iter().rev().find(|&&p| p < s).copied());
+        let wanted = |i: u32| {
+            range.is_some_and(|(f, l)| (f..=l).contains(&i))
+                || sticky == Some(i)
+                || before == Some(i)
+        };
         for slot in 0..self.slots.len() as u32 {
             if let Some(i) = self.slots[slot as usize].index
-                && !range.is_some_and(|(f, l)| (f..=l).contains(&i))
+                && !wanted(i)
             {
                 self.unbind(slot);
             }
@@ -677,6 +806,9 @@ impl ListState {
                 bind(self, i);
             }
         }
+        for s in [before, sticky].into_iter().flatten() {
+            bind(self, s);
+        }
         let (start, end) = self.urgent_span(at);
         let new = binds.len();
         for slot in 0..self.slots.len() {
@@ -685,7 +817,11 @@ impl ListState {
             if s.requested == Some(i) {
                 continue;
             }
-            if !self.paced || self.item_overlaps(i, start, end) {
+            if !self.paced
+                || sticky == Some(i)
+                || before == Some(i)
+                || self.item_overlaps(i, start, end)
+            {
                 self.slots[slot].requested = Some(i);
                 binds.push((slot as u32, i));
             }
@@ -703,14 +839,16 @@ impl ListState {
     /// Computes the viewable item range based on viewability config.
     /// Returns `Some((first, last))` if the range changed, `None` otherwise.
     pub(super) fn check_viewable_items(&mut self) -> Option<(u32, u32)> {
-        let config = self.viewability?;
+        // No config: any overlap counts, so `onViewableItemsChange` still
+        // reports (React Native's default when the listener is set).
+        let config = self.viewability.unwrap_or_default();
         if self.count == 0 || self.viewport <= 0.0 {
             let changed = self.viewable_range.take().is_some();
             return if changed { Some((0, 0)) } else { None };
         }
 
-        let viewport_start = self.offset;
-        let viewport_end = self.offset + self.viewport;
+        let viewport_start = self.natural_offset();
+        let viewport_end = viewport_start + self.viewport;
 
         let mut first = None;
         let mut last = None;
@@ -828,7 +966,7 @@ impl ListState {
 
     /// The waiting cell [`Self::take_paced`] binds next: `(slot, index)`.
     fn nearest_waiting(&self) -> Option<(u32, u32)> {
-        let at = self.offset;
+        let at = self.natural_offset();
         let (top, bottom) = (at, at + self.viewport);
         let forward = self.lead >= 0.0;
         let mut best: Option<((bool, f32), u32, u32)> = None;
@@ -860,18 +998,30 @@ impl ListState {
         }
     }
 
-    /// The content offset that shows item `index` at the viewport's start,
-    /// clamped to the content.
+    /// The content offset that shows item `index` at the viewport's start
+    /// (the end, for an inverted list: item 0 stays at the bottom).
     pub(super) fn offset_for_index(&self, index: u32) -> f32 {
         let index = index.min(self.count.saturating_sub(1));
         let size = self.row_size(self.row_of(index));
-        let at = self.item_at(index);
+        let at = self.to_content(self.item_at(index), size);
         let free = self.viewport - size;
-        (at - 0.0 * free).clamp(0.0, (self.content_len() - self.viewport).max(0.0))
+        let offset = if self.inverted {
+            // Mirrored like the inverted list itself: view position 0 is
+            // the end of the viewport.
+            at - free
+        } else {
+            at
+        };
+        offset.clamp(0.0, (self.content_len() - self.viewport).max(0.0))
     }
 
     pub(super) fn end_offset(&self) -> f32 {
-        (self.content_len() - self.viewport).max(0.0)
+        if self.inverted {
+            // The end of an inverted list is its start (item 0's opposite).
+            0.0
+        } else {
+            (self.content_len() - self.viewport).max(0.0)
+        }
     }
 
     pub(super) fn target_offset(&self, target: PinTarget) -> f32 {
@@ -882,9 +1032,13 @@ impl ListState {
     }
 
     /// The platform is about to scroll to `offset`: the window follows it
-    /// before the platform reports.
+    /// before the platform reports. Inverted lists anchor to it so the
+    /// next content change does not snap back to the end.
     pub(super) fn jump(&mut self, offset: f32) {
         self.offset = offset;
+        if self.inverted {
+            self.anchored_end = (self.content_len() - self.viewport).max(0.0);
+        }
         self.dirty = true;
     }
 
@@ -1411,5 +1565,53 @@ mod tests {
         // Two items where one was measured: the new ones are estimates.
         assert_eq!(l.measured(0, 80.0), 30.0);
         assert!(l.take_splice_anchor() >= 0.0);
+    }
+
+    #[test]
+    fn an_inverted_list_starts_at_the_end_and_keeps_that_distance() {
+        let mut l = list(10, 50.0, 200.0);
+        l.set_inverted(true);
+        // 500 of content in a 200 viewport: item 0 sits at the bottom.
+        assert_eq!(l.anchor_end(), 300.0);
+        assert_eq!(l.offset, 300.0);
+        assert_eq!(l.to_content(l.item_at(0), 50.0), 450.0);
+        // Growing above the viewport (older rows) keeps the same view.
+        l.set_count(12);
+        assert_eq!(l.anchor_end(), 100.0);
+        assert_eq!(l.offset, 400.0);
+        // A jump is the new anchor: the next layout does not snap back.
+        l.jump(0.0);
+        assert_eq!(l.anchor_end(), 0.0);
+        assert_eq!(l.offset, 0.0);
+        // Shorter than the viewport: item 0 still rests on the bottom.
+        let mut short = list(2, 50.0, 200.0);
+        short.set_inverted(true);
+        assert_eq!(short.content_len(), 200.0);
+        assert_eq!(short.anchor_end(), 0.0);
+        assert_eq!(short.to_content(short.item_at(0), 50.0), 150.0);
+        let mut binds = Vec::new();
+        short.update_window(&mut binds);
+        assert!(binds.iter().any(|b| b.1 == 0));
+    }
+
+    #[test]
+    fn sticky_headers_pin_and_yield_to_the_next_one() {
+        let mut l = list(30, 50.0, 200.0);
+        l.set_sticky(vec![20, 0, 10, 0]);
+        assert_eq!(l.sticky_indices.as_ref(), &[0, 10, 20]);
+        l.offset = 80.0;
+        assert_eq!(l.sticky_shift(0, 50.0), 80.0);
+        // The next header starts at 500. This one is pushed until they meet.
+        l.offset = 480.0;
+        assert_eq!(l.sticky_shift(0, 50.0), 450.0);
+        assert_eq!(l.sticky_shift(10, 50.0), 0.0);
+        assert_eq!(l.sticky_shift(1, 50.0), 0.0);
+        // Scrolled past the window, the pinned header stays bound.
+        l.offset = 1000.0;
+        let mut binds = Vec::new();
+        l.update_window(&mut binds);
+        assert!(l.slots.iter().any(|s| s.index == Some(10)));
+        l.set_inverted(true);
+        assert_eq!(l.sticky_shift(0, 50.0), 0.0);
     }
 }
