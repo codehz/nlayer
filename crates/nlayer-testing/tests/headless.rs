@@ -221,7 +221,7 @@ mount(App);
     let mut app = app(source);
     assert_eq!(app.texts(), ["closed:0", "Modal content"]);
 
-    app.back();
+    app.back().expect("back");
     app.next_frame(Duration::from_secs(1));
     assert!(
         app.wait_for("closed:1", Duration::from_secs(1)),
@@ -273,7 +273,7 @@ mount(App);
     assert_eq!(app.texts(), ["open", "Reopen", "Modal content"]);
 
     // Close via back button
-    app.back();
+    app.back().expect("back");
     app.next_frame(Duration::from_secs(1));
     assert!(
         app.wait_for("closed", Duration::from_secs(1)),
@@ -330,7 +330,7 @@ mount(App);
     let mut app = app(source);
     assert_eq!(app.texts(), ["open", "Modal content"]);
 
-    app.back();
+    app.back().expect("back");
     app.next_frame(Duration::from_secs(1));
 
     // Modal should stay mounted, onClose should not fire

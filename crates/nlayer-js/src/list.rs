@@ -278,15 +278,19 @@ unsafe extern "C" fn prop_effect_run(
     _magic: c_int,
     data: *mut JsValue,
 ) -> JsValue {
-    // SAFETY: three data values: node, props, prop_name
-    let (node, props, prop_name_val) = (*data, *data.add(1), *data.add(2));
+    // SAFETY: three data values: node, props, prop_name. The host owns `data`.
+    let (node, props, prop_name_val) = unsafe { (*data, *data.add(1), *data.add(2)) };
 
     // Get the property name as a string
-    let name_ptr = qjs::JS_ToCString(cx, prop_name_val);
+    // SAFETY: `prop_name_val` is a string the host stored.
+    let name_ptr = unsafe { qjs::JS_ToCString(cx, prop_name_val) };
     if name_ptr.is_null() {
         return UNDEFINED;
     }
-    let name = std::ffi::CStr::from_ptr(name_ptr).to_str().unwrap_or("");
+    // SAFETY: `JS_ToCString` returned a non-null C string.
+    let name = unsafe { std::ffi::CStr::from_ptr(name_ptr) }
+        .to_str()
+        .unwrap_or("");
 
     // Get the current value from props
     let value = get(cx, props, name);
@@ -294,10 +298,12 @@ unsafe extern "C" fn prop_effect_run(
     // Set it on the node (this goes through set_prop -> decode_prop -> Op::SetProp)
     let result = set(cx, node, name, value);
 
-    qjs::JS_FreeCString(cx, name_ptr);
+    // SAFETY: `name_ptr` came from `JS_ToCString` above.
+    unsafe { qjs::JS_FreeCString(cx, name_ptr) };
 
-    if result.is_err() {
-        qjs::JS_FreeValue(cx, result.unwrap_err());
+    if let Err(err) = result {
+        // SAFETY: the exception is ours.
+        unsafe { qjs::JS_FreeValue(cx, err) };
     }
 
     UNDEFINED

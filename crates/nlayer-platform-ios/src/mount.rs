@@ -313,11 +313,9 @@ define_class!(
             if let Some(scroll) = control.superview() {
                 let id = scroll.tag() as NodeId;
                 with_mounter(move |mounter| {
-                    mounter.control.as_ref().map(|c| c.dispatch_event(
-                        id,
-                        EventKind::Refresh,
-                        EventPayload::None,
-                    ));
+                    if let Some(c) = mounter.control.as_ref() {
+                        c.dispatch_event(id, EventKind::Refresh, EventPayload::None);
+                    }
                 });
             }
         }
@@ -393,18 +391,17 @@ define_class!(
             }
 
             // Always update core's scroll position to keep tree() offset in sync
-            if let Some(shared) = self.ivars().mounter.borrow().upgrade() {
-                if let Ok(mounter) = shared.try_borrow() {
-                    if let Some(control) = &mounter.control {
-                        control.update_scroll_position(
-                            id,
-                            Point {
-                                x: Points(offset.x as f32),
-                                y: Points(offset.y as f32),
-                            },
-                        );
-                    }
-                }
+            if let Some(shared) = self.ivars().mounter.borrow().upgrade()
+                && let Ok(mounter) = shared.try_borrow()
+                && let Some(control) = &mounter.control
+            {
+                control.update_scroll_position(
+                    id,
+                    Point {
+                        x: Points(offset.x as f32),
+                        y: Points(offset.y as f32),
+                    },
+                );
             }
 
             self.scroll_event(scroll, EventKind::Scroll);
@@ -426,10 +423,8 @@ define_class!(
                         .try_borrow()
                         .is_ok_and(|mounter| mounter.drag_dismisses(scroll))
                 });
-            if dismiss {
-                if let Some(shared) = self.ivars().mounter.borrow().upgrade() {
-                    resign_keyboard(&shared);
-                }
+            if dismiss && let Some(shared) = self.ivars().mounter.borrow().upgrade() {
+                resign_keyboard(&shared);
             }
             self.scroll_event(scroll, EventKind::ScrollDragStart);
         }
@@ -1275,11 +1270,11 @@ impl Mounter {
                 // to learn that would cost the page on every batch.
                 if viewport > 0.0 && content > viewport {
                     let width = crate::scroll_extent::settled_content_width(
-                        viewport as f64,
-                        content as f64,
+                        viewport,
+                        content,
                         reaches_beyond(scroll, viewport + 0.5),
                     );
-                    if width != content as f64 {
+                    if width != content {
                         scroll.setContentSize(CGSize::new(width as CGFloat, height));
                         narrowed = Some((content, height));
                     }
@@ -1307,12 +1302,11 @@ impl Mounter {
             {
                 let viewport = scroll.bounds().size.width;
                 let reaches = reaches_beyond(scroll, viewport + 0.5);
-                let width =
-                    crate::scroll_extent::narrowed_width(viewport as f64, core as f64, reaches);
-                if width != scroll.contentSize().width as f64 {
+                let width = crate::scroll_extent::narrowed_width(viewport, core, reaches);
+                if width != scroll.contentSize().width {
                     scroll.setContentSize(CGSize::new(width as CGFloat, height));
                 }
-                done = width == core as f64;
+                done = width == core;
             }
             if done {
                 self.narrowed.swap_remove(i);
@@ -1787,25 +1781,25 @@ impl Mounter {
         self.slots[id as usize] = Some(slot);
         // Bindings may arrive before the view (the core sets a prop before
         // the batch creates it). Apply what was kept.
-        if let Some((x, y)) = self.pending_pan.remove(&id) {
-            if let Some(slot) = self.slot_mut(id) {
-                slot.pan_nodes = (x, y);
-            }
+        if let Some((x, y)) = self.pending_pan.remove(&id)
+            && let Some(slot) = self.slot_mut(id)
+        {
+            slot.pan_nodes = (x, y);
         }
-        if let Some(scale) = self.pending_pinch.remove(&id) {
-            if let Some(slot) = self.slot_mut(id) {
-                slot.pinch_node = scale;
-            }
+        if let Some(scale) = self.pending_pinch.remove(&id)
+            && let Some(slot) = self.slot_mut(id)
+        {
+            slot.pinch_node = scale;
         }
-        if let Some(angle) = self.pending_rotation.remove(&id) {
-            if let Some(slot) = self.slot_mut(id) {
-                slot.rotation_node = angle;
-            }
+        if let Some(angle) = self.pending_rotation.remove(&id)
+            && let Some(slot) = self.slot_mut(id)
+        {
+            slot.rotation_node = angle;
         }
-        if let Some(bindings) = self.pending_bindings.remove(&id) {
-            if let Some(slot) = self.slot_mut(id) {
-                slot.bindings = bindings;
-            }
+        if let Some(bindings) = self.pending_bindings.remove(&id)
+            && let Some(slot) = self.slot_mut(id)
+        {
+            slot.bindings = bindings;
         }
         self.sync_gestures(id);
         self.apply_animations();
@@ -2353,7 +2347,7 @@ impl Mounter {
     pub(crate) fn input_view(&self, id: NodeId) -> Option<Retained<UIView>> {
         match self.native(id)? {
             Native::Input(field) => {
-                let view: &UIView = &field;
+                let view: &UIView = field;
                 Some(view.retain())
             }
             Native::Area(area) => {
@@ -2973,26 +2967,18 @@ impl Mounter {
     fn pan_scroll_offset(&self, scroll: &UIScrollView, offset: CGPoint) -> CGPoint {
         let mut current = scroll.superview();
         while let Some(view) = current {
-            if let Some(slot) = self.slot(view.tag() as NodeId) {
-                if let Some(pan_scroll) = &slot.pan_scroll {
-                    if &*pan_scroll.view == scroll {
-                        if let Some(pan) = &slot.pan_recognizer {
-                            if matches!(
-                                pan.state(),
-                                UIGestureRecognizerState::Began | UIGestureRecognizerState::Changed
-                            ) || pan.state() == UIGestureRecognizerState::Ended
-                                && scroll.isDragging()
-                            {
-                                let t = pan.translationInView(view.superview().as_deref());
-                                if slot.gesture_start[1] + t.y as f32 > pan_scroll.offset {
-                                    return CGPoint::new(
-                                        offset.x,
-                                        -scroll.adjustedContentInset().top,
-                                    );
-                                }
-                            }
-                        }
-                    }
+            if let Some(slot) = self.slot(view.tag() as NodeId)
+                && let Some(pan_scroll) = &slot.pan_scroll
+                && &*pan_scroll.view == scroll
+                && let Some(pan) = &slot.pan_recognizer
+                && (matches!(
+                    pan.state(),
+                    UIGestureRecognizerState::Began | UIGestureRecognizerState::Changed
+                ) || pan.state() == UIGestureRecognizerState::Ended && scroll.isDragging())
+            {
+                let t = pan.translationInView(view.superview().as_deref());
+                if slot.gesture_start[1] + t.y as f32 > pan_scroll.offset {
+                    return CGPoint::new(offset.x, -scroll.adjustedContentInset().top);
                 }
             }
             current = view.superview();
@@ -3112,12 +3098,11 @@ impl Mounter {
         if matches!(
             state,
             UIGestureRecognizerState::Began | UIGestureRecognizerState::Changed
-        ) {
-            if let Some(n) = node {
-                let start = self.slot(id).map_or(1.0, |s| s.gesture_start[2]);
-                self.animator.set(n, start * scale);
-                self.apply_animations();
-            }
+        ) && let Some(n) = node
+        {
+            let start = self.slot(id).map_or(1.0, |s| s.gesture_start[2]);
+            self.animator.set(n, start * scale);
+            self.apply_animations();
         }
 
         if matches!(
@@ -3162,11 +3147,11 @@ impl Mounter {
                 );
             }
 
-            if let Some(slot) = self.slot_mut(id) {
-                if let Native::Scroll(scroll) = &slot.native {
-                    scroll.setRefreshControl(Some(&control));
-                    slot.refresh_control = Some(control);
-                }
+            if let Some(slot) = self.slot_mut(id)
+                && let Native::Scroll(scroll) = &slot.native
+            {
+                scroll.setRefreshControl(Some(&control));
+                slot.refresh_control = Some(control);
             }
         } else if !wants_refresh {
             if has_control
@@ -3232,12 +3217,11 @@ impl Mounter {
         if matches!(
             state,
             UIGestureRecognizerState::Began | UIGestureRecognizerState::Changed
-        ) {
-            if let Some(n) = node {
-                let start = self.slot(id).map_or(0.0, |s| s.gesture_start[3]);
-                self.animator.set(n, start + angle);
-                self.apply_animations();
-            }
+        ) && let Some(n) = node
+        {
+            let start = self.slot(id).map_or(0.0, |s| s.gesture_start[3]);
+            self.animator.set(n, start + angle);
+            self.apply_animations();
         }
 
         if matches!(

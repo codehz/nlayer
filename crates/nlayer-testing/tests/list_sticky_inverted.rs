@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use nlayer_core::{
     ViewKind,
-    geometry::{Points, Size, px},
+    geometry::{Size, px},
 };
 use nlayer_testing::Headless;
 
@@ -137,7 +137,6 @@ mount(App);
         .views()
         .find_map(|(id, v)| (v.kind == ViewKind::Scroll).then_some(id))
         .expect("list");
-    drop(screen);
 
     // Scroll to 300. Item 5 starts at 250, so it has pinned and pushed
     // item 0 up until their edges meet (250 - 50).

@@ -107,6 +107,7 @@ impl WebHost {
     }
 }
 
+/// One app loaded in the headless browser for a web `nlayer test` run.
 pub struct WebApp {
     browser: Arc<Mutex<Browser>>,
     page: Option<Page>,
@@ -114,6 +115,7 @@ pub struct WebApp {
 }
 
 impl WebApp {
+    /// Evaluates `expression` in the page and returns the JSON result.
     pub fn eval(&mut self, expression: &str) -> Result<Value, String> {
         let session = self
             .page
@@ -155,6 +157,7 @@ impl WebApp {
         browser.call(Some(&session), method, params)
     }
 
+    /// Dispatches a mouse event of `kind` at (`x`, `y`) CSS pixels.
     pub fn mouse(&mut self, kind: &str, x: f64, y: f64, buttons: u32) -> Result<(), String> {
         self.dispatch(
             "Input.dispatchMouseEvent",
@@ -386,9 +389,7 @@ impl HostedApp for WebApp {
     }
 
     fn drag(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String> {
-        let (cx, cy) = self.point("point", selector)?;
-        let center_x = cx as f64;
-        let center_y = cy as f64;
+        let (center_x, center_y) = self.point("point", selector)?;
         let end_x = center_x + x as f64;
         let end_y = center_y + y as f64;
 
@@ -408,9 +409,7 @@ impl HostedApp for WebApp {
     }
 
     fn drag_and_hold(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String> {
-        let (cx, cy) = self.point("point", selector)?;
-        let center_x = cx as f64;
-        let center_y = cy as f64;
+        let (center_x, center_y) = self.point("point", selector)?;
 
         self.mouse("mousePressed", center_x, center_y, 1)?;
         for i in 1..=5 {
@@ -507,6 +506,7 @@ struct Page {
     session_id: String,
 }
 
+/// A headless Chromium process and its DevTools socket.
 pub struct Browser {
     child: Child,
     socket: Socket,
@@ -515,6 +515,7 @@ pub struct Browser {
 }
 
 impl Browser {
+    /// Launches Chromium with remote debugging and connects the socket.
     pub fn start() -> Result<Self, String> {
         let bin = browser_bin()?;
         let stamp = std::time::SystemTime::now()

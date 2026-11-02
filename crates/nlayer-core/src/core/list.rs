@@ -302,10 +302,11 @@ impl ListState {
         });
 
         // Only maintain position if splice is at/before min_index_for_visible
-        let should_maintain = self.maintain_position.as_ref().map_or(
-            true, // Default: always maintain (backwards compat)
-            |m| at <= m.min_index_for_visible,
-        );
+        // None: always maintain (backwards compat).
+        let should_maintain = self
+            .maintain_position
+            .as_ref()
+            .is_none_or(|m| at <= m.min_index_for_visible);
 
         // Inverted lists keep their distance from the end (`anchor_end`)
         // instead of pinning the first visible row.
@@ -877,16 +878,16 @@ impl ListState {
             }
 
             // Check item_visible_threshold: how much of item is visible
-            if let Some(threshold) = config.item_visible_threshold {
-                if item_size > 0.0 {
-                    let visibility = visible_size / item_size;
-                    if config.view_area_coverage_threshold.is_some() {
-                        // Both thresholds: item must satisfy both (AND)
-                        is_viewable = is_viewable && visibility >= threshold;
-                    } else {
-                        // Only item_visible_threshold
-                        is_viewable = visibility >= threshold;
-                    }
+            if let Some(threshold) = config.item_visible_threshold
+                && item_size > 0.0
+            {
+                let visibility = visible_size / item_size;
+                if config.view_area_coverage_threshold.is_some() {
+                    // Both thresholds: item must satisfy both (AND)
+                    is_viewable = is_viewable && visibility >= threshold;
+                } else {
+                    // Only item_visible_threshold
+                    is_viewable = visibility >= threshold;
                 }
             }
 
@@ -905,7 +906,7 @@ impl ListState {
             }
         }
 
-        let new_range = first.and_then(|f| last.map(|l| (f, l)));
+        let new_range = first.zip(last);
 
         if new_range != self.viewable_range {
             self.viewable_range = new_range;

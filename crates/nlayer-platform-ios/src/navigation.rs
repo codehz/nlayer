@@ -811,7 +811,9 @@ impl StackHost {
 
 impl Drop for StackHost {
     fn drop(&mut self) {
-        self.nav.view().map(|view| view.removeFromSuperview());
+        if let Some(view) = self.nav.view() {
+            view.removeFromSuperview();
+        }
         self.nav.removeFromParentViewController();
     }
 }

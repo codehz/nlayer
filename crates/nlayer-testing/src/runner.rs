@@ -14,7 +14,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use nlayer_bundler::{BundleOptions, bundle};
@@ -1039,22 +1039,6 @@ fn resolve_entry(dir: &Path, entry: &str) -> Result<PathBuf, String> {
         Ok(path)
     } else {
         Err(format!("entry not found: {}", path.display()))
-    }
-}
-
-/// Waits for the frames the insets asked for. One wait can already have
-/// drained the next frame, so a miss stops instead of sitting out the
-/// whole timeout.
-fn settle(app: &mut Headless, nudges: u32) {
-    let mut left = nudges;
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while left > 0 && Instant::now() < deadline {
-        let slice =
-            Duration::from_millis(100).min(deadline.saturating_duration_since(Instant::now()));
-        if slice.is_zero() || !app.next_frame(slice) {
-            break;
-        }
-        left -= 1;
     }
 }
 

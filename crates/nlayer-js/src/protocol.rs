@@ -201,7 +201,7 @@ pub(crate) fn decode_prop<'js>(
             if let Some(array) = value.as_array() {
                 let mut offsets = Vec::new();
                 for i in 0..array.len() {
-                    if let Some(n) = array.get::<f64>(i).ok() {
+                    if let Ok(n) = array.get::<f64>(i) {
                         offsets.push(n as f32);
                     }
                 }
@@ -276,7 +276,7 @@ pub(crate) fn decode_prop<'js>(
             if let Some(array) = value.as_array() {
                 let mut indices = Vec::new();
                 for i in 0..array.len() {
-                    if let Some(n) = array.get::<f64>(i).ok() {
+                    if let Ok(n) = array.get::<f64>(i) {
                         indices.push(n.max(0.0) as u32);
                     }
                 }

@@ -1,3 +1,5 @@
+//! A NavStack push, then back to the root screen.
+
 use nlayer_bundler::compile_module;
 use nlayer_core::geometry::{Points, Size};
 use nlayer_testing::Headless;

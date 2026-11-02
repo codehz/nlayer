@@ -130,7 +130,6 @@ struct GestureBindings {
 #[derive(Debug, Clone)]
 struct ActiveGesture {
     id: NodeId,
-    start_time: f64,
     start_pos: (f32, f32),
     prev_pos: (f32, f32),
     prev_time: f64,
@@ -155,13 +154,16 @@ pub enum Back {
     Ask(NodeId),
     /// The modal asks to close, and closes when the user may close it.
     Close {
+        /// The modal that asks to close.
         modal: NodeId,
+        /// Whether back may close it.
         close_on_escape: bool,
     },
     /// Nothing to go back from.
     Nothing,
 }
 
+/// Native views a mount batch would make, plus stacks, modals, and gestures.
 #[derive(Debug, Default)]
 pub struct Screen {
     views: HashMap<NodeId, View>,
@@ -369,15 +371,14 @@ impl Screen {
     /// What a back does: which screen to pop, ask, or modal to close.
     pub fn back_target(&self) -> Back {
         // 1. Top modal with close_on_escape
-        if let Some(&modal_id) = self.modals.last() {
-            if let Some(modal) = self.views.get(&modal_id).and_then(|v| v.modal.as_ref()) {
-                if modal.close_on_escape {
-                    return Back::Close {
-                        modal: modal_id,
-                        close_on_escape: true,
-                    };
-                }
-            }
+        if let Some(&modal_id) = self.modals.last()
+            && let Some(modal) = self.views.get(&modal_id).and_then(|v| v.modal.as_ref())
+            && modal.close_on_escape
+        {
+            return Back::Close {
+                modal: modal_id,
+                close_on_escape: true,
+            };
         }
 
         // 2. Top screen of any stack
@@ -393,7 +394,7 @@ impl Screen {
 
                 // If depth > 1 and !prevent_back, can pop
                 if state.screens.len() > 1 {
-                    let prevent_back = screen_cfg.map_or(false, |cfg| cfg.prevent_back);
+                    let prevent_back = screen_cfg.is_some_and(|cfg| cfg.prevent_back);
                     if !prevent_back {
                         return Back::Pop(screen_id);
                     }
@@ -456,20 +457,15 @@ impl Screen {
                 let child_kind = self.views.get(child).map(|v| v.kind);
 
                 if parent_kind == Some(ViewKind::Stack) && child_kind == Some(ViewKind::Screen) {
-                    let state = self
-                        .stacks
-                        .entry(*parent)
-                        .or_insert_with(StackState::default);
+                    let state = self.stacks.entry(*parent).or_default();
                     if !state.screens.contains(child) {
                         state.screens.push(*child);
                     }
                 }
 
                 // Track modals
-                if child_kind == Some(ViewKind::Modal) {
-                    if !self.modals.contains(child) {
-                        self.modals.push(*child);
-                    }
+                if child_kind == Some(ViewKind::Modal) && !self.modals.contains(child) {
+                    self.modals.push(*child);
                 }
 
                 let children = &mut self.views.get_mut(parent).expect("a view").children;
@@ -488,10 +484,10 @@ impl Screen {
                 if let Some(view) = self.views.get(id) {
                     if view.kind == ViewKind::Screen {
                         // Remove from parent stack
-                        if let Some(parent_id) = view.parent {
-                            if let Some(state) = self.stacks.get_mut(&parent_id) {
-                                state.screens.retain(|&s| s != *id);
-                            }
+                        if let Some(parent_id) = view.parent
+                            && let Some(state) = self.stacks.get_mut(&parent_id)
+                        {
+                            state.screens.retain(|&s| s != *id);
                         }
                     } else if view.kind == ViewKind::Modal {
                         self.modals.retain(|&m| m != *id);
@@ -503,10 +499,10 @@ impl Screen {
                 // Clean up from stacks/modals
                 if let Some(view) = self.views.get(id) {
                     if view.kind == ViewKind::Screen {
-                        if let Some(parent_id) = view.parent {
-                            if let Some(state) = self.stacks.get_mut(&parent_id) {
-                                state.screens.retain(|&s| s != *id);
-                            }
+                        if let Some(parent_id) = view.parent
+                            && let Some(state) = self.stacks.get_mut(&parent_id)
+                        {
+                            state.screens.retain(|&s| s != *id);
                         }
                         self.screen_headers.remove(id);
                     } else if view.kind == ViewKind::Modal {
@@ -1016,7 +1012,7 @@ impl Headless {
                     .screen
                     .view(screen_id)
                     .and_then(|v| v.screen.as_ref())
-                    .map_or(false, |cfg| cfg.prevent_back);
+                    .is_some_and(|cfg| cfg.prevent_back);
                 if !prevent_back {
                     // Callback was notified, now do the pop
                     self.engine.control().dispatch_event(
@@ -1129,10 +1125,10 @@ impl Headless {
 
         // Walk up to find ancestor with gesture bindings
         let gesture_id = loop {
-            if let Some(bindings) = self.screen.gesture_bindings.get(&id) {
-                if bindings.pan_x.is_some() || bindings.pan_y.is_some() {
-                    break Some(id);
-                }
+            if let Some(bindings) = self.screen.gesture_bindings.get(&id)
+                && (bindings.pan_x.is_some() || bindings.pan_y.is_some())
+            {
+                break Some(id);
             }
             let Some(view) = self.screen.views.get(&id) else {
                 break None;
@@ -1153,25 +1149,16 @@ impl Headless {
             .get(&id)
             .cloned()
             .unwrap_or_default();
-        let mut finished: Vec<Finished> = Vec::new();
 
         // Read current values and stop animations
         let start_values = [
             bindings
                 .pan_x
-                .map(|n| {
-                    let val = self.screen.graph.eval(n).number();
-
-                    val
-                })
+                .map(|n| self.screen.graph.eval(n).number())
                 .unwrap_or(0.0),
             bindings
                 .pan_y
-                .map(|n| {
-                    let val = self.screen.graph.eval(n).number();
-
-                    val
-                })
+                .map(|n| self.screen.graph.eval(n).number())
                 .unwrap_or(0.0),
             0.0, // pinch not supported
             0.0, // rotation not supported
@@ -1179,7 +1166,6 @@ impl Headless {
 
         self.screen.active_gesture = Some(ActiveGesture {
             id,
-            start_time: time,
             start_pos: (x, y),
             prev_pos: (x, y),
             prev_time: time,
@@ -1189,18 +1175,18 @@ impl Headless {
         });
 
         // Dispatch PanStart if view listens
-        if let Some(view) = self.screen.views.get(&id) {
-            if view.events.contains(EventKind::PanStart) {
-                self.engine.control().dispatch_event(
-                    id,
-                    EventKind::PanStart,
-                    EventPayload::Pan {
-                        translation: (0.0, 0.0),
-                        velocity: (0.0, 0.0),
-                        values: (start_values[0], start_values[1]),
-                    },
-                );
-            }
+        if let Some(view) = self.screen.views.get(&id)
+            && view.events.contains(EventKind::PanStart)
+        {
+            self.engine.control().dispatch_event(
+                id,
+                EventKind::PanStart,
+                EventPayload::Pan {
+                    translation: (0.0, 0.0),
+                    velocity: (0.0, 0.0),
+                    values: (start_values[0], start_values[1]),
+                },
+            );
         }
     }
 
@@ -1242,7 +1228,7 @@ impl Headless {
     /// Ends the active gesture at the given time (seconds), dispatching PanEnd
     /// with velocity calculated from the last movement segment. Pinch/rotation
     /// not supported headless.
-    pub fn pointer_up(&mut self, time: f64) {
+    pub fn pointer_up(&mut self, _time: f64) {
         let Some(gesture) = self.screen.active_gesture.take() else {
             return;
         };
@@ -1276,18 +1262,18 @@ impl Headless {
             0.0, // rotation not supported
         ];
 
-        if let Some(view) = self.screen.views.get(&gesture.id) {
-            if view.events.contains(EventKind::PanEnd) {
-                self.engine.control().dispatch_event(
-                    gesture.id,
-                    EventKind::PanEnd,
-                    EventPayload::Pan {
-                        translation: (dx_total, dy_total),
-                        velocity: (vel_x, vel_y),
-                        values: (current_values[0], current_values[1]),
-                    },
-                );
-            }
+        if let Some(view) = self.screen.views.get(&gesture.id)
+            && view.events.contains(EventKind::PanEnd)
+        {
+            self.engine.control().dispatch_event(
+                gesture.id,
+                EventKind::PanEnd,
+                EventPayload::Pan {
+                    translation: (dx_total, dy_total),
+                    velocity: (vel_x, vel_y),
+                    values: (current_values[0], current_values[1]),
+                },
+            );
         }
     }
 
@@ -1664,7 +1650,6 @@ mod tests {
         // Test that pointer_down reads current animated values and stops animations
         let gesture = ActiveGesture {
             id: 1,
-            start_time: 0.0,
             start_pos: (10.0, 20.0),
             prev_pos: (10.0, 20.0),
             prev_time: 0.0,
@@ -1719,8 +1704,6 @@ mod tests {
         // Verify that pointer_down walks up to find gesture binding
         // This is a logic test; actual traversal tested in integration
         let mut parent_has_binding = false;
-        let child_id = 2;
-        let parent_id = 1;
 
         // Simulate: child has no binding, parent does
         if !parent_has_binding {

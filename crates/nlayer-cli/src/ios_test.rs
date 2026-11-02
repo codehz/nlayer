@@ -126,6 +126,7 @@ impl IosApp {
         self.call_ex(op, selector, text, distance, 0.0, 0.0, 0.0)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn call_ex(
         &mut self,
         op: &str,

@@ -789,13 +789,13 @@ impl<M: TextEngine> Core<M> {
         }
 
         // Check for pull-to-refresh trigger
-        if let Some(indicator_height) = scroll.refresh_indicator {
-            if pull_distance >= indicator_height.0 {
-                // Fire refresh event only once per cycle
-                if !scroll.refresh_reported && !scroll.refreshing {
-                    scroll.refresh_reported = true;
-                    self.events.push((id, EventKind::Refresh));
-                }
+        if let Some(indicator_height) = scroll.refresh_indicator
+            && pull_distance >= indicator_height.0
+        {
+            // Fire refresh event only once per cycle
+            if !scroll.refresh_reported && !scroll.refreshing {
+                scroll.refresh_reported = true;
+                self.events.push((id, EventKind::Refresh));
             }
         }
 
@@ -838,7 +838,7 @@ impl<M: TextEngine> Core<M> {
         let is_viewport_parent = self.nodes[key as usize]
             .list
             .as_ref()
-            .map_or(false, |l| l.viewport_parent);
+            .is_some_and(|l| l.viewport_parent);
 
         if is_viewport_parent {
             // Calculate cumulative position from list up to parent scroll
@@ -883,11 +883,11 @@ impl<M: TextEngine> Core<M> {
             let parent_offset = if horizontal { offset.x.0 } else { offset.y.0 };
             let new_offset = parent_offset - cumulative_pos;
 
-            if let Some(list) = self.nodes[key as usize].list.as_mut() {
-                if list.offset != new_offset {
-                    list.offset = new_offset;
-                    self.mark(key, dirty::LIST);
-                }
+            if let Some(list) = self.nodes[key as usize].list.as_mut()
+                && list.offset != new_offset
+            {
+                list.offset = new_offset;
+                self.mark(key, dirty::LIST);
             }
         }
 
@@ -8301,7 +8301,7 @@ mod tests {
 
     #[test]
     fn pull_value_updates_with_pull_distance() {
-        use crate::animation::{AnimationId, AnimationOp};
+        use crate::animation::AnimationOp;
 
         let mut c = core();
         c.apply(Op::Create {

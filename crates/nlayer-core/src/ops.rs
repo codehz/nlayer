@@ -897,9 +897,10 @@ pub enum SnapAlignment {
 }
 
 /// Deceleration rate of scroll momentum (`decelerationRate`).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum DecelerationRate {
     /// Normal rate (0.998, default).
+    #[default]
     Normal,
     /// Fast rate (0.99).
     Fast,
@@ -915,12 +916,6 @@ impl DecelerationRate {
             DecelerationRate::Fast => 0.99,
             DecelerationRate::Custom(v) => v.clamp(0.0, 1.0),
         }
-    }
-}
-
-impl Default for DecelerationRate {
-    fn default() -> Self {
-        DecelerationRate::Normal
     }
 }
 
@@ -944,22 +939,13 @@ pub struct Viewability {
 }
 
 /// Keep the first visible item in place (`maintainVisibleContentPosition`).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct MaintainPosition {
     /// The first item index to anchor (default 0).
     pub min_index_for_visible: u32,
     /// Auto-scroll to the bottom when new items arrive within this many
     /// points of the end (no auto-scroll if `None`).
     pub autoscroll_to_bottom_threshold: Option<f32>,
-}
-
-impl Default for MaintainPosition {
-    fn default() -> Self {
-        MaintainPosition {
-            min_index_for_visible: 0,
-            autoscroll_to_bottom_threshold: None,
-        }
-    }
 }
 
 /// What a list cell holds.

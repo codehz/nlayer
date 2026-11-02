@@ -1,7 +1,8 @@
+//! Pan start and end events on a view with gesture bindings.
+
 use nlayer_bundler::compile_module;
 use nlayer_core::geometry::{Points, Size};
 use nlayer_testing::Headless;
-use std::time::Duration;
 
 #[test]
 fn pan_events_fire_on_view() {

@@ -31,6 +31,7 @@ type DataFn = unsafe extern "C" fn(
     c_int,
     *mut JsValue,
 ) -> JsValue;
+type ExportFn = fn(*mut JsContext) -> JsValue;
 
 fn native(cx: *mut JsContext, f: DataFn, length: c_int, data: &mut [JsValue]) -> JsValue {
     // SAFETY: a function data closure that keeps dups of `data`.
@@ -52,7 +53,7 @@ fn free(cx: *mut JsContext, v: JsValue) {
 }
 
 /// `@nlayer/ui`'s navigation exports.
-pub(crate) const EXPORTS: &[(&str, fn(*mut JsContext) -> JsValue)] = &[
+pub(crate) const EXPORTS: &[(&str, ExportFn)] = &[
     ("createNavStack", create_nav_stack_export),
     ("NavStack", stack_export),
     ("NavPage", screen_export),
@@ -321,14 +322,12 @@ unsafe extern "C" fn navigate(
                 }
             }
         }
-        6 => {
-            // remove this exact entry (the user popped its page).
-            if argc > 0 {
-                let target = unsafe { *argv };
-                if let Some(pos) = entries.iter().position(|&e| strict_equal(cx, e, target)) {
-                    let removed = entries.remove(pos);
-                    free(cx, removed);
-                }
+        // remove this exact entry (the user popped its page).
+        6 if argc > 0 => {
+            let target = unsafe { *argv };
+            if let Some(pos) = entries.iter().position(|&e| strict_equal(cx, e, target)) {
+                let removed = entries.remove(pos);
+                free(cx, removed);
             }
         }
         _ => {}
@@ -700,11 +699,7 @@ unsafe extern "C" fn on_dismiss_handler(
     let popped = dom::popped(cx, node);
     if !unsafe { qjs::JS_IsUndefined(popped) } {
         let result = unsafe { qjs::JS_Call(cx, popped, UNDEFINED, 0, std::ptr::null_mut()) };
-        if unsafe { qjs::JS_IsException(result) } {
-            unsafe { qjs::JS_FreeValue(cx, result) };
-        } else {
-            unsafe { qjs::JS_FreeValue(cx, result) };
-        }
+        unsafe { qjs::JS_FreeValue(cx, result) };
         // Free the popped callback after calling it
         unsafe { qjs::JS_FreeValue(cx, popped) };
         dom::set_popped(cx, node, UNDEFINED);

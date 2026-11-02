@@ -47,11 +47,7 @@ mount(App);
     let screen = app.screen();
     let item_count = screen
         .views()
-        .filter(|(_, v)| {
-            v.test_id
-                .as_deref()
-                .map_or(false, |t| t.starts_with("item-"))
-        })
+        .filter(|(_, v)| v.test_id.as_deref().is_some_and(|t| t.starts_with("item-")))
         .count();
 
     assert!(item_count > 0, "Should render some items");
@@ -110,11 +106,7 @@ mount(App);
     let screen = app.screen();
     let rendered_count = screen
         .views()
-        .filter(|(_, v)| {
-            v.test_id
-                .as_deref()
-                .map_or(false, |t| t.starts_with("item-"))
-        })
+        .filter(|(_, v)| v.test_id.as_deref().is_some_and(|t| t.starts_with("item-")))
         .count();
 
     // With 400px viewport and 50px items, visible = 8 items

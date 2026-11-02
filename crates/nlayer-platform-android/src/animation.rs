@@ -263,13 +263,20 @@ pub(crate) fn transform_moved(id: NodeId, rotation: bool, amount: f32) {
     }
 }
 
+/// The current pinch/rotation value for reporting in events.
+pub(crate) fn transform_value(id: NodeId, rotation: bool) -> Option<f32> {
+    let s = state();
+    let g = s.gestures.get(&id)?;
+    let node = if rotation { g.angle } else { g.scale };
+    node.and_then(|n| s.graph.value(n))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     // Tests share global state(), so must run serially
     static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    use nlayer_core::animation::NodeId as AnimationNode;
 
     #[test]
     fn test_pan_gesture_tracking() {
@@ -286,14 +293,14 @@ mod tests {
             graph.apply(
                 nlayer_core::animation::AnimationOp::CreateValue {
                     node: 1,
-                    value: 0.0_f32.into(),
+                    value: 0.0_f32,
                 },
                 finished,
             );
             graph.apply(
                 nlayer_core::animation::AnimationOp::CreateValue {
                     node: 2,
-                    value: 0.0_f32.into(),
+                    value: 0.0_f32,
                 },
                 finished,
             );
@@ -335,7 +342,7 @@ mod tests {
             graph.apply(
                 nlayer_core::animation::AnimationOp::CreateValue {
                     node: 3,
-                    value: 1.0_f32.into(),
+                    value: 1.0_f32,
                 },
                 finished,
             );
@@ -372,7 +379,7 @@ mod tests {
             graph.apply(
                 nlayer_core::animation::AnimationOp::CreateValue {
                     node: 4,
-                    value: 0.0_f32.into(),
+                    value: 0.0_f32,
                 },
                 finished,
             );
@@ -408,28 +415,28 @@ mod tests {
             graph.apply(
                 nlayer_core::animation::AnimationOp::CreateValue {
                     node: 10,
-                    value: 0.0_f32.into(),
+                    value: 0.0_f32,
                 },
                 finished,
             );
             graph.apply(
                 nlayer_core::animation::AnimationOp::CreateValue {
                     node: 11,
-                    value: 0.0_f32.into(),
+                    value: 0.0_f32,
                 },
                 finished,
             );
             graph.apply(
                 nlayer_core::animation::AnimationOp::CreateValue {
                     node: 12,
-                    value: 1.0_f32.into(),
+                    value: 1.0_f32,
                 },
                 finished,
             );
             graph.apply(
                 nlayer_core::animation::AnimationOp::CreateValue {
                     node: 13,
-                    value: 0.0_f32.into(),
+                    value: 0.0_f32,
                 },
                 finished,
             );
@@ -470,7 +477,7 @@ mod tests {
             graph.apply(
                 nlayer_core::animation::AnimationOp::CreateValue {
                     node: 20,
-                    value: 0.0_f32.into(),
+                    value: 0.0_f32,
                 },
                 finished,
             );
@@ -487,12 +494,4 @@ mod tests {
 
         assert!(!has_pan(200));
     }
-}
-
-/// The current pinch/rotation value for reporting in events.
-pub(crate) fn transform_value(id: NodeId, rotation: bool) -> Option<f32> {
-    let s = state();
-    let g = s.gestures.get(&id)?;
-    let node = if rotation { g.angle } else { g.scale };
-    node.and_then(|n| s.graph.value(n))
 }

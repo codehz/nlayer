@@ -1,3 +1,5 @@
+//! `popOnBack` stays reactive, and back still asks a page that listens.
+
 use nlayer_bundler::compile_module;
 use nlayer_core::geometry::{Points, Size};
 use nlayer_testing::{Back, Headless};
