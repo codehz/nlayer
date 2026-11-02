@@ -950,7 +950,10 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_snapTarget(
         Vec::new()
     } else {
         let arr = unsafe { jni::objects::JFloatArray::from_raw(snap_offsets_pt) };
-        match env.get_array_elements(&arr, jni::objects::ReleaseMode::NoCopyBack) {
+        // SAFETY: `snap_offsets_pt` is a non-null `float[]` from this JNI
+        // call. The elements are copied out before the guard drops, and
+        // `NoCopyBack` does not write them back.
+        match unsafe { env.get_array_elements(&arr, jni::objects::ReleaseMode::NoCopyBack) } {
             Ok(elements) => {
                 let slice =
                     unsafe { std::slice::from_raw_parts(elements.as_ptr(), elements.len()) };
