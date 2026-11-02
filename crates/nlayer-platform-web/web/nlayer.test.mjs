@@ -696,3 +696,178 @@ test("Scroll view with snapToOffsets calls host.snap on scrollEnded", () => {
     assert.equal(scrollToOpts.behavior, "smooth");
   }
 });
+
+test("a text carries its selectable state, selection color and hrefs", () => {
+  const { player } = createTestEnv();
+  player.apply([
+    ["c", 6, "text"],
+    ["f", 6, 0, 0, 100, 20],
+    ["i", 1, 6, null],
+    ["t", 6, 0, 0, 100, 20, null, false, [["Terms", null]], [], [], true, "#ff0000", [[0, 5, 7]]],
+    ["c", 7, "text"],
+    ["i", 1, 7, null],
+    ["t", 7, 0, 20, 100, 20, null, false, [["label", null]], [], [], false, null, []],
+    ["c", 8, "text"],
+    ["i", 1, 8, null],
+    ["t", 8, 0, 40, 100, 20, null, false, [["auto", null]], [], [], null, null, []],
+  ]);
+  const selectable = player.view(6);
+  assert.equal(selectable._selectable, true);
+  assert.ok(selectable.classList.contains("nl-selectable"));
+  assert.ok(!selectable.classList.contains("nl-noselect"));
+  assert.equal(selectable.style.getPropertyValue("--nl-selection"), "#ff0000");
+  assert.deepEqual(selectable._hrefs, [[0, 5, 7]]);
+
+  const off = player.view(7);
+  assert.equal(off._noselect, true);
+  assert.ok(off.classList.contains("nl-noselect"));
+  assert.ok(!off.classList.contains("nl-selectable"));
+  assert.equal(off.style.getPropertyValue("--nl-selection"), "");
+
+  const auto = player.view(8);
+  assert.equal(auto._selectable, false);
+  assert.equal(auto._noselect, false);
+  assert.ok(!auto.classList.contains("nl-selectable"));
+  assert.ok(!auto.classList.contains("nl-noselect"));
+});
+
+test("op_sel marks a selectable view's subtree", () => {
+  const { player } = createTestEnv();
+  player.apply([
+    ["c", 4, "view"],
+    ["i", 1, 4, null],
+    ["c", 6, "text"],
+    ["i", 4, 6, null],
+    ["t", 6, 0, 0, 100, 20, null, false, [["A", null]], [], [], null, null, []],
+    ["sel", 4, true],
+  ]);
+  const area = player.view(4);
+  assert.equal(area._area, true);
+  assert.ok(area.classList.contains("nl-area"));
+  assert.equal(player.selectArea(player.view(6)), area);
+  assert.equal(player.selectableText(player.view(6)), true);
+  player.apply([["sel", 4, false]]);
+  assert.equal(area._area, false);
+  assert.ok(!area.classList.contains("nl-area"));
+  assert.equal(player.selectableText(player.view(6)), false);
+});
+
+test("a short press on an href goes to the core press with its node", () => {
+  const { player, window } = createTestEnv();
+  const presses = [];
+  player.host.press = (id) => presses.push(id);
+  player.apply([
+    ["c", 6, "text"],
+    ["f", 6, 0, 0, 100, 20],
+    ["i", 1, 6, null],
+    ["e", 6, ["onPress"]],
+    [
+      "t",
+      6,
+      0,
+      0,
+      100,
+      20,
+      null,
+      false,
+      [["Terms", null]],
+      [],
+      [[0, 5, 9]],
+      null,
+      null,
+      [[0, 5, 7]],
+    ],
+  ]);
+  const el = player.view(6);
+  const click = (offset) => {
+    const event = new window.MouseEvent("click", { bubbles: true });
+    event._utf16 = offset;
+    el.dispatchEvent(event);
+  };
+  click(2);
+  assert.deepEqual(presses, [7], "the innermost href's node, not the block");
+  click(8);
+  assert.deepEqual(presses, [7, 6], "a press outside the href still reports");
+});
+
+test("a click after a selection reports nothing", () => {
+  const { player, window } = createTestEnv();
+  const presses = [];
+  player.host.press = (id) => presses.push(id);
+  player.apply([
+    ["c", 6, "text"],
+    ["i", 1, 6, null],
+    ["e", 6, ["onPress"]],
+    ["t", 6, 0, 0, 100, 20, null, false, [["Terms", null]], [], [], true, null, [[0, 5, 7]]],
+  ]);
+  const el = player.view(6);
+  el._text.dispatchEvent(new window.Event("selectstart"));
+  assert.equal(el._selected, true);
+  const event = new window.MouseEvent("click", { bubbles: true });
+  event._utf16 = 2;
+  el.dispatchEvent(event);
+  assert.deepEqual(presses, [], "a selection is not a press");
+  assert.equal(el._selected, false);
+});
+
+test("a long press on selectable text is a selection, not onLongPress", async () => {
+  const { player, window } = createTestEnv();
+  const long = [];
+  player.host.longPress = (id) => long.push(id);
+  player.apply([
+    ["c", 6, "text"],
+    ["i", 1, 6, null],
+    ["e", 6, ["onLongPress"]],
+    ["lp", 6, 5],
+    ["t", 6, 0, 0, 100, 20, null, false, [["Terms", null]], [], [], true, null, []],
+    ["c", 7, "text"],
+    ["i", 1, 7, null],
+    ["e", 7, ["onLongPress"]],
+    ["lp", 7, 5],
+    ["t", 7, 0, 20, 100, 20, null, false, [["plain", null]], [], [], null, null, []],
+  ]);
+  player.view(6).dispatchEvent(new window.Event("pointerdown"));
+  player.view(7).dispatchEvent(new window.Event("pointerdown"));
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.deepEqual(long, [7], "only the text that is not selectable");
+  player.view(7).dispatchEvent(new window.Event("pointerup"));
+});
+
+test("an attachment is placed from the block, above the text", () => {
+  const { player } = createTestEnv();
+  player.apply([
+    ["c", 9, "text"],
+    ["f", 9, 20, 30, 100, 40],
+    ["i", 1, 9, null],
+    ["t", 9, 4, 6, 92, 28, null, false, [["\uFFFC", null]], [], [], null, null, []],
+    ["c", 10, "view"],
+    ["f", 10, 12, 14, 18, 18],
+    ["i", 9, 10, null],
+  ]);
+  const text = player.view(9);
+  const box = text._text;
+  const attachment = player.view(10);
+  assert.equal(box.parentNode, text);
+  assert.equal(attachment.parentNode, text);
+  assert.ok(
+    [...text.children].indexOf(attachment) > [...text.children].indexOf(box),
+    "the attachment paints over the text box",
+  );
+  assert.equal(box.style.left, "4px");
+  assert.equal(box.style.top, "6px");
+  assert.equal(attachment.style.left, "12px", "the block's frame, no content origin added");
+  assert.equal(attachment.style.top, "14px");
+  assert.equal(attachment.style.width, "18px");
+  assert.equal(attachment.style.height, "18px");
+});
+
+test("an open url command opens a new tab once", () => {
+  const { player } = createTestEnv();
+  const opened = [];
+  player.window.open = (url, target) => {
+    opened.push([url, target]);
+    return null;
+  };
+  player.apply([["cmd", 1, "openUrl", "https://example.com/terms"]]);
+  assert.deepEqual(opened, [["https://example.com/terms", "_blank"]]);
+});

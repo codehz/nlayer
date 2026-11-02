@@ -118,6 +118,13 @@ Copied files:
   `crates/nsh-platform-web/web/nsh.js` (the DOM mounter, the same cut:
   frames, classes, border overlay, scroll spacer, single-line field,
   and the scroll events of a native scroll: touch drag, glide, `scrollend`)
+- the `user-select` rules of `crates/nlayer-platform-web/web/base.css` and
+  the selection and link paths of `crates/nlayer-platform-web/web/nlayer.js`
+  (`op_t`'s `selectable` and selection color, `op_sel`, `selectStart`,
+  `selecting`, `hrefAt`, the `openUrl` command) from
+  `crates/nsh-platform-web/web/nsh.js`'s `user-select` block and `openUrl`
+  (the desktop `nsh-autoselect` idiom and the capability grant are not
+  copied)
 - `URL` / `URLSearchParams` behavior from `crates/nsh-js/src/web/url.rs`
   (bound on this host's classes; nsh's web class layer is not copied)
 - `crates/nlayer-js/src/random.rs` from `crates/nsh-js/src/standard/random.rs`

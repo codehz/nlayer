@@ -5,6 +5,47 @@
 .nl-root * {
   box-sizing: border-box;
 }
+/* Selection is off by default, as in nsh: a `Text` with `userSelect:
+   "text"` (`nl-selectable`) and the texts in a `selectable` view
+   (`nl-area`) turn it on; `userSelect: "none"` (`nl-noselect`) keeps it
+   off, inside an area too. The highlight is `--nl-selection` when the
+   text sets `selectionColor`, the browser's otherwise. A selectable
+   view's texts inherit the property, each with its own value. */
+.nl-root {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.nl-selectable,
+.nl-selectable * {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+.nl-selectable ::selection {
+  background: var(--nl-selection, Highlight);
+}
+.nl-root .nl-area.nl-area,
+.nl-root .nl-area.nl-area * {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+.nl-root .nl-area ::selection {
+  background: var(--nl-selection, Highlight);
+}
+/* A text set off in a selectable view, and an area's images, stay out. */
+.nl-root .nl-area .nl-noselect.nl-noselect,
+.nl-root .nl-area .nl-noselect.nl-noselect *,
+.nl-root .nl-area.nl-area img {
+  -webkit-user-select: none;
+  user-select: none;
+}
+.nl-noselect,
+.nl-noselect * {
+  -webkit-user-select: none;
+  user-select: none;
+}
 .nl-v {
   position: absolute;
   margin: 0;

@@ -286,10 +286,17 @@ export class Player {
           return;
         }
       }
-      const link = linkAt(el, event);
-      if (link != null) {
+      if (this.selecting(el)) {
         event.stopPropagation?.();
-        this.host.press?.(link);
+        return;
+      }
+      // The innermost `href` at the press goes to the engine with the
+      // press: the core checks the address and mounts `OpenUrl`, and the
+      // press still reports `onPress`.
+      const target = hrefAt(el, event) ?? linkAt(el, event);
+      if (target != null) {
+        event.stopPropagation?.();
+        this.host.press?.(target);
         return;
       }
       if (!el._events.has("onPress")) return;
@@ -411,7 +418,7 @@ export class Player {
     if (el._border) el.append(el._border);
   }
 
-  op_t([, id, x, y, w, h, align, rtl, runs, spanIds, links]) {
+  op_t([, id, x, y, w, h, align, rtl, runs, spanIds, links, selectable, selection, hrefs]) {
     const el = this.view(id);
     if (!el) return;
     let box = el._text;
@@ -420,6 +427,9 @@ export class Player {
       box.className = "nl-text";
       el._text = box;
       el.insertBefore(box, el.firstChild);
+      // A selection the browser starts is not a long press, and the click
+      // that ends it reports nothing (see `selecting`).
+      box.addEventListener("selectstart", () => this.selectStart(el));
     }
     const s = box.style;
     s.left = `${x}px`;
@@ -438,6 +448,63 @@ export class Player {
     }
     el._spanIds = spanIds || [];
     el._links = links || [];
+    el._hrefs = hrefs || [];
+    // `selectable` is tri-state: `true` is `userSelect: "text"`, `false`
+    // `"none"`, `null` follows the views around it (and is not selectable).
+    el.classList.toggle("nl-selectable", selectable === true);
+    el.classList.toggle("nl-noselect", selectable === false);
+    el._selectable = selectable === true;
+    el._noselect = selectable === false;
+    if (selection) el.style.setProperty?.("--nl-selection", selection);
+    else el.style.removeProperty?.("--nl-selection");
+  }
+
+  /** `selectable` on a view: its texts select as one area. */
+  op_sel([, id, selectable]) {
+    const el = this.view(id);
+    if (!el) return;
+    el.classList.toggle("nl-area", !!selectable);
+    el._area = !!selectable;
+  }
+
+  /**
+   * The browser began selecting inside text `el`: the press in progress is
+   * a selection, not a long press (and a click after it reports nothing).
+   */
+  selectStart(el) {
+    el._selected = true;
+    for (let node = el; node; node = node.parentNode) this.cancelLong(node);
+  }
+
+  /** Whether text `el` is selectable (`userSelect: "text"`, or a `selectable` view around it). */
+  selectableText(el) {
+    for (let node = el; node; node = node.parentNode) {
+      if (node._noselect) return false;
+      if (node._selectable || node._area) return true;
+    }
+    return false;
+  }
+
+  /** The click that ends a selection, if this one does. */
+  selecting(el) {
+    if (el._selected) {
+      el._selected = false;
+      return true;
+    }
+    const selection = this.window?.getSelection?.();
+    if (!selection || selection.isCollapsed || !selection.rangeCount) return false;
+    const anchor = selection.anchorNode;
+    if (!anchor) return false;
+    const scope = this.selectArea(el) ?? el;
+    const node = scope._text ?? scope;
+    return node === anchor || node.contains?.(anchor) === true;
+  }
+
+  /** The outermost `selectable` view around `el`, if any. */
+  selectArea(el) {
+    let area = null;
+    for (let node = el; node; node = node.parentNode) if (node._area) area = node;
+    return area;
   }
 
   op_lp([, id, delay]) {
@@ -733,8 +800,12 @@ export class Player {
   pressStart(el, event) {
     this.cancelLong(el);
     el._longPressed = false;
+    el._selected = false;
     if (event.button != null && event.button !== 0) return;
     if (!el._events.has("onLongPress")) return;
+    // On selectable text a long press starts a selection: no timer, and so
+    // no `onLongPress`.
+    if (el._kind === "text" && this.selectableText(el)) return;
     for (let node = el; node; node = node.parentNode) {
       if (node._disabled) return;
     }
@@ -1112,6 +1183,12 @@ export class Player {
       this.blurField();
       return;
     }
+    // A `Text` `href` the core checked: one way, no report back (a blocked
+    // popup is not an error the app sees).
+    if (name === "openUrl") {
+      this.window?.open?.(x, "_blank");
+      return;
+    }
     const el = this.view(id);
     if (!el) return;
     if (name === "setSelection") {
@@ -1317,6 +1394,7 @@ export class Player {
     for (let el = node; el; el = el.parentNode) {
       if (el._kind === "input" || el.classList?.contains("nl-field")) return true;
       if (el._events?.has("onPress")) return true;
+      if (hrefAt(el, event) != null) return true;
       if (linkAt(el, event) != null) return true;
       if (el === scroll) return false;
     }
@@ -1351,6 +1429,26 @@ export class Player {
       this.onResize = null;
     }
   }
+}
+
+/**
+ * The node of the innermost `href` under a click, or null. Same caret as
+ * [`linkAt`]; a span's range wins over its block's.
+ */
+function hrefAt(el, event) {
+  const hrefs = el._hrefs;
+  if (!hrefs?.length) return null;
+  const index = utf16At(el, event);
+  if (index == null) return null;
+  let node = null;
+  let width = Infinity;
+  for (const [start, end, id] of hrefs) {
+    if (index >= start && index < end && end - start < width) {
+      node = id;
+      width = end - start;
+    }
+  }
+  return node;
 }
 
 /**

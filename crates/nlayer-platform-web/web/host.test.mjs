@@ -119,11 +119,11 @@ test("selectors name one view, and input goes to its point", () => {
     ["c", 3, "text"],
     ["f", 3, 0, 0, 40, 16],
     ["i", 2, 3, null],
-    ["t", 3, 0, 0, 40, 16, null, false, [["Save", null]], [["label", 0, 4]], []],
+    ["t", 3, 0, 0, 40, 16, null, false, [["Save", null]], [["label", 0, 4]], [], null, null, []],
     ["c", 4, "text"],
     ["f", 4, 0, 40, 40, 16],
     ["i", 1, 4, null],
-    ["t", 4, 0, 0, 40, 16, null, false, [["Save", null]], [], []],
+    ["t", 4, 0, 0, 40, 16, null, false, [["Save", null]], [], [], null, null, []],
     ["c", 5, "input"],
     ["f", 5, 0, 20, 80, 20],
     ["i", 1, 5, null],
@@ -290,4 +290,38 @@ test("a static transform is the engine steps, and an empty list clears it", () =
   ]);
   player.apply([["xf", 2, []]]);
   assert.equal(host.tree().children[0].transform, undefined);
+});
+
+test("an href press goes to the host with the innermost href's node", () => {
+  const { player, sink } = harness();
+  player.apply([
+    ["c", 2, "text"],
+    ["f", 2, 0, 0, 80, 16],
+    ["i", 1, 2, null],
+    ["e", 2, ["onPress"]],
+    [
+      "t",
+      2,
+      0,
+      0,
+      80,
+      16,
+      null,
+      false,
+      [["see docs", null]],
+      [],
+      [[4, 8, 5]],
+      null,
+      null,
+      [
+        [0, 3, 7],
+        [4, 8, 9],
+      ],
+    ],
+  ]);
+  const el = player.view(2);
+  el.dispatch("click", { _utf16: 5 });
+  el.dispatch("click", { _utf16: 1 });
+  el.dispatch("click", { _utf16: 9 });
+  assert.deepEqual(sink.presses, [9, 7, 2], "the href node, the block's href, the block");
 });

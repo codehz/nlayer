@@ -334,6 +334,68 @@ fn an_app_frame_encodes_the_v1_surface() {
 }
 
 #[test]
+fn a_text_carries_its_selection_color_and_hrefs() {
+    use nlayer_core::{
+        geometry::{Bounds, Point},
+        text::{AttributedText, ResolvedTextStyle, TextHref, TextLayout},
+    };
+    let mut text = AttributedText {
+        selectable: Some(true),
+        selection_color: Some(Color::rgba(255, 0, 0, 255)),
+        ..AttributedText::default()
+    };
+    text.push("Terms", ResolvedTextStyle::default());
+    text.hrefs.push(TextHref {
+        start: 0,
+        end: 5,
+        node: 7,
+        url: "https://example.com/terms".into(),
+    });
+    let content = Bounds::new(Point::new(px(4.0), px(6.0)), Size::new(px(30.0), px(20.0)));
+    let json = Encoder::new().encode(&MountBatch {
+        items: vec![MountItem::Text {
+            id: 6,
+            text: Arc::new(text),
+            layout: TextLayout(Arc::new(())),
+            content,
+        }],
+    });
+    let text = items(&json)
+        .into_iter()
+        .find(|item| item[0] == "t")
+        .expect("a text block");
+    assert_eq!(text[2], 4.0, "the content origin stays inside the view");
+    assert_eq!(text[3], 6.0);
+    assert_eq!(text[11], Value::Bool(true), "userSelect: text");
+    assert_eq!(text[12], "#ff0000", "selectionColor");
+    assert_eq!(text[13], serde_json::json!([[0, 5, 7]]), "href ranges");
+}
+
+#[test]
+fn a_selectable_view_and_an_open_url_are_ops() {
+    let json = Encoder::new().encode(&MountBatch {
+        items: vec![
+            MountItem::Selectable {
+                id: 4,
+                selectable: true,
+            },
+            MountItem::Command {
+                id: 1,
+                command: nlayer_core::Command::OpenUrl {
+                    url: "https://example.com".to_owned(),
+                },
+            },
+        ],
+    });
+    let batch = items(&json);
+    assert_eq!(batch[0], serde_json::json!(["sel", 4, true]));
+    assert_eq!(
+        batch[1],
+        serde_json::json!(["cmd", 1, "openUrl", "https://example.com"])
+    );
+}
+
+#[test]
 fn the_mounter_applies_a_batch_in_node() {
     assert!(MOUNTER_JS.contains("export class Player"));
     let script = concat!(env!("CARGO_MANIFEST_DIR"), "/web/nlayer.test.mjs");

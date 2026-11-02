@@ -186,6 +186,24 @@ impl Encoder {
                     let _ = write!(out.s, "[{},{},{}]", link.start, link.end, link.node);
                 }
                 out.s.push(']');
+                // `selectable`: `null` follows the view around it (`auto`),
+                // `true` is `userSelect: "text"`, `false` `"none"`.
+                match text.selectable {
+                    Some(selectable) => out.bool(selectable),
+                    None => out.raw("null"),
+                };
+                match text.selection_color {
+                    Some(color) => out.str(&css_color(color)),
+                    None => out.raw("null"),
+                };
+                out.s.push_str(",[");
+                for (i, href) in text.hrefs.iter().enumerate() {
+                    if i > 0 {
+                        out.s.push(',');
+                    }
+                    let _ = write!(out.s, "[{},{},{}]", href.start, href.end, href.node);
+                }
+                out.s.push(']');
                 out.end();
             }
             MountItem::LongPressDelay { id, delay } => {
@@ -339,12 +357,12 @@ impl Encoder {
                 Command::Back | Command::GoBack => {
                     // Back routing handled by engine/page layer
                 }
-                Command::OpenUrl { .. } => {
-                    // M4 opens it with `window.open(url, "_blank")`.
+                Command::OpenUrl { url } => {
+                    out.item("cmd").num(*id).str("openUrl").str(url).end();
                 }
             },
-            MountItem::Selectable { .. } => {
-                // M4 turns on `user-select: text`; M1 only carries the mark.
+            MountItem::Selectable { id, selectable } => {
+                out.item("sel").num(*id).bool(*selectable).end();
             }
             MountItem::ScreenConfig { id, config } => {
                 out.item("scr").num(*id);
