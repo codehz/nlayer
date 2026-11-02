@@ -1416,6 +1416,12 @@ impl Headless {
             return Err("no pointer is held (call drag_and_hold first)".into());
         }
         self.pointer_up(self.now);
+        // Deliver the PanEnd event before the caller looks at the screen or
+        // advances the clock, as a host delivers a lifted finger.
+        self.control()
+            .synchronize()
+            .map_err(|e| format!("sync failed: {e}"))?;
+        self.refresh();
         Ok(())
     }
 

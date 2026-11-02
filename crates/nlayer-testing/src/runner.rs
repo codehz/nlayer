@@ -1137,6 +1137,23 @@ fn node_json(node: &TreeNode, screen: &Screen) -> serde_json::Value {
         if let Some(source) = &view.source {
             map.insert("src".into(), source.uri.as_ref().into());
             map.insert("fit".into(), fit_name(view.resize_mode).into());
+            if let Some(style) = &view.style {
+                let radii = style.radii();
+                let corners = [
+                    radii.top_left,
+                    radii.top_right,
+                    radii.bottom_right,
+                    radii.bottom_left,
+                ];
+                if corners.iter().any(|radius| radius.0 > 0.0) {
+                    map.insert(
+                        "radius".into(),
+                        serde_json::Value::Array(
+                            corners.iter().map(|radius| radius.0.into()).collect(),
+                        ),
+                    );
+                }
+            }
         }
         if let Some(config) = &view.screen {
             map.insert(
