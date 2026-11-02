@@ -18,7 +18,8 @@ import android.widget.FrameLayout;
 
 /**
  * A modal dialog: content presented in its own window over the app. The core lays the content out
- * at the size this window reports.
+ * at the size this window reports. The content starts below the status bar; the top inset the core
+ * sees is what remains after that (a cutout taller than the status bar).
  */
 final class ModalHost {
   final Mounter mounter;
@@ -46,7 +47,6 @@ final class ModalHost {
     this.id = id;
     root = new Box(context, mounter, id);
     container = new Container(context);
-    container.addView(root);
   }
 
   boolean shown() {
@@ -195,44 +195,43 @@ final class ModalHost {
     this.closeOnSwipe = closeOnSwipe;
   }
 
-  /** Edge-to-edge container that reports size and insets. */
+  /** Edge-to-edge container. Content is laid out below the status bar. */
   @SuppressLint("ViewConstructor")
   private final class Container extends FrameLayout {
     private int[] reported = {0, 0, 0, 0, 0, 0};
 
+    /** Holds {@code root}. Its top is the status bar, so core y=0 is already clear of it. */
+    final FrameLayout content;
+
     Container(Context context) {
       super(context);
+      content = new FrameLayout(context);
+      content.addView(root);
+      addView(content);
     }
 
     @Override
     protected void onMeasure(int widthSpec, int heightSpec) {
       int w = MeasureSpec.getSize(widthSpec), h = MeasureSpec.getSize(heightSpec);
       setMeasuredDimension(w, h);
-      // The core places the root with margins
-      ViewGroup.LayoutParams lp = root.getLayoutParams();
-      if (lp instanceof MarginLayoutParams) {
-        MarginLayoutParams mlp = (MarginLayoutParams) lp;
-        root.measure(
-            MeasureSpec.makeMeasureSpec(mlp.width, MeasureSpec.EXACTLY),
-            MeasureSpec.makeMeasureSpec(mlp.height, MeasureSpec.EXACTLY));
-      } else {
-        root.measure(
-            MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY),
-            MeasureSpec.makeMeasureSpec(h, MeasureSpec.EXACTLY));
-      }
+      int ch = Math.max(0, h - statusBar());
+      content.measure(
+          MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY),
+          MeasureSpec.makeMeasureSpec(ch, MeasureSpec.EXACTLY));
+    }
+
+    /** The status bar's height: content starts below it. */
+    private int statusBar() {
+      WindowInsets insets = getRootWindowInsets();
+      if (insets == null) return 0;
+      if (Build.VERSION.SDK_INT >= 30) return insets.getInsets(WindowInsets.Type.statusBars()).top;
+      return insets.getSystemWindowInsetTop();
     }
 
     @Override
     protected void onLayout(boolean changed, int l, int t, int r, int b) {
-      // Position root by its margins
-      ViewGroup.LayoutParams lp = root.getLayoutParams();
-      if (lp instanceof MarginLayoutParams) {
-        MarginLayoutParams mlp = (MarginLayoutParams) lp;
-        root.layout(
-            mlp.leftMargin, mlp.topMargin, mlp.leftMargin + mlp.width, mlp.topMargin + mlp.height);
-      } else {
-        root.layout(0, 0, r - l, b - t);
-      }
+      int below = statusBar();
+      content.layout(0, below, r - l, b - t);
       report();
     }
 
@@ -279,8 +278,10 @@ final class ModalHost {
           left = insets.getSystemWindowInsetLeft();
         }
       }
-      int[] now = {getWidth(), getHeight(), top, right, bottom, left};
-      if (now[0] == 0 || java.util.Arrays.equals(now, reported)) return;
+      int below = statusBar();
+      top = Math.max(0, top - below);
+      int[] now = {getWidth(), Math.max(0, getHeight() - below), top, right, bottom, left};
+      if (now[0] == 0 || now[1] == 0 || java.util.Arrays.equals(now, reported)) return;
       reported = now;
       float d = mounter.density;
       long handle = mounter.host.handle();

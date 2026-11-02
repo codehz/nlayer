@@ -1021,9 +1021,10 @@ unsafe extern "C" fn modal_render(
         }
         free(cx, close_handler);
 
-        // Create backdrop and popup
+        // Create backdrop and popup. A styled backdrop, or the default
+        // closeOnBackdropPress, is a full-window press target behind the popup.
         let mut parts = Vec::new();
-        if has_backdrop_result {
+        if wants_backdrop_hit(cx, props) {
             let backdrop_fn = {
                 let mut fdata = [props, state];
                 native(cx, create_backdrop, 2, &mut fdata)
@@ -1062,6 +1063,26 @@ fn has_backdrop(cx: *mut JsContext, props: JsValue) -> bool {
         free(cx, backdrop_class);
         free(cx, backdrop_style);
         has
+    }
+}
+
+/// A press outside the popup is a close attempt when the app styles a backdrop
+/// or leaves `closeOnBackdropPress` at its default (`true`).
+fn wants_backdrop_hit(cx: *mut JsContext, props: JsValue) -> bool {
+    has_backdrop(cx, props) || flag_enabled(cx, props, c"closeOnBackdropPress")
+}
+
+/// `true` unless the prop is the boolean `false`. Missing means the default.
+fn flag_enabled(cx: *mut JsContext, props: JsValue, name: &CStr) -> bool {
+    unsafe {
+        let flag = qjs::JS_GetPropertyStr(cx, props, name.as_ptr());
+        let enabled = if qjs::JS_IsUndefined(flag) || qjs::JS_IsNull(flag) {
+            true
+        } else {
+            qjs::JS_ToBool(cx, flag) == 1
+        };
+        free(cx, flag);
+        enabled
     }
 }
 
@@ -1288,7 +1309,7 @@ unsafe extern "C" fn create_backdrop(
     let props = *data;
     let state = *data.add(1);
 
-    if !has_backdrop(cx, props) {
+    if !wants_backdrop_hit(cx, props) {
         return UNDEFINED;
     }
 

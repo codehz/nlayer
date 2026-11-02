@@ -490,6 +490,56 @@ fn dialog_creates_backdrop_and_popup_views() {
 }
 
 #[test]
+fn dialog_default_close_on_backdrop_press_builds_hit_target() {
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r#"
+        import { Dialog } from "@nlayer/ui";
+        import { mount } from "@nlayer/runtime";
+        globalThis.dispose = mount(() => Dialog({ open: true, children: "content" }));
+        "#,
+    )
+    .unwrap();
+    let mut ops = Vec::new();
+    host.take_ops(&mut ops);
+    let views = ops
+        .iter()
+        .filter(|op| matches!(op, Op::Create { tag: Tag::View, .. }))
+        .count();
+    assert!(
+        views >= 2,
+        "default closeOnBackdropPress builds a press target behind the popup, views={views}"
+    );
+}
+
+#[test]
+fn dialog_skips_hit_target_when_backdrop_press_is_disabled() {
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r#"
+        import { Dialog } from "@nlayer/ui";
+        import { mount } from "@nlayer/runtime";
+        globalThis.dispose = mount(() => Dialog({
+          open: true,
+          closeOnBackdropPress: false,
+          children: "content"
+        }));
+        "#,
+    )
+    .unwrap();
+    let mut ops = Vec::new();
+    host.take_ops(&mut ops);
+    let views = ops
+        .iter()
+        .filter(|op| matches!(op, Op::Create { tag: Tag::View, .. }))
+        .count();
+    assert_eq!(
+        views, 1,
+        "no backdrop and closeOnBackdropPress false: popup only, views={views}"
+    );
+}
+
+#[test]
 fn nav_stack_renders_screens_for_each_route() {
     let host = Host::new().unwrap();
     host.eval_source(

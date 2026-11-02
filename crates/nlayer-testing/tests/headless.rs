@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use nlayer_core::{
     ViewKind,
-    geometry::{Points, Size, px},
+    geometry::{Edges, Points, Size, px},
 };
 use nlayer_testing::Headless;
 
@@ -460,6 +460,103 @@ mount(App);
         app.texts(),
         ["closed:1"],
         "modal should unmount after backdrop press, onClose called once"
+    );
+    app.stop();
+}
+
+#[test]
+fn dialog_outside_press_closes_without_backdrop_style() {
+    let source = r##"
+import { mount, signal } from "@nlayer/runtime";
+import { Dialog, Text, View } from "@nlayer/ui";
+
+function App() {
+    const open = signal(true);
+    const closeCount = signal(0);
+    return (
+        <View style={{ flex: 1 }}>
+            <Text testID="status">closed:{closeCount()}</Text>
+            <Dialog
+                open={open()}
+                backdropTestID="modal-backdrop"
+                onOpenChange={(e) => open.set(e.open)}
+                onClose={() => closeCount.set(closeCount() + 1)}
+            >
+                <View style={{ width: 200, height: 100 }}>
+                    <Text>Modal content</Text>
+                </View>
+            </Dialog>
+        </View>
+    );
+}
+mount(App);
+"##;
+    let mut app = app(source);
+    app.next_frame(Duration::from_millis(100));
+    let screen = app.screen();
+    let modal = screen
+        .views()
+        .find(|(_, view)| view.kind == ViewKind::Modal)
+        .map(|(_, view)| view.frame.size);
+    let backdrop = screen
+        .views()
+        .find(|(_, view)| view.test_id.as_deref() == Some("modal-backdrop"))
+        .map(|(_, view)| view.frame.size);
+    assert_eq!(
+        backdrop, modal,
+        "unstyled closeOnBackdropPress still fills the dialog"
+    );
+    app.press_selector("id:modal-backdrop").unwrap();
+    assert!(
+        app.wait_for("closed:1", Duration::from_secs(1)),
+        "outside press should close, texts: {:?}",
+        app.texts()
+    );
+    app.stop();
+}
+
+#[test]
+fn dialog_content_pads_by_safe_area() {
+    let source = r#"
+import { mount } from "@nlayer/runtime";
+import { Dialog, Text, View } from "@nlayer/ui";
+
+function App() {
+    return (
+        <Dialog open>
+            <View testID="card" style={{ paddingTop: "env(safe-area-inset-top)" }}>
+                <Text>Title</Text>
+            </View>
+        </Dialog>
+    );
+}
+mount(App);
+"#;
+    let mut app = app(source);
+    app.control().set_safe_area(Edges {
+        top: px(47.0),
+        right: px(0.0),
+        bottom: px(34.0),
+        left: px(0.0),
+    });
+    assert!(
+        app.next_frame(Duration::from_secs(1)),
+        "safe area should relayout"
+    );
+    let screen = app.screen();
+    let card = screen
+        .views()
+        .find(|(_, view)| view.test_id.as_deref() == Some("card"))
+        .expect("card");
+    let title = screen
+        .views()
+        .find(|(_, view)| view.text.as_deref() == Some("Title"))
+        .expect("title");
+    let card_y = card.1.frame.origin.y.0;
+    let title_y = title.1.frame.origin.y.0;
+    assert!(
+        title_y - card_y >= 47.0 - 0.5,
+        "dialog content should clear the safe area, card={card_y} title={title_y}"
     );
     app.stop();
 }

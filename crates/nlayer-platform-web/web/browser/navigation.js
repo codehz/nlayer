@@ -228,9 +228,9 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
             "onOpenChange",
           ]),
         );
-        const hasBackdrop = () => props.backdropClass != null || props.backdropStyle != null;
+        const styledBackdrop = () => props.backdropClass != null || props.backdropStyle != null;
         const slide =
-          hasBackdrop() &&
+          styledBackdrop() &&
           (props.animation == null || props.animation === "slide") &&
           props.style?.translate == null &&
           !reduceMotion();
@@ -248,19 +248,24 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
             e?.reason === "backdropPress" || e?.reason === "swipe" ? e.reason : "cancel";
           close(reason);
         });
-        const backdrop = rt.cond(hasBackdrop, () => {
-          const view = rt.element("view");
-          rt.bindProp(
-            view,
-            "class",
-            () =>
-              `absolute inset-0 ${typeof props.backdropClass === "string" ? props.backdropClass : ""}`,
-          );
-          rt.bindProp(view, "style", () => props.backdropStyle);
-          rt.bindProp(view, "testID", () => props.backdropTestID);
-          rt.prop(view, "onPress", () => close("backdropPress"));
-          return view;
-        });
+        // Tailwind classes are not applied. The fill is a style, so the backdrop
+        // (or the default closeOnBackdropPress target) has a frame to press.
+        const backdrop = rt.cond(
+          () => styledBackdrop() || props.closeOnBackdropPress !== false,
+          () => {
+            const view = rt.element("view");
+            rt.bindProp(view, "class", () =>
+              typeof props.backdropClass === "string" ? props.backdropClass : "",
+            );
+            rt.bindProp(view, "style", () => {
+              const fill = { position: "absolute", top: 0, right: 0, bottom: 0, left: 0 };
+              return props.backdropStyle == null ? fill : [fill, props.backdropStyle];
+            });
+            rt.bindProp(view, "testID", () => props.backdropTestID);
+            rt.prop(view, "onPress", () => close("backdropPress"));
+            return view;
+          },
+        );
         const popup = rt.element("view");
         rt.bindProp(popup, "class", () => props.class);
         if (slide) {

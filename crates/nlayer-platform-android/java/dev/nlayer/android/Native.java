@@ -153,11 +153,6 @@ final class Native {
   }
 
   private static HostView host(android.view.View view) {
-    for (android.view.View v = view; v != null; ) {
-      if (v instanceof HostView) return (HostView) v;
-      android.view.ViewParent p = v.getParent();
-      v = p instanceof android.view.View ? (android.view.View) p : null;
-    }
-    return null;
+    return Mounter.hostOf(view);
   }
 }

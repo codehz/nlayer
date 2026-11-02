@@ -876,14 +876,23 @@ final class Mounter {
 
   static void pressed(View v, int id, boolean down) {
     v.setPressed(down);
-    for (View p = v; p != null; ) {
-      if (p instanceof HostView) {
-        ((HostView) p).mounter.paint(id);
-        return;
-      }
-      android.view.ViewParent parent = p.getParent();
-      p = parent instanceof View ? (View) parent : null;
+    HostView host = hostOf(v);
+    if (host != null) host.mounter.paint(id);
+  }
+
+  /**
+   * The surface that owns {@code view}. A dialog window is not a child of the activity content, so
+   * the walk also accepts a {@link Box} or {@link StackBox} (they keep the mounter).
+   */
+  static HostView hostOf(View view) {
+    for (View v = view; v != null; ) {
+      if (v instanceof HostView) return (HostView) v;
+      if (v instanceof Box) return ((Box) v).mounter.host;
+      if (v instanceof StackBox) return ((StackBox) v).mounter.host;
+      android.view.ViewParent parent = v.getParent();
+      v = parent instanceof View ? (View) parent : null;
     }
+    return null;
   }
 
   void paint(int id) {

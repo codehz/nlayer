@@ -789,7 +789,17 @@ function DialogDemoPage(props: { nav: NavStackHandle }) {
             }
           }}
         >
-          <View style={{ backgroundColor: "#fff", padding: 24, borderRadius: 12, minWidth: 280 }}>
+          <View
+            style={{
+              backgroundColor: "#fff",
+              paddingTop: "calc(env(safe-area-inset-top) + 24px)",
+              paddingRight: "calc(env(safe-area-inset-right) + 24px)",
+              paddingBottom: "calc(env(safe-area-inset-bottom) + 24px)",
+              paddingLeft: "calc(env(safe-area-inset-left) + 24px)",
+              borderRadius: 12,
+              minWidth: 280,
+            }}
+          >
             <Text style={{ fontSize: 18, fontWeight: "700", marginBottom: 12 }}>Dialog Title</Text>
             <Text style={{ color: "#64748b", marginBottom: 16 }}>
               Press back() to close with reason "cancel", or press Close button
