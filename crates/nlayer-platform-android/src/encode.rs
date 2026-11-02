@@ -48,6 +48,7 @@ const PINCH_BINDING: i32 = 23;
 const ROTATION_BINDING: i32 = 24;
 const LIST_CONTENT: i32 = 25;
 const REFRESHING: i32 = 26;
+const SELECTABLE: i32 = 27;
 /// A `StaticLayout` measured on the engine thread and drawn on the UI thread.
 #[cfg(target_os = "android")]
 pub(crate) struct AndroidLayout(pub(crate) jni::objects::GlobalRef);
@@ -360,13 +361,16 @@ pub fn encode(batch: MountBatch) -> Encoded {
                     | Command::GoBack => {
                         // The engine handles navigation commands.
                     }
-                    Command::OpenUrl { .. } => {
-                        // M3 sends `Intent.ACTION_VIEW`.
+                    Command::OpenUrl { url } => {
+                        e.int(3);
+                        e.string(url.clone());
                     }
                 }
             }
-            MountItem::Selectable { .. } => {
-                // M3 mounts `SelectableView`; M1 only carries the mark.
+            MountItem::Selectable { id, selectable } => {
+                e.int(SELECTABLE);
+                e.id(id);
+                e.bool(selectable);
             }
             MountItem::ScreenConfig { id, config } => {
                 e.int(SCREEN_CONFIG);
@@ -706,6 +710,19 @@ pub(crate) fn write_text(
         encoded.bool(span.style.italic);
         encoded.int(argb(span.style.color));
         encoded.float(span.style.font_size.0);
+    }
+    // 1 text, 0 none (out of an area too), 2 unset (an area still includes it).
+    encoded.int(match text.selectable {
+        Some(true) => 1,
+        Some(false) => 0,
+        None => 2,
+    });
+    opt_color(encoded, text.selection_color);
+    encoded.int(text.hrefs.len() as i32);
+    for href in &text.hrefs {
+        encoded.int(href.start as i32);
+        encoded.int(href.end as i32);
+        encoded.id(href.node);
     }
 }
 
@@ -1155,6 +1172,9 @@ mod tests {
         assert_eq!(words.int(), 1);
         assert_eq!((words.int(), words.int()), (1, 2));
         assert_eq!(object(&encoded, words.int()), "span");
+        assert_eq!(words.int(), 0);
+        assert_eq!(words.int(), 2);
+        assert_eq!(words.int(), 0);
         assert_eq!(words.int(), 0);
         assert!(words.done());
     }

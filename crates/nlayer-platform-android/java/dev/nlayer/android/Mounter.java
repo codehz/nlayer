@@ -62,7 +62,8 @@ final class Mounter {
       PINCH_BINDING = 23,
       ROTATION_BINDING = 24,
       LIST_CONTENT = 25,
-      REFRESHING = 26;
+      REFRESHING = 26,
+      SELECTABLE = 27;
   final HostView host;
   final float density;
   final SparseArray<View> views = new SparseArray<>();
@@ -87,6 +88,15 @@ final class Mounter {
   final SparseArray<ModalOptions> modalOptions = new SparseArray<>();
   final SparseArray<int[]> headerSizes = new SparseArray<>();
   final SparseArray<ModalHost> modals = new SparseArray<>();
+
+  /** The text with a selection (one per surface). */
+  TextBox selectedText;
+
+  /** The selectable view with a selection. */
+  SelectableView selectedArea;
+
+  /** Selectable views, by view id. */
+  private final SparseArray<SelectableView> selectableViews = new SparseArray<>();
 
   /** Monotonic counter for modal show order (topmost determination). */
   int modalShowOrder;
@@ -164,7 +174,7 @@ final class Mounter {
             break;
           }
         case COMMAND:
-          command(b);
+          command(b, objects);
           break;
         case ACCESSIBILITY:
           accessibility(b, objects);
@@ -192,6 +202,9 @@ final class Mounter {
           break;
         case REFRESHING:
           refreshing(b);
+          break;
+        case SELECTABLE:
+          selectable(b.getInt(), b.getInt() != 0);
           break;
         default:
           throw new IllegalArgumentException("Unknown nlayer opcode " + opcode);
@@ -224,6 +237,7 @@ final class Mounter {
     if (v instanceof ScrollBox) ((ScrollBox) v).pressMask = mask;
     if (v instanceof InputBox) ((InputBox) v).pressMask = mask;
     v.setClickable(press);
+    if (v instanceof TextBox) ((TextBox) v).noteSelectable();
     if ((mask & (1 << 11)) != 0) {
       v.setOnTouchListener(
           (view, event) -> {
@@ -335,9 +349,73 @@ final class Mounter {
     }
   }
 
-  private void cancelLong(int id) {
+  void cancelLong(int id) {
     longDown.put(id, false);
     cancelRun(id);
+  }
+
+  /** A finger went down: a selection that does not contain the point ends. */
+  void touchDown(float rawX, float rawY) {
+    if (selectedText != null && !selectedText.selectionContains(rawX, rawY))
+      selectedText.clearSelection();
+    if (selectedArea != null && !selectedArea.selectionContains(rawX, rawY)) selectedArea.clear();
+  }
+
+  /** The outermost selectable view {@code text} is in, or null. */
+  SelectableView selectableViewOf(TextBox text) {
+    if (selectableViews.size() == 0) return null;
+    SelectableView outer = null;
+    for (Object v = text; v instanceof View; v = ((View) v).getParent()) {
+      for (int i = 0; i < selectableViews.size(); i++) {
+        SelectableView area = selectableViews.valueAt(i);
+        if (area.view == v) outer = area;
+      }
+    }
+    return outer;
+  }
+
+  private void selectable(int id, boolean on) {
+    View v = views.get(id);
+    SelectableView area = selectableViews.get(id);
+    if (on && v != null && (area == null || area.view != v)) {
+      if (area != null) area.clear();
+      selectableViews.put(id, new SelectableView(this, v));
+    } else if (!on && area != null) {
+      area.clear();
+      selectableViews.remove(id);
+    }
+    if (v != null) refreshTexts(v);
+  }
+
+  private void refreshTexts(View v) {
+    if (v instanceof TextBox) ((TextBox) v).noteSelectable();
+    if (v instanceof ViewGroup) {
+      ViewGroup group = (ViewGroup) v;
+      for (int i = 0; i < group.getChildCount(); i++) refreshTexts(group.getChildAt(i));
+    }
+  }
+
+  /** The system clipboard. Selection menus write here; there is no JS API. */
+  static void copyText(android.content.Context context, String text) {
+    Object service = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+    if (!(service instanceof android.content.ClipboardManager)) return;
+    ((android.content.ClipboardManager) service)
+        .setPrimaryClip(android.content.ClipData.newPlainText("text", text == null ? "" : text));
+  }
+
+  /** `Command::OpenUrl`: one `ACTION_VIEW`, no event and no grant. */
+  static void openUrl(android.content.Context context, String url) {
+    if (url == null || url.isEmpty()) return;
+    android.content.Intent intent =
+        new android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url));
+    if (!(context instanceof android.app.Activity)) {
+      intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+    }
+    try {
+      context.startActivity(intent);
+    } catch (android.content.ActivityNotFoundException | SecurityException ignored) {
+      // Nothing handles it, or the platform refused. The press already ran.
+    }
   }
 
   /** A release after a long press does not also fire `onPress`. */
@@ -404,7 +482,7 @@ final class Mounter {
         v = new Box(host.getContext(), this, id);
         break;
       case 1:
-        v = new TextBox(host.getContext(), id);
+        v = new TextBox(host.getContext(), this, id);
         break;
       case 2:
         v = new ImageBox(host.getContext(), id);
@@ -509,6 +587,7 @@ final class Mounter {
         }
     }
     g.addView(c, at);
+    refreshTexts(c);
   }
 
   private void remove(int id) {
@@ -548,6 +627,11 @@ final class Mounter {
       modalOptions.remove(id);
     }
     remove(id);
+    SelectableView area = selectableViews.get(id);
+    if (area != null) {
+      area.clear();
+      selectableViews.remove(id);
+    }
     views.remove(id);
     events.remove(id);
     testIds.remove(id);
@@ -744,6 +828,15 @@ final class Mounter {
       runColor[i] = b.getInt();
       runSize[i] = b.getFloat();
     }
+    int selectable = b.getInt();
+    Integer selectionColor = b.getInt() != 0 ? b.getInt() : null;
+    int hrefCount = b.getInt();
+    int[] hrefs = new int[Math.max(0, hrefCount) * 3];
+    for (int i = 0; i < hrefCount; i++) {
+      hrefs[i * 3] = b.getInt();
+      hrefs[i * 3 + 1] = b.getInt();
+      hrefs[i * 3 + 2] = b.getInt();
+    }
     View v = views.get(id);
     if (v instanceof TextBox && li >= 0 && li < o.length && o[li] instanceof StaticLayout) {
       TextBox text = (TextBox) v;
@@ -751,6 +844,8 @@ final class Mounter {
       text.setLinks(links, presses);
       text.setIds(idStart, idEnd, ids);
       text.setRuns(runStart, runEnd, runWeight, runItalic, runColor, runSize);
+      text.setSelectable(selectable, selectionColor);
+      text.setHrefs(hrefs);
     }
   }
 
@@ -1056,7 +1151,7 @@ final class Mounter {
     }
   }
 
-  private void command(ByteBuffer b) {
+  private void command(ByteBuffer b, Object[] objects) {
     int id = b.getInt(), cmd = b.getInt();
     if (cmd == 1) {
       Native.dismissKeyboard(host);
@@ -1066,6 +1161,13 @@ final class Mounter {
       int start = b.getInt(), end = b.getInt();
       View v = views.get(id);
       if (v instanceof InputBox) ((InputBox) v).setSelection(start, end);
+      return;
+    }
+    if (cmd == 3) {
+      int index = b.getInt();
+      if (index >= 0 && index < objects.length && objects[index] instanceof String) {
+        openUrl(host.getContext(), (String) objects[index]);
+      }
       return;
     }
     float x = b.getFloat(), y = b.getFloat();

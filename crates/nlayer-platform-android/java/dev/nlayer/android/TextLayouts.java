@@ -99,7 +99,8 @@ final class TextLayouts {
       int align,
       int maxLines,
       int ellipsize,
-      float density) {
+      float density,
+      float[] attachments) {
     SpannableString s = new SpannableString(text);
     TextPaint paint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     paint.density = density;
@@ -172,6 +173,20 @@ final class TextLayouts {
         break;
       default:
         truncate = TextUtils.TruncateAt.END;
+    }
+    if (attachments != null) {
+      for (int i = 0; i + 3 < attachments.length; i += 4) {
+        int at = (int) attachments[i];
+        if (at < 0 || at >= text.length()) continue;
+        s.setSpan(
+            new Attachment(
+                Math.round(attachments[i + 1] * density),
+                Math.round(attachments[i + 2] * density),
+                (int) attachments[i + 3]),
+            at,
+            at + 1,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+      }
     }
     PrecomputedText.Params params =
         new PrecomputedText.Params.Builder(paint)
@@ -282,5 +297,162 @@ final class TextLayouts {
       fm.top = fm.ascent;
       fm.bottom = fm.descent;
     }
+  }
+
+  /**
+   * Where a final layout put its attachments, in text order: x, y (top left, dp) each, NaN for ones
+   * cut off (lines past the limit, an ellipsis).
+   */
+  static float[] attachments(Object layout, float density) {
+    if (!(layout instanceof Layout)) return new float[0];
+    Layout l = (Layout) layout;
+    CharSequence text = l.getText();
+    if (!(text instanceof Spanned)) return new float[0];
+    Spanned spanned = (Spanned) text;
+    Attachment[] spans = spanned.getSpans(0, text.length(), Attachment.class);
+    java.util.Arrays.sort(spans, (a, b) -> spanned.getSpanStart(a) - spanned.getSpanStart(b));
+    float[] out = new float[spans.length * 2];
+    int lines = l.getLineCount();
+    for (int i = 0; i < spans.length; i++) {
+      Attachment a = spans[i];
+      int at = spanned.getSpanStart(a);
+      int line = l.getLineForOffset(at);
+      boolean shown = lines > 0 && at < l.getLineEnd(lines - 1);
+      if (shown && l.getEllipsisCount(line) > 0)
+        shown = at < l.getLineStart(line) + l.getEllipsisStart(line);
+      if (!shown) {
+        out[i * 2] = Float.NaN;
+        out[i * 2 + 1] = Float.NaN;
+        continue;
+      }
+      float x = l.getPrimaryHorizontal(at);
+      if (l.isRtlCharAt(at)) x -= a.width;
+      out[i * 2] = x / density;
+      out[i * 2 + 1] = (l.getLineBaseline(line) - a.ascent) / density;
+    }
+    return out;
+  }
+
+  /** A hit: the offset in the low 32 bits, bit 32 for a caret at the end of a wrapped line. */
+  private static long packHit(int offset, boolean upstream) {
+    return (upstream ? 1L << 32 : 0L) | (offset & 0xffffffffL);
+  }
+
+  /** The offset (UTF-16) of a {@link #hitTest} result. */
+  static int hitOffset(long hit) {
+    return (int) hit;
+  }
+
+  /**
+   * Whether a {@link #hitTest} result is the end of a wrapped line, on that line ({@code
+   * Affinity::Upstream}).
+   */
+  static boolean hitUpstream(long hit) {
+    return (hit >>> 32) != 0;
+  }
+
+  /**
+   * The caret nearest ({@code x}, {@code y}) of a final layout. {@code density}: px per unit of
+   * {@code x} and {@code y} (1 when the caller already has pixels).
+   */
+  static long hitTest(Object layout, float x, float y, float density) {
+    if (!(layout instanceof Layout)) return 0;
+    Layout l = (Layout) layout;
+    int lines = l.getLineCount();
+    if (lines == 0) return 0;
+    x *= density;
+    y *= density;
+    int line = l.getLineForVertical((int) y);
+    int offset = l.getOffsetForHorizontal(line, x);
+    int end = l.getLineEnd(line);
+    if (line < lines - 1
+        && end > l.getLineStart(line)
+        && breakStart(l, line) == end
+        && l.isRtlCharAt(end - 1) == (l.getParagraphDirection(line) == Layout.DIR_RIGHT_TO_LEFT)) {
+      float endX = wrappedEndX(l, line);
+      if (offset == l.getOffsetForHorizontal(line, endX)
+          && Math.abs(x - endX) < Math.abs(x - l.getPrimaryHorizontal(offset))) {
+        return packHit(end, true);
+      }
+    }
+    return packHit(offset, false);
+  }
+
+  private static int breakStart(Layout l, int line) {
+    int start = l.getLineStart(line), end = l.getLineEnd(line);
+    if (end <= start) return end;
+    CharSequence text = l.getText();
+    char c = text.charAt(end - 1);
+    if (c != '\n' && c != '\r' && c != '\u0085' && c != '\u2028' && c != '\u2029') return end;
+    return c == '\n' && end - 1 > start && text.charAt(end - 2) == '\r' ? end - 2 : end - 1;
+  }
+
+  private static float wrappedEndX(Layout l, int line) {
+    float width = l.getLineWidth(line);
+    float start = l.getPrimaryHorizontal(l.getLineStart(line));
+    return l.getParagraphDirection(line) == Layout.DIR_RIGHT_TO_LEFT
+        ? start - width
+        : start + width;
+  }
+
+  /**
+   * An attachment's placeholder: its size, placed in its line by its {@code verticalAlign} (as
+   * {@code TextAttachment::extent} places it, with the run's font metrics). Draws nothing.
+   */
+  static final class Attachment extends android.text.style.ReplacementSpan {
+    static final int BASELINE = 0, TEXT_TOP = 1, TEXT_BOTTOM = 2, MIDDLE = 3;
+    final int width, height, align;
+    int ascent;
+
+    Attachment(int width, int height, int align) {
+      this.width = width;
+      this.height = height;
+      this.align = align;
+      this.ascent = height;
+    }
+
+    @Override
+    public int getSize(
+        Paint paint, CharSequence text, int start, int end, Paint.FontMetricsInt fm) {
+      if (align != BASELINE) {
+        Paint.FontMetrics font = paint.getFontMetrics();
+        switch (align) {
+          case TEXT_TOP:
+            ascent = Math.round(-font.ascent);
+            break;
+          case TEXT_BOTTOM:
+            ascent = Math.round(height - font.descent);
+            break;
+          default:
+            {
+              android.graphics.Rect x = new android.graphics.Rect();
+              paint.getTextBounds("x", 0, 1, x);
+              ascent = Math.round((height - x.top) / 2f);
+              break;
+            }
+        }
+      }
+      if (fm != null) {
+        Paint.FontMetricsInt own = paint.getFontMetricsInt();
+        fm.ascent = Math.min(own.ascent, -Math.max(0, ascent));
+        fm.top = Math.min(own.top, fm.ascent);
+        fm.descent = Math.max(own.descent, height - ascent);
+        fm.bottom = Math.max(own.bottom, fm.descent);
+        fm.leading = own.leading;
+      }
+      return width;
+    }
+
+    @Override
+    public void draw(
+        android.graphics.Canvas canvas,
+        CharSequence text,
+        int start,
+        int end,
+        float x,
+        int top,
+        int y,
+        int bottom,
+        Paint paint) {}
   }
 }

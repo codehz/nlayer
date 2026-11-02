@@ -2,11 +2,12 @@
 //!
 //! `TextLayouts.prepare` builds the styled text once per content, `measure`
 //! lays it out at any width, `layout` makes the final `StaticLayout` that
-//! the UI thread only draws.
+//! the UI thread only draws. Inline attachments are replacement spans of
+//! the attachment's size; `attachments` reports where the layout put them
+//! and `hit_test` is the caret a selection or an `href` press uses.
 //!
-//! Extracted from `nsh-platform-android/src/text.rs`. Custom fonts, shadows,
-//! decorations and inline attachments are not measured: v1 text is color,
-//! size, weight, italic and line height on the system font.
+//! Extracted from `nsh-platform-android/src/text.rs`. Custom fonts, shadows
+//! and decorations are not measured.
 
 use std::sync::{
     Arc,
@@ -14,10 +15,11 @@ use std::sync::{
 };
 
 use jni::{objects::JValue, sys::jvalue};
-use nlayer_core::geometry::{Points, Size, px};
-use nlayer_core::style::EllipsizeMode;
-use nlayer_core::style::{Color, TextAlign};
-use nlayer_core::text::{AttributedText, TextEngine, TextLayout, TextLine};
+use nlayer_core::geometry::{Point, Points, Size, px};
+use nlayer_core::style::{Color, EllipsizeMode, TextAlign, VerticalAlign};
+use nlayer_core::text::{
+    Affinity, AttachmentAlignments, AttributedText, TextEngine, TextLayout, TextLine, TextPosition,
+};
 
 use crate::encode::AndroidLayout;
 use crate::java::{java, with_env};
@@ -65,6 +67,14 @@ impl TextEngine for AndroidTextEngine {
     type Prepared = Prepared;
 
     fn prepare(&self, text: &AttributedText) -> Prepared {
+        self.prepare_aligned(text, &AttachmentAlignments::default())
+    }
+
+    fn prepare_aligned(
+        &self,
+        text: &AttributedText,
+        alignments: &AttachmentAlignments,
+    ) -> Prepared {
         let mut ints = Vec::with_capacity(text.spans.len() * SPAN_INTS);
         let mut floats = Vec::with_capacity(text.spans.len() * SPAN_FLOATS);
         for span in &text.spans {
@@ -98,6 +108,27 @@ impl TextEngine for AndroidTextEngine {
         };
         let density = self.density.get();
         let max_lines = text.max_lines as i32;
+        // Offset, width, height and `verticalAlign` (0 baseline, 1 text
+        // top, 2 text bottom, 3 middle). `TextLayouts.Attachment` places
+        // it as `TextAttachment::extent` does, with the run's font metrics.
+        let attachments: Vec<f32> = text
+            .attachments
+            .iter()
+            .flat_map(|attachment| {
+                let align = match alignments.get(attachment.index) {
+                    VerticalAlign::Baseline => 0.0,
+                    VerticalAlign::TextTop => 1.0,
+                    VerticalAlign::TextBottom => 2.0,
+                    VerticalAlign::Middle => 3.0,
+                };
+                [
+                    attachment.index as f32,
+                    attachment.width.0,
+                    attachment.height.0,
+                    align,
+                ]
+            })
+            .collect();
         Prepared(with_env(|env| {
             let cached = java();
             let string = env.new_string(&text.text)?;
@@ -105,6 +136,8 @@ impl TextEngine for AndroidTextEngine {
             env.set_int_array_region(&int_array, 0, &ints)?;
             let float_array = env.new_float_array(floats.len() as i32)?;
             env.set_float_array_region(&float_array, 0, &floats)?;
+            let attachment_array = env.new_float_array(attachments.len() as i32)?;
+            env.set_float_array_region(&attachment_array, 0, &attachments)?;
             let args = [
                 JValue::Object(&string).as_jni(),
                 JValue::Object(&int_array).as_jni(),
@@ -113,6 +146,7 @@ impl TextEngine for AndroidTextEngine {
                 JValue::Int(max_lines).as_jni(),
                 JValue::Int(ellipsize).as_jni(),
                 JValue::Float(density).as_jni(),
+                JValue::Object(&attachment_array).as_jni(),
             ];
             // SAFETY: the method id and argument types match the signature
             // checked in `java::init`.
@@ -225,5 +259,74 @@ impl TextEngine for AndroidTextEngine {
                 x_height: px(value[9]),
             })
             .collect()
+    }
+
+    fn attachments(&self, layout: &TextLayout) -> Vec<Option<Point<Points>>> {
+        let Some(AndroidLayout(obj)) = layout.downcast::<AndroidLayout>() else {
+            return Vec::new();
+        };
+        let floats = with_env(|env| {
+            let cached = java();
+            let args: [jvalue; 2] = [
+                JValue::Object(obj.as_obj()).as_jni(),
+                JValue::Float(self.density.get()).as_jni(),
+            ];
+            // SAFETY: matches the signature checked in `java::init`.
+            let array = unsafe {
+                env.call_static_method_unchecked(
+                    <&jni::objects::JClass<'_>>::from(cached.text.as_obj()),
+                    cached.text_attachments,
+                    jni::signature::ReturnType::Array,
+                    &args,
+                )
+            }?
+            .l()?;
+            let array = jni::objects::JFloatArray::from(array);
+            let len = env.get_array_length(&array)? as usize;
+            let mut out = vec![0f32; len];
+            env.get_float_array_region(&array, 0, &mut out)?;
+            Ok(out)
+        });
+        floats
+            .chunks_exact(2)
+            .map(|value| {
+                (!value[0].is_nan())
+                    .then_some(nlayer_core::geometry::point(px(value[0]), px(value[1])))
+            })
+            .collect()
+    }
+
+    fn hit_test(&self, layout: &TextLayout, at: Point<Points>) -> TextPosition {
+        let Some(AndroidLayout(obj)) = layout.downcast::<AndroidLayout>() else {
+            return TextPosition::default();
+        };
+        let packed = with_env(|env| {
+            let cached = java();
+            let args: [jvalue; 4] = [
+                JValue::Object(obj.as_obj()).as_jni(),
+                JValue::Float(at.x.0).as_jni(),
+                JValue::Float(at.y.0).as_jni(),
+                JValue::Float(self.density.get()).as_jni(),
+            ];
+            // SAFETY: matches the signature checked in `java::init`.
+            unsafe {
+                env.call_static_method_unchecked(
+                    <&jni::objects::JClass<'_>>::from(cached.text.as_obj()),
+                    cached.text_hit_test,
+                    jni::signature::ReturnType::Primitive(jni::signature::Primitive::Long),
+                    &args,
+                )
+            }?
+            .j()
+        });
+        // The offset in the low 32 bits, bit 32 set at the end of a wrapped
+        // line (`TextLayouts.hitTest`).
+        let offset = u32::try_from(packed & 0xffff_ffff).unwrap_or_default();
+        let affinity = if (packed >> 32) & 1 != 0 {
+            Affinity::Upstream
+        } else {
+            Affinity::Downstream
+        };
+        TextPosition::new(offset, affinity)
     }
 }

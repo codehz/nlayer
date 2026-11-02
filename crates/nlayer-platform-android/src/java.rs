@@ -23,6 +23,8 @@ pub(crate) struct Java {
     pub(crate) text_measure: JStaticMethodID,
     pub(crate) text_layout: JStaticMethodID,
     pub(crate) text_lines: JStaticMethodID,
+    pub(crate) text_attachments: JStaticMethodID,
+    pub(crate) text_hit_test: JStaticMethodID,
     /// `dev.nlayer.android.HostView`.
     pub(crate) view_submit: JMethodID,
     pub(crate) view_report_error: JMethodID,
@@ -57,7 +59,7 @@ pub(crate) fn init(vm: JavaVM) -> jni::errors::Result<()> {
         text_prepare: env.get_static_method_id(
             text_class,
             "prepare",
-            "(Ljava/lang/String;[I[FIIIF)Ljava/lang/Object;",
+            "(Ljava/lang/String;[I[FIIIF[F)Ljava/lang/Object;",
         )?,
         text_measure: env.get_static_method_id(text_class, "measure", "(Ljava/lang/Object;F)J")?,
         text_layout: env.get_static_method_id(
@@ -66,6 +68,16 @@ pub(crate) fn init(vm: JavaVM) -> jni::errors::Result<()> {
             "(Ljava/lang/Object;FF)Ljava/lang/Object;",
         )?,
         text_lines: env.get_static_method_id(text_class, "lines", "(Ljava/lang/Object;F)[F")?,
+        text_attachments: env.get_static_method_id(
+            text_class,
+            "attachments",
+            "(Ljava/lang/Object;F)[F",
+        )?,
+        text_hit_test: env.get_static_method_id(
+            text_class,
+            "hitTest",
+            "(Ljava/lang/Object;FFF)J",
+        )?,
         view_submit: env.get_method_id(view_class, "submit", "([B[Ljava/lang/Object;)V")?,
         view_report_error: env.get_method_id(view_class, "reportError", "(Ljava/lang/String;)V")?,
         view_snapshot: env.get_method_id(view_class, "snapshot", "()Ljava/lang/String;")?,

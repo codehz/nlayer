@@ -370,3 +370,16 @@ Copied files:
   `check_attachments` and `place_attachments`; `Prop::SelectableView` becomes
   `Prop::Selectable` and the `href` press path is nlayer's, through the same
   `check_url`)
+- `crates/nlayer-platform-android/src/selectable_view.rs` and
+  `java/dev/nlayer/android/SelectableView.java` from
+  `crates/nsh-platform-android/src/selectable_view.rs` and
+  `java/com/longbridge/nsh/SelectableView.java` (one selection across a
+  view's texts, in reading order; kept virtual-list rows are not copied)
+- `crates/nlayer-platform-android/java/dev/nlayer/android/SelectionHandle.java`
+  from `java/com/longbridge/nsh/SelectionHandle.java` (the theme's handle
+  drawables in a popup)
+- the selection section of
+  `crates/nlayer-platform-android/java/dev/nlayer/android/TextBox.java` and
+  the attachment spans, `attachments` and `hitTest` of `TextLayouts.java`
+  from `java/com/longbridge/nsh/TextBox.java` and `TextLayouts.java` (one
+  long-press timer; no Java word breaker)

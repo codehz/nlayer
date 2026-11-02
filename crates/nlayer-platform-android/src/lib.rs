@@ -6,13 +6,14 @@
 //! that stream.
 //!
 //! Extracted from `nsh-platform-android` (`encode.rs`, `host.rs`, `text.rs`,
-//! `java.rs`) and cut to views, text, images, one-axis scroll, virtualized lists and
-//! a text field (one line or several, with selection and compositions). `onPress` is the view's own touch: a nested span wins
-//! over its text view, and a view that does not take one leaves the touch
-//! for the nearest ancestor that does. A scroll view reports `onScroll` (at
-//! most once per frame), drag and momentum, with the content offset, content
-//! size and visible size. `nlayer test` drives the mounted tree through the
-//! view system's own touch, input connection and scroll view.
+//! `java.rs`, `selectable_view.rs`) and cut to views, text, images, one-axis
+//! scroll, virtualized lists, a text field and text selection (one block, or
+//! one area). `onPress` is the view's own touch: a nested span wins over its
+//! text view, and a view that does not take one leaves the touch for the
+//! nearest ancestor that does. A scroll view reports `onScroll` (at most once
+//! per frame), drag and momentum, with the content offset, content size and
+//! visible size. `nlayer test` drives the mounted tree through the view
+//! system's own touch, input connection and scroll view.
 
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 mod animation;
@@ -29,6 +30,8 @@ mod driver;
 mod host;
 #[cfg(target_os = "android")]
 mod java;
+#[cfg(target_os = "android")]
+mod selectable_view;
 #[cfg(target_os = "android")]
 mod text;
 

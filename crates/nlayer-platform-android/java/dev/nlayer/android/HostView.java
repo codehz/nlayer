@@ -56,6 +56,14 @@ public final class HostView extends FrameLayout {
     mounter = new Mounter(this);
   }
 
+  @Override
+  public boolean dispatchTouchEvent(android.view.MotionEvent event) {
+    if (event.getActionMasked() == android.view.MotionEvent.ACTION_DOWN) {
+      mounter.touchDown(event.getRawX(), event.getRawY());
+    }
+    return super.dispatchTouchEvent(event);
+  }
+
   private final Choreographer.FrameCallback animationFrame =
       new Choreographer.FrameCallback() {
         public void doFrame(long frameTimeNanos) {
