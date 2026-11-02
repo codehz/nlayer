@@ -127,11 +127,13 @@ test("safe-area env insets pad the view", () => {
   const nodes = flat(app.tree(), []);
   const inset = holder(nodes, "Inset").children[0];
   expect(inset.frame.x).toBe(10);
-  expect(inset.frame.y).toBe(22);
+  // The page sits under a native header, which already covers the top
+  // inset. Left is still the window's.
+  expect(inset.frame.y).toBe(0);
   const safe = must(nodes.find((node) => node.testID === "safe"));
   const title = must(safe.children[0]);
   expect(title.frame.x).toBe(26);
-  expect(title.frame.y).toBe(38);
+  expect(title.frame.y).toBe(16);
   const section = must(safe.children.find((node) => node.kind === "view"));
   expect(section.frame.x).toBe(26);
   expect(section.frame.x + section.frame.width).toBe(safe.frame.width - 24);

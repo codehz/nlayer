@@ -761,6 +761,26 @@ impl<M: TextEngine> Session<M> {
     fn apply(&mut self, message: Message) -> bool {
         match message {
             Message::Event { id, event, payload } => {
+                if event == EventKind::Insets
+                    && let EventPayload::Insets {
+                        top,
+                        right,
+                        bottom,
+                        left,
+                    } = &payload
+                {
+                    // `env()` inside the screen or modal follows this, not
+                    // the window safe area the header already covers.
+                    self.core.set_root_insets(
+                        id,
+                        Edges {
+                            top: Points(*top),
+                            right: Points(*right),
+                            bottom: Points(*bottom),
+                            left: Points(*left),
+                        },
+                    );
+                }
                 if event == EventKind::Scroll
                     && let EventPayload::Scroll { x, y, .. } = &payload
                 {

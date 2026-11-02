@@ -267,8 +267,13 @@ struct StatePaint {
 struct RootState {
     /// Size the platform reported for the root (modals).
     reported: Option<Size<Points>>,
-    /// Safe-area insets the platform reported for the root (modals).
+    /// Safe-area insets the platform reported for this root. `env()` inside
+    /// it reads them once `insets_set` is set; until then a screen whose
+    /// native header covers the top uses no top inset.
     insets: crate::geometry::Edges<Points>,
+    /// The platform has reported [`Self::insets`] (a screen's `onInsets`,
+    /// or a modal's size report).
+    insets_set: bool,
     /// Height of the header the platform measured above the content
     /// (screens; until then, estimated from the bar's height and the safe
     /// area).
@@ -595,9 +600,9 @@ impl<M: TextEngine> Core<M> {
         self.repick_images(old, pixel_ratio);
     }
 
-    /// Safe-area insets of the surface. Padding and margin that name
-    /// `env(safe-area-inset-*)` follow them. One surface: v1 has no
-    /// per-screen insets.
+    /// Safe-area insets of the surface. `env(safe-area-inset-*)` outside a
+    /// screen or modal follows them. Inside one, `env()` uses the insets
+    /// that root reported; a native header covers the top until then.
     pub fn set_safe_area(&mut self, insets: Edges<Points>) {
         if self.safe_area != insets {
             self.safe_area = insets;
@@ -622,6 +627,9 @@ impl<M: TextEngine> Core<M> {
         if self.header_heights != (normal, large) {
             self.header_heights = (normal, large);
             self.needs_layout = true;
+            // A header appearing or leaving changes which top inset a
+            // screen's content is owed.
+            self.sync_env();
         }
     }
 
@@ -641,15 +649,48 @@ impl<M: TextEngine> Core<M> {
     }
 
     /// The platform presents root `id` (a modal) at `size`, with `insets`
-    /// of it covered by system UI.
+    /// of it covered by system UI. Those insets are what `env()` reads
+    /// inside the modal.
     pub fn set_root_size(&mut self, id: NodeId, size: Size<Points>, insets: Edges<Points>) {
         let Ok(key) = self.key(id) else { return };
-        if let Some(root) = self.nodes[key as usize].root.as_mut()
-            && (root.reported != Some(size) || root.insets != insets)
-        {
+        let insets_changed = {
+            let Some(root) = self.nodes[key as usize].root.as_mut() else {
+                return;
+            };
+            let insets_changed = !root.insets_set || root.insets != insets;
+            let size_changed = root.reported != Some(size);
+            if !insets_changed && !size_changed {
+                return;
+            }
             root.reported = Some(size);
             root.insets = insets;
-            self.needs_layout = true;
+            root.insets_set = true;
+            insets_changed
+        };
+        self.needs_layout = true;
+        if insets_changed {
+            self.sync_env();
+        }
+    }
+
+    /// The platform reported the insets of screen or modal `id` (`onInsets`):
+    /// what `env(safe-area-inset-*)` reads inside it. The top is what the
+    /// header does not already cover.
+    pub fn set_root_insets(&mut self, id: NodeId, insets: Edges<Points>) {
+        let Ok(key) = self.key(id) else { return };
+        let changed = {
+            let Some(root) = self.nodes[key as usize].root.as_mut() else {
+                return;
+            };
+            if root.insets_set && root.insets == insets {
+                return;
+            }
+            root.insets = insets;
+            root.insets_set = true;
+            true
+        };
+        if changed {
+            self.sync_env();
         }
     }
 
@@ -1288,7 +1329,7 @@ impl<M: TextEngine> Core<M> {
         style::resolve_normal_alignment(&mut layout);
         style::apply_direction(&mut layout, &mut view, &logical, rtl);
         let env_edges = pending.env;
-        let applied = (!env_edges.is_empty()).then(|| self.env_insets(&env_edges));
+        let applied = (!env_edges.is_empty()).then(|| self.env_insets(key, &env_edges));
         let node = &mut self.nodes[key as usize];
         let span_background_changed = node.inline
             && node.kind == Kind::Text
@@ -1773,7 +1814,17 @@ impl<M: TextEngine> Core<M> {
             }
             Prop::Screen(screen_prop) => {
                 use crate::ops::ScreenProp;
+                let mut cover_changed = false;
                 if let Some(root) = self.nodes[key as usize].root.as_mut() {
+                    cover_changed = match &screen_prop {
+                        ScreenProp::HeaderVisible(visible) => {
+                            root.screen.header_visible != *visible
+                        }
+                        ScreenProp::HeaderTransparent(transparent) => {
+                            root.screen.header_transparent != *transparent
+                        }
+                        _ => false,
+                    };
                     let config = &mut root.screen;
                     match screen_prop {
                         ScreenProp::Title(title) => config.title = title,
@@ -1802,6 +1853,11 @@ impl<M: TextEngine> Core<M> {
                         .laid_out = None;
                     self.nodes[key as usize].dirty |= dirty::SCREEN;
                     self.needs_layout = true;
+                }
+                // Showing, hiding or making the header transparent changes
+                // whether the content still owes the surface's top inset.
+                if cover_changed {
+                    self.sync_env();
                 }
             }
             Prop::Modal(modal_prop) => {
@@ -1918,6 +1974,10 @@ impl<M: TextEngine> Core<M> {
         self.nodes[child as usize].parent = parent;
         self.nodes[parent as usize].children.insert(pos, child);
         self.update_direction(child);
+        // Style is applied before insert. `env()` was resolved with no
+        // parent then; the screen or modal this lands in may owe different
+        // insets.
+        self.refresh_env(child);
         // A header slot's options are part of the screen's config.
         if self.nodes[child as usize].kind == Kind::HeaderItem
             && self.nodes[parent as usize].kind == Kind::Screen
@@ -4323,10 +4383,46 @@ impl<M: TextEngine> Core<M> {
 }
 
 impl<M: TextEngine> Core<M> {
-    fn env_insets(&self, env: &EnvEdges) -> [Edges<Points>; 2] {
+    /// The insets `env()` uses for `key`: its screen's or modal's, once
+    /// reported, else the surface safe area. A native header covers the
+    /// top until the screen reports (nsh `insets_of`).
+    fn insets_of(&self, key: Key) -> Edges<Points> {
+        let safe = self.safe_area;
+        let mut k = key;
+        loop {
+            let node = &self.nodes[k as usize];
+            if matches!(node.kind, Kind::Screen | Kind::Modal)
+                && let Some(root) = node.root.as_ref()
+            {
+                if root.insets_set {
+                    return root.insets;
+                }
+                if node.kind == Kind::Screen && self.header_covers_top(&root.screen) {
+                    return Edges {
+                        top: Points::ZERO,
+                        ..safe
+                    };
+                }
+                return safe;
+            }
+            if node.parent == NO_KEY || k == self.root {
+                return safe;
+            }
+            k = node.parent;
+        }
+    }
+
+    /// A native header is drawn over the top of the screen, so content
+    /// below it does not also take the surface's top inset.
+    fn header_covers_top(&self, screen: &crate::ScreenConfig) -> bool {
+        self.native_header() && screen.header_visible && !screen.header_transparent
+    }
+
+    fn env_insets(&self, key: Key, env: &EnvEdges) -> [Edges<Points>; 2] {
+        let safe = self.insets_of(key);
         let edge = |term: Option<style::EnvTerm>| {
             term.map_or(Points::ZERO, |term| {
-                env_term(self.safe_area, self.keyboard_inset, term)
+                env_term(safe, self.keyboard_inset, term)
             })
         };
         let edges = |terms: &[Option<style::EnvTerm>; 4]| Edges {
@@ -4352,36 +4448,60 @@ impl<M: TextEngine> Core<M> {
                 stale.push(id);
                 continue;
             };
-            let Some(env) = self.nodes[key as usize].env.as_deref().map(|(env, _)| *env) else {
+            if self.nodes[key as usize].env.is_none() {
                 stale.push(id);
                 continue;
-            };
-            let now = self.env_insets(&env);
-            let was = self.nodes[key as usize].env.as_ref().expect("env").1;
-            if now == was {
-                continue;
             }
-            self.nodes[key as usize].env.as_mut().expect("env").1 = now;
-            if self.nodes[key as usize].kind == Kind::Scroll {
-                self.sync_scroll_style(key);
-                continue;
-            }
-            // A layout root is laid out from its base style every time.
-            if self.nodes[key as usize].kind.is_layout_root()
-                && let Some(base) = self.nodes[key as usize].base_layout.as_deref_mut()
-            {
-                shift_insets(base, was, now);
-            }
-            let Some(layout) = self.nodes[key as usize].layout else {
-                continue;
-            };
-            let mut style = self.layout.style(layout).clone();
-            shift_insets(&mut style, was, now);
-            self.layout.set_style(layout, style);
-            self.needs_layout = true;
+            self.sync_env_key(key);
         }
         for id in stale {
             self.env_styled.remove(&id);
+        }
+    }
+
+    /// Restyles `key` when the insets its `env()` terms come to changed.
+    fn sync_env_key(&mut self, key: Key) {
+        let Some(env) = self.nodes[key as usize].env.as_deref().map(|(env, _)| *env) else {
+            return;
+        };
+        let now = self.env_insets(key, &env);
+        let was = self.nodes[key as usize].env.as_ref().expect("env").1;
+        if now == was {
+            return;
+        }
+        self.nodes[key as usize].env.as_mut().expect("env").1 = now;
+        if self.nodes[key as usize].kind == Kind::Scroll {
+            self.sync_scroll_style(key);
+            return;
+        }
+        // A layout root is laid out from its base style every time.
+        if self.nodes[key as usize].kind.is_layout_root()
+            && let Some(base) = self.nodes[key as usize].base_layout.as_deref_mut()
+        {
+            shift_insets(base, was, now);
+        }
+        let Some(layout) = self.nodes[key as usize].layout else {
+            return;
+        };
+        let mut style = self.layout.style(layout).clone();
+        shift_insets(&mut style, was, now);
+        self.layout.set_style(layout, style);
+        self.needs_layout = true;
+    }
+
+    /// `key` moved under a screen or modal. Its `env()` nodes, styled
+    /// before they were inserted, follow that root's insets.
+    fn refresh_env(&mut self, key: Key) {
+        let mut stack = vec![key];
+        let mut keys = Vec::new();
+        while let Some(k) = stack.pop() {
+            if self.nodes[k as usize].env.is_some() {
+                keys.push(k);
+            }
+            stack.extend(self.nodes[k as usize].children.iter().copied());
+        }
+        for k in keys {
+            self.sync_env_key(k);
         }
     }
 }
@@ -6311,6 +6431,178 @@ mod tests {
         let batch = c.commit().unwrap();
         assert_eq!(frame(&batch, 2).size.height, px(52.0));
         assert_eq!(frame(&batch, 4).origin.y, px(52.0));
+    }
+
+    #[test]
+    fn screen_env_does_not_repeat_the_header_safe_area() {
+        let mut c = core();
+        c.set_safe_area(Edges {
+            top: px(20.0),
+            right: px(4.0),
+            bottom: px(34.0),
+            left: px(12.0),
+        });
+        let padded = || {
+            let mut style = Style::default();
+            style
+                .set(
+                    "paddingTop",
+                    StyleValue::Str("calc(env(safe-area-inset-top) + 8px)"),
+                )
+                .unwrap();
+            style
+                .set(
+                    "paddingBottom",
+                    StyleValue::Str("env(safe-area-inset-bottom)"),
+                )
+                .unwrap();
+            style
+        };
+        // On the surface. Style before insert, as the runtime does.
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::View,
+        })
+        .unwrap();
+        apply_style(&mut c, 2, padded());
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::View,
+        })
+        .unwrap();
+        apply_style(&mut c, 3, sized(10.0, 10.0));
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+
+        // On a screen whose native header already covers the top inset.
+        c.apply(Op::Create {
+            id: 4,
+            tag: Tag::Stack,
+        })
+        .unwrap();
+        apply_style(&mut c, 4, sized(100.0, 180.0));
+        c.apply(Op::Create {
+            id: 6,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 8,
+            tag: Tag::View,
+        })
+        .unwrap();
+        apply_style(&mut c, 8, padded());
+        c.apply(Op::Create {
+            id: 9,
+            tag: Tag::View,
+        })
+        .unwrap();
+        apply_style(&mut c, 9, sized(10.0, 10.0));
+        c.apply(Op::Insert {
+            parent: 8,
+            child: 9,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 6,
+            child: 8,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 4,
+            child: 6,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+
+        // A transparent header does not cover the top.
+        c.apply(Op::Create {
+            id: 10,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 10,
+            prop: Prop::Screen(crate::ops::ScreenProp::HeaderTransparent(true)),
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 11,
+            tag: Tag::View,
+        })
+        .unwrap();
+        apply_style(&mut c, 11, padded());
+        c.apply(Op::Create {
+            id: 12,
+            tag: Tag::View,
+        })
+        .unwrap();
+        apply_style(&mut c, 12, sized(10.0, 10.0));
+        c.apply(Op::Insert {
+            parent: 11,
+            child: 12,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 10,
+            child: 11,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 4,
+            child: 10,
+            before: None,
+        })
+        .unwrap();
+
+        let batch = c.commit().unwrap();
+        let pad = |batch: &MountBatch, view: NodeId, child: NodeId| {
+            (frame(batch, child).origin.y, frame(batch, view).size.height)
+        };
+        // Surface: 20 + 8 top, 34 bottom, around a 10pt child.
+        assert_eq!(pad(&batch, 2, 3), (px(28.0), px(72.0)));
+        // Header covers the top (8 + 10 + 34). The bottom is still the surface's.
+        assert_eq!(pad(&batch, 8, 9), (px(8.0), px(52.0)));
+        assert_eq!(pad(&batch, 11, 12), (px(28.0), px(72.0)));
+
+        c.set_root_insets(
+            6,
+            Edges {
+                top: px(3.0),
+                bottom: px(9.0),
+                ..Edges::default()
+            },
+        );
+        let batch = c.commit().unwrap();
+        // 3 + 8 top, 9 bottom. The surface and the transparent screen are
+        // not in this batch: their insets did not change.
+        assert_eq!(pad(&batch, 8, 9), (px(11.0), px(30.0)));
+        assert!(
+            batch
+                .items
+                .iter()
+                .all(|item| { !matches!(item, MountItem::Frame { id: 3 | 12, .. }) })
+        );
     }
 
     #[test]
