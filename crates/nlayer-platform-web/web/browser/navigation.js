@@ -120,9 +120,11 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
       popped.get(node)?.();
       props.onDismiss?.();
     });
-    // onBackPress must be reactive: the gallery toggles popOnBack at runtime,
-    // and the engine's prevent_back needs to update.
-    rt.bindProp(node, "onBackPress", () => props.onBackPress ?? null);
+    // Set only when the page passes one (nsh). `bindProp` keeps the
+    // engine's listener in step when the handler later appears or goes.
+    if ("onBackPress" in props) {
+      rt.bindProp(node, "onBackPress", () => props.onBackPress ?? null);
+    }
     const parts = [
       ["left", "headerLeft"],
       ["right", "headerRight"],
