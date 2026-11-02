@@ -670,7 +670,8 @@ type Route =
   | { name: "gesture" }
   | { name: "list" }
   | { name: "header" }
-  | { name: "viewport-parent" };
+  | { name: "viewport-parent" }
+  | { name: "reading" };
 function DialogDemoPage(props: { nav: NavStackHandle }) {
   const dialogOpen = signal(false);
   const dialogAnimation = signal<"fade" | "slide" | "none">("fade");
@@ -1213,6 +1214,131 @@ function ViewportParentPage(props: { nav: NavStackHandle }) {
     </View>
   );
 }
+function ReadingPage(props: { nav: NavStackHandle }) {
+  const pressed = signal(0);
+  return (
+    <Scroll testID="reading-page" style={{ flex: 1, backgroundColor: "#f8fafc" }}>
+      <View
+        style={{
+          paddingTop: "calc(env(safe-area-inset-top) + 16px)",
+          paddingRight: "calc(env(safe-area-inset-right) + 16px)",
+          paddingBottom: 32,
+          paddingLeft: "calc(env(safe-area-inset-left) + 16px)",
+        }}
+      >
+        <Text
+          testID="reading-back"
+          onPress={() => props.nav.pop()}
+          style={{ color: "#3b82f6", fontWeight: "600", marginBottom: 8 }}
+        >
+          ← Gallery
+        </Text>
+        <Text style={{ fontSize: 28, fontWeight: "700", color: "#0f172a" }}>Reading</Text>
+        <Text style={{ fontSize: 14, color: "#64748b" }}>
+          v4: selectable text, inline views, href links
+        </Text>
+
+        <Section title="Selectable paragraph">
+          <Text
+            testID="reading-selectable-paragraph"
+            style={{
+              fontSize: 16,
+              lineHeight: 26,
+              color: "#0f172a",
+              userSelect: "text",
+              selectionColor: "#93c5fd",
+            }}
+          >
+            {"Long-press a word here to select it"}
+            <Text style={{ fontWeight: "700" }}>{" — and this nested span comes too"}</Text>
+            {". The handles extend and the system menu copies it."}
+          </Text>
+        </Section>
+
+        <Section title="Selectable view">
+          <View testID="reading-selectable" selectable style={{ gap: 12 }}>
+            <Text
+              testID="reading-para-one"
+              style={{
+                fontSize: 16,
+                lineHeight: 26,
+                color: "#0f172a",
+                selectionColor: "#fde68a",
+              }}
+            >
+              A selection started here continues through the paragraphs below, in reading order.
+            </Text>
+            <Text
+              testID="reading-none-label"
+              style={{ fontSize: 12, fontWeight: "600", color: "#64748b", userSelect: "none" }}
+            >
+              Caption — not selectable
+            </Text>
+            <Text
+              testID="reading-para-two"
+              style={{
+                fontSize: 16,
+                lineHeight: 26,
+                color: "#0f172a",
+                selectionColor: "#fde68a",
+              }}
+            >
+              So this paragraph joins the same selection, while the caption between them is skipped.
+            </Text>
+          </View>
+        </Section>
+
+        <Section title="Inline view and image">
+          <Text testID="reading-inline" style={{ fontSize: 16, lineHeight: 26, color: "#0f172a" }}>
+            {"Made with "}
+            <Image
+              src={mark}
+              style={{ width: 18, height: 18, borderRadius: 4, verticalAlign: "text-top" }}
+            />
+            {" and shipped "}
+            <View
+              testID="reading-inline-badge"
+              style={{
+                height: 18,
+                paddingHorizontal: 7,
+                borderRadius: 9,
+                backgroundColor: "#dcfce7",
+                justifyContent: "center",
+                verticalAlign: "middle",
+              }}
+            >
+              <Text style={{ fontSize: 10, fontWeight: "700", color: "#166534" }}>LIVE</Text>
+            </View>
+            {" today."}
+          </Text>
+        </Section>
+
+        <Section title="Link">
+          <Text
+            testID="reading-terms-parent"
+            onPress={() => pressed.set(pressed() + 1)}
+            style={{ fontSize: 15, lineHeight: 24, color: "#0f172a" }}
+          >
+            {"By continuing you agree to the "}
+            <Text
+              testID="reading-terms"
+              href="https://example.com/terms"
+              onPress={() => pressed.set(pressed() + 1)}
+              style={{ color: "#2563eb", textDecorationLine: "underline" }}
+            >
+              Terms of service
+            </Text>
+            {"."}
+          </Text>
+          <Text testID="reading-press-count" style={{ fontSize: 12, color: "#64748b" }}>
+            Link pressed: {pressed()}
+          </Text>
+        </Section>
+      </View>
+    </Scroll>
+  );
+}
+
 function HomePage() {
   return (
     <Scroll testID="page" style={{ flex: 1, backgroundColor: "#f8fafc" }}>
@@ -1297,6 +1423,13 @@ function HomePage() {
           >
             → List viewport="parent" (nested in Scroll)
           </Text>
+          <Text
+            testID="open-reading"
+            onPress={() => nav.push({ name: "reading" })}
+            style={{ color: "#3b82f6", fontWeight: "600", padding: 8 }}
+          >
+            → Reading (selection, inline views, href)
+          </Text>
         </Section>
       </View>
     </Scroll>
@@ -1371,6 +1504,9 @@ function App() {
         } else if (r.name === "viewport-parent") {
           content = <ViewportParentPage nav={nav} />;
           title = "Viewport Parent";
+        } else if (r.name === "reading") {
+          content = <ReadingPage nav={nav} />;
+          title = "Reading";
         } else {
           content = <Text>Unknown route</Text>;
         }

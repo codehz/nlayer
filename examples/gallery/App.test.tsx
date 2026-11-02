@@ -650,3 +650,77 @@ test("header demo shows title and header props", () => {
   app.press("header-back");
   app.waitFor("page"); // Wait for home page scroll view
 });
+
+test("reading screen shows its selectable texts", () => {
+  const app = open("./App.tsx");
+  reveal(app, (n) => n.testID === "open-reading");
+  app.press("open-reading");
+  app.waitFor("reading-page");
+
+  const texts = app.texts();
+  const has = (part: string) => texts.some((text) => text.includes(part));
+  expect(has("Long-press a word here to select it — and this nested span comes too")).toBe(true);
+  expect(has("A selection started here continues through the paragraphs below")).toBe(true);
+  expect(has("Caption — not selectable")).toBe(true);
+  expect(has("So this paragraph joins the same selection")).toBe(true);
+  expect(has("By continuing you agree to the Terms of service.")).toBe(true);
+
+  const nodes = flat(app.tree(), []);
+  const paragraph = must(nodes.find((node) => node.testID === "reading-selectable-paragraph"));
+  expect(paragraph.kind).toBe("text");
+  expect(paragraph.userSelect).toBe(true);
+  expect(paragraph.selectionColor).toBe("#93c5fdff");
+  expect(app.selectionOwner("reading-selectable-paragraph")).toBe(paragraph.id);
+
+  const view = must(nodes.find((node) => node.testID === "reading-selectable"));
+  expect(view.selectable).toBe(true);
+  expect(app.selectionOwner("reading-para-one")).toBe(view.id);
+  expect(app.selectionOwner("reading-para-two")).toBe(view.id);
+  expect(app.selectionOwner("reading-none-label")).toBe(null);
+
+  const skipped = must(nodes.find((node) => node.testID === "reading-none-label"));
+  expect(skipped.userSelect).toBe(false);
+  const one = must(nodes.find((node) => node.testID === "reading-para-one"));
+  expect(one.userSelect).toBe(undefined);
+  expect(one.selectionColor).toBe("#fde68aff");
+});
+
+test("reading screen places its inline view and image in the text", () => {
+  const app = open("./App.tsx");
+  reveal(app, (n) => n.testID === "open-reading");
+  app.press("open-reading");
+  app.waitFor("reading-page");
+
+  const inline = must(flat(app.tree(), []).find((node) => node.testID === "reading-inline"));
+  expect(inline.kind).toBe("text");
+  const image = must(
+    inline.children.find(
+      (node) => node.kind === "image" && String(node.src).indexOf("asset:/mark.png") === 0,
+    ),
+  );
+  expect(image.frame.width).toBe(18);
+  expect(image.frame.height).toBe(18);
+  const badge = must(inline.children.find((node) => node.testID === "reading-inline-badge"));
+  expect(badge.kind).toBe("view");
+  expect(badge.frame.height).toBe(18);
+  expect(badge.frame.width > 0).toBe(true);
+  expect(badge.children.some((node) => node.text === "LIVE")).toBe(true);
+});
+
+test("a press on the reading link opens it and reports to the press handler", () => {
+  const app = open("./App.tsx");
+  reveal(app, (n) => n.testID === "open-reading");
+  app.press("open-reading");
+  app.waitFor("reading-page");
+
+  app.scroll("reading-page", 600);
+  app.press("reading-terms");
+  app.waitFor("Link pressed: 1");
+  expect(app.openedUrls()).toEqual(["https://example.com/terms"]);
+
+  // The paragraph's own `onPress` sees presses outside the nested span, and
+  // the span's press does not open a second time.
+  app.press("reading-terms-parent");
+  app.waitFor("Link pressed: 2");
+  expect(app.openedUrls()).toEqual(["https://example.com/terms"]);
+});

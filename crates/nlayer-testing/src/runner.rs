@@ -19,7 +19,7 @@ use std::{
 
 use nlayer_bundler::{BundleOptions, bundle};
 use nlayer_core::{
-    KeyboardType, ROOT_ID, ResizeMode, ViewKind,
+    KeyboardType, NodeId, ROOT_ID, ResizeMode, ViewKind,
     geometry::{Bounds, Edges, Points, Size, px},
     text::ApproxTextEngine,
     transform::TransformKind,
@@ -230,6 +230,14 @@ pub trait HostedApp {
     fn wait_for(&mut self, selector: &str) -> Result<(), String>;
     /// The mounted tree: kind, text, input, frame.
     fn tree(&mut self) -> Result<serde_json::Value, String>;
+    /// What owns the selection of the text `selector` names.
+    fn selection_owner(&mut self, _selector: &str) -> Result<Option<NodeId>, String> {
+        Err("this host has no text selection".to_owned())
+    }
+    /// The URLs short presses on `Text` `href`s opened, in order.
+    fn opened_urls(&mut self) -> Result<Vec<String>, String> {
+        Err("this host cannot open URLs".to_owned())
+    }
     /// Drags `selector` by (`x`, `y`) points.
     fn drag(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String>;
     /// Drags `selector` by (`x`, `y`) but keeps pointer down.
@@ -774,6 +782,18 @@ impl Session {
                 let app = self.app_mut(parse_id(payload)?)?;
                 json(&app.tree()?)
             }
+            "selectionOwner" => {
+                let request: PressRequest =
+                    serde_json::from_str(payload).map_err(|e| e.to_string())?;
+                let owner = self
+                    .app_mut(request.id)?
+                    .selection_owner(&request.selector)?;
+                json(&owner)
+            }
+            "openedUrls" => {
+                let app = self.app_mut(parse_id(payload)?)?;
+                json(&app.opened_urls()?)
+            }
             "close" => {
                 let id = parse_id(payload)?;
                 if let Some(mut app) = self.apps.get_mut(id).and_then(Option::take) {
@@ -973,6 +993,16 @@ impl HostedApp for HeadlessApp {
         Ok(node_json(&root, screen))
     }
 
+    fn selection_owner(&mut self, selector: &str) -> Result<Option<NodeId>, String> {
+        let app = self.app()?;
+        let target = crate::selector::resolve(app.screen(), selector)?;
+        Ok(app.screen().selection_owner(target.view()))
+    }
+
+    fn opened_urls(&mut self) -> Result<Vec<String>, String> {
+        Ok(self.app()?.opened_urls())
+    }
+
     fn drag(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String> {
         self.app.as_mut().ok_or("closed")?.drag(selector, x, y)
     }
@@ -1050,6 +1080,7 @@ fn style_color_hex(color: nlayer_core::style::Color) -> String {
 fn node_json(node: &TreeNode, screen: &Screen) -> serde_json::Value {
     let view = screen.view(node.id);
     let mut map = serde_json::Map::new();
+    map.insert("id".into(), node.id.into());
     map.insert("kind".into(), kind_name(node.kind).into());
     map.insert("frame".into(), frame_json(node.frame));
     if let Some(text) = &node.text {
@@ -1059,6 +1090,15 @@ fn node_json(node: &TreeNode, screen: &Screen) -> serde_json::Value {
         map.insert("testID".into(), test_id.as_ref().into());
     }
     if let Some(view) = view {
+        if let Some(selectable) = view.text_selectable {
+            map.insert("userSelect".into(), selectable.into());
+        }
+        if let Some(color) = view.selection_color {
+            map.insert("selectionColor".into(), style_color_hex(color).into());
+        }
+        if view.selectable {
+            map.insert("selectable".into(), true.into());
+        }
         let a = &view.accessibility;
         if a.role != nlayer_core::AccessibilityRole::None {
             map.insert("role".into(), a.role.name().into());

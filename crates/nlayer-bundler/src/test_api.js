@@ -135,6 +135,12 @@ export function open(entry, options) {
     tree() {
       return call("tree", id);
     },
+    selectionOwner(selector) {
+      return call("selectionOwner", { id, selector });
+    },
+    openedUrls() {
+      return call("openedUrls", id);
+    },
     close() {
       call("close", id);
     },

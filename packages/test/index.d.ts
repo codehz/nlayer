@@ -84,6 +84,8 @@ export interface AccessibilityValue {
 
 /** One view. `text` is a text view's content, `value` an input's, `src` an image's URL. */
 export interface Node {
+  /** The view's id, as `selectionOwner` reports it. */
+  id: number;
   kind: "view" | "text" | "image" | "scroll" | "input";
   frame: Frame;
   /** A view's `testID`, when it has one. */
@@ -96,6 +98,13 @@ export interface Node {
   accessibilityState?: AccessibilityState;
   accessibilityValue?: AccessibilityValue;
   text?: string;
+  /** A text view's resolved `userSelect`: `true` asks for selection, `false`
+   * is `"none"`, absent is unset. */
+  userSelect?: boolean;
+  /** A text view's selection highlight (`#rrggbb` or `#rrggbbaa`). */
+  selectionColor?: string;
+  /** `selectable` on a view: one selection across its texts. */
+  selectable?: boolean;
   /** Style runs of a text view, in order. `color` is `#rrggbb` or `#rrggbbaa`. */
   spans?: Array<{
     text: string;
@@ -182,6 +191,12 @@ export interface App {
   waitFor(selector: string): void;
   /** The mount tree from the surface root, with each view's frame. */
   tree(): Node;
+  /** What owns the selection of the text `selector` names: the outermost
+   * `selectable` view around it, else the text itself when it asks for
+   * selection, else `null`. */
+  selectionOwner(selector: string): number | null;
+  /** The URLs short presses on `Text` `href`s opened, in order. */
+  openedUrls(): string[];
   close(): void;
 }
 
