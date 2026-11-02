@@ -81,6 +81,8 @@ struct Slot {
     /// The press generation and whether this press already became long.
     long_generation: u64,
     long_fired: bool,
+    /// Selection took this gesture: the release is not a press or an `href`.
+    press_cancelled: bool,
     /// Listeners, including the scroll events. A scroll callback fires only
     /// a kind this contains.
     events: EventMask,
@@ -404,6 +406,13 @@ define_class!(
                 );
             }
 
+            if let Some(shared) = self.ivars().mounter.borrow().upgrade()
+                && let Ok(mounter) = shared.try_borrow()
+            {
+                for (_, area) in &mounter.areas {
+                    area.scrolled();
+                }
+            }
             self.scroll_event(scroll, EventKind::Scroll);
         }
 
@@ -864,6 +873,8 @@ pub(crate) struct Mounter {
     pending_rotation: std::collections::HashMap<NodeId, Option<u32>>,
     pending_bindings:
         std::collections::HashMap<NodeId, Vec<(nlayer_core::animation::AnimationProp, u32)>>,
+    /// Selectable views and the responder that owns each selection.
+    areas: Vec<(NodeId, Retained<crate::selectable_view::AreaResponder>)>,
 }
 
 impl Mounter {
@@ -903,6 +914,7 @@ impl Mounter {
             pending_pinch: std::collections::HashMap::new(),
             pending_rotation: std::collections::HashMap::new(),
             pending_bindings: std::collections::HashMap::new(),
+            areas: Vec::new(),
         }));
         CURRENT.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&mounter)));
         relay.bind(Rc::downgrade(&mounter));
@@ -1164,6 +1176,9 @@ impl Mounter {
         self.finish_navigation();
         self.apply_animations();
         self.report_finished();
+        for (_, area) in &self.areas {
+            area.batch_applied();
+        }
     }
 
     /// Runs one display frame: the graph moves, bound values are painted,
@@ -1328,11 +1343,13 @@ impl Mounter {
                 if self.remove_hosted(id) {
                     return;
                 }
+                self.detach_area(id);
                 if let Some(view) = self.view(id) {
                     view.removeFromSuperview();
                 }
             }
             MountItem::Delete { id } => {
+                self.detach_area(id);
                 self.forget_scroll(id);
                 self.pending_pan.remove(&id);
                 self.pending_pinch.remove(&id);
@@ -1416,7 +1433,8 @@ impl Mounter {
                 let links = text
                     .links
                     .iter()
-                    .any(|link| link.events.contains(EventKind::Press));
+                    .any(|link| link.events.contains(EventKind::Press))
+                    || !text.hrefs.is_empty();
                 {
                     let Some(Native::Text(view)) = self.native(id) else {
                         return;
@@ -1557,13 +1575,9 @@ impl Mounter {
                 | nlayer_core::Command::ScrollToEnd { .. }
                 | nlayer_core::Command::Back
                 | nlayer_core::Command::GoBack => {}
-                nlayer_core::Command::OpenUrl { .. } => {
-                    // M2 opens it with `UIApplication.open`.
-                }
+                nlayer_core::Command::OpenUrl { url } => self.open_url(&url),
             },
-            MountItem::Selectable { .. } => {
-                // M2 mounts `UITextInteraction`; M1 only carries the mark.
-            }
+            MountItem::Selectable { id, selectable } => self.set_selectable_area(id, selectable),
             MountItem::Image {
                 id,
                 source,
@@ -2049,11 +2063,27 @@ impl Mounter {
             || state == UIGestureRecognizerState::Failed;
         let mut long = None;
         let mut fired = false;
+        let takes_selection = began
+            && self
+                .view(id)
+                .is_some_and(|view| crate::text_view::selection_takes_long_press(view, point));
+        if self.slot(id).is_some_and(|slot| slot.press_cancelled) && !began {
+            if let Some(slot) = self.slot_mut(id) {
+                slot.pressed = false;
+                if ended || cancelled {
+                    slot.press_cancelled = false;
+                    slot.long_generation = slot.long_generation.wrapping_add(1);
+                }
+            }
+            self.repaint(id);
+            return;
+        }
         if let Some(slot) = self.slot_mut(id) {
             if began {
+                slot.press_cancelled = false;
                 slot.long_generation = slot.long_generation.wrapping_add(1);
                 slot.long_fired = false;
-                if slot.own_long {
+                if slot.own_long && !takes_selection {
                     long = Some((slot.long_generation, slot.delay_long));
                 }
             }
@@ -2092,6 +2122,80 @@ impl Mounter {
             control.dispatch_event(link, EventKind::Press, nlayer_engine::EventPayload::None);
         } else if own {
             control.dispatch_event(id, EventKind::Press, nlayer_engine::EventPayload::None);
+        }
+    }
+
+    /// Selection started on `id`: the pending long press never fires, and
+    /// the release is not `onPress` or an `href`.
+    pub(crate) fn cancel_press(&mut self, id: NodeId) {
+        let Some(slot) = self.slot_mut(id) else {
+            return;
+        };
+        slot.long_generation = slot.long_generation.wrapping_add(1);
+        slot.pressed = false;
+        slot.long_fired = false;
+        slot.press_cancelled = true;
+        self.repaint(id);
+    }
+
+    /// Cancels the press of `view` and of every ancestor that has one.
+    pub(crate) fn cancel_press_chain(&mut self, view: &UIView) {
+        let mut current = Some(view.retain());
+        while let Some(v) = current {
+            let id = v.tag() as NodeId;
+            if self
+                .slot(id)
+                .is_some_and(|slot| std::ptr::eq(slot.native.view(), &*v))
+            {
+                self.cancel_press(id);
+            }
+            current = v.superview();
+        }
+    }
+
+    /// Attaches or removes the selection of a selectable view.
+    fn set_selectable_area(&mut self, id: NodeId, selectable: bool) {
+        let existing = self.areas.iter().position(|(node, _)| *node == id);
+        if !selectable {
+            if let Some(index) = existing {
+                let (_, area) = self.areas.remove(index);
+                area.detach();
+            }
+            return;
+        }
+        if existing.is_some() {
+            return;
+        }
+        let Some(view) = self.view(id).map(|view| view.retain()) else {
+            return;
+        };
+        let area = crate::selectable_view::AreaResponder::attach(&view, self.mtm);
+        self.areas.push((id, area));
+    }
+
+    /// Drops a selectable view's selection when the view goes.
+    fn detach_area(&mut self, id: NodeId) {
+        if let Some(index) = self.areas.iter().position(|(node, _)| *node == id) {
+            let (_, area) = self.areas.remove(index);
+            area.detach();
+        }
+    }
+
+    /// Opens `url` with the system. One way: no result comes back.
+    fn open_url(&self, url: &str) {
+        let Some(url) =
+            objc2_foundation::NSURL::URLWithString(&objc2_foundation::NSString::from_str(url))
+        else {
+            return;
+        };
+        let options = objc2_foundation::NSDictionary::<
+            objc2_ui_kit::UIApplicationOpenExternalURLOptionsKey,
+            objc2::runtime::AnyObject,
+        >::new();
+        // SAFETY: an empty options dictionary and no completion handler.
+        unsafe {
+            objc2_ui_kit::UIApplication::sharedApplication(self.mtm)
+                .openURL_options_completionHandler(&url, &options, None);
         }
     }
 
@@ -3346,6 +3450,7 @@ impl Slot {
             delay_long: None,
             long_generation: 0,
             long_fired: false,
+            press_cancelled: false,
             events: EventMask::default(),
             link_press: false,
             hover: None,

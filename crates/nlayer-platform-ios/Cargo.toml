@@ -111,6 +111,11 @@ objc2-ui-kit = { version = "0.3.2", default-features = false, features = [
   "UIViewControllerTransitionCoordinator",
   "UIWindow",
   "UIWindowScene",
+  "UIInteraction",
+  "UITextInteraction",
+  "UITextInputTraits",
+  "UIPasteboard",
+  "UIMenuController",
 ] }
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
   "std",
@@ -139,6 +144,8 @@ objc2-core-text = { version = "0.3.2", default-features = false, features = [
   "CTFramesetter",
   "CTLine",
   "CTParagraphStyle",
+  "CTRun",
+  "CTRunDelegate",
   "CTStringAttributes",
   "CTTypesetter",
 ] }

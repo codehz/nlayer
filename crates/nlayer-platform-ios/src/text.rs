@@ -1,17 +1,21 @@
 //! CoreText text engine: typesets on the engine thread, draws on the main
 //! thread from finished `CTLine`s, so every text is laid out once.
 //!
-//! Extracted from `nsh-platform-ios/src/text.rs`. Inline attachments, custom
-//! font files, strikethrough, span backgrounds and caret geometry are not
-//! copied: v1 text is nested spans (color, size, weight, italic) plus
-//! alignment, line height and a solid underline.
+//! Extracted from `nsh-platform-ios/src/text.rs`. Inline attachments (a run
+//! delegate on U+FFFC, ascent and descent from [`TextAttachment::extent`])
+//! and the caret geometry selection uses (`hit_test`, caret and range
+//! rects) are copied from there. Custom font files, strikethrough and span
+//! backgrounds are not.
 
-use std::{cell::RefCell, ptr::NonNull};
+use std::{cell::RefCell, ffi::c_void, ptr::NonNull};
 
 use nlayer_core::{
-    geometry::{Points, Size},
-    style::{Color, EllipsizeMode, FontFamily, TextAlign},
-    text::{AttributedText, ResolvedTextStyle, TextEngine, TextLayout, TextLine},
+    geometry::{Bounds, Point, Points, Size},
+    style::{Color, EllipsizeMode, FontFamily, TextAlign, VerticalAlign},
+    text::{
+        Affinity, AttachmentAlignments, AttributedText, FontExtent, ResolvedTextStyle, TextEngine,
+        TextLayout, TextLine, TextPosition,
+    },
 };
 use objc2::rc::Retained;
 use objc2_core_foundation::{
@@ -21,12 +25,13 @@ use objc2_core_foundation::{
 use objc2_core_graphics::CGColor;
 use objc2_core_text::{
     CTFont, CTFontDescriptor, CTFontSymbolicTraits, CTFramesetter, CTLine, CTLineTruncationType,
-    CTParagraphStyle, CTParagraphStyleSetting, CTParagraphStyleSpecifier, CTTextAlignment,
-    CTTypesetter, CTWritingDirection, kCTFontAttributeName, kCTFontFamilyNameAttribute,
-    kCTFontFeatureSettingsAttribute, kCTFontOpenTypeFeatureTag, kCTFontOpenTypeFeatureValue,
-    kCTFontTraitsAttribute, kCTFontWeightTrait, kCTForegroundColorAttributeName,
-    kCTKernAttributeName, kCTParagraphStyleAttributeName, kCTUnderlineColorAttributeName,
-    kCTUnderlineStyleAttributeName,
+    CTParagraphStyle, CTParagraphStyleSetting, CTParagraphStyleSpecifier, CTRun, CTRunDelegate,
+    CTRunDelegateCallbacks, CTRunStatus, CTTextAlignment, CTTypesetter, CTWritingDirection,
+    kCTFontAttributeName, kCTFontFamilyNameAttribute, kCTFontFeatureSettingsAttribute,
+    kCTFontOpenTypeFeatureTag, kCTFontOpenTypeFeatureValue, kCTFontTraitsAttribute,
+    kCTFontWeightTrait, kCTForegroundColorAttributeName, kCTKernAttributeName,
+    kCTParagraphStyleAttributeName, kCTRunDelegateAttributeName, kCTRunDelegateCurrentVersion,
+    kCTUnderlineColorAttributeName, kCTUnderlineStyleAttributeName,
 };
 use objc2_ui_kit::{
     UIFont, UIFontWeight, UIFontWeightBlack, UIFontWeightBold, UIFontWeightHeavy,
@@ -43,6 +48,20 @@ struct FontCache {
 }
 
 type FontKey = (u32, u16, Option<FontFamily>, bool, u8);
+
+/// Attribute marking the ellipsis token of a truncated line (a `CFNumber`):
+/// its run claims the characters it cut, which are not on screen to select.
+fn ellipsis_key() -> &'static CFString {
+    static KEY: std::sync::LazyLock<CFStringKey> =
+        std::sync::LazyLock::new(|| CFStringKey(CFString::from_static_str("NlayerEllipsis")));
+    &KEY.0
+}
+
+struct CFStringKey(CFRetained<CFString>);
+// SAFETY: CFStrings are immutable and thread-safe.
+unsafe impl Send for CFStringKey {}
+// SAFETY: as above.
+unsafe impl Sync for CFStringKey {}
 
 impl FontCache {
     const MAX: usize = 64;
@@ -221,6 +240,8 @@ pub(crate) struct Prepared {
     max_lines: u32,
     ellipsize: EllipsizeMode,
     align: TextAlign,
+    /// Placeholder offset (UTF-16) and how far its top is above the baseline.
+    attachments: Vec<(CFIndex, CGFloat)>,
     breaks: Vec<(CFIndex, CFIndex)>,
 }
 
@@ -236,8 +257,9 @@ pub(crate) struct LaidLine {
     pub(crate) origin: CGPoint,
     pub(crate) range: CFRange,
     /// Where its caret positions end: before a hard break that ends the line.
-    #[allow(dead_code)]
     pub(crate) caret_end: CFIndex,
+    /// An ellipsis stands for the text after `range`.
+    truncated: bool,
     width: CGFloat,
     ascent: CGFloat,
     descent: CGFloat,
@@ -264,6 +286,8 @@ pub(crate) struct CoreTextLayout {
     pub(crate) lines: Vec<LaidLine>,
     /// The box's height (lines are placed y-up from its bottom).
     pub(crate) height: CGFloat,
+    /// Top left of each attachment's placeholder (y down), if shown.
+    attachments: Vec<Option<(f32, f32)>>,
 }
 
 // SAFETY: the lines are finished and immutable, and CoreText draws an
@@ -279,7 +303,44 @@ pub(crate) struct CoreTextEngine {
 }
 
 impl CoreTextEngine {
-    fn attributed_string(&self, text: &AttributedText) -> CFRetained<CFMutableAttributedString> {
+    /// Where attachment `a` of `text` sits: how far its top is above the
+    /// baseline, and its run delegate's ascent and descent
+    /// (`TextAttachment::ascent` and `extent` in its placeholder's font).
+    fn attachment_metrics(
+        &self,
+        text: &AttributedText,
+        a: &nlayer_core::text::TextAttachment,
+        alignments: &AttachmentAlignments,
+    ) -> (CGFloat, CGFloat, CGFloat) {
+        let align = alignments.get(a.index);
+        let font = if align == VerticalAlign::Baseline {
+            FontExtent::default()
+        } else {
+            let style = text
+                .span_at(a.index)
+                .map_or_else(Default::default, |s| s.style);
+            let f = self.fonts.get(&style);
+            // SAFETY: a valid font.
+            let (ascent, descent, x) = unsafe { (f.ascent(), f.descent(), f.x_height()) };
+            FontExtent::new(
+                Points(ascent as f32),
+                Points(descent as f32),
+                Points(x as f32),
+            )
+        };
+        let (up, down) = a.extent(font, align);
+        (
+            a.ascent(font, align).0 as CGFloat,
+            up.0 as CGFloat,
+            down.0 as CGFloat,
+        )
+    }
+
+    fn attributed_string(
+        &self,
+        text: &AttributedText,
+        alignments: &AttachmentAlignments,
+    ) -> CFRetained<CFMutableAttributedString> {
         let string =
             CFMutableAttributedString::new(None, 0).expect("CFAttributedStringCreateMutable");
         let s = Some(&*string);
@@ -347,6 +408,28 @@ impl CoreTextEngine {
                     decoration.as_ref(),
                 );
             }
+        }
+        // Attachments: their placeholders take the attachment's width and
+        // its extent around the baseline (`verticalAlign`), and draw nothing.
+        let clear = cg_color(Color::TRANSPARENT);
+        for a in &text.attachments {
+            let range = CFRange {
+                location: a.index as CFIndex,
+                length: 1,
+            };
+            let (_, ascent, descent) = self.attachment_metrics(text, a, alignments);
+            if let Some(delegate) = run_delegate(a.width.0 as CGFloat, ascent, descent) {
+                set(
+                    range,
+                    unsafe { kCTRunDelegateAttributeName },
+                    delegate.as_ref(),
+                );
+            }
+            set(
+                range,
+                unsafe { kCTForegroundColorAttributeName },
+                clear.as_ref(),
+            );
         }
         CFMutableAttributedString::end_editing(s);
         string
@@ -466,7 +549,12 @@ impl Prepared {
                 });
             }
         };
-        let last = (self.length - 1).max(start);
+        // The token copies the attributes of the last character that is
+        // not an attachment (a placeholder's would make it invisible).
+        let mut last = (self.length - 1).max(start);
+        while last > start && self.attachments.iter().any(|&(at, _)| at == last) {
+            last -= 1;
+        }
         // SAFETY: ranges lie within the string.
         unsafe {
             let rest = self.typesetter().line(CFRange {
@@ -493,6 +581,16 @@ impl Prepared {
                     false,
                 );
             }
+            // Marks the token's run so selection rects skip the characters it cut.
+            CFMutableAttributedString::set_attribute(
+                Some(&token_string),
+                CFRange {
+                    location: 0,
+                    length: 1,
+                },
+                Some(ellipsis_key()),
+                Some(CFNumber::new_i32(1).as_ref()),
+            );
             let token = CTLine::with_attributed_string(&token_string);
             rest.truncated_line(width, kind, Some(&token))
         }
@@ -507,11 +605,355 @@ impl Prepared {
     }
 }
 
+/// A run delegate reserving `width`, `ascent` above the baseline and
+/// `descent` below it.
+fn run_delegate(
+    width: CGFloat,
+    ascent: CGFloat,
+    descent: CGFloat,
+) -> Option<CFRetained<CTRunDelegate>> {
+    type Size = [CGFloat; 3];
+    unsafe extern "C-unwind" fn dealloc(refcon: NonNull<c_void>) {
+        // SAFETY: the box created below, freed once by CoreText.
+        drop(unsafe { Box::from_raw(refcon.as_ptr().cast::<Size>()) });
+    }
+    unsafe extern "C-unwind" fn get_ascent(refcon: NonNull<c_void>) -> CGFloat {
+        // SAFETY: the live box created below.
+        unsafe { (*refcon.as_ptr().cast::<Size>())[1] }
+    }
+    unsafe extern "C-unwind" fn get_descent(refcon: NonNull<c_void>) -> CGFloat {
+        // SAFETY: as above.
+        unsafe { (*refcon.as_ptr().cast::<Size>())[2] }
+    }
+    unsafe extern "C-unwind" fn get_width(refcon: NonNull<c_void>) -> CGFloat {
+        // SAFETY: as above.
+        unsafe { (*refcon.as_ptr().cast::<Size>())[0] }
+    }
+    static CALLBACKS: CTRunDelegateCallbacks = CTRunDelegateCallbacks {
+        version: kCTRunDelegateCurrentVersion as CFIndex,
+        dealloc: Some(dealloc),
+        getAscent: Some(get_ascent),
+        getDescent: Some(get_descent),
+        getWidth: Some(get_width),
+    };
+    let refcon = Box::into_raw(Box::new([width, ascent, descent]));
+    // SAFETY: static callbacks; the delegate owns `refcon` (freed by `dealloc`).
+    let delegate = unsafe { CTRunDelegate::new(NonNull::from(&CALLBACKS), refcon.cast()) };
+    if delegate.is_none() {
+        // SAFETY: not handed over.
+        drop(unsafe { Box::from_raw(refcon) });
+    }
+    delegate
+}
+
+/// A box in content coordinates as the engine contract reports it.
+fn bounds_of(rect: CGRect) -> Bounds<Points> {
+    Bounds::new(
+        Point::new(Points(rect.origin.x as f32), Points(rect.origin.y as f32)),
+        Size::new(
+            Points(rect.size.width as f32),
+            Points(rect.size.height as f32),
+        ),
+    )
+}
+
+/// Where the lines put the placeholders at `attachments` (offset, top
+/// above the baseline): the top left of each (y down in a box `height`
+/// tall), if shown.
+fn attachment_points(
+    lines: &[LaidLine],
+    attachments: &[(CFIndex, CGFloat)],
+    height: CGFloat,
+) -> Vec<Option<(f32, f32)>> {
+    let mut points = vec![None; attachments.len()];
+    for l in lines {
+        // SAFETY: the line's own run array (of CTRuns).
+        let runs = unsafe { l.line.glyph_runs() };
+        for r in 0..runs.count() {
+            // SAFETY: an index within the array.
+            let run = unsafe { &*runs.value_at_index(r).cast::<CTRun>() };
+            // SAFETY: a valid run.
+            let range = unsafe { run.string_range() };
+            // Only placeholder runs: an ellipsis token claims the range it cut.
+            // SAFETY: a valid run; an immutable CoreText key.
+            let placeholder = unsafe {
+                let key: *const CFString = kCTRunDelegateAttributeName;
+                run.attributes().contains_ptr_key(key.cast())
+            };
+            if !placeholder {
+                continue;
+            }
+            for (i, &(at, h)) in attachments.iter().enumerate() {
+                if points[i].is_some() || at < range.location || at >= range.location + range.length
+                {
+                    continue;
+                }
+                let mut p = CGPoint::new(0.0, 0.0);
+                // SAFETY: one position into a one-point buffer.
+                unsafe {
+                    run.positions(
+                        CFRange {
+                            location: 0,
+                            length: 1,
+                        },
+                        NonNull::from(&mut p),
+                    )
+                };
+                points[i] = Some(((l.origin.x + p.x) as f32, (height - l.origin.y - h) as f32));
+            }
+        }
+    }
+    points
+}
+
+/// A laid out line in content coordinates (y down), for hit testing.
+pub(crate) struct LineBox<'a> {
+    line: &'a LaidLine,
+    start: usize,
+    end: usize,
+    caret_end: usize,
+    x: CGFloat,
+    top: CGFloat,
+    height: CGFloat,
+}
+
+impl LineBox<'_> {
+    /// The x of the caret before character `index`.
+    pub(crate) fn x_of(&self, index: usize) -> CGFloat {
+        let index = isize::try_from(index).unwrap_or(isize::MAX);
+        // SAFETY: a valid line; no secondary offset wanted.
+        self.x
+            + unsafe {
+                self.line
+                    .line
+                    .offset_for_string_index(index, std::ptr::null_mut())
+            }
+    }
+
+    /// The caret index nearest to `x`.
+    pub(crate) fn index_at(&self, x: CGFloat) -> usize {
+        // SAFETY: a valid line.
+        let index = unsafe {
+            self.line
+                .line
+                .string_index_for_position(CGPoint::new(x - self.x, 0.0))
+        };
+        usize::try_from(index)
+            .unwrap_or(0)
+            .clamp(self.start, self.caret_end)
+    }
+
+    /// Fills `spans` with the stretches of x the characters `a..b` cover.
+    /// The ellipsis token is never covered.
+    fn spans(&self, a: usize, b: usize, spans: &mut Vec<(CGFloat, CGFloat)>) {
+        let (a, b) = (a as CFIndex, b as CFIndex);
+        let (start, end) = (self.start as CFIndex, self.end as CFIndex);
+        spans.clear();
+        let past = b > end;
+        let (a, b) = (a.max(start), b.min(end));
+        let (mut text_left, mut text_right) = (CGFloat::INFINITY, CGFloat::NEG_INFINITY);
+        let (mut first_rtl, mut last_rtl) = (false, false);
+        // SAFETY: the line's own run array (of CTRuns).
+        let runs = unsafe { self.line.line.glyph_runs() };
+        for i in 0..runs.count() {
+            // SAFETY: an index within the array.
+            let run = unsafe { &*runs.value_at_index(i).cast::<CTRun>() };
+            // SAFETY: a valid run; an immutable key of ours.
+            let (range, status, glyphs, token) = unsafe {
+                let key: *const CFString = ellipsis_key();
+                (
+                    run.string_range(),
+                    run.status(),
+                    run.glyph_count(),
+                    run.attributes().contains_ptr_key(key.cast()),
+                )
+            };
+            if token || glyphs <= 0 {
+                continue;
+            }
+            let mut origin = CGPoint::new(0.0, 0.0);
+            // SAFETY: one position (the run has a glyph) into a one-point
+            // buffer, and the whole run's width.
+            let width = unsafe {
+                run.positions(
+                    CFRange {
+                        location: 0,
+                        length: 1,
+                    },
+                    NonNull::from(&mut origin),
+                );
+                run.typographic_bounds(
+                    CFRange {
+                        location: 0,
+                        length: 0,
+                    },
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            };
+            let (left, right) = (self.x + origin.x, self.x + origin.x + width);
+            let rtl = status.contains(CTRunStatus::RightToLeft);
+            text_left = text_left.min(left);
+            text_right = text_right.max(right);
+            let run_end = range.location + range.length;
+            if range.location <= start {
+                first_rtl = rtl;
+            }
+            if run_end >= end {
+                last_rtl = rtl;
+            }
+            let (s, e) = (a.max(range.location), b.min(run_end));
+            if s >= e {
+                continue;
+            }
+            let edge = |index: CFIndex| {
+                if index <= range.location {
+                    if rtl { right } else { left }
+                } else if index >= run_end {
+                    if rtl { left } else { right }
+                } else {
+                    self.x_of(index as usize)
+                }
+            };
+            let (x1, x2) = (edge(s), edge(e));
+            spans.push((x1.min(x2), x1.max(x2)));
+        }
+        if spans.is_empty() {
+            return;
+        }
+        spans.sort_by(|p, q| p.0.total_cmp(&q.0));
+        if past {
+            if first_rtl && last_rtl {
+                if let Some(first) = spans.first_mut() {
+                    first.0 = text_left;
+                }
+            } else if let Some(last) = spans.last_mut() {
+                last.1 = last.1.max(text_right);
+            }
+        }
+        spans.dedup_by(|(left, right), kept| {
+            let joins = *left <= kept.1 + 0.01;
+            if joins {
+                kept.1 = kept.1.max(*right);
+            }
+            joins
+        });
+    }
+
+    fn bottom(&self) -> CGFloat {
+        self.top + self.height
+    }
+}
+
+/// The index of the line holding offset `at` on the side `affinity` says.
+pub(crate) fn line_of(lines: &[LineBox], at: usize, affinity: Affinity) -> Option<usize> {
+    let unit = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    TextPosition::new(unit(at), affinity).line_in(lines.iter().map(|l| unit(l.start)..unit(l.end)))
+}
+
+impl CoreTextLayout {
+    /// The lines in content coordinates.
+    pub(crate) fn boxes(&self) -> Vec<LineBox<'_>> {
+        self.lines
+            .iter()
+            .map(|l| {
+                let start = usize::try_from(l.range.location).unwrap_or(0);
+                let end = if l.truncated {
+                    usize::try_from(l.caret_end).unwrap_or(start)
+                } else {
+                    start.saturating_add(usize::try_from(l.range.length).unwrap_or(0))
+                };
+                LineBox {
+                    line: l,
+                    start,
+                    end,
+                    caret_end: usize::try_from(l.caret_end)
+                        .unwrap_or(end)
+                        .clamp(start, end),
+                    x: l.origin.x,
+                    top: self.height - l.origin.y - l.ascent,
+                    height: l.ascent + l.descent + l.leading,
+                }
+            })
+            .collect()
+    }
+
+    /// The caret position nearest to `point` (content coordinates).
+    pub(crate) fn position_at(&self, point: CGPoint) -> TextPosition {
+        let lines = self.boxes();
+        let Some(l) = lines.iter().find(|l| point.y < l.bottom()).or(lines.last()) else {
+            return TextPosition::default();
+        };
+        let at = l.index_at(point.x);
+        let wrapped = l.caret_end == l.end;
+        let affinity = if at == l.end && wrapped && at > l.start {
+            Affinity::Upstream
+        } else {
+            Affinity::Downstream
+        };
+        TextPosition::new(u32::try_from(at).unwrap_or(u32::MAX), affinity)
+    }
+
+    /// The zero-width caret box at `position` (content coordinates).
+    pub(crate) fn caret_box(&self, position: TextPosition) -> Option<CGRect> {
+        let lines = self.boxes();
+        let at = usize::try_from(position.offset).unwrap_or(usize::MAX);
+        let l = lines.get(line_of(&lines, at, position.affinity)?)?;
+        Some(CGRect::new(
+            CGPoint::new(l.x_of(at), l.top),
+            CGSize::new(0.0, l.height),
+        ))
+    }
+
+    /// The boxes of the UTF-16 range `a..b` on each line it covers, with
+    /// whether each holds the range's start and its end.
+    pub(crate) fn range_boxes(&self, a: usize, b: usize) -> Vec<(CGRect, bool, bool)> {
+        let mut out = Vec::new();
+        if a >= b {
+            return out;
+        }
+        let mut spans = Vec::new();
+        for l in &self.boxes() {
+            if l.end <= a || l.start >= b {
+                continue;
+            }
+            l.spans(a, b, &mut spans);
+            out.extend(spans.iter().map(|&(x1, x2)| {
+                (
+                    CGRect::new(CGPoint::new(x1, l.top), CGSize::new(x2 - x1, l.height)),
+                    a >= l.start && a < l.end && x1 <= l.x_of(a) && l.x_of(a) <= x2,
+                    b <= l.end && b > l.start && x1 <= l.x_of(b) && l.x_of(b) <= x2,
+                )
+            }));
+        }
+        if !out.iter().any(|r| r.1)
+            && let Some(first) = out.first_mut()
+        {
+            first.1 = true;
+        }
+        if !out.iter().any(|r| r.2)
+            && let Some(last) = out.last_mut()
+        {
+            last.2 = true;
+        }
+        out
+    }
+}
+
 impl TextEngine for CoreTextEngine {
     type Prepared = Prepared;
 
     fn prepare(&self, text: &AttributedText) -> Prepared {
-        let string = self.attributed_string(text);
+        self.prepare_aligned(text, &AttachmentAlignments::default())
+    }
+
+    fn prepare_aligned(
+        &self,
+        text: &AttributedText,
+        alignments: &AttachmentAlignments,
+    ) -> Prepared {
+        let string = self.attributed_string(text, alignments);
         let attributed: &CFAttributedString = &string;
         // SAFETY: a valid attributed string.
         let framesetter = unsafe { CTFramesetter::with_attributed_string(attributed) };
@@ -522,6 +964,16 @@ impl TextEngine for CoreTextEngine {
             max_lines: text.max_lines,
             ellipsize: text.ellipsize,
             align: text.align,
+            attachments: text
+                .attachments
+                .iter()
+                .map(|a| {
+                    (
+                        a.index as CFIndex,
+                        self.attachment_metrics(text, a, alignments).0,
+                    )
+                })
+                .collect(),
             breaks: hard_breaks(&text.text),
         }
     }
@@ -582,6 +1034,7 @@ impl TextEngine for CoreTextEngine {
                         origin: origins[i as usize],
                         range,
                         caret_end,
+                        truncated: false,
                         width: 0.0,
                         ascent: 0.0,
                         descent: 0.0,
@@ -606,12 +1059,22 @@ impl TextEngine for CoreTextEngine {
                 last.origin.x = x.max(0.0);
                 last.line = truncated;
                 last.caret_end = prepared.length;
+                last.truncated = true;
             }
         }
         for line in &mut lines {
             line.measure();
         }
-        TextLayout(std::sync::Arc::new(CoreTextLayout { lines, height }))
+        let attachments = if prepared.attachments.is_empty() {
+            Vec::new()
+        } else {
+            attachment_points(&lines, &prepared.attachments, height)
+        };
+        TextLayout(std::sync::Arc::new(CoreTextLayout {
+            lines,
+            height,
+            attachments,
+        }))
     }
 
     fn lines(&self, layout: &TextLayout) -> Vec<TextLine> {
@@ -635,6 +1098,49 @@ impl TextEngine for CoreTextEngine {
                 x_height: Points((l.ascent * 0.5) as f32),
             })
             .collect()
+    }
+
+    fn attachments(&self, layout: &TextLayout) -> Vec<Option<Point<Points>>> {
+        layout
+            .downcast::<CoreTextLayout>()
+            .map_or_else(Vec::new, |l| {
+                l.attachments
+                    .iter()
+                    .map(|a| a.map(|(x, y)| Point::new(Points(x), Points(y))))
+                    .collect()
+            })
+    }
+
+    fn hit_test(&self, layout: &TextLayout, point: Point<Points>) -> TextPosition {
+        layout
+            .downcast::<CoreTextLayout>()
+            .map_or_else(TextPosition::default, |l| {
+                l.position_at(CGPoint::new(point.x.0 as CGFloat, point.y.0 as CGFloat))
+            })
+    }
+
+    fn caret_rect(&self, layout: &TextLayout, position: TextPosition) -> Option<Bounds<Points>> {
+        layout
+            .downcast::<CoreTextLayout>()?
+            .caret_box(position)
+            .map(bounds_of)
+    }
+
+    fn range_rects(
+        &self,
+        layout: &TextLayout,
+        range: std::ops::Range<u32>,
+        out: &mut Vec<Bounds<Points>>,
+    ) {
+        let Some(layout) = layout.downcast::<CoreTextLayout>() else {
+            return;
+        };
+        out.extend(
+            layout
+                .range_boxes(range.start as usize, range.end as usize)
+                .into_iter()
+                .map(|(rect, ..)| bounds_of(rect)),
+        );
     }
 }
 

@@ -383,3 +383,13 @@ Copied files:
   the attachment spans, `attachments` and `hitTest` of `TextLayouts.java`
   from `java/com/longbridge/nsh/TextBox.java` and `TextLayouts.java` (one
   long-press timer; no Java word breaker)
+- `crates/nlayer-platform-ios/src/text_selection.rs` from
+  `crates/nsh-platform-ios/src/text_selection.rs` (non-editable
+  `UITextInteraction`; no editable text)
+- `crates/nlayer-platform-ios/src/selectable_view.rs` from
+  `crates/nsh-platform-ios/src/selectable_view.rs` (one selection across a
+  view's texts; pointer selection and kept virtual-list rows are not copied)
+- the attachment placeholders, caret geometry and `UITextInput` of
+  `crates/nlayer-platform-ios/src/text.rs` and `text_view.rs` from
+  `crates/nsh-platform-ios/src/text.rs` and `text_view.rs` (custom fonts,
+  strikethrough and span backgrounds are not copied)

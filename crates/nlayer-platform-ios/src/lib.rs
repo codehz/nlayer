@@ -17,7 +17,8 @@
 //! keyboard's height (`env(keyboard-inset-height)`, applied at once, not
 //! animated), PNG, JPEG or WebP from a bundled file or `http(s)`, and a field
 //! with `value`, `onChange`, `placeholder`, `disabled`, `secureTextEntry` and
-//! `keyboardType`. Refresh, zoom, paging and text selection are not mounted.
+//! `keyboardType`. Text selection (one block, and a selectable view), inline
+//! attachments and `href` are mounted. Refresh, zoom and paging are not.
 
 #![cfg_attr(target_os = "ios", deny(unsafe_op_in_unsafe_fn))]
 
@@ -47,9 +48,13 @@ mod scroll_extent;
 #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
 mod scroll_frame;
 #[cfg(target_os = "ios")]
+mod selectable_view;
+#[cfg(target_os = "ios")]
 mod synth;
 #[cfg(target_os = "ios")]
 mod text;
+#[cfg(target_os = "ios")]
+mod text_selection;
 #[cfg(target_os = "ios")]
 mod text_view;
 
