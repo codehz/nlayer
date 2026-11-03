@@ -1198,6 +1198,11 @@ pub enum Prop {
     /// `href` on a `Text` (block or span): the address a short press opens
     /// ([`Command::OpenUrl`]). `None` clears it.
     Href(Option<String>),
+    /// `class`: Tailwind classes. An empty string clears them. Later
+    /// names in the string win.
+    Class(Box<str>),
+    /// `classList`: the truthy keys, in order, applied after `class`.
+    ClassList(Vec<Box<str>>),
 }
 
 /// A mutation produced by the JS renderer.
@@ -1232,8 +1237,8 @@ pub enum Op {
         /// The new style; boxed because layout styles are large.
         style: Box<Style>,
         /// The declarations `style` was built from, applied again over the
-        /// node's class styles. v1 has no class table, so the shadow tree
-        /// applies `style` itself.
+        /// node's class styles. With no classes and no parent `space-*`,
+        /// the shadow tree applies `style` itself.
         patch: StylePatch,
     },
     /// Sets a non-style property.

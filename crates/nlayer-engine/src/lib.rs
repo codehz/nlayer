@@ -219,6 +219,14 @@ enum Message {
         event: EventKind,
         payload: EventPayload,
     },
+    /// Pressed, hovered and focused bits of a view.
+    States {
+        /// The view.
+        id: NodeId,
+        /// [`nlayer_core::tailwind::state`] bits. Only pressed, hovered
+        /// and focused are taken.
+        states: u16,
+    },
     Input {
         id: NodeId,
         text: String,
@@ -264,6 +272,13 @@ impl EngineControl {
     /// Calls node `id`'s handler of `event` on the engine thread.
     pub fn dispatch_event(&self, id: NodeId, event: EventKind, payload: EventPayload) {
         let _ = self.tx.send(Message::Event { id, event, payload });
+    }
+
+    /// Sets the pressed, hovered and focused bits of node `id`
+    /// ([`nlayer_core::tailwind::state`]). `disabled:` reads the prop.
+    /// `focus-within` is maintained by the core at the next commit.
+    pub fn set_states(&self, id: NodeId, states: u16) {
+        let _ = self.tx.send(Message::States { id, states });
     }
 
     /// Waits until earlier messages have been committed by the engine thread.
@@ -760,6 +775,7 @@ impl<M: TextEngine> Session<M> {
 
     fn apply(&mut self, message: Message) -> bool {
         match message {
+            Message::States { id, states } => self.core.set_states(id, states),
             Message::Event { id, event, payload } => {
                 if event == EventKind::Insets
                     && let EventPayload::Insets {

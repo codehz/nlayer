@@ -470,20 +470,24 @@ fn active_style_is_paint_the_platform_applies() {
     );
 }
 
-/// An unknown style name and a class warn and do not drop the styles that apply.
+/// An unknown style name warns and does not drop styles that apply.
+/// `p-4` and a truthy `m-2` apply; `off` is not a class.
 #[test]
 fn unknown_style_and_class_do_not_drop_known_styles() {
     let host = Host::new().unwrap();
     host.eval_source(
         r#"
         import { mount } from "@nlayer/runtime";
-        import { element, prop } from "nlayer:rt";
+        import { element, prop, append } from "nlayer:rt";
 
         function App() {
             const view = element("view");
             prop(view, "style", { width: 10, height: 10, nope: 1 });
             prop(view, "class", "p-4");
             prop(view, "classList", { "m-2": true, off: false });
+            const inner = element("view");
+            prop(inner, "style", { width: 4, height: 4 });
+            append(view, inner);
             return view;
         }
         mount(App);
@@ -504,10 +508,26 @@ fn unknown_style_and_class_do_not_drop_known_styles() {
             _ => None,
         })
         .unwrap();
-    assert_eq!(
-        frame_of(&batch, view).unwrap().size,
-        Size::new(Points(10.0), Points(10.0))
-    );
+    let outer = frame_of(&batch, view).unwrap();
+    // `nope` did not drop the size. A border box of 10 cannot hold
+    // `p-4` (16 on each side), so the frame is the padding. `m-2` is 8
+    // outside that; `off` contributed nothing.
+    assert_eq!(outer.size, Size::new(Points(32.0), Points(32.0)));
+    assert_eq!((outer.origin.x.0, outer.origin.y.0), (8.0, 8.0));
+    let inner = batch
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MountItem::Frame { id, frame }
+                if *id != view && frame.size.width.0 == 4.0 && frame.size.height.0 == 4.0 =>
+            {
+                Some(*frame)
+            }
+            _ => None,
+        })
+        .expect("inner view");
+    // `p-4` is 16, in the parent's frame (the margin is the parent's).
+    assert_eq!((inner.origin.x.0, inner.origin.y.0), (16.0, 16.0));
 }
 
 fn transforms_of(batch: &MountBatch, id: u32) -> Vec<(TransformKind, f32)> {

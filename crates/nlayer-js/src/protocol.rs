@@ -91,20 +91,21 @@ pub(crate) fn decode_prop<'js>(
             prop: Prop::TestId(test_id),
         }));
     }
-    if name == "class" || name == "classList" {
-        let names = if name == "class" {
-            nlayer_core::class_tokens(&string(&value)?)
-                .map(str::to_owned)
-                .collect()
-        } else {
-            class_list_names(&value)?
-        };
-        if let Some(message) =
-            nlayer_core::unknown_classes_warning(names.iter().map(String::as_str))
-        {
-            warnings.warn(message);
-        }
-        return Ok(None);
+    if name == "class" {
+        return Ok(Some(Op::SetProp {
+            id,
+            prop: Prop::Class(string(&value)?.into()),
+        }));
+    }
+    if name == "classList" {
+        let names = class_list_names(&value)?
+            .into_iter()
+            .map(String::into_boxed_str)
+            .collect();
+        return Ok(Some(Op::SetProp {
+            id,
+            prop: Prop::ClassList(names),
+        }));
     }
     if name == "disabled" {
         return Ok(Some(Op::SetProp {

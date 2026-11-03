@@ -22,12 +22,17 @@
 //! the text's parent. `href` on a `Text` (block or span) opens through
 //! [`crate::open_url::check_url`] as [`Command::OpenUrl`], one way, after
 //! the press's own listeners still run.
+//!
+//! `class` and `classList` resolve through [`crate::tailwind`] (`classes`):
+//! later classes win, `style` wins per key, and state classes can change
+//! layout. `activeStyle`, `hoverStyle` and `focusStyle` stay paint-only.
 
+mod classes;
 mod fenwick;
 mod layout_tree;
 mod list;
 
-use std::{mem, sync::Arc};
+use std::{mem, rc::Rc, sync::Arc};
 
 use layout_tree::LayoutTree;
 use rustc_hash::FxHashSet;
@@ -40,7 +45,10 @@ use crate::{
         Accessibility, AccessibilityProp, CellSlot, Command, EventKind, EventMask, ImageSource,
         Interaction, KeyboardDismiss, KeyboardTaps, NodeId, Op, Prop, ROOT_ID, ResizeMode, Tag,
     },
-    style::{self, EllipsizeMode, EnvEdges, Style, TextAlign, TextStyle, VerticalAlign, ViewStyle},
+    style::{
+        self, EllipsizeMode, EnvEdges, Style, StylePatch, TextAlign, TextStyle, VerticalAlign,
+        ViewStyle,
+    },
     text::{
         AttachmentAlignments, AttributedText, MeasureCache, ResolvedTextStyle, SpanTestId,
         TextEngine, TextHref, TextLayout,
@@ -408,6 +416,20 @@ struct Node {
     /// `role`, label, hint, state, value and whether the subtree is hidden
     /// from assistive technologies.
     accessibility: Accessibility,
+    /// `class` and the truthy `classList` keys.
+    class_names: Option<Box<classes::ClassNames>>,
+    /// Parsed `class` / `classList`.
+    classes: Option<Rc<crate::tailwind::ClassList>>,
+    /// The `style` prop's declarations, replayed over the classes.
+    inline_style: StylePatch,
+    /// The last `style` prop. Clearing classes restores it whole.
+    authored: Option<Box<Style>>,
+    /// Node props the classes set (`space-*`, `selection:`).
+    class_props: Option<Box<crate::tailwind::ClassProps>>,
+    /// Interaction states (`tailwind::state` bits).
+    states: u16,
+    /// Styled with the margin its parent's `space-*` gives it.
+    spaced: bool,
 }
 impl Node {
     fn new(id: NodeId, kind: Kind) -> Self {
@@ -461,6 +483,13 @@ impl Node {
             state_dirty: 0,
             test_id: None,
             accessibility: Accessibility::default(),
+            class_names: None,
+            classes: None,
+            inline_style: StylePatch::default(),
+            authored: None,
+            class_props: None,
+            states: 0,
+            spaced: false,
         }
     }
 }
@@ -566,6 +595,17 @@ pub struct Core<M: TextEngine> {
     paced_scratch: Vec<(u32, u32)>,
     /// Events the core raises for JS (a list's end came near).
     events: Vec<(NodeId, EventKind)>,
+    /// Class cache. The theme is Tailwind's default.
+    tailwind: crate::tailwind::Tailwind,
+    /// The focused view, by key and id. The root is never the focus.
+    focus: Option<(Key, NodeId)>,
+    /// The focus and its parents, innermost first (`focus-within`).
+    focus_chain: Vec<(Key, NodeId)>,
+    /// The chain before, reused.
+    focus_scratch: Vec<(Key, NodeId)>,
+    /// The focus was reported, or a view of its chain moved, since the
+    /// last commit.
+    focus_moved: bool,
 }
 
 impl<M: TextEngine> Core<M> {
@@ -610,6 +650,11 @@ impl<M: TextEngine> Core<M> {
             paced_lists: Vec::new(),
             paced_scratch: Vec::new(),
             events: Vec::new(),
+            tailwind: crate::tailwind::Tailwind::new(),
+            focus: None,
+            focus_chain: Vec::new(),
+            focus_scratch: Vec::new(),
+            focus_moved: false,
         }
     }
 
@@ -1250,7 +1295,7 @@ impl<M: TextEngine> Core<M> {
                 self.mount.push(MountItem::Animation(op));
                 Ok(())
             }
-            Op::SetStyle { id, style, .. } => self.set_style(id, *style),
+            Op::SetStyle { id, style, patch } => self.apply_authored_style(id, *style, patch),
             Op::SetProp { id, prop } => self.set_prop(id, prop),
             Op::Listen { id, event, enabled } => {
                 let key = self.key(id)?;
@@ -1307,6 +1352,9 @@ impl<M: TextEngine> Core<M> {
     /// Finishes a turn: runs layout and returns the mount items, or `None`
     /// when nothing changed.
     pub fn commit(&mut self) -> Option<MountBatch> {
+        if self.focus_moved {
+            self.update_focus_within();
+        }
         self.flush_dirty();
         self.layout_round();
         self.update_lists();
@@ -1886,6 +1934,7 @@ impl<M: TextEngine> Core<M> {
                     self.nodes[key as usize].accessibility.state.disabled = disabled;
                     self.mark(key, dirty::ACCESSIBILITY);
                 }
+                self.set_disabled(key, disabled);
             }
             Prop::Accessibility(prop) => {
                 let node = &mut self.nodes[key as usize];
@@ -2041,6 +2090,8 @@ impl<M: TextEngine> Core<M> {
                     self.mark_text_block(key);
                 }
             }
+            Prop::Class(name) => self.set_class_name(key, name),
+            Prop::ClassList(list) => self.set_class_list_names(key, list),
             Prop::HeaderSlot(slot) => {
                 if let Some(root) = self.nodes[key as usize].root.as_mut() {
                     root.slot = slot;
@@ -2125,6 +2176,10 @@ impl<M: TextEngine> Core<M> {
         self.set_inline(child, inline);
         self.nodes[child as usize].parent = parent;
         self.nodes[parent as usize].children.insert(pos, child);
+        if self.nodes[child as usize].states & crate::tailwind::state::FOCUS_WITHIN != 0 {
+            self.focus_moved = true;
+        }
+        self.spacing_changed(parent, child);
         self.update_direction(child);
         // Style is applied before insert. `env()` was resolved with no
         // parent then; the screen or modal this lands in may owe different
@@ -2202,6 +2257,10 @@ impl<M: TextEngine> Core<M> {
             .expect("child of parent");
         siblings.remove(pos);
         self.nodes[key as usize].parent = NO_KEY;
+        if self.nodes[key as usize].states & crate::tailwind::state::FOCUS_WITHIN != 0 {
+            self.focus_moved = true;
+        }
+        self.spacing_changed(parent, key);
         let (inline, layout, created, id) = (
             self.nodes[key as usize].inline,
             self.nodes[key as usize].layout,
@@ -2248,6 +2307,9 @@ impl<M: TextEngine> Core<M> {
         }
         if self.nodes[key as usize].parent != NO_KEY {
             self.unlink(key, false);
+        }
+        if self.nodes[key as usize].states & crate::tailwind::state::FOCUS_WITHIN != 0 {
+            self.focus_moved = true;
         }
         let node = self.nodes.remove(key as usize);
         self.slots[id as usize] = 0;
@@ -3183,7 +3245,10 @@ impl<M: TextEngine> Core<M> {
             ellipsize,
             shadow: node.text_style.shadow(),
             selectable,
-            selection_color: node.text_style.selection_color,
+            selection_color: node
+                .text_style
+                .selection_color
+                .or_else(|| node.class_props.as_ref().and_then(|p| p.selection_color)),
             ..AttributedText::default()
         };
         let base = inherited.inherit(&node.text_style);
@@ -9531,6 +9596,249 @@ mod tests {
         assert_eq!(
             c.press_at(2, point(32.0)).as_deref(),
             Some("https://example.com/span")
+        );
+    }
+    use crate::tailwind::state;
+
+    fn view(c: &mut Core<FakeEngine>, id: NodeId) {
+        c.apply(Op::Create { id, tag: Tag::View }).unwrap();
+    }
+
+    fn set_class(c: &mut Core<FakeEngine>, id: NodeId, class: &str) {
+        c.apply(Op::SetProp {
+            id,
+            prop: Prop::Class(class.into()),
+        })
+        .unwrap();
+    }
+
+    fn node(c: &Core<FakeEngine>, id: NodeId) -> &Node {
+        &c.nodes[c.key(id).unwrap() as usize]
+    }
+    fn layout_of(c: &Core<FakeEngine>, id: NodeId) -> &taffy::Style {
+        let layout = node(c, id).layout.expect("view has a layout node");
+        c.layout.style(layout)
+    }
+
+    fn length(value: taffy::LengthPercentage) -> f32 {
+        match value.expand() {
+            taffy::style::ExpandedLengthPercentage::Length(v) => v,
+            other => panic!("expected a length, got {other:?}"),
+        }
+    }
+
+    fn margin_length(value: taffy::LengthPercentageAuto) -> f32 {
+        match value.expand() {
+            taffy::style::ExpandedLengthPercentageAuto::Length(v) => v,
+            other => panic!("expected a length, got {other:?}"),
+        }
+    }
+
+    /// Padding top, right, bottom, left.
+    fn padding(c: &Core<FakeEngine>, id: NodeId) -> [f32; 4] {
+        let p = layout_of(c, id).padding;
+        [
+            length(p.top),
+            length(p.right),
+            length(p.bottom),
+            length(p.left),
+        ]
+    }
+
+    #[test]
+    fn later_class_wins_and_style_replaces_one_side() {
+        let mut c = core();
+        view(&mut c, 2);
+        set_class(&mut c, 2, "p-4");
+        assert_eq!(padding(&c, 2), [16.0, 16.0, 16.0, 16.0]);
+        set_class(&mut c, 2, "p-2 p-4");
+        assert_eq!(padding(&c, 2), [16.0, 16.0, 16.0, 16.0]);
+
+        set_class(&mut c, 2, "pl-4 pr-4");
+        let mut style = Style::default();
+        let mut patch = StylePatch::default();
+        patch
+            .set(&mut style, "paddingLeft", StyleValue::Number(8.0))
+            .unwrap();
+        c.apply(Op::SetStyle {
+            id: 2,
+            style: Box::new(style),
+            patch,
+        })
+        .unwrap();
+        assert_eq!(padding(&c, 2), [0.0, 16.0, 0.0, 8.0]);
+
+        // Clearing the class restores the style prop, not the class padding.
+        set_class(&mut c, 2, "");
+        assert_eq!(padding(&c, 2), [0.0, 0.0, 0.0, 8.0]);
+    }
+
+    #[test]
+    fn hover_changes_padding_only_while_hovered() {
+        let mut c = core();
+        view(&mut c, 2);
+        set_class(&mut c, 2, "hover:p-4");
+        assert_eq!(padding(&c, 2), [0.0, 0.0, 0.0, 0.0]);
+        c.set_states(2, state::HOVERED);
+        assert_eq!(padding(&c, 2), [16.0, 16.0, 16.0, 16.0]);
+        c.set_states(2, 0);
+        assert_eq!(padding(&c, 2), [0.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn disabled_pressed_skips_active_and_applies_disabled() {
+        let mut c = core();
+        view(&mut c, 2);
+        set_class(&mut c, 2, "active:p-8 disabled:opacity-50");
+        c.set_states(2, state::PRESSED);
+        assert_eq!(padding(&c, 2), [32.0, 32.0, 32.0, 32.0]);
+        assert_eq!(node(&c, 2).view_style.opacity, 1.0);
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::Disabled(true),
+        })
+        .unwrap();
+        assert_eq!(padding(&c, 2), [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(node(&c, 2).view_style.opacity, 0.5);
+        // A press reported while disabled does not bring `active:` back.
+        c.set_states(2, state::PRESSED);
+        assert_eq!(node(&c, 2).states & state::PRESSED, 0);
+        assert_eq!(padding(&c, 2), [0.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn class_list_applies_after_class_and_a_later_list_drops_it() {
+        let mut c = core();
+        view(&mut c, 2);
+        set_class(&mut c, 2, "p-2");
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::ClassList(vec!["p-4".into()]),
+        })
+        .unwrap();
+        assert_eq!(padding(&c, 2), [16.0, 16.0, 16.0, 16.0]);
+        c.apply(Op::SetProp {
+            id: 2,
+            prop: Prop::ClassList(Vec::new()),
+        })
+        .unwrap();
+        assert_eq!(padding(&c, 2), [8.0, 8.0, 8.0, 8.0]);
+    }
+
+    #[test]
+    fn space_x_margins_stop_at_the_last_element_child() {
+        let mut c = core();
+        view(&mut c, 2);
+        view(&mut c, 3);
+        view(&mut c, 4);
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+        set_class(&mut c, 2, "space-x-2");
+        let margin = |id| layout_of(&c, id).margin;
+        let first = margin(3);
+        let last = margin(4);
+        assert_eq!(margin_length(first.right), 8.0);
+        assert_eq!(margin_length(first.left), 0.0);
+        assert_eq!(margin_length(last.right), 0.0);
+        assert_eq!(margin_length(last.left), 0.0);
+    }
+
+    #[test]
+    fn focus_within_follows_the_child_until_blur() {
+        let mut c = core();
+        view(&mut c, 2);
+        view(&mut c, 3);
+        set_class(&mut c, 2, "focus-within:p-4");
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        assert_eq!(padding(&c, 2), [0.0, 0.0, 0.0, 0.0]);
+        c.set_states(3, state::FOCUSED);
+        // The chain is resolved at commit, not when the bit is reported.
+        assert_eq!(padding(&c, 2), [0.0, 0.0, 0.0, 0.0]);
+        c.commit();
+        assert_eq!(padding(&c, 2), [16.0, 16.0, 16.0, 16.0]);
+        c.set_states(3, 0);
+        c.commit();
+        assert_eq!(padding(&c, 2), [0.0, 0.0, 0.0, 0.0]);
+    }
+
+    struct ClassLog(std::sync::Mutex<Vec<String>>);
+
+    impl log::Log for ClassLog {
+        fn enabled(&self, meta: &log::Metadata<'_>) -> bool {
+            meta.level() <= log::Level::Warn
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            if self.enabled(record.metadata()) {
+                self.0.lock().unwrap().push(record.args().to_string());
+            }
+        }
+
+        fn flush(&self) {}
+    }
+
+    fn class_log() -> &'static ClassLog {
+        use std::sync::Once;
+        static ONCE: Once = Once::new();
+        static LOGGER: ClassLog = ClassLog(std::sync::Mutex::new(Vec::new()));
+        ONCE.call_once(|| {
+            let _ = log::set_logger(&LOGGER);
+            log::set_max_level(log::LevelFilter::Warn);
+        });
+        &LOGGER
+    }
+
+    #[test]
+    fn a_class_string_warns_once() {
+        let log = class_log();
+        log.0.lock().unwrap().clear();
+        let mut c = core();
+        view(&mut c, 2);
+        set_class(&mut c, 2, "wat shadow-md");
+        let first: Vec<_> = log.0.lock().unwrap().clone();
+        assert_eq!(
+            first
+                .iter()
+                .filter(|m| *m == "unknown classes: wat")
+                .count(),
+            1
+        );
+        assert_eq!(
+            first
+                .iter()
+                .filter(|m| *m == "unsupported classes: shadow-md")
+                .count(),
+            1
+        );
+        log.0.lock().unwrap().clear();
+        set_class(&mut c, 2, "wat shadow-md");
+        let again = log.0.lock().unwrap().clone();
+        assert!(
+            !again
+                .iter()
+                .any(|m| m.contains("wat") || m.contains("shadow-md")),
+            "{again:?}"
         );
     }
 }

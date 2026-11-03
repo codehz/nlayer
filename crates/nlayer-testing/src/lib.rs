@@ -1120,6 +1120,13 @@ impl Headless {
             .dispatch_event(id, EventKind::Press, EventPayload::None);
     }
 
+    /// Sets the pressed, hovered and focused bits of node `id`
+    /// (`nlayer_core::tailwind::state`). The next frame restyles state
+    /// classes. There is no script or JS API for this yet.
+    pub fn set_states(&mut self, id: NodeId, states: u16) {
+        self.engine.control().set_states(id, states);
+    }
+
     /// Presses the view showing `text` (its nearest parent listening to
     /// presses): whether one was found.
     pub fn press_text(&mut self, text: &str) -> bool {
