@@ -2855,7 +2855,15 @@ impl<M: TextEngine> Core<M> {
                 frame.origin.x = content.width - frame.origin.x - frame.size.width;
             }
         }
-        self.set_frame(key, frame);
+        // An attachment's frame is where `place_attachments` put its
+        // placeholder. Its taffy node is its own root, so the location is
+        // (0, 0); writing that on a later layout stacks every inline view
+        // at the text's origin.
+        let follows_text =
+            self.nodes[key as usize].inline && self.nodes[key as usize].kind != Kind::Text;
+        if !follows_text {
+            self.set_frame(key, frame);
+        }
         if self.nodes[key as usize].kind == Kind::Input {
             let content = content_box(&l);
             let node = &mut self.nodes[key as usize];
@@ -3583,6 +3591,34 @@ impl<M: TextEngine> Core<M> {
         }
         for (key, layout, content) in placements {
             self.place_attachments(key, &layout, content);
+        }
+        // A layout that did not rebuild the text still walked these views
+        // (`display: none` zeroes them). Put back the placeholders of the
+        // blocks that are showing.
+        self.restore_attachments();
+    }
+
+    /// Puts every showing text block's attachments back on the placeholders
+    /// of the layout already sent.
+    fn restore_attachments(&mut self) {
+        let blocks = self.attachment_blocks.clone();
+        for key in blocks {
+            if self.displays_none(key) {
+                continue;
+            }
+            let Some(layout_id) = self.nodes.get(key as usize).and_then(|node| node.layout) else {
+                continue;
+            };
+            let placed = match self.layout.get_node_context_mut(layout_id) {
+                Some(LeafContext::Text(cx)) => cx
+                    .laid_out
+                    .as_ref()
+                    .map(|laid| (laid.layout.clone(), laid.content)),
+                _ => None,
+            };
+            if let Some((layout, content)) = placed {
+                self.place_attachments(key, &layout, content);
+            }
         }
     }
 }
@@ -9251,6 +9287,71 @@ mod tests {
             frame(&batch, 4).origin.y > baseline.origin.y,
             "middle sits lower than the baseline"
         );
+    }
+
+    #[test]
+    fn a_later_layout_keeps_an_inline_view_on_its_placeholder() {
+        let mut c = Core::new(ApproxTextEngine, size(px(100.0), px(200.0)));
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Text,
+        })
+        .unwrap();
+        c.apply(Op::CreateText {
+            id: 3,
+            text: "ab".into(),
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 4,
+            tag: Tag::View,
+        })
+        .unwrap();
+        apply_style(&mut c, 4, sized(18.0, 18.0));
+        c.apply(Op::Create {
+            id: 5,
+            tag: Tag::View,
+        })
+        .unwrap();
+        apply_style(&mut c, 5, sized(10.0, 10.0));
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 5,
+            before: None,
+        })
+        .unwrap();
+        let placed = frame(&c.commit().expect("a frame"), 4);
+        assert!(placed.origin.x > Points::ZERO, "{placed:?}");
+        apply_style(&mut c, 5, sized(10.0, 40.0));
+        let batch = c.commit().expect("the sibling's layout");
+        let again = batch.items.iter().rev().find_map(|item| match item {
+            MountItem::Frame { id: 4, frame } => Some(*frame),
+            _ => None,
+        });
+        if let Some(again) = again {
+            assert_eq!(
+                again.origin, placed.origin,
+                "a later layout put the attachment back at the text's origin: {again:?}"
+            );
+        }
     }
 
     #[test]

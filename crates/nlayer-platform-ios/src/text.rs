@@ -312,28 +312,63 @@ impl CoreTextEngine {
         a: &nlayer_core::text::TextAttachment,
         alignments: &AttachmentAlignments,
     ) -> (CGFloat, CGFloat, CGFloat) {
+        let style = text
+            .span_at(a.index)
+            .map_or_else(Default::default, |s| s.style);
+        let f = self.fonts.get(&style);
+        // SAFETY: a valid font.
+        let (ascent, descent, leading, x) =
+            unsafe { (f.ascent(), f.descent(), f.leading(), f.x_height()) };
         let align = alignments.get(a.index);
         let font = if align == VerticalAlign::Baseline {
             FontExtent::default()
         } else {
-            let style = text
-                .span_at(a.index)
-                .map_or_else(Default::default, |s| s.style);
-            let f = self.fonts.get(&style);
-            // SAFETY: a valid font.
-            let (ascent, descent, x) = unsafe { (f.ascent(), f.descent(), f.x_height()) };
             FontExtent::new(
                 Points(ascent as f32),
                 Points(descent as f32),
                 Points(x as f32),
             )
         };
+        let top = a.ascent(font, align).0 as CGFloat;
         let (up, down) = a.extent(font, align);
-        (
-            a.ascent(font, align).0 as CGFloat,
-            up.0 as CGFloat,
-            down.0 as CGFloat,
-        )
+        let (up, down) = (up.0 as CGFloat, down.0 as CGFloat);
+        // A fixed `lineHeight`: CoreText centers a line's own extent in
+        // it, so a placeholder reaching past the font on one side only
+        // would move its line's baseline (lines unevenly spaced). Its
+        // delegate reserves the font's half-leading box instead (the CSS
+        // strut), and where the attachment reaches past that box, as much
+        // again on the other side: the line grows only when it must,
+        // evenly, its text where other lines' is.
+        let line_height = line_height(text);
+        if line_height <= 0.0 {
+            return (top, up, down);
+        }
+        let half = (line_height - (ascent + descent + leading)) / 2.0;
+        let (strut_up, strut_down) = (ascent + half, descent + half);
+        let grow = (up - strut_up).max(down - strut_down).max(0.0);
+        (top, strut_up + grow, strut_down + grow)
+    }
+
+    /// The height a line holding the tallest attachment needs: its extent
+    /// around the baseline joined with its placeholder font's. A fixed
+    /// `lineHeight` caps text lines, not these: the view's line grows to
+    /// hold it (as a replaced inline box in CSS) instead of painting over
+    /// its neighbours.
+    fn tallest_attachment_line(
+        &self,
+        text: &AttributedText,
+        alignments: &AttachmentAlignments,
+    ) -> CGFloat {
+        text.attachments.iter().fold(0.0, |tallest: CGFloat, a| {
+            let (_, up, down) = self.attachment_metrics(text, a, alignments);
+            let style = text
+                .span_at(a.index)
+                .map_or_else(Default::default, |s| s.style);
+            let f = self.fonts.get(&style);
+            // SAFETY: a valid font.
+            let (ascent, descent, leading) = unsafe { (f.ascent(), f.descent(), f.leading()) };
+            tallest.max(up.max(ascent) + down.max(descent) + leading)
+        })
     }
 
     fn attributed_string(
@@ -359,7 +394,7 @@ impl CoreTextEngine {
             // and every range lies within the string (span offsets are UTF-16).
             unsafe { CFMutableAttributedString::set_attribute(s, range, Some(key), Some(value)) }
         };
-        let paragraph = paragraph_style(text);
+        let paragraph = paragraph_style(text, self.tallest_attachment_line(text, alignments));
         set(
             CFRange {
                 location: 0,
@@ -436,7 +471,14 @@ impl CoreTextEngine {
     }
 }
 
-fn paragraph_style(text: &AttributedText) -> CFRetained<CTParagraphStyle> {
+/// The text's fixed `lineHeight` (its first span's; 0: none).
+fn line_height(text: &AttributedText) -> CGFloat {
+    text.spans.first().map_or(0.0, |s| s.style.line_height.0) as CGFloat
+}
+
+/// `tallest`: the height a line holding an attachment needs (see
+/// `CoreTextEngine::tallest_attachment_line`); lines may grow up to it.
+fn paragraph_style(text: &AttributedText, tallest: CGFloat) -> CFRetained<CTParagraphStyle> {
     let alignment = match text.align {
         // React Native: the right side in right-to-left layouts.
         TextAlign::Auto if text.rtl => CTTextAlignment::Right,
@@ -446,7 +488,7 @@ fn paragraph_style(text: &AttributedText) -> CFRetained<CTParagraphStyle> {
         TextAlign::Right => CTTextAlignment::Right,
         TextAlign::Justify => CTTextAlignment::Justified,
     };
-    let line_height = text.spans.first().map_or(0.0, |s| s.style.line_height.0) as CGFloat;
+    let line_height = line_height(text);
     let setting = |spec, value: *const std::ffi::c_void, size| CTParagraphStyleSetting {
         spec,
         valueSize: size,
@@ -469,17 +511,18 @@ fn paragraph_style(text: &AttributedText) -> CFRetained<CTParagraphStyle> {
             size_of::<CTWritingDirection>(),
         ),
     ];
+    let max_line_height = line_height.max(tallest);
     if line_height > 0.0 {
-        for spec in [
+        settings.push(setting(
             CTParagraphStyleSpecifier::MinimumLineHeight,
+            (&raw const line_height).cast(),
+            size_of::<CGFloat>(),
+        ));
+        settings.push(setting(
             CTParagraphStyleSpecifier::MaximumLineHeight,
-        ] {
-            settings.push(setting(
-                spec,
-                (&raw const line_height).cast(),
-                size_of::<CGFloat>(),
-            ));
-        }
+            (&raw const max_line_height).cast(),
+            size_of::<CGFloat>(),
+        ));
     }
     // SAFETY: every setting points at a live value of the declared size.
     unsafe { CTParagraphStyle::new(settings.as_ptr(), settings.len()) }
@@ -1173,6 +1216,10 @@ pub(crate) mod tests {
                 "text::max_lines_cuts_the_rest_to_one_line",
                 max_lines_cuts_the_rest_to_one_line as fn(),
             ),
+            (
+                "text::inline_views_follow_their_placeholders",
+                inline_views_follow_their_placeholders as fn(),
+            ),
         ]
     }
 
@@ -1208,5 +1255,54 @@ pub(crate) mod tests {
         assert_eq!(lines.len(), 1);
         assert!(lines[0].end < text.len_utf16(), "{lines:?}");
         assert!(lines[0].width.0 > 0.0);
+    }
+
+    fn inline_views_follow_their_placeholders() {
+        use nlayer_core::geometry::{px, size};
+        let engine = CoreTextEngine::default();
+        let style = ResolvedTextStyle {
+            font_size: px(16.0),
+            line_height: px(26.0),
+            ..ResolvedTextStyle::default()
+        };
+        let mut text = AttributedText::default();
+        text.push("Made with ", style);
+        let mut alignments = AttachmentAlignments::default();
+        alignments.push(
+            &mut text,
+            size(px(18.0), px(18.0)),
+            VerticalAlign::TextTop,
+            style,
+        );
+        text.push(" and shipped ", style);
+        alignments.push(
+            &mut text,
+            size(px(40.0), px(18.0)),
+            VerticalAlign::Middle,
+            style,
+        );
+        text.push(" today.", style);
+        let prepared = engine.prepare_aligned(&text, &alignments);
+        let measured = engine.measure(&prepared, Some(px(400.0)));
+        let layout = engine.layout(&prepared, measured);
+        let points = engine.attachments(&layout);
+        let (Some(image), Some(badge)) = (
+            points.first().copied().flatten(),
+            points.get(1).copied().flatten(),
+        ) else {
+            panic!("both attachments are on the line: {points:?}");
+        };
+        assert!(
+            badge.x > image.x + px(20.0),
+            "the badge follows the image, not the text origin: image {image:?} badge {badge:?}"
+        );
+        assert!(
+            image.y >= Points::ZERO && image.y < px(20.0),
+            "text-top sits on the first line, not the corner: {image:?}"
+        );
+        assert!(
+            (badge.y - image.y).abs() < px(24.0),
+            "both attachments share the line: image {image:?} badge {badge:?}"
+        );
     }
 }
