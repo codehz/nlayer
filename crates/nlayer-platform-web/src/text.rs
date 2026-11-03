@@ -1013,9 +1013,11 @@ mod placement {
     #[test]
     fn inline_image_and_badge_share_the_line() {
         let engine = WebTextEngine::default();
-        let mut style = ResolvedTextStyle::default();
-        style.font_size = px(16.0);
-        style.line_height = px(26.0);
+        let style = ResolvedTextStyle {
+            font_size: px(16.0),
+            line_height: px(26.0),
+            ..Default::default()
+        };
         let mut text = AttributedText::default();
         text.push("Made with ", style);
         let mut alignments = AttachmentAlignments::default();

@@ -235,7 +235,7 @@ fn an_app_frame_encodes_the_v1_surface() {
     let (tx, rx) = crossbeam_channel::unbounded();
     let engine = Engine::start(
         EngineConfig::new(code, Size::new(px(390.0), px(800.0))),
-        || nlayer_platform_web::WebTextEngine::default(),
+        nlayer_platform_web::WebTextEngine::default,
         Arc::new(Sink { tx }),
     )
     .expect("the engine starts");
