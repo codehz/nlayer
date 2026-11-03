@@ -244,6 +244,25 @@ pub trait HostedApp {
     fn drag_and_hold(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String>;
     /// Releases the held pointer.
     fn drop(&mut self) -> Result<(), String>;
+    /// Hovers what `selector` names.
+    fn hover(&mut self, selector: &str) -> Result<(), String>;
+    /// Focuses what `selector` names. Headless sets the focus bit. A host
+    /// that cannot focus fails the step.
+    fn focus(&mut self, _selector: &str) -> Result<(), String> {
+        Err("this host cannot focus".to_owned())
+    }
+    /// Holds a press on `selector` without firing `onPress`.
+    fn down(&mut self, _selector: &str) -> Result<(), String> {
+        Err("this host cannot hold a press".to_owned())
+    }
+    /// Releases the press [`HostedApp::down`] held.
+    fn up(&mut self) -> Result<(), String> {
+        Err("this host cannot hold a press".to_owned())
+    }
+    /// Class warnings so far. A host that cannot see them returns none.
+    fn warnings(&mut self) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
     /// Sends a back request through navigation precedence.
     fn back(&mut self) -> Result<(), String>;
     /// Closes the app.
@@ -258,6 +277,11 @@ pub trait AppHost {
     /// What the opened app's `platform.os` is. Headless and web are `web`.
     fn os(&self) -> &'static str {
         "web"
+    }
+
+    /// Headless sets state bits itself. Device hosts take real input.
+    fn headless(&self) -> bool {
+        false
     }
 }
 
@@ -522,6 +546,9 @@ fn execute_in(dir: &Path, name: &str, code: &str, filter: Option<&str>) -> FileR
         if let Ok(os) = with_host(|app_host| app_host.os()) {
             host.set_global_string("__nlayerOs", os);
         }
+        if with_host(|app_host| app_host.headless()).unwrap_or(false) {
+            host.set_global_string("__nlayerHeadless", "1");
+        }
         host.eval_source(code).map_err(|e| e.to_string())?;
         let raw = host
             .global_string("__nlayerResult")
@@ -703,6 +730,34 @@ impl Session {
                 self.app_mut(request.id)?.press(&request.selector)?;
                 Ok("null".to_owned())
             }
+            "hover" => {
+                let request: PressRequest =
+                    serde_json::from_str(payload).map_err(|e| e.to_string())?;
+                self.app_mut(request.id)?.hover(&request.selector)?;
+                Ok("null".to_owned())
+            }
+            "focus" => {
+                let request: PressRequest =
+                    serde_json::from_str(payload).map_err(|e| e.to_string())?;
+                self.app_mut(request.id)?.focus(&request.selector)?;
+                Ok("null".to_owned())
+            }
+            "down" => {
+                let request: PressRequest =
+                    serde_json::from_str(payload).map_err(|e| e.to_string())?;
+                self.app_mut(request.id)?.down(&request.selector)?;
+                Ok("null".to_owned())
+            }
+            "up" => {
+                let request: DropRequest =
+                    serde_json::from_str(payload).map_err(|e| e.to_string())?;
+                self.app_mut(request.id)?.up()?;
+                Ok("null".to_owned())
+            }
+            "warnings" => {
+                let app = self.app_mut(parse_id(payload)?)?;
+                json(&app.warnings()?)
+            }
             "longPress" => {
                 let request: PressRequest =
                     serde_json::from_str(payload).map_err(|e| e.to_string())?;
@@ -875,6 +930,10 @@ fn with_host<T>(body: impl FnOnce(&mut dyn AppHost) -> T) -> Result<T, String> {
 struct HeadlessHost;
 
 impl AppHost for HeadlessHost {
+    fn headless(&self) -> bool {
+        true
+    }
+
     fn open(&mut self, request: HostOpen) -> Result<Box<dyn HostedApp>, String> {
         let app_dir = request
             .entry
@@ -953,6 +1012,27 @@ impl HostedApp for HeadlessApp {
             .map_err(|error| error.to_string())?;
         app.refresh();
         Ok(())
+    }
+
+    fn hover(&mut self, selector: &str) -> Result<(), String> {
+        self.app()?.hover_selector(selector)
+    }
+
+    fn focus(&mut self, selector: &str) -> Result<(), String> {
+        self.app()?.focus_selector(selector)
+    }
+
+    fn down(&mut self, selector: &str) -> Result<(), String> {
+        self.app()?.down_selector(selector)
+    }
+
+    fn up(&mut self) -> Result<(), String> {
+        self.app()?.up();
+        Ok(())
+    }
+
+    fn warnings(&mut self) -> Result<Vec<String>, String> {
+        self.app()?.class_warnings()
     }
 
     fn long_press(&mut self, selector: &str) -> Result<(), String> {

@@ -494,9 +494,9 @@ export interface ViewProps extends AccessibilityProps {
   hoverStyle?: StyleProp<ViewStyle>;
   /** Painted while it has focus. The platform applies it; layout does not change. */
   focusStyle?: StyleProp<ViewStyle>;
-  /** Utilities. v1 parses none: each name is warned and does not apply. */
+  /** Tailwind utilities. A name this version draws applies. An unknown name warns. A parsed name this version does not draw warns and does not apply. */
   class?: string;
-  /** Names applied while their value is truthy. v1 parses none. */
+  /** Names applied while their value is truthy, after `class`. */
   classList?: Record<string, boolean | null | undefined>;
   children?: Children;
   /** A name tests use to find this view. The platform does not draw it. */
@@ -540,9 +540,9 @@ export interface TextProps extends AccessibilityProps {
   hoverStyle?: StyleProp<TextStyle>;
   /** Painted while it has focus. The platform applies it; layout does not change. */
   focusStyle?: StyleProp<TextStyle>;
-  /** Utilities. v1 parses none: each name is warned and does not apply. */
+  /** Tailwind utilities. A name this version draws applies. An unknown name warns. A parsed name this version does not draw warns and does not apply. */
   class?: string;
-  /** Names applied while their value is truthy. v1 parses none. */
+  /** Names applied while their value is truthy, after `class`. */
   classList?: Record<string, boolean | null | undefined>;
   children?: Children;
   /** A name tests use to find this span. The platform does not draw it. */
@@ -568,9 +568,9 @@ export interface ImageProps extends AccessibilityProps {
   hoverStyle?: StyleProp<ImageStyle>;
   /** Painted while it has focus. The platform applies it; layout does not change. */
   focusStyle?: StyleProp<ImageStyle>;
-  /** Utilities. v1 parses none: each name is warned and does not apply. */
+  /** Tailwind utilities. A name this version draws applies. An unknown name warns. A parsed name this version does not draw warns and does not apply. */
   class?: string;
-  /** Names applied while their value is truthy. v1 parses none. */
+  /** Names applied while their value is truthy, after `class`. */
   classList?: Record<string, boolean | null | undefined>;
   /** A URL or a bundled image import. */
   src?: string | ImageAsset;
@@ -640,9 +640,9 @@ export interface InputProps extends AccessibilityProps {
   hoverStyle?: StyleProp<InputStyle>;
   /** Painted while it has focus. The platform applies it; layout does not change. */
   focusStyle?: StyleProp<InputStyle>;
-  /** Utilities. v1 parses none: each name is warned and does not apply. */
+  /** Tailwind utilities. A name this version draws applies. An unknown name warns. A parsed name this version does not draw warns and does not apply. */
   class?: string;
-  /** Names applied while their value is truthy. v1 parses none. */
+  /** Names applied while their value is truthy, after `class`. */
   classList?: Record<string, boolean | null | undefined>;
   value?: string;
   onChange?: (value: string) => void;
@@ -1128,6 +1128,16 @@ export interface App {
   inputs(): string[];
   /** Presses what `selector` names and waits for the frame. */
   press(selector: string): void;
+  /** Hovers what `selector` names. Headless sets the hover bit. A device moves the pointer. */
+  hover(selector: string): void;
+  /** Focuses what `selector` names. Headless sets the focus bit. */
+  focus(selector: string): void;
+  /** Holds a press on `selector` without firing `onPress`. Headless sets the pressed bit. */
+  down(selector: string): void;
+  /** Releases the press `down` held. */
+  up(): void;
+  /** `unknown classes` and `unsupported classes` lines so far. Empty when the host cannot see them. */
+  warnings(): string[];
   /** Sends `onLongPress` to what `selector` names. */
   longPress(selector: string): void;
   /** Types `text` into the input `selector` names, one change per character. */

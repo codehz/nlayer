@@ -880,6 +880,10 @@ pub struct Headless {
     screen: Screen,
     /// The test clock, in seconds since the app opened.
     now: f64,
+    /// The view the test last hovered, pressed, or focused.
+    hovered: Option<NodeId>,
+    pressed: Option<NodeId>,
+    focused: Option<NodeId>,
 }
 
 /// A display frame at 60 Hz.
@@ -928,6 +932,9 @@ impl Headless {
                 ..Screen::default()
             },
             now: 0.0,
+            hovered: None,
+            pressed: None,
+            focused: None,
         };
         app.refresh();
         // Initialize root view frame to viewport size for hit testing
@@ -1126,6 +1133,81 @@ impl Headless {
     /// classes. There is no script or JS API for this yet.
     pub fn set_states(&mut self, id: NodeId, states: u16) {
         self.engine.control().set_states(id, states);
+    }
+
+    /// `pressed`, `hovered` and `focused` bits the test has put on `id`.
+    fn state_bits(&self, id: NodeId) -> u16 {
+        let mut bits = 0;
+        if self.pressed == Some(id) {
+            bits |= 1;
+        }
+        if self.hovered == Some(id) {
+            bits |= 2;
+        }
+        if self.focused == Some(id) {
+            bits |= 4;
+        }
+        bits
+    }
+
+    /// Moves one state bit onto `next` (`0` pressed, `1` hovered, `2`
+    /// focused) and commits.
+    fn put_state(&mut self, which: u8, next: Option<NodeId>) {
+        let old = match which {
+            0 => std::mem::replace(&mut self.pressed, next),
+            1 => std::mem::replace(&mut self.hovered, next),
+            _ => std::mem::replace(&mut self.focused, next),
+        };
+        let control = self.control();
+        if let Some(old) = old.filter(|old| Some(*old) != next) {
+            control.set_states(old, self.state_bits(old));
+        }
+        if let Some(id) = next {
+            control.set_states(id, self.state_bits(id));
+        }
+        let _ = control.synchronize();
+        self.refresh();
+    }
+
+    fn view_selector(&mut self, selector: &str) -> Result<NodeId, String> {
+        self.refresh();
+        let target = selector::resolve(&self.screen, selector)?;
+        self.require_visible(selector, target)?;
+        Ok(target.view())
+    }
+
+    /// Hovers what `selector` names. The previous hover ends.
+    pub fn hover_selector(&mut self, selector: &str) -> Result<(), String> {
+        let id = self.view_selector(selector)?;
+        self.put_state(1, Some(id));
+        Ok(())
+    }
+
+    /// Focuses what `selector` names. `focus-within` follows at the next commit.
+    pub fn focus_selector(&mut self, selector: &str) -> Result<(), String> {
+        let id = self.view_selector(selector)?;
+        self.put_state(2, Some(id));
+        Ok(())
+    }
+
+    /// Holds a press on what `selector` names, without firing `onPress`.
+    pub fn down_selector(&mut self, selector: &str) -> Result<(), String> {
+        let id = self.view_selector(selector)?;
+        self.put_state(0, Some(id));
+        Ok(())
+    }
+
+    /// Releases the press [`Self::down_selector`] held.
+    pub fn up(&mut self) {
+        self.put_state(0, None);
+    }
+
+    /// `unknown classes` and `unsupported classes` lines so far.
+    pub fn class_warnings(&self) -> Result<Vec<String>, String> {
+        self.engine
+            .control()
+            .class_warnings()
+            .map_err(|error| error.to_string())
     }
 
     /// Presses the view showing `text` (its nearest parent listening to

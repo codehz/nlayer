@@ -610,6 +610,8 @@ pub struct Core<M: TextEngine> {
     /// The focus was reported, or a view of its chain moved, since the
     /// last commit.
     focus_moved: bool,
+    /// `unknown classes` and `unsupported classes` lines, once per string.
+    class_warnings: Vec<String>,
 }
 
 impl<M: TextEngine> Core<M> {
@@ -659,6 +661,7 @@ impl<M: TextEngine> Core<M> {
             focus_chain: Vec::new(),
             focus_scratch: Vec::new(),
             focus_moved: false,
+            class_warnings: Vec::new(),
         }
     }
 
@@ -721,6 +724,11 @@ impl<M: TextEngine> Core<M> {
             // screen's content is owed.
             self.sync_env();
         }
+    }
+
+    /// Class warnings for this core, in order. A class string warns once.
+    pub fn class_warnings(&self) -> &[String] {
+        &self.class_warnings
     }
 
     /// The platform measured where the content of screen `id` starts below

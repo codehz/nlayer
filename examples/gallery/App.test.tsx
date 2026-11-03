@@ -1,5 +1,9 @@
 import { type App, type Node, expect, open, test } from "@nlayer/test";
 
+declare global {
+  var __nlayerHeadless: string | undefined;
+}
+
 function flat(node: Node, out: Node[]): Node[] {
   out.push(node);
   for (const child of node.children) flat(child, out);
@@ -723,4 +727,78 @@ test("a press on the reading link opens it and reports to the press handler", ()
   app.press("reading-terms-parent");
   app.waitFor("Link pressed: 2");
   expect(app.openedUrls()).toEqual(["https://example.com/terms"]);
+});
+
+function byId(root: Node, id: string): Node {
+  const found = flat(root, []).find((node) => node.testID === id);
+  if (!found) throw new Error(`missing ${id}`);
+  return found;
+}
+
+test("classes lay out, restyle, and warn", () => {
+  const app = open("./App.tsx", { width: 390, height: 844 });
+  reveal(app, (node) => node.testID === "open-classes");
+  app.press("open-classes");
+  app.waitFor("classes-page");
+  app.hover("class-hover");
+  app.press("class-press");
+
+  const tree = app.tree();
+  const row = byId(tree, "class-row");
+  expect(byId(row, "class-a").frame).toEqual({ x: 16, y: 16, width: 10, height: 10 });
+  expect(byId(row, "class-b").frame.x).toBe(38);
+  expect(byId(row, "class-b").frame.y).toBe(16);
+  const arbitrary = byId(tree, "class-arbitrary");
+  expect(arbitrary.frame.width).toBe(37);
+  expect(arbitrary.frame.height).toBe(11);
+  expect(byId(byId(tree, "class-space"), "space-b").frame.x).toBe(16);
+  expect(byId(byId(tree, "class-mixed"), "mixed-child").frame).toEqual({
+    x: 16,
+    y: 16,
+    width: 8,
+    height: 8,
+  });
+  const override = byId(byId(tree, "class-override"), "override-child");
+  expect(override.frame.x).toBe(8);
+  expect(override.frame.y).toBe(16);
+  expect(byId(byId(tree, "class-important"), "important-child").frame.y).toBe(16);
+
+  const headless = globalThis.__nlayerHeadless === "1";
+  if (!headless) return;
+
+  const hover = byId(app.tree(), "class-hover");
+  expect(byId(hover, "hover-child").frame.x).toBe(16);
+  expect(byId(hover, "hover-child").frame.y).toBe(16);
+  expect(row.backgroundColor).toBe("#27272aff");
+  expect(arbitrary.backgroundColor).toBe("#7c3aedff");
+  expect(byId(tree, "class-faded").opacity).toBe(0.5);
+  expect((byId(tree, "class-shift").transform ?? []).some((step) => step.translateX === 4)).toBe(
+    true,
+  );
+  const image = byId(tree, "class-image");
+  expect(image.fit).toBe("cover");
+  expect(image.radius).toEqual([8, 8, 8, 8]);
+  const span = byId(tree, "class-label").spans?.[0];
+  expect(span?.fontSize).toBe(14);
+  expect(span?.fontWeight).toBe(600);
+  expect(span?.color).toBe("#27272a");
+  expect(byId(tree, "class-select").selectionColor).toBe("#e4e4e7ff");
+  expect(byId(tree, "class-disabled").opacity).toBe(0.25);
+  expect(byId(tree, "class-enabled").opacity).toBe(0.5);
+
+  app.focus("class-field");
+  const field = byId(byId(app.tree(), "class-within"), "class-field");
+  expect(field.frame.x).toBe(16);
+  expect(field.frame.y).toBe(16);
+  expect(field.opacity).toBe(0.5);
+
+  app.down("class-press");
+  expect(
+    (byId(app.tree(), "class-press").transform ?? []).some((step) => step.scale === 0.95),
+  ).toBe(true);
+  app.up();
+
+  const warnings = app.warnings().join("\n");
+  expect(warnings).toContain("unknown classes: wat");
+  expect(warnings).toContain("unsupported classes: shadow-md");
 });

@@ -99,6 +99,21 @@ export function open(entry, options) {
     press(selector) {
       call("press", { id, selector });
     },
+    hover(selector) {
+      call("hover", { id, selector });
+    },
+    focus(selector) {
+      call("focus", { id, selector });
+    },
+    down(selector) {
+      call("down", { id, selector });
+    },
+    up() {
+      call("up", { id });
+    },
+    warnings() {
+      return call("warnings", id);
+    },
     longPress(selector) {
       call("longPress", { id, selector });
     },

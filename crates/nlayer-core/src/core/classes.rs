@@ -198,11 +198,13 @@ impl<M: TextEngine> Core<M> {
                     crate::unknown_classes_warning(classes.unknown().iter().map(|s| &**s))
                 {
                     log::warn!("{message}");
+                    self.class_warnings.push(message);
                 }
                 if let Some(message) =
                     crate::unsupported_classes_warning(classes.unsupported().iter().map(|s| &**s))
                 {
                     log::warn!("{message}");
+                    self.class_warnings.push(message);
                 }
             }
             Some(classes)

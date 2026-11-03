@@ -257,6 +257,11 @@ impl HostedApp for WebApp {
         self.click(x, y)
     }
 
+    fn hover(&mut self, selector: &str) -> Result<(), String> {
+        let (x, y) = self.point("point", selector)?;
+        self.mouse("mouseMoved", x, y, 0)
+    }
+
     fn long_press(&mut self, selector: &str) -> Result<(), String> {
         let (x, y) = self.point("press", selector)?;
         self.mouse("mouseMoved", x, y, 0)?;

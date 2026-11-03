@@ -139,6 +139,7 @@ fn dispatch(host: &Host, line: &str) -> Result<Value, String> {
             })
         }
         "press" => press(host, request.selector),
+        "hover" => hover(host, request.selector),
         "selectionOwner" => {
             let scene = scene_of(&snapshot(host)?)?;
             let owner = scene
@@ -174,6 +175,24 @@ fn press(host: &Host, selector: String) -> Result<Value, String> {
     tap(host, x, y, false);
     thread::sleep(TAP);
     tap(host, x, y, true);
+    thread::sleep(SETTLE);
+    Ok(Value::Null)
+}
+
+fn hover(host: &Host, selector: String) -> Result<Value, String> {
+    let scene = scene_of(&snapshot(host)?)?;
+    let (x, y) = scene.point_for(&selector)?;
+    let _ = with_env(|env| {
+        unsafe {
+            env.call_method_unchecked(
+                host.view.as_obj(),
+                java().view_hover,
+                jni::signature::ReturnType::Primitive(jni::signature::Primitive::Void),
+                &[JValue::Float(x).as_jni(), JValue::Float(y).as_jni()],
+            )?;
+        }
+        Ok(())
+    });
     thread::sleep(SETTLE);
     Ok(Value::Null)
 }

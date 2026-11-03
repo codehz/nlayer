@@ -257,6 +257,9 @@ enum Message {
     /// Acknowledge after earlier messages have committed.
     #[cfg(not(target_arch = "wasm32"))]
     Barrier(Sender<()>),
+    /// The class warnings recorded so far.
+    #[cfg(not(target_arch = "wasm32"))]
+    ClassWarnings(Sender<Vec<String>>),
     /// The engine thread was asked to exit.
     #[cfg(not(target_arch = "wasm32"))]
     Stop,
@@ -287,6 +290,18 @@ impl EngineControl {
         let (tx, rx) = crossbeam_channel::bounded(1);
         self.tx
             .send(Message::Barrier(tx))
+            .map_err(|_| EngineError::new("engine stopped".to_owned()))?;
+        rx.recv()
+            .map_err(|_| EngineError::new("engine stopped".to_owned()))
+    }
+
+    /// Class warnings recorded so far (`unknown classes` and `unsupported
+    /// classes`), in order.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn class_warnings(&self) -> Result<Vec<String>, EngineError> {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        self.tx
+            .send(Message::ClassWarnings(tx))
             .map_err(|_| EngineError::new("engine stopped".to_owned()))?;
         rx.recv()
             .map_err(|_| EngineError::new("engine stopped".to_owned()))
@@ -743,6 +758,10 @@ impl<M: TextEngine> Session<M> {
             let _ = reply.send(());
             return true;
         }
+        if let Message::ClassWarnings(reply) = message {
+            let _ = reply.send(self.core.class_warnings().to_vec());
+            return true;
+        }
         #[cfg(feature = "js")]
         complete_network(&self.host, &self.results, &mut self.fetches);
         if !self.apply(message) {
@@ -859,6 +878,10 @@ impl<M: TextEngine> Session<M> {
             Message::NetworkDone => {}
             #[cfg(not(target_arch = "wasm32"))]
             Message::Barrier(_) => unreachable!("barriers are handled before apply"),
+            #[cfg(not(target_arch = "wasm32"))]
+            Message::ClassWarnings(_) => {
+                unreachable!("class warnings are answered before apply")
+            }
             #[cfg(not(target_arch = "wasm32"))]
             Message::Stop => return false,
         }

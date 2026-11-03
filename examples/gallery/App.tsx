@@ -671,7 +671,8 @@ type Route =
   | { name: "list" }
   | { name: "header" }
   | { name: "viewport-parent" }
-  | { name: "reading" };
+  | { name: "reading" }
+  | { name: "classes" };
 function DialogDemoPage(props: { nav: NavStackHandle }) {
   const dialogOpen = signal(false);
   const dialogAnimation = signal<"fade" | "slide" | "none">("fade");
@@ -1339,6 +1340,80 @@ function ReadingPage(props: { nav: NavStackHandle }) {
   );
 }
 
+function ClassesPage() {
+  return (
+    <Scroll testID="classes-page" style={{ flex: 1, backgroundColor: "#ffffff" }}>
+      <View testID="class-row" class="flex flex-row items-start gap-3 p-4 bg-zinc-800 rounded-lg">
+        <View testID="class-a" style={{ width: 10, height: 10, backgroundColor: "#ffffff" }} />
+        <View testID="class-b" style={{ width: 10, height: 10, backgroundColor: "#ffffff" }} />
+      </View>
+      <View testID="class-arbitrary" class="w-[37px] h-[11px] bg-[#7c3aed]" />
+      <Text testID="class-label" class="text-sm font-semibold text-zinc-800">
+        Class label
+      </Text>
+      <View
+        testID="class-faded"
+        class="opacity-50"
+        style={{ width: 20, height: 20, backgroundColor: "#000000" }}
+      />
+      <View testID="class-shift" class="translate-x-1" style={{ width: 20, height: 20 }} />
+      <Image
+        testID="class-image"
+        src={mark}
+        class="object-cover rounded-lg"
+        style={{ width: 32, height: 32 }}
+      />
+      <Text testID="class-clamp" class="line-clamp-2">
+        one two three four five six seven eight nine ten
+      </Text>
+      <View testID="class-space" class="flex flex-row items-start space-x-2">
+        <View testID="space-a" style={{ width: 8, height: 8 }} />
+        <View testID="space-b" style={{ width: 8, height: 8 }} />
+      </View>
+      <View testID="class-hover" class="hover:p-4">
+        <View testID="hover-child" style={{ width: 8, height: 8, backgroundColor: "#e2e8f0" }} />
+      </View>
+      <View
+        testID="class-press"
+        class="active:scale-95"
+        onPress={() => {}}
+        style={{ width: 40, height: 40, backgroundColor: "#e2e8f0" }}
+      />
+      <View testID="class-within" class="focus-within:p-4">
+        <Input
+          testID="class-field"
+          value=""
+          onChange={() => {}}
+          class="focus:p-2 focus-visible:opacity-50"
+        />
+      </View>
+      <View
+        testID="class-disabled"
+        disabled
+        class="disabled:opacity-25 enabled:opacity-50"
+        style={{ width: 12, height: 12, backgroundColor: "#000000" }}
+      />
+      <View
+        testID="class-enabled"
+        class="disabled:opacity-25 enabled:opacity-50"
+        style={{ width: 12, height: 12, backgroundColor: "#000000" }}
+      />
+      <View testID="class-mixed" class="p-4 shadow-md wat">
+        <View testID="mixed-child" style={{ width: 8, height: 8 }} />
+      </View>
+      <Text testID="class-select" class="selection:bg-zinc-200">
+        Pick
+      </Text>
+      <View testID="class-important" class="!p-4" style={{ paddingTop: 1 }}>
+        <View testID="important-child" style={{ width: 8, height: 8 }} />
+      </View>
+      <View testID="class-override" class="p-4" style={{ paddingLeft: 8 }}>
+        <View testID="override-child" style={{ width: 8, height: 8 }} />
+      </View>
+    </Scroll>
+  );
+}
+
 function HomePage() {
   return (
     <Scroll testID="page" style={{ flex: 1, backgroundColor: "#f8fafc" }}>
@@ -1430,6 +1505,13 @@ function HomePage() {
           >
             → Reading (selection, inline views, href)
           </Text>
+          <Text
+            testID="open-classes"
+            onPress={() => nav.push({ name: "classes" })}
+            style={{ color: "#3b82f6", fontWeight: "600", padding: 8 }}
+          >
+            → Classes
+          </Text>
         </Section>
       </View>
     </Scroll>
@@ -1507,6 +1589,9 @@ function App() {
         } else if (r.name === "reading") {
           content = <ReadingPage nav={nav} />;
           title = "Reading";
+        } else if (r.name === "classes") {
+          content = <ClassesPage />;
+          title = "Classes";
         } else {
           content = <Text>Unknown route</Text>;
         }

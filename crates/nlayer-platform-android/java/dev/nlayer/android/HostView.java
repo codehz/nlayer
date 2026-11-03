@@ -333,6 +333,16 @@ public final class HostView extends FrameLayout {
         });
   }
 
+  public void hover(final float x, final float y) {
+    onMain(
+        new Main<Void>() {
+          public Void run() {
+            Tree.hover(HostView.this, x, y);
+            return null;
+          }
+        });
+  }
+
   public void move(final float x, final float y) {
     onMain(
         new Main<Void>() {

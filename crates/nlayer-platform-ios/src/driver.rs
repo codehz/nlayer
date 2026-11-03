@@ -187,6 +187,7 @@ fn dispatch(line: &str) -> Result<Value, String> {
             })
         })?,
         "press" => press(request.selector),
+        "hover" => hover(request.selector),
         "selectionOwner" => on_ui(move || {
             Ok(scene().map(|scene| {
                 let owner = scene
@@ -242,6 +243,24 @@ fn press(selector: String) -> Result<Value, String> {
     })??;
     thread::sleep(SETTLE);
     Ok(Value::Null)
+}
+
+fn hover(selector: String) -> Result<Value, String> {
+    on_ui(move || -> Result<Value, String> {
+        let mounter = crate::host::mounter().ok_or_else(|| "the app is not up".to_owned())?;
+        let id = {
+            let borrowed = mounter.borrow();
+            let scene = borrowed.scene();
+            match scene.query(&selector) {
+                Query::Ready => {}
+                Query::Wait => return Err(format!("`{selector}` is not in view")),
+                Query::Fail(error) => return Err(error),
+            }
+            scene.view_of(&selector)?
+        };
+        mounter.borrow_mut().test_hover(id);
+        Ok(json!(null))
+    })?
 }
 
 fn long_press(selector: String) -> Result<Value, String> {

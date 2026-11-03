@@ -2361,6 +2361,11 @@ impl Mounter {
         self.repaint(id);
     }
 
+    /// The test driver hovers `id` the way the hover gesture does.
+    pub(crate) fn test_hover(&mut self, id: NodeId) {
+        self.hovered(id, UIGestureRecognizerState::Began);
+    }
+
     fn repaint(&mut self, id: NodeId) {
         // Gestures and image arrivals are outside the batch transaction.
         quiet(|| {

@@ -166,6 +166,16 @@ export interface App {
   inputs(): string[];
   /** Presses what `selector` names and waits for the frame. */
   press(selector: string): void;
+  /** Hovers what `selector` names. Headless sets the hover bit. A device moves the pointer. */
+  hover(selector: string): void;
+  /** Focuses what `selector` names. Headless sets the focus bit. */
+  focus(selector: string): void;
+  /** Holds a press on `selector` without firing `onPress`. Headless sets the pressed bit. */
+  down(selector: string): void;
+  /** Releases the press `down` held. */
+  up(): void;
+  /** `unknown classes` and `unsupported classes` lines so far. Empty when the host cannot see them. */
+  warnings(): string[];
   /** Sends `onLongPress` to what `selector` names. */
   longPress(selector: string): void;
   /** Types `text` into the input `selector` names, one change per character. */

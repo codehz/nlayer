@@ -176,6 +176,11 @@ impl HostedApp for IosApp {
         Ok(())
     }
 
+    fn hover(&mut self, selector: &str) -> Result<(), String> {
+        self.call("hover", selector, "", 0.0)?;
+        Ok(())
+    }
+
     fn long_press(&mut self, selector: &str) -> Result<(), String> {
         self.call("longPress", selector, "", 0.0)?;
         Ok(())

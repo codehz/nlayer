@@ -342,6 +342,15 @@ final class Tree {
     event.recycle();
   }
 
+  static void hover(HostView host, float xDp, float yDp) {
+    float x = xDp * host.density, y = yDp * host.density;
+    long now = android.os.SystemClock.uptimeMillis();
+    MotionEvent event = MotionEvent.obtain(now, now, MotionEvent.ACTION_HOVER_ENTER, x, y, 0);
+    event.setSource(android.view.InputDevice.SOURCE_MOUSE);
+    host.dispatchGenericMotionEvent(event);
+    event.recycle();
+  }
+
   static void move(HostView host, float xDp, float yDp) {
     float x = xDp * host.density, y = yDp * host.density;
     long now = android.os.SystemClock.uptimeMillis();
