@@ -33,7 +33,9 @@ Copied files:
 - `crates/nlayer-core/src/{style,color,css,css_named,effects,transform,grid}.rs`
   from the same paths under `crates/nsh-core/src/`
 - `ResizeMode` from `nsh_core::ops` (`crates/nlayer-core/src/ops.rs`)
-- `ClassProps` / `Space` from `nsh_core::tailwind` (utility table not copied)
+- `crates/nlayer-core/src/tailwind/{mod,utilities,theme,palette}.rs` from
+  `crates/nsh-core/src/tailwind/{mod,utilities,theme,palette}.rs`
+  (no `Theme::from_json` / `extend` / `ClassTokens`; the v5 gate drops utilities the hosts do not draw)
 - `AnimationProp` names from `nsh_core::animation` (graph not copied)
 - `PointerEvents` from `nsh_core::props`
   `PropEnum` derives are omitted until the element macros exist.

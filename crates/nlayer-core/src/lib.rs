@@ -24,7 +24,7 @@ pub mod selection;
 pub mod snap;
 pub mod storage;
 pub mod style;
-mod tailwind;
+pub mod tailwind;
 pub mod typescript;
 
 pub use ops::{EventMask, NodeId, ROOT_ID, ResizeMode};
@@ -47,4 +47,6 @@ pub use ops::{
 };
 pub use platform::ColorScheme;
 pub use style::Color;
-pub use tailwind::{class_tokens, unknown_classes_warning};
+pub use tailwind::{
+    ClassList, Theme, class_tokens, parse, unknown_classes_warning, unsupported_classes_warning,
+};
