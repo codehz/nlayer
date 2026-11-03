@@ -6,7 +6,6 @@ use nlayer_core::{
     Color, MountBatch, MountItem, ViewKind,
     geometry::{Edges, Size, px},
     style::ViewStyle,
-    text::ApproxTextEngine,
     transform::{Transform, TransformKind},
 };
 use nlayer_engine::{Engine, EngineConfig, MountSink};
@@ -236,7 +235,7 @@ fn an_app_frame_encodes_the_v1_surface() {
     let (tx, rx) = crossbeam_channel::unbounded();
     let engine = Engine::start(
         EngineConfig::new(code, Size::new(px(390.0), px(800.0))),
-        || ApproxTextEngine,
+        || nlayer_platform_web::WebTextEngine::default(),
         Arc::new(Sink { tx }),
     )
     .expect("the engine starts");
@@ -268,11 +267,11 @@ fn an_app_frame_encodes_the_v1_surface() {
         .iter()
         .find(|item| item[0] == "t")
         .expect("a text block");
-    let runs = text[8].as_array().unwrap();
-    let words: Vec<&str> = runs.iter().map(|run| run[0].as_str().unwrap()).collect();
+    let runs = text[6].as_array().unwrap();
+    let words: Vec<&str> = runs.iter().map(|run| run[2].as_str().unwrap()).collect();
     assert!(words.iter().any(|w| w.contains("span")), "{words:?}");
     assert!(
-        text.get(10).and_then(|item| item.as_array()).is_some(),
+        text.get(9).and_then(|item| item.as_array()).is_some(),
         "span press ranges"
     );
     assert!(
@@ -366,9 +365,9 @@ fn a_text_carries_its_selection_color_and_hrefs() {
         .expect("a text block");
     assert_eq!(text[2], 4.0, "the content origin stays inside the view");
     assert_eq!(text[3], 6.0);
-    assert_eq!(text[11], Value::Bool(true), "userSelect: text");
-    assert_eq!(text[12], "#ff0000", "selectionColor");
-    assert_eq!(text[13], serde_json::json!([[0, 5, 7]]), "href ranges");
+    assert_eq!(text[10], Value::Bool(true), "userSelect: text");
+    assert_eq!(text[11], "#ff0000", "selectionColor");
+    assert_eq!(text[12], serde_json::json!([[0, 5, 7]]), "href ranges");
 }
 
 #[test]

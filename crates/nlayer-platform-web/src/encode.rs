@@ -8,11 +8,12 @@
 //! text, gets its own rule (`i<id>…`), which the page replaces in place.
 //!
 //! Copied from `nsh-platform-web/src/encode.rs` and `text/css.rs`. The CSS
-//! is the v1 whitelist only (fill, radius, opacity, overflow, static
-//! transform, transform origin, border). Text is the attributed spans, not
-//! `WebLayout` glyph runs. `activeStyle`, `hoverStyle` and `focusStyle`
-//! are rules on the view (`["rule", ...]`) that the page applies; they do
-//! not replace the view's class.
+//! is the drawn whitelist (fill, radius, opacity, overflow, static
+//! transform, transform origin, border). Text is glyph runs from
+//! [`crate::text::WebLayout`]: each run is placed where layout put it.
+//! `activeStyle`, `hoverStyle` and `focusStyle` are rules on the view
+//! (`["rule", ...]`) that the page applies; they do not replace the view's
+//! class.
 //! A view style also sends `["xf", id, steps]` (`{ translateX: 12 }`, angles
 //! in degrees), including an empty list that clears a previous one. The page
 //! paints the CSS and keeps the steps for the test tree.
@@ -25,18 +26,14 @@ use nlayer_core::{
     MountItem, NodeId, ResizeMode, ViewKind,
     animation::AnimationProp,
     geometry::{DefiniteLength, Points, REM_SIZE, relative},
-    style::{BorderStyle, TextAlign, TextStyle, TransformOrigin, ViewStyle},
-    text::{AttributedText, ResolvedTextStyle},
+    style::{BorderStyle, DecorationStyle, TextAlign, TextStyle, TransformOrigin, ViewStyle},
+    text::ResolvedTextStyle,
     transform::{Transform, TransformKind},
 };
 use rustc_hash::FxHashMap;
 
 /// New classes a view may define before its styles get rules of their own.
 const OWN_RULES_AFTER: u8 = 16;
-
-/// The system font stack (`fontFamily` unset). v1 has no custom fonts.
-const SYSTEM_FONT: &str = "-apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, \
-\"Helvetica Neue\", Arial, \"PingFang SC\", \"Noto Sans SC\", \"Microsoft YaHei\", sans-serif";
 
 /// The classes defined for one page.
 #[derive(Default)]
@@ -137,35 +134,56 @@ impl Encoder {
                 out.item("ab").num(*id).raw(&json).end();
             }
             MountItem::Text {
-                id, text, content, ..
+                id,
+                text,
+                layout,
+                content,
             } => {
-                let runs = text_runs(text);
-                let classes: Vec<Class> = runs
-                    .iter()
-                    .enumerate()
-                    .map(|(i, run)| self.class(out, *id, Part::Text(i), &run.css))
-                    .collect();
+                let layout = layout.downcast::<crate::text::WebLayout>();
+                // Defined before the item that uses them. A run's line box is
+                // the font's own (ascent + descent): the extra leading is in
+                // the run's y, so the glyphs sit on the baseline attachments
+                // were placed against.
+                let mut classes = Vec::new();
+                if let Some(layout) = layout.as_ref() {
+                    for (i, style) in layout.styles.iter().enumerate() {
+                        classes.push(self.class(out, *id, Part::Text(i), &run_css(style)));
+                    }
+                }
                 out.item("t")
                     .num(*id)
                     .num(content.origin.x.0)
                     .num(content.origin.y.0)
                     .num(content.size.width.0)
                     .num(content.size.height.0);
-                match align_css(text.align, text.rtl) {
-                    Some(align) => out.str(align),
-                    None => out.raw("null"),
-                };
-                out.bool(text.rtl);
                 out.s.push_str(",[");
-                for (i, (run, class)) in runs.iter().zip(classes).enumerate() {
+                if let Some(layout) = layout.as_ref() {
+                    for (i, run) in layout.runs.iter().enumerate() {
+                        if i > 0 {
+                            out.s.push(',');
+                        }
+                        let _ = write!(out.s, "[{},{},", run.x, run.y);
+                        push_str(&mut out.s, &run.text);
+                        let _ = write!(out.s, ",{},", run.style);
+                        match run.start {
+                            Some(start) => {
+                                let _ = write!(out.s, "{start}");
+                            }
+                            None => out.s.push_str("null"),
+                        }
+                        if !run.after.is_empty() {
+                            out.s.push(',');
+                            push_str(&mut out.s, &run.after);
+                        }
+                        out.s.push(']');
+                    }
+                }
+                out.s.push_str("],[");
+                for (i, class) in classes.into_iter().enumerate() {
                     if i > 0 {
                         out.s.push(',');
                     }
-                    out.s.push('[');
-                    push_str(&mut out.s, &run.text);
-                    out.s.push(',');
                     out.push_class(class);
-                    out.s.push(']');
                 }
                 out.s.push(']');
                 out.s.push_str(",[");
@@ -204,6 +222,24 @@ impl Encoder {
                     let _ = write!(out.s, "[{},{},{}]", href.start, href.end, href.node);
                 }
                 out.s.push(']');
+                // Span backgrounds, in the content box: `[x, y, w, h, radius, color]`.
+                out.s.push_str(",[");
+                if let Some(layout) = layout.as_ref() {
+                    for (i, b) in layout.backgrounds.iter().enumerate() {
+                        if i > 0 {
+                            out.s.push(',');
+                        }
+                        let _ = write!(
+                            out.s,
+                            "[{},{},{},{},{},",
+                            b.x, b.y, b.width, b.height, b.radius
+                        );
+                        push_str(&mut out.s, &css_color(b.color));
+                        out.s.push(']');
+                    }
+                }
+                out.s.push_str("],");
+                push_str(&mut out.s, &text.text);
                 out.end();
             }
             MountItem::LongPressDelay { id, delay } => {
@@ -1098,20 +1134,14 @@ fn origin(o: DefiniteLength) -> String {
     }
 }
 
-/// The CSS `font` shorthand. The family is the system stack. `font`
-/// resets `line-height`, so callers write [`css_line_height`] after it.
+/// The CSS `font` shorthand. The family is the system stack, or the one
+/// the style names in front of it. `font` resets `line-height`.
 fn css_font(style: &ResolvedTextStyle) -> String {
-    format!(
-        "{}{} {}px {SYSTEM_FONT}",
-        if style.italic { "italic " } else { "" },
-        style.font_weight,
-        style.font_size.0
-    )
+    crate::text::css_font(style)
 }
 
-/// Matches [`nlayer_core::text::ApproxTextEngine`]: an explicit
-/// `lineHeight`, otherwise `1.2` times the font size. The page's default
-/// line box is taller than that, and the text box clips what hangs out.
+/// An explicit `lineHeight`, otherwise `1.2` times the font size. Fields
+/// use this; text runs use the font's own ascent and descent instead.
 fn css_line_height(style: &ResolvedTextStyle) -> String {
     if style.line_height.0 > 0.0 {
         format!("line-height:{}px;", style.line_height.0)
@@ -1120,43 +1150,60 @@ fn css_line_height(style: &ResolvedTextStyle) -> String {
     }
 }
 
-struct Run {
-    text: String,
-    css: String,
-}
-
-/// One run per attributed span: color, weight, size and italic. The page
-/// lays them out in the content box (no glyph positions).
-fn text_runs(text: &AttributedText) -> Vec<Run> {
-    text.spans
-        .iter()
-        .map(|span| Run {
-            text: utf16_slice(&text.text, span.start, span.end),
-            css: format!(
-                "font:{};{}color:{};",
-                css_font(&span.style),
-                css_line_height(&span.style),
-                css_color(span.style.color)
-            ),
-        })
-        .filter(|run| !run.text.is_empty())
-        .collect()
-}
-
-fn utf16_slice(s: &str, start: u32, end: u32) -> String {
-    let mut out = String::new();
-    let mut i = 0u32;
-    for ch in s.chars() {
-        let next = i + ch.len_utf16() as u32;
-        if next > start && i < end {
-            out.push(ch);
+/// The CSS of one laid-out run. The line box is the font's metrics, not
+/// the styled line height: leading is already in the run's position.
+fn run_css(style: &crate::text::RunStyle) -> String {
+    let s = &style.style;
+    let mut css = format!(
+        "font:{};line-height:{}px;color:{};",
+        css_font(s),
+        style.ascent + style.descent,
+        css_color(s.color)
+    );
+    if s.letter_spacing.0 != 0.0 {
+        let _ = write!(css, "letter-spacing:{}px;", s.letter_spacing.0);
+    }
+    let d = s.decoration;
+    if !d.is_none() {
+        let lines = match (d.underline, d.line_through) {
+            (true, true) => "underline line-through",
+            (true, false) => "underline",
+            _ => "line-through",
+        };
+        let _ = write!(
+            css,
+            "text-decoration:{lines} {};",
+            decoration_css(s.decoration_style)
+        );
+        if let Some(c) = s.decoration_color {
+            let _ = write!(css, "text-decoration-color:{};", css_color(c));
         }
-        i = next;
-        if i >= end {
-            break;
+        if let Some(t) = s.decoration_thickness {
+            let _ = write!(css, "text-decoration-thickness:{}px;", t.0);
+        }
+        if let Some(o) = s.underline_offset {
+            let _ = write!(css, "text-underline-offset:{}px;", o.0);
         }
     }
-    out
+    if let Some(numeric) = crate::text::font_variant_numeric(s.font_variant) {
+        let _ = write!(css, "font-variant-numeric:{numeric};");
+    }
+    if s.font_variant
+        .has(nlayer_core::style::FontVariant::SMALL_CAPS)
+    {
+        css.push_str("font-variant-caps:small-caps;");
+    }
+    css
+}
+
+fn decoration_css(style: DecorationStyle) -> &'static str {
+    match style {
+        DecorationStyle::Solid => "solid",
+        DecorationStyle::Double => "double",
+        DecorationStyle::Dotted => "dotted",
+        DecorationStyle::Dashed => "dashed",
+        DecorationStyle::Wavy => "wavy",
+    }
 }
 
 fn align_css(align: TextAlign, rtl: bool) -> Option<&'static str> {

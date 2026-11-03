@@ -74,10 +74,17 @@
 /* No strut: the box is only as tall as the spans, and a 16px page font would otherwise hang their bottoms out of `overflow: hidden`. Each span sets its own `line-height` (the engine's `1.2`, or an explicit `lineHeight`) after `font`, which resets it. */
 .nl-text {
   position: absolute;
-  white-space: pre-wrap;
   overflow: hidden;
   font-size: 0;
   line-height: 0;
+}
+.nl-run {
+  position: absolute;
+  white-space: pre;
+}
+.nl-run-bg {
+  position: absolute;
+  pointer-events: none;
 }
 .nl-border {
   position: absolute;

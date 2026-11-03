@@ -48,6 +48,12 @@ test("the page graph and a text mount do not need QuickJS", async () => {
       nlayer_log: (level, ptr, len) => {
         logs.push(new TextDecoder().decode(new Uint8Array(wasm.memory.buffer, ptr, len)));
       },
+      measure_text: () => 0,
+      measure_numeric_text: () => 0,
+      text_cluster_boxes: () => {},
+      font_ascent: () => 0,
+      font_descent: () => 0,
+      font_x_height: () => 0,
     },
   };
   // `prefers-color-scheme` and history back, as a page provides them.

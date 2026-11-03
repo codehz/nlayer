@@ -167,6 +167,8 @@ export class Player {
       this.window.addEventListener?.("popstate", this.onPopState);
     }
     this.window.addEventListener?.("resize", this.onResize);
+    this.onCopy = (event) => this.copyText(event);
+    this.doc.addEventListener?.("copy", this.onCopy);
     this.safeArea = options.safeArea ?? null;
     this.changedStacks = new Set();
     this.changedModals = false;
@@ -418,7 +420,23 @@ export class Player {
     if (el._border) el.append(el._border);
   }
 
-  op_t([, id, x, y, w, h, align, rtl, runs, spanIds, links, selectable, selection, hrefs]) {
+  op_t([
+    ,
+    id,
+    x,
+    y,
+    w,
+    h,
+    runs,
+    styles,
+    spanIds,
+    links,
+    selectable,
+    selection,
+    hrefs,
+    backgrounds,
+    source,
+  ]) {
     const el = this.view(id);
     if (!el) return;
     let box = el._text;
@@ -436,19 +454,13 @@ export class Player {
     s.top = `${y}px`;
     s.width = `${w}px`;
     s.height = `${h}px`;
-    s.textAlign = align || "";
-    s.direction = rtl ? "rtl" : "";
-    box.replaceChildren();
-    for (const [text, name] of runs) {
-      const span = this.doc.createElement("span");
-      const cls = this.styleClass(name);
-      if (cls) span.className = cls;
-      span.textContent = text;
-      box.append(span);
-    }
+    // Runs are where layout put them, inside the content box. The browser
+    // does not wrap them: an attachment's frame uses the same origin.
+    this.placeRuns(box, runs || [], styles || [], backgrounds || []);
     el._spanIds = spanIds || [];
     el._links = links || [];
     el._hrefs = hrefs || [];
+    el._source = typeof source === "string" ? source : null;
     // `selectable` is tri-state: `true` is `userSelect: "text"`, `false`
     // `"none"`, `null` follows the views around it (and is not selectable).
     el.classList.toggle("nl-selectable", selectable === true);
@@ -458,6 +470,32 @@ export class Player {
     if (selection) el.style.setProperty?.("--nl-selection", selection);
     else el.style.removeProperty?.("--nl-selection");
     el._selection = selection || null;
+  }
+
+  /** Glyph runs and span backgrounds, in the content box. */
+  placeRuns(box, runs, styles, backgrounds) {
+    const nodes = [];
+    for (const [x, y, w, h, r, color] of backgrounds) {
+      const bg = this.doc.createElement("div");
+      bg.className = "nl-run-bg";
+      bg.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px;border-radius:${r}px;background:${color}`;
+      nodes.push(bg);
+    }
+    for (const [x, y, text, style, start, after] of runs) {
+      const span = this.doc.createElement("span");
+      const name = this.styleClass(styles[style]);
+      span.className = name ? `nl-run ${name}` : "nl-run";
+      span.style.left = `${x}px`;
+      span.style.top = `${y}px`;
+      span.textContent = text ?? "";
+      if (start != null) span._start = start;
+      if (after) span._after = after;
+      nodes.push(span);
+    }
+    // The host stand-in clears and ignores arguments. A real node does too
+    // when called with none, then `append` places the runs.
+    box.replaceChildren();
+    for (const node of nodes) box.append(node);
   }
 
   /** `selectable` on a view: its texts select as one area. */
@@ -1420,6 +1458,27 @@ export class Player {
     }
   }
 
+  /**
+   * Copy reads the source, placeholders included. The runs omit the
+   * U+FFFC, so the DOM selection would drop them.
+   */
+  copyText(event) {
+    const sel = this.doc.getSelection?.();
+    const selected = String(sel ?? "");
+    if (!selected) return;
+    let node = sel?.anchorNode ?? null;
+    while (node && !node.classList?.contains?.("nl-text")) node = node.parentNode;
+    const source = node?.parentElement?._source;
+    if (typeof source !== "string" || !source.includes("\uFFFC")) return;
+    const flat = source.replaceAll("\uFFFC", "");
+    const at = flat.indexOf(selected);
+    if (at < 0) return;
+    const start = sourceIndex(source, at);
+    const end = sourceIndex(source, at + selected.length);
+    event.clipboardData?.setData?.("text/plain", source.slice(start, end));
+    event.preventDefault?.();
+  }
+
   dispose() {
     if (this.onPopState) {
       this.window.removeEventListener?.("popstate", this.onPopState);
@@ -1428,6 +1487,10 @@ export class Player {
     if (this.onResize) {
       this.window.removeEventListener?.("resize", this.onResize);
       this.onResize = null;
+    }
+    if (this.onCopy) {
+      this.doc.removeEventListener?.("copy", this.onCopy);
+      this.onCopy = null;
     }
   }
 }
@@ -1495,11 +1558,9 @@ function utf16At(el, event) {
   }
   const box = el._text;
   if (!box || typeof box.contains !== "function" || !box.contains(node)) return null;
-  if (node.nodeType === 3) {
-    return utf16Before(box, node) + offset;
-  }
-  const child = node.childNodes?.[offset];
-  return child ? utf16Before(box, child) : utf16Before(box, null);
+  // A hit on the run element itself is its first source offset.
+  if (node._start != null && node.nodeType !== 3) return node._start;
+  return utf16Before(box, node) + (node.nodeType === 3 ? offset : 0);
 }
 
 function utf16Before(root, stop) {
@@ -1510,11 +1571,25 @@ function utf16Before(root, stop) {
       count += node.textContent.length;
       return false;
     }
+    // Runs are absolutely positioned, so DOM order is not a fallback, and
+    // a placeholder is not a character of the span. The run's start is.
+    if (node._start != null && node.contains?.(stop)) count = node._start;
     for (const child of node.childNodes ?? []) {
       if (walk(child)) return true;
     }
+    if (node._after) count += node._after.length;
     return false;
   };
   walk(root);
   return count;
+}
+
+/** A flat offset (U+FFFC removed) as an offset in `source`. */
+function sourceIndex(source, flat) {
+  let seen = 0;
+  for (let i = 0; i < source.length; i++) {
+    if (seen === flat) return i;
+    if (source[i] !== "\uFFFC") seen++;
+  }
+  return source.length;
 }

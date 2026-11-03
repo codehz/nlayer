@@ -39,6 +39,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 slab = "0.4"
 thiserror = "2"
 unicode-linebreak = "0.1.5"
+unicode-bidi = "0.3.18"
 taffy = { version = "0.15", default-features = false, features = [
   "std",
   "flexbox",

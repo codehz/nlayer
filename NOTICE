@@ -112,7 +112,7 @@ Copied files:
   `crates/nsh-platform-web/src/encode.rs` and `src/text/css.rs` (the mount
   JSON and its CSS classes, cut to the v1 views and the whitelist: fill,
   radius, opacity, overflow, static transform, transform origin, border
-  and attributed text spans; shadows, gradients, filters and glyph runs
+  and attributed text as glyph runs; shadows, gradients and filters
   are not copied)
 - `crates/nlayer-platform-web/web/nlayer.js` and `web/base.css` from
   `crates/nsh-platform-web/web/nsh.js` (the DOM mounter, the same cut:
@@ -393,12 +393,19 @@ Copied files:
   `crates/nlayer-platform-ios/src/text.rs` and `text_view.rs` from
   `crates/nsh-platform-ios/src/text.rs` and `text_view.rs` (custom fonts,
   strikethrough and span backgrounds are not copied)
+- the web text engine `crates/nlayer-platform-web/src/text.rs`,
+  `src/text/{cluster,css,hit,measure}.rs` from
+  `crates/nsh-platform-web/src/text.rs` and `src/text/` (line breaking,
+  bidi, glyph runs and attachment `verticalAlign`; custom fonts are not
+  copied). Off wasm a fixed advance stands in for the page's canvas
+  measurements
 - the inline attachments and `href` ranges of
-  `crates/nlayer-platform-web/web/nlayer.js` from
-  `crates/nsh-platform-web/web/nsh.js`'s text mount (the run text is the
-  block's first child, so a U+FFFC placeholder's view paints over it; the
-  view takes the frame the core laid out) and its span press ranges (a
-  span's `href` wins over its block's; nsh has no `href` on text). The
-  desktop `.nsh-desktop .nsh-autoselect` idiom, its double-click,
-  triple-click and Shift+click selection, and the `openUrl` capability
-  grant are not copied)
+  `crates/nlayer-platform-web/web/nlayer.js` and the canvas measurements
+  of `web/boot.js` from `crates/nsh-platform-web/web/nsh.js`'s text mount
+  (a run is absolutely positioned where the text engine put it, so an
+  attachment's frame and the glyphs share one origin; a placeholder is
+  not a character of the run) and its span press ranges (a span's `href`
+  wins over its block's; nsh has no `href` on text). The desktop
+  `.nsh-desktop .nsh-autoselect` idiom, its double-click, triple-click
+  and Shift+click selection, and the `openUrl` capability grant are not
+  copied

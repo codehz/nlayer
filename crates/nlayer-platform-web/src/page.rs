@@ -1,19 +1,16 @@
 //! One surface running on the caller's thread: the page's engine.
 //!
-//! [`PageSession`] loads the bundle, lays out with the headless text
-//! stand-in and hands each frame to the page as the JSON [`Encoder`]
-//! writes. The page applies it (`web/nlayer.js`) and reports presses,
-//! typing, scrolling, resizes and insets. The app's `fetch` is the page's.
-//! Measurement
-//! is [`ApproxTextEngine`] (the same stand-in as `nlayer test`); the
-//! browser wraps the attributed spans in the box it produced. Glyph
-//! measurement, hot reload and bytecode are not here. The wasm exports
-//! (`nlayer_browser_start`, `nlayer_pump`) call this module. The bundle
-//! string is evaluated only by the native QuickJS host; on wasm the page
-//! owns the script and the string is empty.
+//! [`PageSession`] loads the bundle, lays text out with [`crate::text::WebTextEngine`]
+//! and hands each frame to the page as the JSON [`Encoder`] writes. The page
+//! applies it (`web/nlayer.js`) and reports presses, typing, scrolling, resizes
+//! and insets. The app's `fetch` is the page's. On wasm, widths and font
+//! metrics come from the browser; off wasm a fixed advance stands in, so host
+//! tests see the same run protocol. The wasm exports (`nlayer_browser_start`,
+//! `nlayer_pump`) call this module. The bundle string is evaluated only by the
+//! native QuickJS host; on wasm the page owns the script and the string is empty.
 //!
 //! Extracted from `nsh-platform-web`'s page loop (`src/lib.rs`, the
-//! `nsh_start` / `nsh_pump` / `nsh_event` exports) and cut to that set.
+//! `nsh_start` / `nsh_pump` / `nsh_event` exports).
 
 use std::{
     sync::{Arc, Mutex},
@@ -23,11 +20,10 @@ use std::{
 use nlayer_core::{
     EventKind, NO_NATIVE_HEADER, NodeId,
     geometry::{Edges, Point, Points, Size},
-    text::ApproxTextEngine,
 };
 use nlayer_engine::{EngineConfig, EngineError, EventPayload, LocalEngine, MountSink, Wake};
 
-use crate::Encoder;
+use crate::{Encoder, text::WebTextEngine};
 
 /// What the page does for the running surface.
 ///
@@ -56,7 +52,7 @@ pub trait Page: Send + Sync + 'static {
 
 /// The engine of one page, driven by the page.
 pub struct PageSession {
-    engine: LocalEngine<ApproxTextEngine>,
+    engine: LocalEngine<WebTextEngine>,
     page: Arc<dyn Page>,
 }
 
@@ -79,7 +75,7 @@ impl PageSession {
             EngineConfig::new(bundle, viewport)
                 .with_os(nlayer_engine::Os::Web)
                 .with_header_heights(NO_NATIVE_HEADER),
-            ApproxTextEngine,
+            WebTextEngine::default(),
             sink,
             wake,
         )?;

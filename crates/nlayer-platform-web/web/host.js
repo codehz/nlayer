@@ -292,7 +292,9 @@ function inputEq(el, want) {
   return (field.value ?? "") === "" && textEq(field.placeholder ?? "", want);
 }
 
+/** The block's source when it has one, else what its runs drew. */
 function textOf(el) {
+  if (typeof el._source === "string") return el._source;
   const box = el._text;
   if (!box) return null;
   let text = "";
@@ -643,6 +645,7 @@ function spanJson(el) {
   if (!box) return null;
   const spans = [];
   for (const span of box.children ?? []) {
+    if (span.classList?.contains?.("nl-run-bg")) continue;
     const item = { text: span.textContent ?? "" };
     const style = span.ownerDocument?.defaultView?.getComputedStyle?.(span);
     if (style) {

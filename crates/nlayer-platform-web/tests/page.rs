@@ -57,11 +57,11 @@ fn texts_of(json: &str) -> Vec<String> {
         .iter()
         .filter(|item| item[0] == "t")
         .map(|item| {
-            item[8]
+            item[6]
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|run| run[0].as_str().unwrap())
+                .map(|run| run[2].as_str().unwrap())
                 .collect()
         })
         .collect()

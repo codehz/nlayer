@@ -135,6 +135,87 @@ function requestFrame() {
   }
 }
 
+// Blink's shape cache stays near 5 MB if a context is dropped this often.
+const MEASURE_ROUNDS = 5000;
+let measureUses = 0;
+let measureCtx = null;
+const metricsCache = new Map();
+let numericSpan = null;
+
+function measureContext() {
+  const canvas =
+    typeof OffscreenCanvas !== "undefined"
+      ? new OffscreenCanvas(1, 1)
+      : globalThis.document.createElement("canvas");
+  return canvas.getContext("2d");
+}
+
+function measuring() {
+  if (!measureCtx || ++measureUses >= MEASURE_ROUNDS) {
+    measureUses = 0;
+    measureCtx = measureContext();
+  }
+  return measureCtx;
+}
+
+function fontMetrics(font) {
+  let cached = metricsCache.get(font);
+  if (!cached) {
+    const ctx = measuring();
+    ctx.font = font;
+    const sample = ctx.measureText("Hg");
+    const ex = ctx.measureText("x");
+    cached = [
+      sample.fontBoundingBoxAscent ?? 0,
+      sample.fontBoundingBoxDescent ?? 0,
+      ex.actualBoundingBoxAscent ?? 0,
+    ];
+    metricsCache.set(font, cached);
+  }
+  return cached;
+}
+
+/** Canvas cannot set `font-variant-numeric`; a hidden span can. */
+function measureNumeric(font, numeric, value) {
+  const doc = globalThis.document;
+  if (!doc?.body) return null;
+  if (!numericSpan?.isConnected) {
+    const box = doc.createElement("div");
+    box.setAttribute("aria-hidden", "true");
+    box.style.cssText =
+      "position:fixed;left:0;top:0;width:0;height:0;overflow:hidden;visibility:hidden;pointer-events:none;contain:strict";
+    numericSpan = doc.createElement("span");
+    numericSpan.style.cssText =
+      "position:absolute;left:0;top:0;white-space:pre;letter-spacing:normal;word-spacing:normal;text-transform:none;font-kerning:auto;font-feature-settings:normal";
+    box.append(numericSpan);
+    doc.body.append(box);
+  }
+  numericSpan.style.letterSpacing = "normal";
+  numericSpan.style.font = font;
+  numericSpan.style.fontVariantNumeric = numeric;
+  numericSpan.textContent = value;
+  return numericSpan.getBoundingClientRect().width;
+}
+
+function clusterBoxes(font, numeric, spacing, value, ranges) {
+  const doc = globalThis.document;
+  if (!doc?.body || measureNumeric(font, numeric || "normal", value) == null) {
+    return ranges.map(() => [0, 0]);
+  }
+  numericSpan.style.direction = "ltr";
+  numericSpan.style.letterSpacing = `${spacing}px`;
+  const origin = numericSpan.getBoundingClientRect().left;
+  const node = numericSpan.firstChild;
+  if (!node) return ranges.map(() => [0, 0]);
+  const range = doc.createRange();
+  return ranges.map(([start, end]) => {
+    range.setStart(node, start);
+    range.setEnd(node, end);
+    const box = range.getBoundingClientRect();
+    return [box.left - origin, box.right - origin];
+  });
+}
+
 function importsFor(options) {
   return {
     nlayer_browser: {
@@ -159,6 +240,39 @@ function importsFor(options) {
         const name = LEVELS[level] ?? "log";
         (console[name] ?? console.log).call(console, message);
         options.onLog?.(name, message);
+      },
+      measure_text(fp, fl, tp, tl) {
+        const ctx = measuring();
+        ctx.font = text(fp, fl);
+        return ctx.measureText(text(tp, tl)).width;
+      },
+      measure_numeric_text(fp, fl, np, nl, tp, tl) {
+        const font = text(fp, fl);
+        const value = text(tp, tl);
+        const width = measureNumeric(font, text(np, nl), value);
+        if (width != null) return width;
+        const ctx = measuring();
+        ctx.font = font;
+        return ctx.measureText(value).width;
+      },
+      text_cluster_boxes(fp, fl, np, nl, spacing, tp, tl, rp, op, count) {
+        const input = new Uint32Array(memory(), rp, count * 2);
+        const ranges = Array.from({ length: count }, (_, i) => [input[2 * i], input[2 * i + 1]]);
+        const boxes = clusterBoxes(text(fp, fl), text(np, nl), spacing, text(tp, tl), ranges);
+        const output = new Float32Array(memory(), op, count * 2);
+        boxes.forEach(([left, right], i) => {
+          output[2 * i] = left;
+          output[2 * i + 1] = right;
+        });
+      },
+      font_ascent(fp, fl) {
+        return fontMetrics(text(fp, fl))[0];
+      },
+      font_descent(fp, fl) {
+        return fontMetrics(text(fp, fl))[1];
+      },
+      font_x_height(fp, fl) {
+        return fontMetrics(text(fp, fl))[2];
       },
     },
   };

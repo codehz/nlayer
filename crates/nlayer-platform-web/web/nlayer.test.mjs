@@ -703,13 +703,29 @@ test("a text carries its selectable state, selection color and hrefs", () => {
     ["c", 6, "text"],
     ["f", 6, 0, 0, 100, 20],
     ["i", 1, 6, null],
-    ["t", 6, 0, 0, 100, 20, null, false, [["Terms", null]], [], [], true, "#ff0000", [[0, 5, 7]]],
+    [
+      "t",
+      6,
+      0,
+      0,
+      100,
+      20,
+      [[0, 0, "Terms", 0, 0, ""]],
+      [],
+      [],
+      [],
+      true,
+      "#ff0000",
+      [[0, 5, 7]],
+      [],
+      "Terms",
+    ],
     ["c", 7, "text"],
     ["i", 1, 7, null],
-    ["t", 7, 0, 20, 100, 20, null, false, [["label", null]], [], [], false, null, []],
+    ["t", 7, 0, 20, 100, 20, [[0, 0, "label", 0, 0, ""]], [], [], [], false, null, [], [], "label"],
     ["c", 8, "text"],
     ["i", 1, 8, null],
-    ["t", 8, 0, 40, 100, 20, null, false, [["auto", null]], [], [], null, null, []],
+    ["t", 8, 0, 40, 100, 20, [[0, 0, "auto", 0, 0, ""]], [], [], [], null, null, [], [], "auto"],
   ]);
   const selectable = player.view(6);
   assert.equal(selectable._selectable, true);
@@ -738,7 +754,7 @@ test("op_sel marks a selectable view's subtree", () => {
     ["i", 1, 4, null],
     ["c", 6, "text"],
     ["i", 4, 6, null],
-    ["t", 6, 0, 0, 100, 20, null, false, [["A", null]], [], [], null, null, []],
+    ["t", 6, 0, 0, 100, 20, [[0, 0, "A", 0, 0, ""]], [], [], [], null, null, [], [], "A"],
     ["sel", 4, true],
   ]);
   const area = player.view(4);
@@ -768,14 +784,15 @@ test("a short press on an href goes to the core press with its node", () => {
       0,
       100,
       20,
-      null,
-      false,
-      [["Terms", null]],
+      [[0, 0, "Terms", 0, 0, ""]],
+      [],
       [],
       [[0, 5, 9]],
       null,
       null,
       [[0, 5, 7]],
+      [],
+      "Terms",
     ],
   ]);
   const el = player.view(6);
@@ -798,7 +815,23 @@ test("a click after a selection reports nothing", () => {
     ["c", 6, "text"],
     ["i", 1, 6, null],
     ["e", 6, ["onPress"]],
-    ["t", 6, 0, 0, 100, 20, null, false, [["Terms", null]], [], [], true, null, [[0, 5, 7]]],
+    [
+      "t",
+      6,
+      0,
+      0,
+      100,
+      20,
+      [[0, 0, "Terms", 0, 0, ""]],
+      [],
+      [],
+      [],
+      true,
+      null,
+      [[0, 5, 7]],
+      [],
+      "Terms",
+    ],
   ]);
   const el = player.view(6);
   el._text.dispatchEvent(new window.Event("selectstart"));
@@ -819,12 +852,12 @@ test("a long press on selectable text is a selection, not onLongPress", async ()
     ["i", 1, 6, null],
     ["e", 6, ["onLongPress"]],
     ["lp", 6, 5],
-    ["t", 6, 0, 0, 100, 20, null, false, [["Terms", null]], [], [], true, null, []],
+    ["t", 6, 0, 0, 100, 20, [[0, 0, "Terms", 0, 0, ""]], [], [], [], true, null, [], [], "Terms"],
     ["c", 7, "text"],
     ["i", 1, 7, null],
     ["e", 7, ["onLongPress"]],
     ["lp", 7, 5],
-    ["t", 7, 0, 20, 100, 20, null, false, [["plain", null]], [], [], null, null, []],
+    ["t", 7, 0, 20, 100, 20, [[0, 0, "plain", 0, 0, ""]], [], [], [], null, null, [], [], "plain"],
   ]);
   player.view(6).dispatchEvent(new window.Event("pointerdown"));
   player.view(7).dispatchEvent(new window.Event("pointerdown"));
@@ -839,7 +872,23 @@ test("an attachment is placed from the block, above the text", () => {
     ["c", 9, "text"],
     ["f", 9, 20, 30, 100, 40],
     ["i", 1, 9, null],
-    ["t", 9, 4, 6, 92, 28, null, false, [["\uFFFC", null]], [], [], null, null, []],
+    [
+      "t",
+      9,
+      4,
+      6,
+      92,
+      28,
+      [[0, 5, "Made with ", 0, 0, "\uFFFC"]],
+      [],
+      [],
+      [],
+      null,
+      null,
+      [],
+      [],
+      "Made with \uFFFC",
+    ],
     ["c", 10, "view"],
     ["f", 10, 12, 14, 18, 18],
     ["i", 9, 10, null],
@@ -859,6 +908,10 @@ test("an attachment is placed from the block, above the text", () => {
   assert.equal(attachment.style.top, "14px");
   assert.equal(attachment.style.width, "18px");
   assert.equal(attachment.style.height, "18px");
+  const run = box.querySelector(".nl-run");
+  assert.equal(run.style.left, "0px", "the run is inside the content box");
+  assert.equal(run.style.top, "5px", "text-top is the glyph top, not the line top");
+  assert.equal(run.textContent, "Made with ");
 });
 
 test("an open url command opens a new tab once", () => {
