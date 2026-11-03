@@ -98,8 +98,9 @@ Copied files:
 - `crates/nlayer-core/src/typescript.rs` from `crates/nsh-core/src/js/style.rs`
   (style interfaces from the style table; animated values are not emitted)
 - `crates/nlayer-bundler/src/classes.rs` from `crates/nsh-bundler/src/classes.rs`
-  (static `class` / `classList` checks; the utility table is not copied, so
-  every static class is unknown and warned, and the build does not fail)
+  (static `class` / `classList` checks; the check calls `nlayer_core::parse` /
+  `Theme::default()`; unknown and unsupported are warned, and the build does
+  not fail)
 - `crates/nlayer-bundler/src/types.rs` (the declaration generator for the npm
   packages; not the nsh element-registry generator)
 - `packages/*/index.d.ts`, `packages/ui/styles.d.ts` and `packages/ui/assets.d.ts`

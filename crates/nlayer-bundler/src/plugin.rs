@@ -283,13 +283,18 @@ impl Plugin for NlayerPlugin {
                 ModuleType::Tsx => SourceType::tsx(),
                 _ => SourceType::jsx(),
             };
-            for unknown in crate::classes::check(args.code, source_type) {
+            for warning in crate::classes::check(args.code, source_type) {
+                let phrase = if warning.unsupported {
+                    "unsupported classes"
+                } else {
+                    "unknown classes"
+                };
                 log::warn!(
                     target: "nlayer::build",
-                    "{rel}:{}:{}: unknown class `{}`",
-                    unknown.line,
-                    unknown.column,
-                    unknown.class
+                    "{rel}:{}:{}: {phrase}: {}",
+                    warning.line,
+                    warning.column,
+                    warning.class
                 );
             }
         }
