@@ -216,6 +216,18 @@ pub enum MountItem {
         /// Text paint. The default clears it.
         text: crate::style::TextStyle,
     },
+    /// Ask the host to report this view's interaction states
+    /// (`EngineControl::set_states`). The bits are
+    /// [`crate::tailwind::state`]: `PRESSED` = 1, `HOVERED` = 2,
+    /// `FOCUSED` = 4. The host reports those. `0` stops reporting press
+    /// and hover; focus is still reported. `focus-within` is not a host bit.
+    TrackStates {
+        /// View.
+        id: NodeId,
+        /// Bits the host should report. Only these three, from
+        /// `tailwind::state`: `PRESSED` = 1, `HOVERED` = 2, `FOCUSED` = 4.
+        states: u16,
+    },
     /// Set the content of a text view.
     Text {
         /// Text view.

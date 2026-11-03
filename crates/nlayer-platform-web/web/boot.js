@@ -380,6 +380,12 @@ export async function startPage(root, options = {}) {
           return wasm.nlayer_pump();
         });
       },
+      states(id, bits) {
+        enter(() => {
+          wasm.nlayer_states(id, bits);
+          return wasm.nlayer_pump();
+        });
+      },
       longPress(id) {
         enter(() => {
           wasm.nlayer_long_press(id);

@@ -63,7 +63,8 @@ final class Mounter {
       ROTATION_BINDING = 24,
       LIST_CONTENT = 25,
       REFRESHING = 26,
-      SELECTABLE = 27;
+      SELECTABLE = 27,
+      TRACK_STATES = 28;
   final HostView host;
   final float density;
   final SparseArray<View> views = new SparseArray<>();
@@ -88,6 +89,17 @@ final class Mounter {
   final SparseArray<ModalOptions> modalOptions = new SparseArray<>();
   final SparseArray<int[]> headerSizes = new SparseArray<>();
   final SparseArray<ModalHost> modals = new SparseArray<>();
+
+  /** Bits the core asked to hear (`active:` 1, `hover:` 2). Focus is always reported. */
+  private final android.util.SparseIntArray trackedStates = new android.util.SparseIntArray();
+
+  /** Bits currently on, including ones the core is not reading yet. */
+  private final android.util.SparseIntArray currentStates = new android.util.SparseIntArray();
+
+  static final int STATE_PRESSED = 1, STATE_HOVERED = 2, STATE_FOCUSED = 4;
+
+  /** Presses reported because the view tracks them and does not handle `onPress` itself. */
+  private final java.util.ArrayList<Integer> observedPress = new java.util.ArrayList<>();
 
   /** The text with a selection (one per surface). */
   TextBox selectedText;
@@ -213,6 +225,9 @@ final class Mounter {
           break;
         case SELECTABLE:
           selectable(b.getInt(), b.getInt() != 0);
+          break;
+        case TRACK_STATES:
+          trackStates(b.getInt(), b.getInt());
           break;
         default:
           throw new IllegalArgumentException("Unknown nlayer opcode " + opcode);
@@ -538,8 +553,10 @@ final class Mounter {
     v.setOnHoverListener(
         new View.OnHoverListener() {
           public boolean onHover(View view, android.view.MotionEvent e) {
-            view.setHovered(e.getAction() != android.view.MotionEvent.ACTION_HOVER_EXIT);
+            boolean hovered = e.getAction() != android.view.MotionEvent.ACTION_HOVER_EXIT;
+            view.setHovered(hovered);
             paint(vid);
+            reportState(vid, STATE_HOVERED, hovered);
             return false;
           }
         });
@@ -665,6 +682,9 @@ final class Mounter {
     headerSizes.remove(id);
     headerItems.remove(id);
     stacks.remove((Integer) id);
+    trackedStates.delete(id);
+    currentStates.delete(id);
+    observedPress.remove(Integer.valueOf(id));
   }
 
   private void frame(int id, float x, float y, float w, float h) {
@@ -986,7 +1006,11 @@ final class Mounter {
   static void pressed(View v, int id, boolean down) {
     v.setPressed(down);
     HostView host = hostOf(v);
-    if (host != null) host.mounter.paint(id);
+    if (host == null) return;
+    host.mounter.paint(id);
+    // A disabled view is not pressed. Clearing a press still reports.
+    if (down && viewDisabled(v)) return;
+    host.mounter.reportState(id, STATE_PRESSED, down);
   }
 
   /**
@@ -1044,6 +1068,17 @@ final class Mounter {
 
   /** Repaint this view and the ancestors whose `focusStyle` tracks the field. */
   private void focusChanged(View origin) {
+    View node = origin;
+    int focusedId = nodeId(origin);
+    if (focusedId < 0 && origin.getParent() instanceof InputBox) {
+      node = (InputBox) origin.getParent();
+      focusedId = ((InputBox) node).id;
+    }
+    if (focusedId >= 0) {
+      boolean on =
+          node.isFocused() || (node instanceof InputBox && ((InputBox) node).edit.isFocused());
+      reportState(focusedId, STATE_FOCUSED, on);
+    }
     for (View v = origin; v != null; ) {
       int id = idOf(v);
       if (id >= 0) paint(id);
@@ -1060,6 +1095,118 @@ final class Mounter {
     if (v instanceof ScrollBox) return ((ScrollBox) v).id;
     if (v instanceof InputBox) return ((InputBox) v).id;
     return -1;
+  }
+
+  private int nodeId(View v) {
+    int id = idOf(v);
+    if (id >= 0) return id;
+    if (v instanceof StackBox) return ((StackBox) v).id;
+    return -1;
+  }
+
+  private static boolean viewDisabled(View v) {
+    if (v instanceof Box) return ((Box) v).disabled;
+    if (v instanceof TextBox) return ((TextBox) v).disabled;
+    if (v instanceof ImageBox) return ((ImageBox) v).disabled;
+    if (v instanceof ScrollBox) return ((ScrollBox) v).disabled;
+    if (v instanceof InputBox) return ((InputBox) v).disabled;
+    return false;
+  }
+
+  /** The view's own touch handler calls {@link #pressed}. The observer must not also. */
+  private static boolean ownsPress(View v) {
+    if (v instanceof Box) return (((Box) v).pressMask & 1) != 0;
+    if (v instanceof ImageBox) return (((ImageBox) v).pressMask & 1) != 0;
+    if (v instanceof TextBox) return (((TextBox) v).pressMask & 1) != 0;
+    if (v instanceof ScrollBox) return (((ScrollBox) v).pressMask & 1) != 0;
+    if (v instanceof InputBox) return (((InputBox) v).pressMask & 1) != 0;
+    return false;
+  }
+
+  /** `pointerEvents` none or box-none: this view does not take the pointer. */
+  private static boolean ignoresPointer(View v) {
+    if (!(v instanceof Box)) return false;
+    int events = ((Box) v).pointerEvents;
+    return events == 1 || events == 3;
+  }
+
+  private void trackStates(int id, int states) {
+    trackedStates.put(id, states);
+    if ((states & STATE_PRESSED) == 0 && observedPress.remove(Integer.valueOf(id))) {
+      View v = views.get(id);
+      if (v != null) pressed(v, id, false);
+    }
+  }
+
+  /**
+   * An interaction state of {@code id} changed. Press and hover are sent only when the last {@code
+   * TrackStates} includes the bit. Focus is always sent, so the core can keep {@code focus-within}.
+   */
+  private void reportState(int id, int bit, boolean on) {
+    int states = currentStates.get(id);
+    int next = on ? states | bit : states & ~bit;
+    if (next == states) return;
+    currentStates.put(id, next);
+    int reported = trackedStates.get(id) | STATE_FOCUSED;
+    if ((reported & bit) == 0) return;
+    long handle = host.handle();
+    if (handle != 0) Native.states(handle, id, next & reported);
+  }
+
+  /**
+   * A finger on {@code root}. Views that track press but do not handle {@code onPress} report it
+   * here, without taking the touch (a scroll around them still scrolls).
+   */
+  void observePress(View root, android.view.MotionEvent e) {
+    int action = e.getActionMasked();
+    if (action == android.view.MotionEvent.ACTION_DOWN) {
+      endObservedPress();
+      float rawX = e.getRawX(), rawY = e.getRawY();
+      int[] at = new int[2];
+      for (View v = deepest(root, rawX, rawY, at); v != null; ) {
+        int id = nodeId(v);
+        if (id >= 0) {
+          if (ownsPress(v)) break;
+          if (!ignoresPointer(v)
+              && !viewDisabled(v)
+              && !blocked(v.getParent())
+              && (trackedStates.get(id) & STATE_PRESSED) != 0) {
+            pressed(v, id, true);
+            observedPress.add(id);
+          }
+        }
+        if (v == root) break;
+        android.view.ViewParent parent = v.getParent();
+        v = parent instanceof View ? (View) parent : null;
+      }
+    } else if (action == android.view.MotionEvent.ACTION_UP
+        || action == android.view.MotionEvent.ACTION_CANCEL) {
+      endObservedPress();
+    }
+  }
+
+  private void endObservedPress() {
+    for (int i = 0; i < observedPress.size(); i++) {
+      int id = observedPress.get(i);
+      View v = views.get(id);
+      if (v != null) pressed(v, id, false);
+    }
+    observedPress.clear();
+  }
+
+  private static View deepest(View v, float rawX, float rawY, int[] at) {
+    if (v instanceof ViewGroup) {
+      ViewGroup group = (ViewGroup) v;
+      for (int i = group.getChildCount() - 1; i >= 0; i--) {
+        View child = group.getChildAt(i);
+        if (child.getVisibility() != View.VISIBLE) continue;
+        child.getLocationOnScreen(at);
+        float x = rawX - at[0], y = rawY - at[1];
+        if (x >= 0 && y >= 0 && x < child.getWidth() && y < child.getHeight())
+          return deepest(child, rawX, rawY, at);
+      }
+    }
+    return v;
   }
 
   private Style merge(Style base, Style over) {

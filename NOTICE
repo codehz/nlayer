@@ -412,3 +412,4 @@ Copied files:
   `.nsh-desktop .nsh-autoselect` idiom, its double-click, triple-click
   and Shift+click selection, and the `openUrl` capability grant are not
   copied
+- `MountItem::TrackStates` and the host report follow nsh's `TrackStates` / `set_states`, cut to press, hover, and focus.

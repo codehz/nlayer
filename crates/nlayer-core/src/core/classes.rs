@@ -1,13 +1,16 @@
 //! Class styles on the shadow tree.
 //!
 //! Cut from `nsh_core::core::classes`: `class` / `classList`, parent
-//! `space-*` margins, and `focus-within`. Dark, window size, group, sibling
-//! position, motion and `ch` are not restyled (those utilities are already
-//! unsupported). State paint slots stay paint-only.
+//! `space-*` margins, `focus-within`, and which of press, hover and focus
+//! the host reports ([`crate::MountItem::TrackStates`]). Dark, window size,
+//! group, sibling position, motion and `ch` are not restyled (those
+//! utilities are already unsupported), and dark, window and group tracking
+//! are not emitted. State paint slots stay paint-only.
 
 use std::rc::Rc;
 
 use crate::{
+    mount::MountItem,
     ops::NodeId,
     style::{Color, Style, StylePatch},
     tailwind::{ClassEnvironment, ClassList, ClassProps, Context, deps, state},
@@ -27,6 +30,10 @@ pub(super) struct ClassNames {
 /// Bits the platform (or a test) reports. `disabled:` reads the prop.
 /// `focus-within` is maintained here.
 const REPORTED: u16 = state::PRESSED | state::HOVERED | state::FOCUSED;
+
+/// The host reports focus whatever a view tracks, so a tracking change
+/// does not forget it.
+const ALWAYS_REPORTED: u16 = state::FOCUSED;
 
 impl<M: TextEngine> Core<M> {
     /// The platform, or a headless test, reports interaction states of view
@@ -205,7 +212,49 @@ impl<M: TextEngine> Core<M> {
 
     fn set_resolved_classes(&mut self, key: Key, classes: Option<Rc<ClassList>>) {
         self.nodes[key as usize].classes = classes;
+        self.update_tracking(key);
         self.restyle(key);
+    }
+
+    /// Tells the platform which states of `key` to report.
+    pub(super) fn update_tracking(&mut self, key: Key) {
+        let node = &mut self.nodes[key as usize];
+        // `focus-within` is the core's own (`update_focus_within`): the
+        // platform reports only the states of the view itself.
+        let tracked = node
+            .classes
+            .as_ref()
+            .map_or(0, |c| c.tracked_states() & REPORTED);
+        if tracked != node.tracked {
+            node.tracked = tracked;
+            // The platform stops reporting the states it no longer tracks,
+            // and keeps the rest as they are: forget them here too, or a
+            // state set before (a hover, a press) would outlive the pointer
+            // and come back when the classes read it again. The focus it
+            // reports always, so it stays.
+            let kept = tracked | ALWAYS_REPORTED;
+            let stale = node.states & REPORTED & !kept;
+            let states = node.states & REPORTED & kept;
+            if node.created {
+                let id = node.id;
+                self.mount.push(MountItem::TrackStates {
+                    id,
+                    states: tracked,
+                });
+            }
+            if stale != 0 {
+                self.set_node_states(key, states);
+            }
+        }
+    }
+
+    /// The tracking item of a view that was just created.
+    pub(super) fn creation_tracking(&self, key: Key) -> Option<MountItem> {
+        let node = &self.nodes[key as usize];
+        (node.tracked != 0).then(|| MountItem::TrackStates {
+            id: node.id,
+            states: node.tracked,
+        })
     }
 
     /// Stores the `style` prop. With no classes and no parent `space-*`,

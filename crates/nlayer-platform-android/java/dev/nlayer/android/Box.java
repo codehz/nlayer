@@ -116,20 +116,28 @@ class Box extends ViewGroup {
   public boolean onTouchEvent(android.view.MotionEvent e) {
     if (disabled || pointerEvents == 1) return false;
 
+    int action = e.getActionMasked();
     // Gestures handled by Gestures class (nsh transplant)
     if (gestures != null && gestures.onTouchEvent(e)) {
+      if ((action == android.view.MotionEvent.ACTION_UP
+              || action == android.view.MotionEvent.ACTION_CANCEL)
+          && isPressed()) Mounter.pressed(this, id, false);
       return true;
     }
 
     // Then press handling
-    int action = e.getActionMasked();
     boolean press = (pressMask & 1) != 0;
     if (action == android.view.MotionEvent.ACTION_DOWN && press) {
+      Mounter.pressed(this, id, true);
       return true;
     } else if (action == android.view.MotionEvent.ACTION_UP && press) {
+      Mounter.pressed(this, id, false);
       if (e.getX() >= 0 && e.getY() >= 0 && e.getX() < getWidth() && e.getY() < getHeight()) {
         Native.sendPress(this, id);
       }
+      return true;
+    } else if (action == android.view.MotionEvent.ACTION_CANCEL && (press || isPressed())) {
+      Mounter.pressed(this, id, false);
       return true;
     }
     return false;

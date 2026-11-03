@@ -29,6 +29,11 @@ const ARIA_ROLES = {
   summary: "",
 };
 
+/** Bits from `tailwind::state` the page reports. Focus is always sent. */
+const PRESSED = 1;
+const HOVERED = 2;
+const FOCUSED = 4;
+
 /** Pull-to-refresh thresholds (points). */
 const REFRESH_PULL = 64;
 const REFRESH_SPACE = 56;
@@ -117,7 +122,7 @@ export function installBase(doc, css) {
 /**
  * One surface. `root` is the platform's root view (node 1). `host` hears
  * what the page must send back to the engine: `press(id)`,
- * `change(id, text)`, `scroll(id, name, x, y, contentWidth, contentHeight, width, height)`.
+ * `states(id, bits)`, `change(id, text)`, `scroll(id, name, x, y, contentWidth, contentHeight, width, height)`.
  * `name` is the event (`onScroll`, `onScrollEnd`, `onScrollDragStart`,
  * `onScrollDragEnd`, `onMomentumStart`, `onMomentumEnd`). Lengths are CSS
  * pixels. `assetBase` is prepended to an `asset:/` URI.
@@ -132,6 +137,8 @@ export class Player {
     this.doc = root.ownerDocument ?? globalThis.document;
     this.views = new Map();
     this.pointers = new Map();
+    this.pressHeld = new Map();
+    this.focused = null;
     this.touchDrags = new Set();
     this.keyboard = 0;
     this.swallowTarget = null;
@@ -139,6 +146,7 @@ export class Player {
     root._id = 1;
     this.gestures = new GestureGate();
     attachGestures(this);
+    this.wrapPointerState();
     root._kind = "view";
     root.classList.add("nl-v", "nl-root");
     this.views.set(1, root);
@@ -321,12 +329,28 @@ export class Player {
     const slot = which === "active" ? "_active" : which === "focus" ? "_focus" : "_hover";
     swapClass(el, slot, this.styleClass(name));
     if (which === "focus") {
-      if (name && el._kind !== "input") el.tabIndex = 0;
-      else {
+      if (name && el._kind !== "input") {
+        el.tabIndex = 0;
+        this.bindFocus(el, el);
+        if (this.doc.activeElement === el) this.setState(el, FOCUSED, true);
+      } else {
         el.tabIndex = undefined;
         el.removeAttribute?.("tabindex");
       }
     }
+  }
+
+  /**
+   * `["ts", id, states]`. `states` is the mask to report (`PRESSED`,
+   * `HOVERED`). Focus is reported either way. `0` drops press and hover.
+   */
+  op_ts([, id, states]) {
+    const el = this.view(id);
+    if (!el) return;
+    el._tracked = states | 0;
+    const kept = (el._states || 0) & (FOCUSED | (el._tracked & (PRESSED | HOVERED)));
+    this.reportStates(el, kept);
+    this.syncHover(el);
   }
 
   op_i([, parentId, childId, beforeId]) {
@@ -354,6 +378,8 @@ export class Player {
     const el = this.view(id);
     if (!el) return;
     const parent = el.parentNode;
+    if (this.focused === el) this.focused = null;
+    for (const held of this.pressHeld.values()) held.delete(el);
     this.animation?.unbind(id);
     this.views.delete(id);
     el.remove();
@@ -588,6 +614,7 @@ export class Player {
     if (!el) return;
     el._disabled = !!disabled;
     el.classList.toggle("nl-disabled", !!disabled);
+    if (disabled) this.setState(el, PRESSED, false);
     const target = el._field ?? el;
     const set = (name, value) =>
       value == null || value === false
@@ -841,6 +868,7 @@ export class Player {
     el._longPressed = false;
     el._selected = false;
     if (event.button != null && event.button !== 0) return;
+    this.markPressed(el, this.hold(event.pointerId ?? 0));
     if (!el._events.has("onLongPress")) return;
     // On selectable text a long press starts a selection: no timer, and so
     // no `onLongPress`.
@@ -865,6 +893,125 @@ export class Player {
       clearTimeout(el._longTimer);
       el._longTimer = 0;
     }
+  }
+
+  /** Root `pointerDown` / `pointerUp` / `pointerCancel` also carry press. */
+  wrapPointerState() {
+    const down = this.pointerDown;
+    const up = this.pointerUp;
+    const cancel = this.pointerCancel;
+    this.pointerDown = (event) => {
+      this.pressDown(event);
+      down.call(this, event);
+    };
+    this.pointerUp = (event) => {
+      this.pressUp(event);
+      up.call(this, event);
+    };
+    this.pointerCancel = (event) => {
+      this.pressUp(event);
+      cancel.call(this, event);
+    };
+  }
+
+  pressDown(event) {
+    if (event.button != null && event.button !== 0) return;
+    const held = this.hold(event.pointerId ?? 0);
+    for (let node = event.target; node; node = node.parentNode) this.markPressed(node, held);
+  }
+
+  pressUp(event) {
+    const held = this.pressHeld.get(event.pointerId ?? 0);
+    if (!held) return;
+    this.pressHeld.delete(event.pointerId ?? 0);
+    for (const el of held) {
+      let still = false;
+      for (const other of this.pressHeld.values()) {
+        if (other.has(el)) {
+          still = true;
+          break;
+        }
+      }
+      if (!still) this.setState(el, PRESSED, false);
+    }
+  }
+
+  hold(pointerId) {
+    let held = this.pressHeld.get(pointerId);
+    if (!held) {
+      held = new Set();
+      this.pressHeld.set(pointerId, held);
+    }
+    return held;
+  }
+
+  /** Bit 1 while the pointer is down on `el`, and only when that bit is tracked. */
+  markPressed(el, held) {
+    if (!el || el._id == null || this.pressBlocked(el)) return;
+    if (((el._tracked || 0) & PRESSED) === 0) return;
+    this.setState(el, PRESSED, true);
+    held.add(el);
+  }
+
+  /** The view, or its field, is disabled. Ancestors the host already skips count too. */
+  pressBlocked(el) {
+    for (let node = el; node; node = node.parentNode) {
+      if (node._disabled || node._field?.disabled) return true;
+    }
+    return false;
+  }
+
+  syncHover(el) {
+    const want = ((el._tracked || 0) & HOVERED) !== 0;
+    if (want && !el._hoverListeners) {
+      el._onPointerEnter = (event) => {
+        if (event.pointerType && event.pointerType !== "mouse") return;
+        this.setState(el, HOVERED, true);
+      };
+      el._onPointerLeave = () => this.setState(el, HOVERED, false);
+      el.addEventListener("pointerenter", el._onPointerEnter);
+      el.addEventListener("pointerleave", el._onPointerLeave);
+      el._hoverListeners = true;
+    } else if (!want && el._hoverListeners) {
+      el.removeEventListener("pointerenter", el._onPointerEnter);
+      el.removeEventListener("pointerleave", el._onPointerLeave);
+      el._onPointerEnter = null;
+      el._onPointerLeave = null;
+      el._hoverListeners = false;
+      this.setState(el, HOVERED, false);
+    }
+  }
+
+  /** Focus and blur on `target` report bit 4 for view `el` only. */
+  bindFocus(target, el) {
+    if (!target || target._focusBound) return;
+    target._focusBound = true;
+    target.addEventListener("focus", () => this.setState(el, FOCUSED, true));
+    target.addEventListener("blur", () => this.setState(el, FOCUSED, false));
+  }
+
+  reportStates(el, next) {
+    if ((el._states || 0) === next) return;
+    el._states = next;
+    this.host.states?.(el._id, next);
+  }
+
+  setState(el, bit, on) {
+    if (!el || el._id == null) return;
+    if (bit === PRESSED && on && this.pressBlocked(el)) return;
+    if ((((el._tracked || 0) | FOCUSED) & bit) === 0) return;
+    const states = el._states || 0;
+    const next = on ? states | bit : states & ~bit;
+    if (next === states) return;
+    el._states = next;
+    if (bit === FOCUSED) {
+      if (on) {
+        const prev = this.focused;
+        this.focused = el;
+        if (prev && prev !== el) this.setState(prev, FOCUSED, false);
+      } else if (this.focused === el) this.focused = null;
+    }
+    this.host.states?.(el._id, el._states);
   }
 
   scrolled(el) {
@@ -1102,6 +1249,7 @@ export class Player {
     field._secure = !!config.secure;
     field._multiline = !!config.multiline;
     el.classList.toggle("nl-disabled", !!config.disabled);
+    if (config.disabled) this.setState(el, PRESSED, false);
     field.dir = config.rtl ? "rtl" : "ltr";
   }
 
@@ -1154,6 +1302,7 @@ export class Player {
     field.addEventListener("select", () => this.selectionChanged(el, id, field));
     field.addEventListener("keyup", () => this.selectionChanged(el, id, field));
     field.addEventListener("pointerup", () => this.selectionChanged(el, id, field));
+    this.bindFocus(field, el);
     el._field = field;
     return field;
   }

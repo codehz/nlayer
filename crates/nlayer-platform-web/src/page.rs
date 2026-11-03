@@ -100,6 +100,12 @@ impl PageSession {
             .dispatch_event(id, EventKind::Press, EventPayload::None);
     }
 
+    /// Pressed (`1`), hovered (`2`) and focused (`4`) bits of view `id`.
+    /// Applied at the next [`pump`](Self::pump).
+    pub fn set_states(&self, id: NodeId, states: u16) {
+        self.engine.control().set_states(id, states);
+    }
+
     /// A long press on view `id` (`onLongPress`). Applied at the next
     /// [`pump`](Self::pump).
     pub fn long_press(&self, id: NodeId) {

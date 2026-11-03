@@ -35,6 +35,9 @@ final class Native {
 
   static native void press(long handle, int id);
 
+  /** Interaction states (`active:`, `hover:`, `focus:`). Bits: pressed 1, hovered 2, focused 4. */
+  static native void states(long handle, int id, int states);
+
   /** A press stayed down long enough (`onLongPress`). */
   static native void longPress(long handle, int id);
 

@@ -428,6 +428,9 @@ struct Node {
     class_props: Option<Box<crate::tailwind::ClassProps>>,
     /// Interaction states (`tailwind::state` bits).
     states: u16,
+    /// Bits the host should report ([`crate::MountItem::TrackStates`]):
+    /// press, hover and focus. `focus-within` is not one of them.
+    tracked: u16,
     /// Styled with the margin its parent's `space-*` gives it.
     spaced: bool,
 }
@@ -489,6 +492,7 @@ impl Node {
             authored: None,
             class_props: None,
             states: 0,
+            tracked: 0,
             spaced: false,
         }
     }
@@ -2518,6 +2522,9 @@ impl<M: TextEngine> Core<M> {
                 kind.view_kind()
             },
         });
+        if let Some(item) = self.creation_tracking(key) {
+            self.mount.push(item);
+        }
         self.mark(key, flags);
         if !kind.is_container() {
             return;
@@ -9683,6 +9690,75 @@ mod tests {
         assert_eq!(padding(&c, 2), [16.0, 16.0, 16.0, 16.0]);
         c.set_states(2, 0);
         assert_eq!(padding(&c, 2), [0.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn hover_class_tracks_hover_until_the_class_is_cleared() {
+        let mut c = core();
+        view(&mut c, 2);
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let created = c.commit().unwrap();
+        assert!(
+            !created
+                .items
+                .iter()
+                .any(|item| matches!(item, MountItem::TrackStates { .. })),
+            "a view with no classes does not ask for states"
+        );
+
+        set_class(&mut c, 2, "hover:p-4");
+        let batch = c.commit().unwrap();
+        let states = track_states(&batch, 2);
+        assert_eq!(states & state::HOVERED, state::HOVERED);
+        assert_eq!(states & state::PRESSED, 0);
+
+        set_class(&mut c, 2, "");
+        let batch = c.commit().unwrap();
+        assert_eq!(track_states(&batch, 2), 0);
+
+        // The mask stays 0, so `p-4` does not ask again.
+        set_class(&mut c, 2, "p-4");
+        if let Some(batch) = c.commit() {
+            assert!(
+                !batch.items.iter().any(|item| matches!(
+                    item,
+                    MountItem::TrackStates { id: 2, states } if *states != 0
+                )),
+                "{:?}",
+                batch.items
+            );
+        }
+
+        // Classes already set when the native view is created.
+        view(&mut c, 3);
+        set_class(&mut c, 3, "hover:p-4");
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        let states = track_states(&batch, 3);
+        assert_eq!(states & state::HOVERED, state::HOVERED);
+        assert_eq!(states & state::PRESSED, 0);
+    }
+
+    fn track_states(batch: &MountBatch, id: NodeId) -> u16 {
+        batch
+            .items
+            .iter()
+            .rev()
+            .find_map(|item| match item {
+                MountItem::TrackStates { id: view, states } if *view == id => Some(*states),
+                _ => None,
+            })
+            .expect("TrackStates")
     }
 
     #[test]

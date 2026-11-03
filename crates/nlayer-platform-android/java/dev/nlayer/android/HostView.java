@@ -58,6 +58,7 @@ public final class HostView extends FrameLayout {
 
   @Override
   public boolean dispatchTouchEvent(android.view.MotionEvent event) {
+    mounter.observePress(this, event);
     if (event.getActionMasked() == android.view.MotionEvent.ACTION_DOWN) {
       mounter.touchDown(event.getRawX(), event.getRawY());
     }

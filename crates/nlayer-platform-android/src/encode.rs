@@ -49,6 +49,7 @@ const ROTATION_BINDING: i32 = 24;
 const LIST_CONTENT: i32 = 25;
 const REFRESHING: i32 = 26;
 const SELECTABLE: i32 = 27;
+const TRACK_STATES: i32 = 28;
 /// A `StaticLayout` measured on the engine thread and drawn on the UI thread.
 #[cfg(target_os = "android")]
 pub(crate) struct AndroidLayout(pub(crate) jni::objects::GlobalRef);
@@ -441,6 +442,11 @@ pub fn encode(batch: MountBatch) -> Encoded {
                 e.int(REFRESHING);
                 e.id(id);
                 e.int(if refreshing { 1 } else { 0 });
+            }
+            MountItem::TrackStates { id, states } => {
+                e.int(TRACK_STATES);
+                e.id(id);
+                e.int(states as i32);
             }
         }
     }

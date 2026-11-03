@@ -646,6 +646,7 @@ impl Screen {
                 self.views.get_mut(id).expect("a modal").modal = Some(*config);
             }
             MountItem::InputContent { .. } | MountItem::StateStyle { .. } => {}
+            MountItem::TrackStates { .. } => {}
             MountItem::Command { id, command } => match command {
                 Command::ScrollTo { x, y, .. } => self.set_scroll(*id, x.0, y.0),
                 Command::Blur => self.blur(),

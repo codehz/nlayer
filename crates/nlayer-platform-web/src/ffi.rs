@@ -340,6 +340,16 @@ pub extern "C" fn nlayer_press(id: u32) {
     });
 }
 
+/// Pressed, hovered and focused bits of view `id` (`1`, `2` and `4`).
+/// Applied at the next [`nlayer_pump`].
+#[unsafe(no_mangle)]
+pub extern "C" fn nlayer_states(id: u32, states: u32) {
+    with_session(|session| {
+        session.set_states(NodeId::from(id), states as u16);
+        -1.0
+    });
+}
+
 /// A long press on view `id`. Applied at the next [`nlayer_pump`].
 #[unsafe(no_mangle)]
 pub extern "C" fn nlayer_long_press(id: u32) {

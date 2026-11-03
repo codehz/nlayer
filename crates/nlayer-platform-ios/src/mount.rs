@@ -19,6 +19,7 @@ use rustc_hash::FxHashMap as HashMap;
 use dispatch2::{DispatchQueue, DispatchTime};
 use nlayer_core::geometry::{Bounds, Point, Points, Size};
 use nlayer_core::style::{BorderStyle, Color, TextStyle, TransformOrigin, ViewStyle};
+use nlayer_core::tailwind::state::{FOCUSED, HOVERED, PRESSED};
 use nlayer_core::{
     EventKind, EventMask, ImageSource, Interaction, KeyboardDismiss, KeyboardTaps, MountBatch,
     MountItem, NodeId, ROOT_ID, ResizeMode, ViewKind,
@@ -71,6 +72,12 @@ struct Slot {
     hovered: bool,
     /// This view, or a field inside it, has focus. `focusStyle` paints then.
     focused: bool,
+    /// Bits the engine asked to hear (`PRESSED`, `HOVERED`). Focus is
+    /// reported either way. Dropped with the slot.
+    tracked: u16,
+    /// Press, hover and focus this view holds for the engine. Focus is
+    /// this view only, not the ancestors `focused` paints.
+    bits: u16,
     press: Option<Retained<UILongPressGestureRecognizer>>,
     /// The view itself listens to `onPress` (not only a span inside it).
     own_press: bool,
@@ -1684,6 +1691,7 @@ impl Mounter {
             MountItem::ListContent { .. } => {
                 // List content is handled by core layout
             }
+            MountItem::TrackStates { id, states } => self.track_states(id, states),
         }
     }
 
@@ -1909,6 +1917,7 @@ impl Mounter {
         let want = slot.own_press || slot.link_press || slot.own_long;
         let view = slot.native.view().retain();
         let input = matches!(slot.native, Native::Input(_) | Native::Area(_));
+        let mut released = false;
         match (&slot.press, want) {
             (None, true) => {
                 // SAFETY: the relay implements `pressed:`.
@@ -1931,8 +1940,12 @@ impl Mounter {
                 view.removeGestureRecognizer(gesture);
                 slot.press = None;
                 slot.pressed = false;
+                released = true;
             }
             _ => {}
+        }
+        if released {
+            self.report_state(id, PRESSED, false);
         }
     }
 
@@ -1944,6 +1957,7 @@ impl Mounter {
         };
         let view = slot.native.view().retain();
         let want_hover = slot.states[state_index(Interaction::Hover)].is_some();
+        let mut left = false;
         match (&slot.hover, want_hover) {
             (None, true) => {
                 // SAFETY: the relay implements `hovered:`.
@@ -1961,8 +1975,12 @@ impl Mounter {
                 view.removeGestureRecognizer(gesture);
                 slot.hover = None;
                 slot.hovered = false;
+                left = true;
             }
             _ => {}
+        }
+        if left {
+            self.report_state(id, HOVERED, false);
         }
     }
 
@@ -2053,6 +2071,66 @@ impl Mounter {
         }
     }
 
+    /// Stores which states of `id` the engine reads. `0` stops press and
+    /// hover; a focus change is still reported.
+    fn track_states(&mut self, id: NodeId, states: u16) {
+        let reported = {
+            let Some(slot) = self.slot_mut(id) else {
+                return;
+            };
+            if slot.tracked == states {
+                return;
+            }
+            slot.tracked = states;
+            if slot.accessibility.blocks_press() {
+                slot.bits &= !PRESSED;
+            }
+            let reported = slot.bits & (states | FOCUSED);
+            // A press or hover already held when tracking starts. Focus was
+            // reported when it changed; it rides along so this does not clear it.
+            if reported & (PRESSED | HOVERED) == 0 {
+                return;
+            }
+            reported
+        };
+        if let Some(control) = &self.control {
+            control.set_states(id, reported);
+        }
+    }
+
+    /// `bit` of `id` turned on or off. Press and hover are sent only when
+    /// `tracked` asks for them; focus always is. The value keeps every other
+    /// bit the slot still holds, so a press does not clear a hover, then
+    /// drops anything the engine did not ask for (`tracked | FOCUSED`).
+    fn report_state(&mut self, id: NodeId, bit: u16, on: bool) {
+        let reported = {
+            let Some(slot) = self.slot_mut(id) else {
+                return;
+            };
+            let mut next = if on {
+                slot.bits | bit
+            } else {
+                slot.bits & !bit
+            };
+            // Disabled is already on the slot: do not report a press.
+            if slot.accessibility.blocks_press() {
+                next &= !PRESSED;
+            }
+            if next == slot.bits {
+                return;
+            }
+            slot.bits = next;
+            let mask = slot.tracked | FOCUSED;
+            if mask & bit == 0 {
+                return;
+            }
+            next & mask
+        };
+        if let Some(control) = &self.control {
+            control.set_states(id, reported);
+        }
+    }
+
     fn pressed(&mut self, id: NodeId, state: UIGestureRecognizerState, point: CGPoint) {
         if state == UIGestureRecognizerState::Began && self.press_blocked(id, point) {
             return;
@@ -2080,6 +2158,7 @@ impl Mounter {
                 }
             }
             self.repaint(id);
+            self.report_state(id, PRESSED, false);
             return;
         }
         if let Some(slot) = self.slot_mut(id) {
@@ -2097,6 +2176,7 @@ impl Mounter {
                 slot.long_generation = slot.long_generation.wrapping_add(1);
             }
         }
+        self.report_state(id, PRESSED, on);
         if let Some((generation, delay)) = long {
             let delay = delay.unwrap_or(500.0).max(0.0);
             let after = DispatchTime::try_from(std::time::Duration::from_secs_f64(
@@ -2140,6 +2220,7 @@ impl Mounter {
         slot.long_fired = false;
         slot.press_cancelled = true;
         self.repaint(id);
+        self.report_state(id, PRESSED, false);
     }
 
     /// Cancels the press of `view` and of every ancestor that has one.
@@ -2276,6 +2357,7 @@ impl Mounter {
         if let Some(slot) = self.slot_mut(id) {
             slot.hovered = on;
         }
+        self.report_state(id, HOVERED, on);
         self.repaint(id);
     }
 
@@ -2430,6 +2512,11 @@ impl Mounter {
                 slot.focused = on;
             }
             self.repaint(id);
+        }
+        // `focused` paints the whole chain. The engine hears only this view
+        // and computes focus-within itself.
+        if let Some(&id) = ids.first() {
+            self.report_state(id, FOCUSED, on);
         }
     }
 
@@ -3463,6 +3550,8 @@ impl Slot {
             pressed: false,
             hovered: false,
             focused: false,
+            tracked: 0,
+            bits: 0,
             press: None,
             own_press: false,
             own_long: false,

@@ -211,6 +211,12 @@ final class ModalHost {
     }
 
     @Override
+    public boolean dispatchTouchEvent(android.view.MotionEvent event) {
+      mounter.observePress(this, event);
+      return super.dispatchTouchEvent(event);
+    }
+
+    @Override
     protected void onMeasure(int widthSpec, int heightSpec) {
       int w = MeasureSpec.getSize(widthSpec), h = MeasureSpec.getSize(heightSpec);
       setMeasuredDimension(w, h);

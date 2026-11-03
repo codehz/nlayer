@@ -433,6 +433,33 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_press(
     dispatch(handle, id, EventKind::Press, EventPayload::None);
 }
 
+/// Interaction states of a view the core tracks (`active:`, `hover:`, `focus:`).
+///
+/// # Safety
+///
+/// `handle` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_states(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    id: jint,
+    states: jint,
+) {
+    if handle == 0 {
+        return;
+    }
+    let host = unsafe { host(handle) };
+    if let Some(control) = host
+        .control
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .as_ref()
+    {
+        control.set_states(id as NodeId, states as u16);
+    }
+}
+
 /// # Safety
 ///
 /// `handle` is live.

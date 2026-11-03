@@ -631,6 +631,9 @@ impl Encoder {
                 view,
                 text,
             } => self.state(out, *id, *interaction, view, text),
+            MountItem::TrackStates { id, states } => {
+                out.item("ts").num(*id).num(*states).end();
+            }
             MountItem::Refreshing { id, refreshing } => {
                 out.item("ref").num(*id).bool(*refreshing).end();
             }
