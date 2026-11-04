@@ -296,6 +296,10 @@ impl HostedApp for WebApp {
     }
 
     fn scroll(&mut self, selector: &str, distance: f32) -> Result<(), String> {
+        // The page sets the offset before this returns. Compare with the
+        // tree from before that, or a list that already moved pays the
+        // whole settle.
+        let before = self.tree().unwrap_or(Value::Null);
         let plan = self.call("scroll", &[json!(selector), json!(distance)])?;
         let points = plan
             .get("points")
@@ -364,14 +368,13 @@ impl HostedApp for WebApp {
         thread::sleep(Duration::from_millis(20));
 
         let settle_deadline = Instant::now() + Duration::from_millis(1000);
-        let initial_tree = self.tree()?;
         loop {
             // Pump engine to process scroll messages (update_scroll_position, dispatch_event)
             let _ = self.eval("nlayer_pump()");
             thread::sleep(Duration::from_millis(16));
             let current_tree = self.tree()?;
             // Tree changed (frame committed with new items) - good to proceed
-            if current_tree != initial_tree {
+            if current_tree != before {
                 break;
             }
             // Timeout - proceed anyway (non-viewport tests don't change tree)

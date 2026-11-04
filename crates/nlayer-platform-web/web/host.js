@@ -3,10 +3,11 @@
 // Licensed under the Apache License, Version 2.0.
 //
 // The page side of `nlayer test --target web`. Steps name a view with the
-// same selector as the headless runner. The browser itself takes the
-// input: these calls answer where a press lands, where a field is, and how
-// far a scroll view moves; `nlayer test` sends that through the DevTools
-// protocol's `Input.dispatch*`, which pages cannot tell from a user's.
+// same selector as the headless runner. A press, a hover and a drag are
+// points: `nlayer test` sends them through the DevTools protocol's
+// `Input.dispatch*`, which pages cannot tell from a user's. A scroll sets
+// the offset, as the iOS and Android drivers do. A wheel would be a
+// gesture, and its end snaps.
 
 /**
  * Installs `globalThis.__nlayerHost` for the page `player` mounted in `root`.
@@ -77,7 +78,9 @@ export function installHost(player, root) {
       visible(root, target, selector);
       const el = scrollOf(target);
       if (!el) throw new Error(`\`${selector}\` is not in a scroll view`);
-      return scrollPlan(el, distance);
+      const plan = scrollPlan(el, distance);
+      applyScroll(player, el, plan.to.x, plan.to.y);
+      return plan;
     },
     offset(selector) {
       const target = one(player, root, selector);
@@ -648,6 +651,35 @@ function scrollOf(target) {
     if (el._kind === "scroll") return el;
   }
   return null;
+}
+
+/**
+ * Moves `el` to (`x`, `y`) without a gesture. `noteInstant` marks the
+ * following `scrollend` so the view does not snap to an interval. The
+ * flag is held until that end: the timer `noteInstant` arms can expire
+ * first on a busy page, and the late end would snap.
+ * @param {import("./nlayer.js").Player} player
+ * @param {HTMLElement} el
+ * @param {number} x
+ * @param {number} y
+ */
+function applyScroll(player, el, x, y) {
+  const release = () => {
+    el._swallowEnd = false;
+    el.removeEventListener?.("scrollend", release);
+  };
+  el.addEventListener?.("scrollend", release);
+  player.noteInstant?.(el);
+  clearTimeout(el._instantTimer);
+  if (typeof el.scrollTo === "function") el.scrollTo({ left: x, top: y, behavior: "auto" });
+  else {
+    el.scrollLeft = x;
+    el.scrollTop = y;
+  }
+  // `noteInstant` swallows `scrollend`, which is what keeps the view from
+  // snapping. The step still ends the scroll: iOS and Android report
+  // `onScrollEnd` for the same step.
+  if (el._events?.has?.("onScrollEnd")) player.reportScroll?.(el, "onScrollEnd");
 }
 
 /**

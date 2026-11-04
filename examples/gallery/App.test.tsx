@@ -2,6 +2,7 @@ import { type App, type Node, expect, open, test } from "@nlayer/test";
 
 declare global {
   var __nlayerHeadless: string | undefined;
+  var __nlayerOs: string | undefined;
 }
 
 function flat(node: Node, out: Node[]): Node[] {
@@ -131,13 +132,16 @@ test("safe-area env insets pad the view", () => {
   const nodes = flat(app.tree(), []);
   const inset = holder(nodes, "Inset").children[0];
   expect(inset.frame.x).toBe(10);
-  // The page sits under a native header, which already covers the top
-  // inset. Left is still the window's.
-  expect(inset.frame.y).toBe(0);
+  // A native header covers the top inset, so content under it does not add
+  // that inset again. The web page draws its header in the layout and
+  // leaves the window's top inset in `env()`. Left is the window's either way.
+  const nativeHeader = globalThis.__nlayerHeadless === "1" || globalThis.__nlayerOs !== "web";
+  const top = nativeHeader ? 0 : 22;
+  expect(inset.frame.y).toBe(top);
   const safe = must(nodes.find((node) => node.testID === "safe"));
   const title = must(safe.children[0]);
   expect(title.frame.x).toBe(26);
-  expect(title.frame.y).toBe(16);
+  expect(title.frame.y).toBe(16 + top);
   const section = must(safe.children.find((node) => node.kind === "view"));
   expect(section.frame.x).toBe(26);
   expect(section.frame.x + section.frame.width).toBe(safe.frame.width - 24);
@@ -224,8 +228,8 @@ test("scroll callbacks report the offset, content, and viewport", () => {
   const content = must(events.content);
   expect(offset).toEqual({ x: 0, y: 40 });
   const metric = `${String(Math.round(offset.x))},${String(Math.round(offset.y))} ${String(Math.round(content.width))}x${String(Math.round(content.height))} ${String(Math.round(events.frame.width))}x${String(Math.round(events.frame.height))}`;
-  // Web's step is a wheel, which is not a drag. A finger's drag and glide
-  // are covered by the browser input test (`web_test.rs`).
+  // The web step sets the offset and reports `onScroll` and `onScrollEnd`.
+  // It is not a finger's drag. Android and iOS synthesize that drag.
   const fired = globalThis.__nlayerOs === "web" ? names.slice(0, 2) : names;
   for (const name of fired) {
     app.waitFor(`${name} ${metric}`);
@@ -314,10 +318,9 @@ test("onBackPress intercepts back() on detail", () => {
 
   app.press("intercept-back");
   app.back();
+  // The page clears the notice after a second. `waitFor` is the
+  // observation; a later snapshot races that timer.
   app.waitFor("back-intercepted");
-  const tree = app.tree();
-  const intercepted = flat(tree, []).find((n) => n.testID === "back-intercepted");
-  expect(intercepted !== undefined).toBe(true);
 });
 
 test("dialog opens and back() closes it", () => {

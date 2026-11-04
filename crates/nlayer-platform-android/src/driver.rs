@@ -149,8 +149,11 @@ fn press(host: &Host, selector: String) -> Result<Value, String> {
     let (x, y) = scene.point(hit)?;
     tap(host, x, y, false);
     thread::sleep(TAP);
+    // `onPress` runs on the lift. Sample after the down so an active-style
+    // batch is not the one this waits for.
+    let before = host.commits.load(Ordering::SeqCst);
     tap(host, x, y, true);
-    thread::sleep(SETTLE);
+    settle(host, before);
     Ok(Value::Null)
 }
 
@@ -249,8 +252,11 @@ fn drag(host: &Host, selector: String, x: f32, y: f32) -> Result<Value, String> 
         move_to(host, cx + x * t, cy + y * t);
         thread::sleep(Duration::from_millis(10));
     }
+    // Moves commit as the finger travels. The lift's `onPanEnd` is the
+    // batch after that.
+    let before = host.commits.load(Ordering::SeqCst);
     tap(host, cx + x, cy + y, true);
-    thread::sleep(Duration::from_millis(16));
+    settle(host, before);
     Ok(Value::Null)
 }
 
@@ -281,6 +287,7 @@ fn drop_touch(host: &Host) -> Result<Value, String> {
 }
 
 fn back(host: &Host) -> Result<Value, String> {
+    let before = host.commits.load(Ordering::SeqCst);
     let _ = with_env(|env| {
         unsafe {
             env.call_method_unchecked(
@@ -292,7 +299,7 @@ fn back(host: &Host) -> Result<Value, String> {
         }
         Ok(())
     });
-    thread::sleep(SETTLE);
+    settle(host, before);
     Ok(Value::Null)
 }
 
@@ -322,6 +329,13 @@ pub(crate) fn wait_for_commit(host: &Host, before: u64, timeout: Duration) -> bo
         thread::sleep(Duration::from_millis(5));
     }
     false
+}
+
+/// Waits for the mount batch `before` did not include, then the usual
+/// settle. A step that changes nothing runs the wait out.
+fn settle(host: &Host, before: u64) {
+    wait_for_commit(host, before, Duration::from_secs(1));
+    thread::sleep(SETTLE);
 }
 
 pub(crate) fn snapshot(host: &Host) -> Result<String, String> {
