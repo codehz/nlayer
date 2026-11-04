@@ -10,7 +10,7 @@ use dispatch2::DispatchQueue;
 use nlayer_core::geometry::{Points, Size};
 use nlayer_engine::{Engine, EngineConfig, EngineError, MountSink};
 use objc2::rc::{Retained, Weak};
-use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
+use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send};
 use objc2_core_foundation::{CGAffineTransform, CGFloat, CGPoint, CGRect, CGSize};
 use objc2_foundation::{NSNotification, NSNotificationCenter, NSOperationQueue, NSValue};
@@ -41,6 +41,12 @@ define_class!(
     impl RootView {
         #[unsafe(method(layoutSubviews))]
         fn layout_subviews(&self) {
+            // `apply` still holds the mounter when UIKit lays this view
+            // out. Borrowing it again aborts. The pass below runs once
+            // that batch has returned.
+            if self.defer_layout_if_busy() {
+                return;
+            }
             if let Some((width, height)) = self.pinned() {
                 let frame = self.frame();
                 let wanted_w = width as CGFloat;
@@ -60,6 +66,13 @@ define_class!(
             // SAFETY: the superclass lays the subviews out.
             let _: () = unsafe { msg_send![super(self), layoutSubviews] };
             self.publish();
+        }
+
+        /// Runs after the mounter's borrow ends. `performSelector:afterDelay:`
+        /// passes one object; it is unused.
+        #[unsafe(method(nlayerLayoutAgain:))]
+        fn layout_again(&self, _object: Option<&AnyObject>) {
+            self.setNeedsLayout();
         }
 
         #[unsafe(method(safeAreaInsetsDidChange))]
@@ -108,22 +121,47 @@ impl RootView {
         *self.ivars().mounter.borrow_mut() = mounter;
     }
 
-    fn pinned(&self) -> Option<(f32, f32)> {
-        self.ivars()
+    /// Another layout after the mounter's current borrow ends.
+    fn defer_layout_if_busy(&self) -> bool {
+        let busy = self
+            .ivars()
             .mounter
             .borrow()
             .upgrade()
-            .and_then(|mounter| mounter.borrow().pin_size())
+            .is_some_and(|mounter| mounter.try_borrow().is_err());
+        if busy {
+            // The run loop retains `self` until the next pass, after
+            // `apply` drops its borrow. A queue block cannot: the view is
+            // main-thread-only and not `Send`.
+            // SAFETY: `nlayerLayoutAgain:` is this class's method. Delay 0
+            // is the next pass of this thread's run loop.
+            unsafe {
+                let _: () = msg_send![
+                    self,
+                    performSelector: objc2::sel!(nlayerLayoutAgain:),
+                    withObject: Option::<&AnyObject>::None,
+                    afterDelay: 0.0_f64
+                ];
+            }
+        }
+        busy
+    }
+
+    fn pinned(&self) -> Option<(f32, f32)> {
+        let mounter = self.ivars().mounter.borrow().upgrade()?;
+        mounter.try_borrow().ok()?.pin_size()
     }
 
     fn publish(&self) {
         let Some(mounter) = self.ivars().mounter.borrow().upgrade() else {
             return;
         };
+        let Ok(mut mounter) = mounter.try_borrow_mut() else {
+            self.defer_layout_if_busy();
+            return;
+        };
         let bounds = self.bounds();
-        mounter
-            .borrow_mut()
-            .publish(bounds.size, self.safeAreaInsets());
+        mounter.publish(bounds.size, self.safeAreaInsets());
     }
 
     /// Tracks the software keyboard. An explicit pin height skips this. The

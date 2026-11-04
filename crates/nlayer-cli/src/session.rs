@@ -358,6 +358,10 @@ fn explain(error: tungstenite::Error) -> String {
         tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed => {
             STOPPED.to_owned()
         }
+        // A peer that dies mid-frame is this, not [`std::io::ErrorKind::ConnectionReset`].
+        tungstenite::Error::Protocol(
+            tungstenite::error::ProtocolError::ResetWithoutClosingHandshake,
+        ) => STOPPED.to_owned(),
         tungstenite::Error::Io(error) if disconnected(&error) => STOPPED.to_owned(),
         tungstenite::Error::Io(error) if error.kind() == ErrorKind::TimedOut => timed_out(),
         other => other.to_string(),
