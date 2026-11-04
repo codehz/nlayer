@@ -9,7 +9,7 @@
 //! `Hello` `test: true`, loads the first bundle, and answers each step.
 //! No overlay and no patch on that session.
 
-use std::sync::Arc;
+use std::sync::{Arc, atomic::Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -244,18 +244,22 @@ fn load_test_bundle(host: &Host, code: String) {
         if boot == code {
             return;
         }
+        let before = host.commits.load(Ordering::SeqCst);
         control.replace_bundle(code.clone());
         *host
             .boot_script
             .lock()
             .unwrap_or_else(|error| error.into_inner()) = code;
+        crate::driver::wait_for_commit(host, before, Duration::from_secs(5));
         return;
     }
+    let before = host.commits.load(Ordering::SeqCst);
     if crate::host::boot(host, &code).is_some() {
         *host
             .boot_script
             .lock()
             .unwrap_or_else(|error| error.into_inner()) = code;
+        crate::driver::wait_for_commit(host, before, Duration::from_secs(5));
     }
 }
 

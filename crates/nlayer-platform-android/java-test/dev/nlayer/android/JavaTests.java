@@ -1745,8 +1745,14 @@ public final class JavaTests extends Instrumentation {
       check(modal != null, "modal created");
       check(modal.shown(), "modal is shown");
 
-      // Dispatch fake IME insets to the modal's container
-      ViewGroup container = main(() -> (ViewGroup) modal.root.getParent());
+      // Dispatch fake IME insets to the modal's container: the dialog's
+      // content view, one level above the content frame that holds `root`.
+      ViewGroup container =
+          main(
+              () -> {
+                View content = (View) modal.root.getParent();
+                return (ViewGroup) content.getParent();
+              });
       check(container != null, "modal container exists");
 
       // Build fake insets: IME 500px, system bars 100px

@@ -233,6 +233,14 @@ public final class HostView extends FrameLayout {
 
   private void finishLoad() {
     if (pin != null) {
+      // The pin is in points; the pixel fields feed screen header and inset
+      // reports, which divide by the density.
+      safeTop = Math.round(pin.top * density);
+      safeRight = Math.round(pin.right * density);
+      safeBottom = Math.round(pin.bottom * density);
+      safeLeft = Math.round(pin.left * density);
+      activityKeyboard = Math.round(pin.keyboard * density);
+      keyboard = activityKeyboard;
       Native.resize(handle, pin.width, pin.height);
       Native.insets(handle, pin.top, pin.right, pin.bottom, pin.left, pin.keyboard);
     }

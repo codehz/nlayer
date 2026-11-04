@@ -5,7 +5,10 @@
 //! in `dev.rs`.
 #![allow(unreachable_pub)]
 
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicU64, Ordering},
+};
 
 use jni::{
     JNIEnv,
@@ -26,6 +29,9 @@ pub(crate) struct Host {
     pub(crate) control: Mutex<Option<EngineControl>>,
     /// `app.js` the engine is running, after a start succeeded.
     pub(crate) boot_script: Mutex<String>,
+    /// Mount batches the engine has handed to the UI thread. A test waits
+    /// for this to move before its first step, then joins the UI thread.
+    pub(crate) commits: Arc<AtomicU64>,
     /// What a later bundle needs to start the engine, if the first start failed.
     launch: Mutex<Option<Launch>>,
     density: Density,
@@ -41,6 +47,7 @@ struct Launch {
 
 struct Sink {
     view: jni::objects::GlobalRef,
+    commits: Arc<AtomicU64>,
 }
 
 impl MountSink for Sink {
@@ -79,6 +86,9 @@ impl MountSink for Sink {
             }?;
             Ok(())
         });
+        // After `submit` returns, the batch is on the UI thread's queue: a
+        // `snapshot` posted later runs after it.
+        self.commits.fetch_add(1, Ordering::SeqCst);
     }
 
     fn failed(&self, error: nlayer_engine::EngineError) {
@@ -189,6 +199,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_create(
         engine: Mutex::new(None),
         control: Mutex::new(None),
         boot_script: Mutex::new(String::new()),
+        commits: Arc::new(AtomicU64::new(0)),
         launch: Mutex::new(None),
         density: Density::new(density),
         size: Mutex::new(Size::new(px(0.0), px(0.0))),
@@ -310,6 +321,7 @@ fn start_engine(host: &Host, bundle: &str, data_dir: &str, dark: bool) -> Result
     let density = host.density.clone();
     let sink = Arc::new(Sink {
         view: host.view.clone(),
+        commits: Arc::clone(&host.commits),
     });
     let mut config = EngineConfig::new(bundle, viewport)
         .with_os(Os::Android)

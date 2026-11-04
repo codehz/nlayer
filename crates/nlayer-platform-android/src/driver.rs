@@ -9,9 +9,9 @@
 //! The runner is ready once the first bundle has loaded and a step can run.
 //! There is no separate ready line: the CLI waits on the first step result.
 
-use std::sync::Mutex;
+use std::sync::{Mutex, atomic::Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use jni::objects::{JString, JValue};
 use jni::sys::{jboolean, jint};
@@ -216,7 +216,11 @@ fn scroll(host: &Host, selector: String, distance: f32) -> Result<Value, String>
             scene::next_offset(node.y, distance, node.content_h, frame.h),
         )
     };
+    let before = host.commits.load(Ordering::SeqCst);
     scroll_to(host, id as jint, x, y);
+    // A scroll moves the view now; the list window and sticky positions are
+    // a new mount batch. Read the tree only after it has landed.
+    wait_for_commit(host, before, Duration::from_millis(500));
     Ok(Value::Null)
 }
 
@@ -306,7 +310,21 @@ fn move_to(host: &Host, x: f32, y: f32) {
     });
 }
 
-fn snapshot(host: &Host) -> Result<String, String> {
+/// Waits until the engine has posted a mount batch after `before`, then
+/// joins the UI thread so the batch is applied. `false` on timeout.
+pub(crate) fn wait_for_commit(host: &Host, before: u64, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if host.commits.load(Ordering::SeqCst) > before {
+            let _ = snapshot(host);
+            return true;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    false
+}
+
+pub(crate) fn snapshot(host: &Host) -> Result<String, String> {
     let text = with_env(|env| {
         let value = unsafe {
             env.call_method_unchecked(
