@@ -87,10 +87,20 @@ Copied files:
 - `crates/nlayer-bundler/src/compile.rs` from
   `crates/nsh-bundler/src/compile.rs` (one module: TypeScript removal,
   named import checks against the native modules, and that module's source
-  map; rolldown, hot reload and props checks are not copied)
+  map; rolldown and props checks are not copied)
 - `crates/nlayer-bundler/src/bundle.rs` from `crates/nsh-bundler/src/bundle.rs`
   (one entry chunk and its source map; no code splitting, no themes,
-  capabilities, hot reload or native-use report)
+  capabilities or native-use report)
+- `crates/nlayer-bundler/src/hot.rs` from `crates/nsh-bundler/src/hot.rs`,
+  and `HotBundle` / `bundle_hot` / `script` / `patch` in
+  `crates/nlayer-bundler/src/bundle.rs` from `crates/nsh-bundler/src/bundle.rs`
+  (`__nsh_hot` renamed to `__nlayer_hot`, `nsh:hot` to `nlayer:hot`; `keep`
+  is only `signal` and `createNavStack`; UI sets and capabilities are not
+  copied)
+
+- `crates/nlayer-js/src/hot.rs` from `crates/nsh-js/src/hot.rs` (factory
+  registry, bubble, component proxies, context identity and `keep`;
+  `import.meta.hot` is new and has no `on` / `off` / `send`)
 - `crates/nlayer-bundler/src/plugin.rs` from `crates/nsh-bundler/src/plugin.rs`
   (resolve, load and transform: native modules external, app modules
   compiled, PNG / JPEG / WebP imports with density variants; fonts, SVG

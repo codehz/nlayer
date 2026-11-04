@@ -36,6 +36,8 @@ pub(crate) struct State {
     pub(crate) lists: crate::list::Lists,
     /// The signal `reduceMotion()` reads internally (owned; not exported).
     pub(crate) reduce_motion: std::cell::Cell<qjs::JSValue>,
+    /// Hot module replacement (`nlayer:hot`; empty outside a dev bundle).
+    pub(crate) hot: crate::hot::Hot,
 }
 /// Timers, by the id JS gave them and the instant they are due.
 #[derive(Default)]
@@ -118,6 +120,7 @@ pub(crate) fn install(cx: &Ctx<'_>) {
             storage: None,
             lists: crate::list::Lists::default(),
             reduce_motion: std::cell::Cell::new(qjs::JS_UNDEFINED),
+            hot: crate::hot::Hot::default(),
         }));
         qjs::JS_SetContextOpaque(raw, state as *mut c_void);
         STATES.with(|m| m.borrow_mut().insert(rt as usize, state as usize));
@@ -158,6 +161,10 @@ pub(crate) fn uninstall(cx: &Ctx<'_>) {
         STATES.with(|m| m.borrow_mut().remove(&(rt as usize)));
         qjs::JS_SetContextOpaque(raw, ptr::null_mut());
         let mut state = Box::from_raw(p);
+        // Hot state holds factories, component proxies and dispose
+        // functions that may reach renderer nodes and graph signals; free
+        // it while both are still alive.
+        state.hot.free_all();
         state.lists.free_all(raw);
         state.dom.free_all(raw);
         qjs::JS_FreeValue(raw, state.color_scheme.replace(qjs::JS_UNDEFINED));

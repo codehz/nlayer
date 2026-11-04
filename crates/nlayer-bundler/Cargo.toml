@@ -26,6 +26,7 @@ dunce = "1"
 rolldown = "=1.2.13"
 rolldown_common = "=1.2.13"
 rolldown_error = "=1.2.13"
+rolldown_sourcemap = "1.2.13"
 tokio = { version = "1", default-features = false }
 
 [dev-dependencies]

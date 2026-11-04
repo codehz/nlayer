@@ -1,8 +1,9 @@
 //! The native ES modules an app imports: `@nlayer/runtime` (the reactive
 //! graph, `mount`, `context`, `ErrorBoundary`) and `@nlayer/ui` (the host
 //! components and `platform.os`). `nlayer:rt` is the renderer's, which only
-//! compiled JSX imports. `@nlayer/jsx-runtime` is types only and is not
-//! served here.
+//! compiled JSX imports. `nlayer:hot` is internal: a development bundle
+//! imports it for `__nlayer_hot`, apps never do. `@nlayer/jsx-runtime` is
+//! types only and is not served here.
 //!
 //! The exports are made when a bundle first imports the module. QuickJS
 //! resolves imports when it compiles a module, so the loader declares the
@@ -221,6 +222,11 @@ pub(crate) const MODULES: &[NativeModule] = &[
     NativeModule {
         name: "nlayer:rt",
         exports: dom::RT_EXPORTS,
+    },
+    // Internal: only a development bundle imports it (for `__nlayer_hot`).
+    NativeModule {
+        name: crate::hot::SPECIFIER,
+        exports: crate::hot::EXPORTS,
     },
 ];
 

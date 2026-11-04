@@ -3,17 +3,22 @@
 //!
 //! Each `.tsx`/`.jsx` module is compiled against the native modules
 //! (`@nlayer/runtime`, `@nlayer/ui`, `nlayer:rt`), which stay imports; rolldown bundles the app's
-//! own modules into one ES module of the app's code.
+//! own modules into one ES module of the app's code. [`bundle_hot`] instead
+//! keeps one CommonJS chunk per module, for development updates.
 
 mod bundle;
 mod classes;
 mod compile;
+mod hot;
 mod jsx;
 mod plugin;
 mod test_api;
 mod types;
 
-pub use bundle::{Bundle, BundleError, BundleOptions, bundle, bundle_async};
+pub use bundle::{
+    Bundle, BundleError, BundleOptions, HotBundle, HotPatch, bundle, bundle_async, bundle_hot,
+    bundle_hot_async,
+};
 pub use types::package_files;
 
 /// Compiles one module (TSX, JSX, TS or JS, as `name`'s extension says) to
@@ -23,7 +28,7 @@ pub fn compile_module(name: &str, source: &str) -> Result<String, String> {
     let path = std::path::Path::new(name);
     let source_type = oxc::span::SourceType::from_path(path).map_err(|e| e.to_string())?;
     let modules = compile::NativeModules::new(false);
-    let compiled = compile::compile_native(path, source_type, source, &modules)
+    let compiled = compile::compile_native(path, source_type, source, &modules, None)
         .map_err(|e| compile::strip_ansi(&e))?;
     Ok(compiled.code)
 }

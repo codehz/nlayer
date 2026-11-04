@@ -1805,6 +1805,24 @@ unsafe extern "C" fn context_call(
     unsafe { qjs::JS_DupValue(cx, (*p).default) }
 }
 
+/// Gives context `kept` the default of context `from` (development
+/// updates keep a context's identity).
+pub(crate) fn set_context_default(cx: *mut JsContext, kept: JsValue, from: JsValue) {
+    let class = dom(cx).classes.context;
+    // SAFETY: the opaques of context objects; the old default is freed.
+    unsafe {
+        let (k, f) = (
+            qjs::JS_GetOpaque(kept, class) as *mut ContextData,
+            qjs::JS_GetOpaque(from, class) as *const ContextData,
+        );
+        if k.is_null() || f.is_null() || std::ptr::eq(k, f) {
+            return;
+        }
+        let old = std::mem::replace(&mut (*k).default, qjs::JS_DupValue(cx, (*f).default));
+        qjs::JS_FreeValue(cx, old);
+    }
+}
+
 /// `context(default)`: a context, read by calling it; `<Ctx.Provider
 /// value={…}>` provides a value to what it renders.
 pub(crate) unsafe extern "C" fn context(
@@ -1920,6 +1938,10 @@ pub(crate) unsafe extern "C" fn mount(
     argv: *mut JsValue,
 ) -> JsValue {
     let (app, props) = (arg(argc, argv, 0), arg(argc, argv, 1));
+    // A hot update running the module again keeps what it mounted.
+    if let Some(dispose) = crate::hot::reuse(cx, app, props) {
+        return dispose;
+    }
     let root = dom(cx).root.get();
     // SAFETY: reads of the root's children; dups for the dispose function.
     let before: Vec<JsValue> = unsafe { &(*node_ptr(cx, root)).children }
@@ -1954,6 +1976,7 @@ pub(crate) unsafe extern "C" fn mount(
     let dispose =
         unsafe { qjs::JS_NewCFunctionData(cx, Some(unmount), 0, 0, 2, data.as_mut_ptr()) };
     unsafe { qjs::JS_FreeValue(cx, data[1]) };
+    crate::hot::rendered(cx, app, dispose);
     reactive::finish_value(cx, dispose)
 }
 

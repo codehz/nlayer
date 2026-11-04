@@ -1311,6 +1311,7 @@ dependencies = [
  "rolldown",
  "rolldown_common",
  "rolldown_error",
+ "rolldown_sourcemap",
  "serde_json",
  "tokio",
 ]

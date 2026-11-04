@@ -328,7 +328,12 @@ fn trimmed_span(span: Span, raw: &str) -> Span {
     }
     let lead = (raw.len() - raw.trim_start().len()) as u32;
     let trail = (raw.len() - raw.trim_end().len()) as u32;
-    Span::new(span.start + lead, span.end - trail)
+    let start = span.start + lead;
+    let end = span.end.saturating_sub(trail);
+    if start >= end {
+        return span;
+    }
+    Span::new(start, end)
 }
 
 /// Whether an expression's value may change: it calls something or reads a

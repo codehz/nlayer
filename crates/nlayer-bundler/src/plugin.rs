@@ -105,6 +105,14 @@ pub(crate) struct NlayerPlugin {
     pub(crate) assets: Arc<Mutex<Vec<PathBuf>>>,
     /// Inline `@nlayer/test` instead of refusing it.
     pub(crate) test: bool,
+    /// Development bundle: components and contexts are registered with the
+    /// hot runtime.
+    pub(crate) hot: bool,
+    /// Native modules the app imports.
+    pub(crate) natives: Arc<Mutex<std::collections::BTreeSet<String>>>,
+    /// Static native imports whose namespaces hot factories require
+    /// immediately. `None` outside a hot bundle.
+    pub(crate) preloads: Option<Arc<Mutex<std::collections::BTreeSet<String>>>>,
 }
 
 impl NlayerPlugin {
@@ -159,7 +167,21 @@ impl Plugin for NlayerPlugin {
         }
         if self.modules.contains(spec) {
             // Native modules stay external. Handwritten `nlayer:rt` is refused
-            // in compile, before the compiler inserts this import.
+            // in compile, before the compiler inserts this import. Hot
+            // factories keep a dynamic `import()` of one; preloading it would
+            // turn an optional native into an eager dependency.
+            self.natives
+                .lock()
+                .expect("natives lock")
+                .insert(spec.to_owned());
+            if !args.kind.is_dynamic()
+                && let Some(preloads) = &self.preloads
+            {
+                preloads
+                    .lock()
+                    .expect("preloads lock")
+                    .insert(spec.to_owned());
+            }
             return Ok(Some(HookResolveIdOutput {
                 external: Some(true.into()),
                 ..HookResolveIdOutput::from_id(spec)
@@ -169,6 +191,11 @@ impl Plugin for NlayerPlugin {
             .importer
             .map(|i| format!("{}: ", self.rel(Path::new(i))))
             .unwrap_or_default();
+        if spec == "nlayer:hot" {
+            return Err(self.refuse(format!(
+                "{from}`nlayer:hot` is the development runtime; apps do not import it"
+            )));
+        }
         if spec == "@nlayer" {
             return Err(self.refuse(format!(
                 "{from}`@nlayer` is not a module: import signal, computed, effect, batch, untracked, cleanup, context, mount and ErrorBoundary from \"@nlayer/runtime\", and View, Text, Image, Scroll and Input from \"@nlayer/ui\""
@@ -304,8 +331,15 @@ impl Plugin for NlayerPlugin {
             ModuleType::Ts => SourceType::ts(),
             _ => SourceType::mjs(),
         };
-        let compiled = compile_native(path, source_type, args.code, &self.modules)
-            .map_err(|detail| self.fail(path, &detail))?;
+        let hot_key = self.hot.then(|| self.rel(path));
+        let compiled = compile_native(
+            path,
+            source_type,
+            args.code,
+            &self.modules,
+            hot_key.as_deref(),
+        )
+        .map_err(|detail| self.fail(path, &detail))?;
         Ok(Some(HookTransformOutput {
             code: Some(compiled.code),
             map: compiled.map.into(),

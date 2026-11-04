@@ -166,6 +166,32 @@ declare function Each<T>(props: {
   key?: ((item: T, index: number) => unknown) | "index";
   children: (item: () => T, index: () => number) => unknown;
 }): unknown;
+
+/** Development module API. Absent (`undefined`) in a published bundle. No `on` / `off` / `send`. */
+interface ImportMetaHot {
+  /** Values kept across a re-run of this module. Empty on the first run. */
+  readonly data: Record<string, unknown>;
+  /** Re-run this module and stop the update here. `cb` receives the new module namespace. */
+  accept(cb?: (mod: Record<string, unknown>) => void): void;
+  /** When `dep` updates, call `cb` instead of re-running this module. */
+  accept(dep: string, cb: (mod: Record<string, unknown>) => void): void;
+  /** When `deps` update, call `cb` with their new namespaces. Other dependencies still bubble. */
+  accept(deps: readonly string[], cb: (mods: readonly Record<string, unknown>[]) => void): void;
+  /** Called before this module re-runs. Values written on `data` are readable next run. */
+  dispose(cb: (data: Record<string, unknown>) => void): void;
+  /** Called when this module leaves the graph. */
+  prune(cb: (data: Record<string, unknown>) => void): void;
+  /** This module did not accept the update; bubble to importers. */
+  invalidate(): void;
+  /** Reload the whole bundle in this process. State is dropped. */
+  decline(): void;
+}
+
+interface ImportMeta {
+  /** Present only in a development bundle. */
+  readonly hot?: ImportMetaHot;
+}
+
 /** A bundled image (`import icon from "./icon.png"`). `url` is an `asset:/` URI. */
 interface ImageAsset {
 url: string;

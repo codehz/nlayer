@@ -64,12 +64,16 @@ pub(crate) struct Compiled {
 }
 
 /// TSX -> JS with nlayer's JSX compiler ([`crate::jsx`]), TypeScript
-/// removed in the same pass. Errors are rendered with a code frame.
+/// removed in the same pass. With `hot_key` (the module's path in the app)
+/// its components are registered for hot replacement ([`crate::hot`]) before
+/// JSX is lowered, and `import.meta.hot` becomes a call of the hot runtime.
+/// Errors are rendered with a code frame.
 pub(crate) fn compile_native(
     path: &Path,
     source_type: SourceType,
     source: &str,
     modules: &NativeModules,
+    hot_key: Option<&str>,
 ) -> Result<Compiled, String> {
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, source_type).parse();
@@ -100,6 +104,10 @@ pub(crate) fn compile_native(
         Transformer::new(&allocator, path, &options).build_with_scoping(scoping, &mut program);
     if let Some(err) = ret.diagnostics.into_iter().next() {
         return Err(err.render_with_source_code(source.to_owned()));
+    }
+    if let Some(key) = hot_key {
+        // Before the JSX goes: components are the functions with JSX.
+        crate::hot::transform(&allocator, &mut program, source, key);
     }
     crate::jsx::transform(&allocator, &mut program, &ret.scoping, source, modules)?;
     // The scopes once TypeScript and JSX are compiled, for checking imports.

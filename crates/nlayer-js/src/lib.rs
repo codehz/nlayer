@@ -3,13 +3,15 @@
 //! [`Host`] owns one QuickJS runtime and context and serves the native
 //! modules an app imports (`@nlayer/runtime`: the reactive graph, `mount`,
 //! `context` and `ErrorBoundary`; `@nlayer/ui`: the host components, `List` and
-//! `platform.os`; `nlayer:rt`: the JSX runtime compiled code calls). A host
-//! is single-threaded (`!Send`): create and use it on the engine thread.
+//! `platform.os`; `nlayer:rt`: the JSX runtime compiled code calls; and
+//! `nlayer:hot`: internal, the development bundle's hot-update runtime). A
+//! host is single-threaded (`!Send`): create and use it on the engine thread.
 
 mod bridge;
 mod clock;
 mod dom;
 mod error;
+mod hot;
 mod list;
 mod modules;
 mod navigation;
@@ -260,6 +262,37 @@ impl Host {
             Ok(Persistent::save(&cx, promise))
         })?;
         self.settle(promise)
+    }
+
+    /// Evaluates a classic script named `name` (for stack traces) and
+    /// returns whether its completion value is strictly `true`:
+    /// development update scripts report whether they could be applied.
+    pub fn eval_script(&self, name: &str, source: &str) -> Result<bool, JsError> {
+        let applied = self.cx.with(|cx| -> Result<bool, JsError> {
+            let mut options = rquickjs::context::EvalOptions::default();
+            options.global = true;
+            options.strict = false;
+            options.filename = Some(name.to_owned());
+            let value: rquickjs::Value<'_> = cx
+                .eval_with_options(source, options)
+                .catch(&cx)
+                .map_err(JsError::caught)?;
+            Ok(value.as_bool() == Some(true))
+        })?;
+        self.run_jobs();
+        Ok(applied)
+    }
+
+    /// Whether a hot update asked for a full reload: a module called
+    /// `decline()`, or an accept/dispose callback threw. `update` returns
+    /// false both for that and for a change that could not reach an
+    /// importer or the entry; this flag tells the two apart. True once,
+    /// then cleared.
+    pub fn take_hot_reload(&self) -> bool {
+        self.cx.with(|cx| {
+            // SAFETY: the state `install` made for this context.
+            unsafe { (*state::state(cx.as_raw().as_ptr())).hot.take_reload() }
+        })
     }
 
     /// Renders the cells list `list` needs, in `(slot, item)` order.
