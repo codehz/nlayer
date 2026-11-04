@@ -2,7 +2,8 @@ use taffy::{Dimension, Display, FlexDirection, LengthPercentage, LengthPercentag
 
 use crate::{
     ResizeMode,
-    geometry::{Size, px},
+    effects::{GradientKind, GradientSize},
+    geometry::{Size, deg, percentage, px},
     style::{Color, Style, StyleKey, StyleValue},
     transform::TransformKind,
 };
@@ -140,10 +141,9 @@ fn selection_passes_and_placeholder_does_not() {
 #[test]
 fn gate_drops_the_whole_utility() {
     for class in [
-        "shadow-md",
-        "bg-linear-to-r",
+        "blur-sm",
         "blur-md",
-        "ring",
+        "text-shadow-md",
         "outline",
         "animate-spin",
         "transition",
@@ -171,9 +171,9 @@ fn gate_drops_the_whole_utility() {
         assert!(list.groups().is_empty(), "{class}");
         assert_eq!(props, ClassProps::default(), "{class}");
     }
-    let (style, _, list) = applied("p-4 shadow-md", 0);
+    let (style, _, list) = applied("p-4 blur-sm", 0);
     assert_eq!(style.layout.padding.top, len(16.0));
-    assert_eq!(list.unsupported(), ["shadow-md".into()].as_slice());
+    assert_eq!(list.unsupported(), ["blur-sm".into()].as_slice());
     assert!(list.unknown().is_empty());
 }
 
@@ -231,8 +231,202 @@ fn unknown_classes_are_named_once() {
     );
     assert_eq!(super::unknown_classes_warning(std::iter::empty()), None);
     assert_eq!(
-        super::unsupported_classes_warning(["shadow-md", "dark:p-4"]).as_deref(),
-        Some("unsupported classes: shadow-md dark:p-4")
+        super::unsupported_classes_warning(["blur-sm", "dark:p-4"]).as_deref(),
+        Some("unsupported classes: blur-sm dark:p-4")
     );
     assert_eq!(super::unsupported_classes_warning(std::iter::empty()), None);
+}
+
+#[test]
+fn shadows_rings_and_gradients_pass_the_gate() {
+    let (s, _, list) = applied("shadow-md", 0);
+    assert!(list.unsupported().is_empty() && list.unknown().is_empty());
+    let layers = &s.view.effects.as_ref().expect("shadow-md").box_shadows;
+    assert_eq!(layers.len(), 2);
+    assert_eq!(layers[0].offset_y, px(4.0));
+    assert_eq!(layers[0].blur, px(6.0));
+    assert_eq!(layers[0].spread, px(-1.0));
+    assert!(!layers[0].inset);
+    assert_eq!(s.layout, Style::default().layout);
+
+    // A color needs a size's layers; an offset needs a ring. Together they
+    // write inset shadow, inset ring, ring offset, ring, then the shadow.
+    let (s, _, list) = applied(
+        "inset-shadow-sm ring-2 ring-offset-2 inset-ring-2 shadow-md shadow-red-500",
+        0,
+    );
+    assert!(
+        list.unsupported().is_empty() && list.unknown().is_empty(),
+        "{:?}",
+        list.unsupported()
+    );
+    let layers = &s.view.effects.as_ref().unwrap().box_shadows;
+    assert_eq!(layers.len(), 6);
+    assert!(layers[0].inset && layers[0].blur == px(4.0));
+    assert!(layers[1].inset && layers[1].spread == px(2.0));
+    assert_eq!(
+        (layers[2].spread, layers[2].color, layers[2].inset),
+        (px(2.0), Color(0xffff_ffff), false)
+    );
+    assert_eq!((layers[3].spread, layers[3].color), (px(4.0), Color::BLACK));
+    assert!(layers[4..].iter().all(|l| l.color == Color(0xfb2c_36ff)));
+    assert_eq!(layers[4].offset_y, px(4.0));
+
+    let (s, _, list) = applied("shadow-md shadow-red-500/20", 0);
+    assert!(list.unsupported().is_empty() && list.unknown().is_empty());
+    let layers = &s.view.effects.as_ref().unwrap().box_shadows;
+    assert!(
+        layers.iter().all(|l| l.color == Color(0xfb2c_3633)),
+        "{layers:?}"
+    );
+
+    for class in [
+        "inset-shadow-sm",
+        "ring-2",
+        "ring-offset-2",
+        "inset-ring-2",
+        "shadow-red-500",
+        "shadow-red-500/20",
+    ] {
+        let (s, _, list) = applied(class, 0);
+        assert!(
+            list.unsupported().is_empty() && list.unknown().is_empty(),
+            "{class}"
+        );
+        if matches!(class, "inset-shadow-sm" | "ring-2" | "inset-ring-2") {
+            assert!(
+                s.view
+                    .effects
+                    .as_ref()
+                    .is_some_and(|e| !e.box_shadows.is_empty()),
+                "{class}"
+            );
+        }
+    }
+
+    let (s, _, list) = applied("bg-linear-to-r from-red-500 via-green-500 to-blue-500", 0);
+    assert!(list.unsupported().is_empty() && list.unknown().is_empty());
+    let images = &s.view.effects.as_ref().unwrap().background_images;
+    assert_eq!(images.len(), 1);
+    let g = &images[0];
+    assert_eq!(g.kind, GradientKind::Linear { angle: deg(90.0) });
+    let (red, green, blue) = (Color(0xfb2c_36ff), Color(0x00c950ff), Color(0x2b7fffff));
+    let fraction = |color: Color| {
+        let stop = g
+            .stops
+            .iter()
+            .find(|s| s.color == color)
+            .unwrap_or_else(|| panic!("{color:?} missing"));
+        match stop.position {
+            Some(crate::geometry::DefiniteLength::Fraction(p)) => p.0,
+            other => panic!("{other:?}"),
+        }
+    };
+    assert!((fraction(red) - 0.0).abs() < 1e-6);
+    assert!((fraction(green) - 0.5).abs() < 1e-6);
+    assert!((fraction(blue) - 1.0).abs() < 1e-6);
+    // The utility's three stops. Oklab sampling may insert colors between them.
+    assert_eq!(
+        g.stops
+            .iter()
+            .filter(|s| s.color == red || s.color == green || s.color == blue)
+            .count(),
+        3
+    );
+
+    for (class, kind) in [
+        (
+            "bg-radial",
+            GradientKind::Radial {
+                circle: false,
+                size: GradientSize::FarthestCorner,
+                x: percentage(0.5),
+                y: percentage(0.5),
+            },
+        ),
+        (
+            "bg-conic",
+            GradientKind::Conic {
+                from: deg(0.0),
+                x: percentage(0.5),
+                y: percentage(0.5),
+            },
+        ),
+    ] {
+        let (s, _, list) = applied(class, 0);
+        assert!(
+            list.unsupported().is_empty() && list.unknown().is_empty(),
+            "{class}"
+        );
+        let images = &s.view.effects.as_ref().expect(class).background_images;
+        assert_eq!(images.len(), 1, "{class}");
+        assert_eq!(images[0].kind, kind, "{class}");
+    }
+    let (s, _, list) = applied("bg-linear-to-r from-red-500 bg-none", 0);
+    assert!(list.unsupported().is_empty() && list.unknown().is_empty());
+    assert!(
+        s.view
+            .effects
+            .as_ref()
+            .is_none_or(|e| e.background_images.is_empty())
+    );
+
+    for class in ["p", "shadow-md", "bg-linear-to-r"] {
+        let list = parse(&Theme::default(), class);
+        assert!(
+            list.unsupported().is_empty(),
+            "{class}: {:?}",
+            list.unsupported()
+        );
+    }
+    for class in ["text-shadow-md", "blur-sm", "transition"] {
+        let list = parse(&Theme::default(), class);
+        assert_eq!(list.unsupported(), [class.into()].as_slice(), "{class}");
+        assert!(list.unknown().is_empty(), "{class}");
+    }
+
+    // Two tokens: the shadow applies, the filter still warns. One utility
+    // that mixes an allowed declaration with a rejected one is dropped whole
+    // (no generated class does that; the rule is the gate's).
+    let (s, _, list) = applied("shadow-md blur-sm", 0);
+    assert_eq!(list.unsupported(), ["blur-sm".into()].as_slice());
+    assert!(!s.view.effects.as_ref().unwrap().box_shadows.is_empty());
+    let shadow =
+        super::utilities::Decl::Part(super::utilities::Part::Shadow(std::sync::Arc::from([])));
+    let text =
+        super::utilities::Decl::Part(super::utilities::Part::TextShadow(std::sync::Arc::from([])));
+    let rule = |decls| super::Rule {
+        cond: super::Condition::default(),
+        decls,
+        rank: super::Rank::default(),
+        important: false,
+        theme: false,
+    };
+    assert!(super::effect_allowed(&rule(vec![shadow.clone()])));
+    assert!(!super::effect_allowed(&rule(vec![shadow, text])));
+}
+
+#[test]
+fn hover_shadows_rewrite_the_main_style() {
+    let (s, _, list) = applied("shadow-md hover:shadow-none", 0);
+    assert!(list.unsupported().is_empty() && list.unknown().is_empty());
+    assert_eq!(s.view.effects.as_ref().unwrap().box_shadows.len(), 2);
+    let (s, _, list) = applied("shadow-md hover:shadow-none", state::HOVERED);
+    assert!(list.unsupported().is_empty());
+    assert!(
+        s.view
+            .effects
+            .as_ref()
+            .is_none_or(|e| e.box_shadows.is_empty())
+    );
+    let (s, _, list) = applied("hover:shadow-md", 0);
+    assert!(list.unsupported().is_empty());
+    assert!(s.view.effects.is_none());
+    let (s, _, list) = applied("hover:shadow-md", state::HOVERED);
+    assert!(list.unsupported().is_empty() && list.unknown().is_empty());
+    assert_eq!(s.view.effects.as_ref().unwrap().box_shadows.len(), 2);
+    assert_eq!(
+        s.view.effects.as_ref().unwrap().box_shadows[0].offset_y,
+        px(4.0)
+    );
 }

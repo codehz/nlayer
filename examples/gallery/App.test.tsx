@@ -800,5 +800,79 @@ test("classes lay out, restyle, and warn", () => {
 
   const warnings = app.warnings().join("\n");
   expect(warnings).toContain("unknown classes: wat");
-  expect(warnings).toContain("unsupported classes: shadow-md");
+  expect(warnings).toContain("unsupported classes: blur-sm");
+});
+
+test("effects paint shadows and gradients without moving layout", () => {
+  const app = open("./App.tsx", { width: 390, height: 844 });
+  reveal(app, (n) => n.testID === "open-effects");
+  app.press("open-effects");
+  app.waitFor("effects-page");
+
+  const headless = globalThis.__nlayerHeadless === "1";
+  if (!headless) return;
+
+  const shadow = byId(app.tree(), "fx-shadow");
+  const shadowFrame = shadow.frame;
+  const layers = must(shadow.boxShadow);
+  expect(layers.length).toBe(2);
+  expect({
+    x: layers[0].x,
+    y: layers[0].y,
+    blur: layers[0].blur,
+    spread: layers[0].spread,
+    inset: layers[0].inset,
+  }).toEqual({ x: 0, y: 8, blur: 24, spread: 4, inset: false });
+  expect(layers[0].color.slice(7) === "ff").toBe(false);
+  expect(layers[1].spread < 0).toBe(true);
+  app.hover("fx-shadow");
+  expect(byId(app.tree(), "fx-shadow").frame).toEqual(shadowFrame);
+
+  expect(must(byId(app.tree(), "fx-inset").boxShadow)[0].inset).toBe(true);
+
+  const gradient = byId(app.tree(), "fx-gradient");
+  const linear = must(gradient.backgroundImage)[0];
+  expect(linear.kind).toBe("linear");
+  expect(linear.repeating).toBe(false);
+  expect(linear.stops.length).toBe(2);
+  expect(linear.stops[0]).toEqual({ color: "#3b82f600", position: 0 });
+  expect(linear.stops[linear.stops.length - 1]).toEqual({ color: "#3b82f6ff", position: 1 });
+  expect(gradient.backgroundColor).toBe("#fef3c7ff");
+  expect(must(byId(app.tree(), "fx-radial").backgroundImage)[0].kind).toBe("radial");
+  expect(must(byId(app.tree(), "fx-conic").backgroundImage)[0].kind).toBe("conic");
+
+  const tree = app.tree();
+  expect((byId(tree, "fx-class-shadow").boxShadow ?? []).length > 0).toBe(true);
+  expect((byId(tree, "fx-class-gradient").backgroundImage ?? []).length > 0).toBe(true);
+  const ring = must(byId(tree, "fx-class-ring").boxShadow);
+  expect(ring.length > 0).toBe(true);
+  expect(ring.every((layer) => layer.inset === false)).toBe(true);
+  const inset = must(byId(tree, "fx-class-inset").boxShadow);
+  expect(inset.length > 0).toBe(true);
+  expect(inset.some((layer) => layer.inset)).toBe(true);
+
+  const state = byId(tree, "fx-state");
+  const stateFrame = state.frame;
+  const stateShadow = must(state.boxShadow);
+  expect(stateShadow.length).toBe(1);
+  app.hover("fx-state");
+  const hovered = byId(app.tree(), "fx-state");
+  expect(hovered.frame).toEqual(stateFrame);
+  expect(hovered.boxShadow).toEqual(stateShadow);
+  const hoverLayers = must(hovered.stateStyles?.hover?.boxShadow);
+  expect(hoverLayers.length).toBe(1);
+  expect(hoverLayers[0].blur).toBe(32);
+  expect(hovered.stateStyles?.active).toBe(undefined);
+  expect(hovered.stateStyles?.focus).toBe(undefined);
+
+  app.hover("fx-class-hover");
+  expect((byId(app.tree(), "fx-class-hover").boxShadow ?? []).length > 0).toBe(true);
+  app.hover("fx-class-hover-none");
+  expect(byId(app.tree(), "fx-class-hover-none").boxShadow).toBe(undefined);
+
+  const warnings = app.warnings().join("\n");
+  expect(warnings).toContain("unsupported classes: blur-sm");
+  expect(warnings.includes("unsupported classes: shadow-")).toBe(false);
+  expect(warnings.includes("unsupported classes: ring-")).toBe(false);
+  expect(warnings.includes("unsupported classes: bg-linear")).toBe(false);
 });

@@ -20,7 +20,9 @@ use std::{
 use nlayer_bundler::{BundleOptions, bundle};
 use nlayer_core::{
     KeyboardType, NodeId, ROOT_ID, ResizeMode, ViewKind,
+    effects::{BoxShadow, Gradient, GradientKind},
     geometry::{Bounds, Edges, Points, Size, px},
+    style::ViewStyle,
     text::ApproxTextEngine,
     transform::TransformKind,
 };
@@ -28,7 +30,7 @@ use nlayer_engine::{EngineConfig, EngineError};
 use nlayer_js::Host;
 use serde::Deserialize;
 
-use crate::{Headless, Screen, TreeNode};
+use crate::{Headless, Screen, StatePaint, TreeNode};
 
 const VIEWPORT_WIDTH: f32 = 390.0;
 const VIEWPORT_HEIGHT: f32 = 844.0;
@@ -1157,6 +1159,103 @@ fn style_color_hex(color: nlayer_core::style::Color) -> String {
     format!("#{:08x}", color.0)
 }
 
+/// The box color stops resolve against. An empty frame is [`Size::default`].
+fn gradient_size(frame: Bounds<Points>) -> Size<Points> {
+    if frame.size.width.0 == 0.0 && frame.size.height.0 == 0.0 {
+        Size::default()
+    } else {
+        frame.size
+    }
+}
+
+/// `boxShadow` and `backgroundImage`, omitted when those lists are empty.
+fn insert_paint(
+    map: &mut serde_json::Map<String, serde_json::Value>,
+    style: &ViewStyle,
+    size: Size<Points>,
+) {
+    let Some(effects) = style.effects.as_deref() else {
+        return;
+    };
+    if !effects.box_shadows.is_empty() {
+        map.insert("boxShadow".into(), box_shadows_json(&effects.box_shadows));
+    }
+    if !effects.background_images.is_empty() {
+        map.insert(
+            "backgroundImage".into(),
+            background_images_json(&effects.background_images, size),
+        );
+    }
+}
+
+fn box_shadows_json(layers: &[BoxShadow]) -> serde_json::Value {
+    serde_json::Value::Array(
+        layers
+            .iter()
+            .map(|layer| {
+                serde_json::json!({
+                    "x": layer.offset_x.0,
+                    "y": layer.offset_y.0,
+                    "blur": layer.blur.0,
+                    "spread": layer.spread.0,
+                    "color": style_color_hex(layer.color),
+                    "inset": layer.inset,
+                })
+            })
+            .collect(),
+    )
+}
+
+fn background_images_json(images: &[Gradient], size: Size<Points>) -> serde_json::Value {
+    let mut layers = Vec::with_capacity(images.len());
+    for gradient in images {
+        let stops: Vec<_> = gradient
+            .resolved_stops(size)
+            .into_iter()
+            .map(|(color, position)| {
+                serde_json::json!({
+                    "color": style_color_hex(color),
+                    "position": position.0,
+                })
+            })
+            .collect();
+        layers.push(serde_json::json!({
+            "kind": gradient_kind_name(gradient.kind),
+            "repeating": gradient.repeating,
+            "stops": stops,
+        }));
+    }
+    serde_json::Value::Array(layers)
+}
+
+fn gradient_kind_name(kind: GradientKind) -> &'static str {
+    match kind {
+        GradientKind::Linear { .. } | GradientKind::LinearCorner { .. } => "linear",
+        GradientKind::Radial { .. } => "radial",
+        GradientKind::Conic { .. } => "conic",
+    }
+}
+
+/// Slot paint as mounted, not merged with the base. A slot is omitted when
+/// it has no shadows and no gradients.
+fn state_styles_json(
+    slots: &[Option<Box<StatePaint>>; 3],
+    size: Size<Points>,
+) -> Option<serde_json::Value> {
+    let mut out = serde_json::Map::new();
+    for (name, slot) in ["active", "hover", "focus"].into_iter().zip(slots) {
+        let Some(paint) = slot else {
+            continue;
+        };
+        let mut fields = serde_json::Map::new();
+        insert_paint(&mut fields, &paint.view, size);
+        if !fields.is_empty() {
+            out.insert(name.into(), serde_json::Value::Object(fields));
+        }
+    }
+    (!out.is_empty()).then(|| serde_json::Value::Object(out))
+}
+
 fn node_json(node: &TreeNode, screen: &Screen) -> serde_json::Value {
     let view = screen.view(node.id);
     let mut map = serde_json::Map::new();
@@ -1344,6 +1443,13 @@ fn node_json(node: &TreeNode, screen: &Screen) -> serde_json::Value {
                         .collect(),
                 ),
             );
+        }
+        let size = gradient_size(view.frame);
+        if let Some(style) = &view.style {
+            insert_paint(&mut map, style, size);
+        }
+        if let Some(states) = state_styles_json(&view.state_styles, size) {
+            map.insert("stateStyles".into(), states);
         }
     }
     map.insert(
@@ -1690,5 +1796,300 @@ test("shows the count", () => {
         assert!(report.ok(), "{report}");
         assert_eq!(report.files[0].cases[0].name, "shows the count");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn node_json_maps_shadow_and_gradient_layers() {
+        use std::sync::Arc;
+
+        use nlayer_core::{
+            EventMask, Interaction, MountBatch, MountItem, ViewKind,
+            effects::{
+                BoxShadow, ColorStop, Effects, Filter, Gradient, GradientKind, GradientSize,
+            },
+            geometry::{Bounds, DefiniteLength, percentage, px, size},
+            style::{Color, TextStyle, ViewStyle},
+        };
+
+        use super::{Screen, TreeNode, node_json};
+
+        fn shadow(x: f32, y: f32, blur: f32, spread: f32, color: u32, inset: bool) -> BoxShadow {
+            BoxShadow {
+                offset_x: px(x),
+                offset_y: px(y),
+                blur: px(blur),
+                spread: px(spread),
+                color: Color(color),
+                inset,
+            }
+        }
+
+        fn stop(color: u32, position: Option<DefiniteLength>) -> ColorStop {
+            ColorStop {
+                color: Color(color),
+                position,
+            }
+        }
+
+        fn at(color: u32, position: f32) -> ColorStop {
+            stop(color, Some(DefiniteLength::from(percentage(position))))
+        }
+
+        // 10px on a 200-wide line is 0.05; the missing stop spreads to 0.275.
+        let length = Gradient {
+            kind: GradientKind::Linear {
+                angle: nlayer_core::geometry::deg(90.0),
+            },
+            stops: vec![
+                stop(0x111111ff, Some(DefiniteLength::from(px(0.0)))),
+                stop(0x222222ff, Some(DefiniteLength::from(px(10.0)))),
+                stop(0x333333ff, None),
+                stop(0x444444ff, Some(DefiniteLength::from(percentage(0.5)))),
+            ],
+            repeating: false,
+        };
+        let corner = Gradient {
+            kind: GradientKind::LinearCorner {
+                right: true,
+                bottom: false,
+            },
+            stops: vec![at(0xaaaaaaff, 0.0), at(0xbbbbbbff, 1.0)],
+            repeating: false,
+        };
+        let radial = Gradient {
+            kind: GradientKind::Radial {
+                circle: false,
+                size: GradientSize::FarthestCorner,
+                x: percentage(0.5),
+                y: percentage(0.5),
+            },
+            stops: vec![at(0xccccccff, 0.0), at(0xddddddff, 1.0)],
+            repeating: true,
+        };
+        let conic = Gradient {
+            kind: GradientKind::Conic {
+                from: nlayer_core::geometry::deg(0.0),
+                x: percentage(0.5),
+                y: percentage(0.5),
+            },
+            stops: vec![at(0xeeeeeeff, 0.25), at(0xffffffff, 0.75)],
+            repeating: false,
+        };
+        let mut style = ViewStyle::default();
+        style.opacity = 0.4;
+        style.background_color = Color(0xaabbccdd);
+        style.effects = Some(Arc::new(Effects {
+            box_shadows: vec![
+                shadow(0.0, 2.0, 4.0, 0.0, 0x11223380, false),
+                shadow(1.0, 0.0, 0.0, -1.0, 0xff0000ff, true),
+            ],
+            background_images: vec![length.clone(), corner, radial, conic],
+            filters: vec![Filter::Blur(px(4.0))],
+            ..Effects::default()
+        }));
+        let mut hover = ViewStyle::default();
+        hover.effects = Some(Arc::new(Effects {
+            box_shadows: vec![shadow(0.0, 8.0, 16.0, 2.0, 0x00ff00ff, false)],
+            ..Effects::default()
+        }));
+        let mut active = ViewStyle::default();
+        active.effects = Some(Arc::new(Effects {
+            background_images: vec![Gradient {
+                kind: GradientKind::Linear {
+                    angle: nlayer_core::geometry::deg(180.0),
+                },
+                stops: vec![at(0x010101ff, 0.0), at(0x020202ff, 1.0)],
+                repeating: false,
+            }],
+            ..Effects::default()
+        }));
+
+        let styled = 2;
+        let bare = 3;
+        let empty = 4;
+        let frame = Bounds {
+            origin: Default::default(),
+            size: size(px(200.0), px(50.0)),
+        };
+        let mut screen = Screen::default();
+        screen.apply(&MountBatch {
+            items: vec![
+                MountItem::Create {
+                    id: styled,
+                    kind: ViewKind::View,
+                },
+                MountItem::Frame { id: styled, frame },
+                MountItem::ViewStyle {
+                    id: styled,
+                    style: Box::new(style),
+                },
+                MountItem::StateStyle {
+                    id: styled,
+                    interaction: Interaction::Hover,
+                    view: Box::new(hover),
+                    text: TextStyle {
+                        color: Some(Color(0xabcdef01)),
+                        ..TextStyle::default()
+                    },
+                },
+                MountItem::StateStyle {
+                    id: styled,
+                    interaction: Interaction::Focus,
+                    view: Box::default(),
+                    text: TextStyle {
+                        color: Some(Color(0xabcdef01)),
+                        ..TextStyle::default()
+                    },
+                },
+                MountItem::StateStyle {
+                    id: styled,
+                    interaction: Interaction::Active,
+                    view: Box::new(active),
+                    text: TextStyle::default(),
+                },
+                MountItem::Create {
+                    id: bare,
+                    kind: ViewKind::View,
+                },
+                MountItem::ViewStyle {
+                    id: bare,
+                    style: Box::new(ViewStyle {
+                        opacity: 0.5,
+                        ..ViewStyle::default()
+                    }),
+                },
+                MountItem::Create {
+                    id: empty,
+                    kind: ViewKind::View,
+                },
+                MountItem::ViewStyle {
+                    id: empty,
+                    style: Box::new({
+                        let mut style = ViewStyle::default();
+                        style.effects = Some(Arc::new(Effects {
+                            background_images: vec![length],
+                            ..Effects::default()
+                        }));
+                        style
+                    }),
+                },
+            ],
+        });
+
+        let node = |id, frame| TreeNode {
+            id,
+            kind: ViewKind::View,
+            frame,
+            text: None,
+            events: EventMask::default(),
+            children: Vec::new(),
+        };
+        let json = node_json(&node(styled, frame), &screen);
+        assert_eq!(json["opacity"].as_f64().unwrap() as f32, 0.4f32);
+        assert_eq!(json["backgroundColor"], "#aabbccdd");
+        assert_eq!(json["frame"]["width"], 200.0);
+        assert_eq!(json["frame"]["height"], 50.0);
+        assert!(json.get("filter").is_none());
+        assert_eq!(
+            json["boxShadow"],
+            serde_json::json!([
+                {
+                    "x": 0.0,
+                    "y": 2.0,
+                    "blur": 4.0,
+                    "spread": 0.0,
+                    "color": "#11223380",
+                    "inset": false
+                },
+                {
+                    "x": 1.0,
+                    "y": 0.0,
+                    "blur": 0.0,
+                    "spread": -1.0,
+                    "color": "#ff0000ff",
+                    "inset": true
+                }
+            ])
+        );
+        let images = json["backgroundImage"].as_array().unwrap();
+        assert_eq!(images.len(), 4);
+        assert_eq!(images[0]["kind"], "linear");
+        assert_eq!(images[0]["repeating"], false);
+        let positions: Vec<f32> = images[0]["stops"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|stop| stop["position"].as_f64().unwrap() as f32)
+            .collect();
+        assert_eq!(images[0]["stops"].as_array().unwrap().len(), 4);
+        assert!(
+            positions
+                .iter()
+                .zip([0.0, 0.05, 0.275, 0.5])
+                .all(|(got, want)| (got - want).abs() < 1e-5),
+            "{positions:?}"
+        );
+        assert_eq!(images[0]["stops"][1]["color"], "#222222ff");
+        assert_eq!(images[1]["kind"], "linear");
+        assert_eq!(images[2]["kind"], "radial");
+        assert_eq!(images[2]["repeating"], true);
+        assert_eq!(images[3]["kind"], "conic");
+        assert_eq!(images[3]["stops"].as_array().unwrap().len(), 2);
+
+        // The slot is the mounted paint, not the base gradient. A text color
+        // alone is not a default state style, so the slot stays, but JSON
+        // omits it when it has no shadows and no gradients.
+        assert!(json["stateStyles"].get("focus").is_none());
+        assert!(screen.view(styled).unwrap().state_styles[2].is_some());
+        assert!(
+            json["stateStyles"]["hover"]
+                .get("backgroundImage")
+                .is_none()
+        );
+        assert_eq!(
+            json["stateStyles"]["hover"]["boxShadow"],
+            serde_json::json!([
+                {
+                    "x": 0.0,
+                    "y": 8.0,
+                    "blur": 16.0,
+                    "spread": 2.0,
+                    "color": "#00ff00ff",
+                    "inset": false
+                }
+            ])
+        );
+        assert!(json["stateStyles"]["active"].get("boxShadow").is_none());
+        assert_eq!(
+            json["stateStyles"]["active"]["backgroundImage"][0]["kind"],
+            "linear"
+        );
+
+        screen.apply(&MountBatch {
+            items: vec![MountItem::StateStyle {
+                id: styled,
+                interaction: Interaction::Active,
+                view: Box::default(),
+                text: TextStyle::default(),
+            }],
+        });
+        let cleared = node_json(&node(styled, frame), &screen);
+        assert!(cleared["stateStyles"].get("active").is_none());
+        assert!(cleared["stateStyles"].get("hover").is_some());
+        assert_eq!(screen.view(styled).unwrap().frame, frame);
+
+        let bare_json = node_json(&node(bare, Bounds::default()), &screen);
+        assert_eq!(bare_json["opacity"], 0.5);
+        assert!(bare_json.get("boxShadow").is_none());
+        assert!(bare_json.get("backgroundImage").is_none());
+        assert!(bare_json.get("stateStyles").is_none());
+
+        let empty_json = node_json(&node(empty, Bounds::default()), &screen);
+        let empty_at = empty_json["backgroundImage"][0]["stops"][1]["position"]
+            .as_f64()
+            .unwrap() as f32;
+        // An empty frame resolves lengths against `Size::default`, so a
+        // positive length sits past the end rather than on a made-up box.
+        assert!((empty_at - 1.0).abs() < 1e-5, "{empty_at}");
     }
 }

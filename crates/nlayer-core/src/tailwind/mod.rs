@@ -1004,29 +1004,7 @@ fn part_allowed(part: &Part) -> bool {
     use Part::*;
     !matches!(
         part,
-        Shadow(_)
-            | ShadowColor(_)
-            | ShadowAlpha(_)
-            | InsetShadow(_)
-            | InsetShadowColor(_)
-            | InsetShadowAlpha(_)
-            | Ring(_)
-            | RingInset
-            | RingColor(_)
-            | RingOffset(_)
-            | RingOffsetColor(_)
-            | InsetRing(_)
-            | InsetRingColor(_)
-            | Gradient(_)
-            | ArbitraryGradient(_)
-            | GradientNone
-            | From(..)
-            | Via(..)
-            | To(..)
-            | FromPos(_)
-            | ViaPos(_)
-            | ToPos(_)
-            | Filter { .. }
+        Filter { .. }
             | FilterNone { .. }
             | DropShadows(_)
             | DropShadowColor(_)
@@ -1122,6 +1100,8 @@ fn key_allowed(key: crate::style::StyleKey) -> bool {
             | K::BorderStartWidth
             | K::BorderEndWidth
             | K::BackgroundColor
+            | K::BoxShadow
+            | K::BackgroundImage
             | K::BorderRadius
             | K::BorderTopLeftRadius
             | K::BorderTopRightRadius

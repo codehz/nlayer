@@ -9899,7 +9899,7 @@ mod tests {
         log.0.lock().unwrap().clear();
         let mut c = core();
         view(&mut c, 2);
-        set_class(&mut c, 2, "wat shadow-md");
+        set_class(&mut c, 2, "wat blur-sm");
         let first: Vec<_> = log.0.lock().unwrap().clone();
         assert_eq!(
             first
@@ -9911,17 +9911,17 @@ mod tests {
         assert_eq!(
             first
                 .iter()
-                .filter(|m| *m == "unsupported classes: shadow-md")
+                .filter(|m| *m == "unsupported classes: blur-sm")
                 .count(),
             1
         );
         log.0.lock().unwrap().clear();
-        set_class(&mut c, 2, "wat shadow-md");
+        set_class(&mut c, 2, "wat blur-sm");
         let again = log.0.lock().unwrap().clone();
         assert!(
             !again
                 .iter()
-                .any(|m| m.contains("wat") || m.contains("shadow-md")),
+                .any(|m| m.contains("wat") || m.contains("blur-sm")),
             "{again:?}"
         );
     }

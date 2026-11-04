@@ -28,14 +28,24 @@ use std::{
 
 use crossbeam_channel::{Receiver, unbounded};
 use nlayer_core::{
-    Accessibility, Command, EventKind, EventMask, ImageSource, InputConfig, ModalConfig,
-    MountBatch, MountItem, ResizeMode, ScreenConfig, ViewKind,
+    Accessibility, Command, EventKind, EventMask, ImageSource, InputConfig, Interaction,
+    ModalConfig, MountBatch, MountItem, ResizeMode, ScreenConfig, ViewKind,
     animation::{AnimationProp, Finished, Graph, NodeId as AnimationNode},
     geometry::{Bounds, Points, Size},
-    style::{Color, ViewStyle},
+    style::{Color, TextStyle, ViewStyle},
     text::{ApproxTextEngine, SpanTestId, TextLayout, TextLink},
 };
 use nlayer_engine::{Engine, EngineConfig, EngineError, EventPayload, MountSink};
+
+/// Paint of one pointer state (`activeStyle`, `hoverStyle`, `focusStyle`),
+/// as last mounted. It is not merged with the view's own style.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StatePaint {
+    /// The view style of that state.
+    pub view: ViewStyle,
+    /// The text color, when that state sets one.
+    pub text_color: Option<Color>,
+}
 
 /// One view of the headless screen, as the platform would hold it.
 #[derive(Debug, Clone)]
@@ -56,6 +66,10 @@ pub struct View {
     pub style: Option<Box<ViewStyle>>,
     /// Its style as last mounted, without animated properties.
     pub base_style: Option<Box<ViewStyle>>,
+    /// Paint last mounted for active, hover and focus, in that order.
+    /// A default [`MountItem::StateStyle`] clears its slot. Layout does not
+    /// use it.
+    pub state_styles: [Option<Box<StatePaint>>; 3],
     /// An image's source.
     pub source: Option<ImageSource>,
     /// How an image fits its box.
@@ -460,6 +474,7 @@ impl Screen {
                     events: EventMask::default(),
                     style: None,
                     base_style: None,
+                    state_styles: [None, None, None],
                     source: None,
                     resize_mode: ResizeMode::default(),
                     screen: None,
@@ -645,7 +660,33 @@ impl Screen {
                 self.ensure(*id, ViewKind::Modal);
                 self.views.get_mut(id).expect("a modal").modal = Some(*config);
             }
-            MountItem::InputContent { .. } | MountItem::StateStyle { .. } => {}
+            MountItem::InputContent { .. } => {}
+            MountItem::StateStyle {
+                id,
+                interaction,
+                view: paint,
+                text,
+            } => {
+                if let Some(view) = self.views.get_mut(id) {
+                    // Same order as `Interaction::index`: active, hover, focus.
+                    let index = match interaction {
+                        Interaction::Active => 0,
+                        Interaction::Hover => 1,
+                        Interaction::Focus => 2,
+                    };
+                    // A default view style and text style clears the slot.
+                    // Layout is not touched.
+                    view.state_styles[index] =
+                        if **paint == ViewStyle::default() && *text == TextStyle::default() {
+                            None
+                        } else {
+                            Some(Box::new(StatePaint {
+                                view: (**paint).clone(),
+                                text_color: text.color,
+                            }))
+                        };
+                }
+            }
             MountItem::TrackStates { .. } => {}
             MountItem::Command { id, command } => match command {
                 Command::ScrollTo { x, y, .. } => self.set_scroll(*id, x.0, y.0),
@@ -785,6 +826,7 @@ impl Screen {
             events: EventMask::default(),
             style: None,
             base_style: None,
+            state_styles: [None, None, None],
             source: None,
             resize_mode: ResizeMode::default(),
             screen: None,

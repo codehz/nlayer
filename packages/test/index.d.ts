@@ -82,6 +82,35 @@ export interface AccessibilityValue {
   text?: string;
 }
 
+/** One `boxShadow` layer, top layer first. Lengths are points; `color` is `#rrggbbaa`. */
+export interface BoxShadowLayer {
+  x: number;
+  y: number;
+  blur: number;
+  spread: number;
+  color: string;
+  inset: boolean;
+}
+
+/** A gradient stop. `position` is a fraction of the gradient line; `color` is `#rrggbbaa`. */
+export interface GradientStop {
+  color: string;
+  position: number;
+}
+
+/** One `backgroundImage` gradient, top layer first. Corner gradients are `"linear"`. */
+export interface GradientPaint {
+  kind: "linear" | "radial" | "conic";
+  repeating: boolean;
+  stops: GradientStop[];
+}
+
+/** Shadow and gradient paint as mounted, not merged with another style. */
+export interface StylePaint {
+  boxShadow?: BoxShadowLayer[];
+  backgroundImage?: GradientPaint[];
+}
+
 /** One view. `text` is a text view's content, `value` an input's, `src` an image's URL. */
 export interface Node {
   /** The view's id, as `selectionOwner` reports it. */
@@ -141,6 +170,17 @@ export interface Node {
   borderColor?: string;
   /** A view's transform steps. Angles are degrees. */
   transform?: Array<Record<string, number>>;
+  /** Box shadows as mounted, top layer first. Absent when that list is empty. */
+  boxShadow?: BoxShadowLayer[];
+  /** Gradient backgrounds as mounted, top layer first. Absent when that list is empty. */
+  backgroundImage?: GradientPaint[];
+  /** `activeStyle`, `hoverStyle` and `focusStyle` paint, not merged with the base.
+   * A slot is absent when it has no shadows and no gradients. */
+  stateStyles?: {
+    active?: StylePaint;
+    hover?: StylePaint;
+    focus?: StylePaint;
+  };
   children: Node[];
 }
 

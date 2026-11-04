@@ -31,7 +31,9 @@ Copied files:
 - `crates/nlayer-core/src/geometry/` from `crates/nsh-core/src/geometry/`
   (`Axis` does not derive `PropEnum` yet; that derive arrives with the element macros)
 - `crates/nlayer-core/src/{style,color,css,css_named,effects,transform,grid}.rs`
-  from the same paths under `crates/nsh-core/src/`
+  from the same paths under `crates/nsh-core/src/`; `Gradient::unrolled_stops`,
+  the repeating-stop expansion and their tests in `effects.rs` from
+  `crates/nsh-core/src/effects.rs`
 - `ResizeMode` from `nsh_core::ops` (`crates/nlayer-core/src/ops.rs`)
 - `crates/nlayer-core/src/tailwind/{mod,utilities,theme,palette}.rs` from
   `crates/nsh-core/src/tailwind/{mod,utilities,theme,palette}.rs`
@@ -125,8 +127,12 @@ Copied files:
   `crates/nsh-platform-web/src/encode.rs` and `src/text/css.rs` (the mount
   JSON and its CSS classes, cut to the v1 views and the whitelist: fill,
   radius, opacity, overflow, static transform, transform origin, border
-  and attributed text as glyph runs; shadows, gradients and filters
-  are not copied)
+  and attributed text as glyph runs; `gradient` / `degrees` and the
+  `box-shadow` / `background-image` rules from the same source. Filters,
+  backdrop filters, masks, outlines, glass, transitions and text shadows
+  are not copied. The content layer for an outer shadow under
+  `overflow: clip` is nlayer's (`web/nlayer.js`, `web/base.css`); nsh clips
+  the view itself)
 - `crates/nlayer-platform-web/web/nlayer.js` and `web/base.css` from
   `crates/nsh-platform-web/web/nsh.js` (the DOM mounter, the same cut:
   frames, classes, border overlay, scroll spacer, single-line field,
@@ -158,7 +164,7 @@ Copied files:
   modules; nsh's canvas, list, gesture and animation facades are not copied.
 - `crates/nlayer-platform-ios` from `crates/nsh-platform-ios`
   (`app.rs`, `surface.rs`, `mount.rs`, `text.rs`, `text_view.rs`,
-  `decor.rs`, `image.rs`, `input.rs`): one window, frames, fill, radius,
+  `decor.rs`, `visual.rs`, `image.rs`, `input.rs`): one window, frames, fill, radius,
   opacity, overflow, a static transform, solid and dashed borders, `onPress`,
   `activeStyle` / `hoverStyle` / `focusStyle`, safe area, CoreText
   measurement, one-axis scroll, PNG / JPEG / WebP from a bundled file or
@@ -171,15 +177,20 @@ Copied files:
   width from panning a vertical scroll; zoom is not copied. The software keyboard's
   overlap (`crates/nlayer-platform-ios/src/keyboard.rs`, from
   `surface.rs` `keyboard_changed`) is `env(keyboard-inset-height)`; the
-  animation and the mounter's scroll-into-view are not copied. Refresh, zoom,
+  animation and the mounter's scroll-into-view are not copied. Outer and
+  inset box shadows and gradient backgrounds (`visual.rs`'s shadow and
+  `shape_gradient` code, with a content subview when an outer shadow must
+  escape an `overflow: hidden` view) are drawn; outline, filters, backdrop
+  filters, mask images and glass are not. Refresh, zoom,
   paging, disk cache, SVG and GIF frames are not mounted. `synth.rs` is the one-finger touch and the software keyboard
   from `crates/nsh-platform-ios/src/synth.rs` (no drag path, no hardware
   modifiers, no screenshot). The runner binary is `nlayer-ios-app`.
 - `crates/nlayer-platform-android/src/encode.rs` from
   `crates/nsh-platform-android/src/encode.rs` (one little-endian batch for
   the UI thread: views, text spans, images, one-axis scroll and a
-  single-line field. Animation, gestures, refresh, zoom, paging, shadows
-  and gradients are not encoded)
+  single-line field, and the box-shadow / gradient word lists after the
+  transform ops. Animation, gestures, refresh, zoom and paging are not
+  encoded)
 - `crates/nlayer-platform-android/src/host.rs`, `src/text.rs`, `src/lib.rs`,
   `src/java.rs` and `java/dev/nlayer/android/` from
   `crates/nsh-platform-android/src/host.rs`, `src/text.rs`, `src/lib.rs` and
@@ -187,8 +198,12 @@ Copied files:
   overflow, a static transform, solid and dashed borders, `onPress`,
   `activeStyle` / `hoverStyle` / `focusStyle`, safe area, StaticLayout
   measurement, one-axis scroll, PNG / JPEG / WebP from a bundled file or
-  `http(s)`, and a single-line field. Refresh, zoom, paging, shadows,
-  gradients and the dev server are not mounted.
+  `http(s)`, and a single-line field. `Decor.java`'s outer and inset box
+  shadows, gradients (`Gradient.place`, including conic and repeating) and
+  `Box.java`'s content box when an outer shadow must escape `overflow:
+  hidden` come from `java/com/longbridge/nsh/Decor.java` and `Box.java`;
+  outline, filters, backdrop filters, masks and glass are not copied.
+  Refresh, zoom, paging and the dev server are not mounted.
 - `crates/nlayer-platform-android/src/dev.rs` from
   `crates/nsh-platform-android/src/dev.rs`: the socket client (read a
   control frame and its script, `hot_update` when the base matches,

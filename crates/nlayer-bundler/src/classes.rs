@@ -165,7 +165,7 @@ mod tests {
 import { Text, View } from "@nlayer/ui";
 export function A(p: { on: boolean }) {
   return (
-    <View class="p-4 bg-blu-500 shadow-md antialiased">
+    <View class="p-4 bg-blu-500 blur-sm antialiased">
       <Text class={p.on ? "text-white" : "txt-black"} classList={{ "opacity-50": p.on, nope: p.on }} />
       <View class={`flex ${p.on ? "gap-2" : ""} wat bg-${p.on}-500`} />
     </View>
@@ -184,7 +184,7 @@ export function A(p: { on: boolean }) {
             .map(|w| w.class.as_str())
             .collect();
         assert_eq!(unknown, ["bg-blu-500", "txt-black", "nope", "wat"]);
-        assert_eq!(unsupported, ["shadow-md"]);
+        assert_eq!(unsupported, ["blur-sm"]);
         assert!(
             found
                 .iter()
@@ -195,7 +195,7 @@ export function A(p: { on: boolean }) {
             (found[0].line, found[0].column, found[0].class.as_str()),
             (5, 22, "bg-blu-500")
         );
-        let shadow = found.iter().find(|w| w.class == "shadow-md").unwrap();
+        let shadow = found.iter().find(|w| w.class == "blur-sm").unwrap();
         assert_eq!((shadow.line, shadow.column), (5, 33));
     }
 }
