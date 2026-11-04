@@ -452,64 +452,6 @@ pub(crate) mod rank {
     pub(crate) const WEB: Key = Key::new(72);
 }
 
-impl Rule {
-    /// A rule applying `decls` while the node is in all of [`state`]
-    /// `states`, ordered by `rank`.
-    pub(crate) fn new(states: u16, rank: impl Into<Rank>, decls: Vec<Decl>) -> Self {
-        Self {
-            cond: Condition {
-                states,
-                ..Condition::default()
-            },
-            decls,
-            rank: rank.into(),
-            important: false,
-            theme: false,
-        }
-    }
-
-    /// A state style (`activeStyle`, ...): `decls` while the node is in
-    /// `states` (and, unless `disabled`, not disabled), applied over the
-    /// inline style as `!` utilities are, ordered by `rank`.
-    pub(crate) fn state_style(
-        states: u16,
-        rank: impl Into<Rank>,
-        decls: Vec<crate::style::StyleDecl>,
-    ) -> Self {
-        // A style's defaults and its `currentColor` are the classes' own
-        // kinds, applied before the rules and read with the text color.
-        let decls = decls
-            .into_iter()
-            .map(|d| match d {
-                crate::style::StyleDecl::Default(key, value) => Decl::Default(key, value),
-                crate::style::StyleDecl::CurrentColor(key) => Decl::CurrentColor(key),
-                d => Decl::Style(d),
-            })
-            .collect();
-        let mut rule = Self::new(states, rank, decls);
-        if states & state::DISABLED == 0 {
-            rule.cond.not_states = state::DISABLED;
-        }
-        rule.important = true;
-        rule
-    }
-
-    /// [`Rule::new`], also requiring the nearest ancestor group `group`
-    /// (`""`: unnamed) in its states, and dark appearance when `dark`.
-    pub(crate) fn with(
-        states: u16,
-        group: Option<(&str, u16)>,
-        dark: bool,
-        rank: Rank,
-        decls: Vec<Decl>,
-    ) -> Self {
-        let mut rule = Self::new(states, rank, decls);
-        rule.cond.group = group.map(|(name, states)| (name.into(), states));
-        rule.cond.dark = dark.then_some(true);
-        rule
-    }
-}
-
 /// Node properties classes and styles set besides layout and paint.
 /// The core reads `numberOfLines`, `textOverflow` and `userSelect` from
 /// the style; classes fill the rest.
@@ -723,7 +665,7 @@ impl ClassList {
             }
             important |= rule.important;
             for decl in &rule.decls {
-                decl.apply(cx.env.dark, rule.important, style, props, &mut parts);
+                decl.apply(rule.important, style, props, &mut parts);
             }
             let background = rule.decls.iter().any(Decl::sets_background_color);
             if rule.cond.interactive() {
@@ -772,7 +714,7 @@ impl ClassList {
             {
                 if rule.cond.matches(cx, data) {
                     for decl in &rule.decls {
-                        decl.apply(cx.env.dark, rule.important, style, props, &mut parts);
+                        decl.apply(rule.important, style, props, &mut parts);
                     }
                 }
             }
@@ -815,28 +757,12 @@ impl ClassList {
                 continue;
             }
             for decl in &rule.decls {
-                if let Some(c) = decl.sets_text_color(cx.env.dark) {
+                if let Some(c) = decl.sets_text_color() {
                     out[usize::from(rule.important)] = c;
                 }
             }
         }
         out
-    }
-
-    /// The rules of a Rust component's styles (already in order), on a
-    /// view that is the groups `groups` (`""`: unnamed).
-    pub(crate) fn from_rules(rules: Vec<Rule>, groups: Vec<Box<str>>) -> Self {
-        let mut list = ClassList::default();
-        for rule in rules {
-            list.add(rule);
-        }
-        if !groups.is_empty() {
-            list.tracked |= state::PRESSED | state::HOVERED | state::FOCUS_WITHIN;
-            list.groups = groups;
-        }
-        list.rules
-            .sort_by(|a, b| (a.important, &a.rank).cmp(&(b.important, &b.rank)));
-        list
     }
 
     fn add(&mut self, rule: Rule) {
@@ -852,22 +778,6 @@ impl ClassList {
             self.deps |= deps::THEME;
         }
         self.rules.push(rule);
-    }
-
-    /// `self`, then `over`: at equal rank `over`'s rules win (the app's
-    /// classes on a Rust component).
-    pub(crate) fn merged(&self, over: &ClassList) -> ClassList {
-        let mut list = self.clone();
-        for rule in &over.rules {
-            list.add(rule.clone());
-        }
-        list.groups.extend(over.groups.iter().cloned());
-        list.unknown.extend(over.unknown.iter().cloned());
-        list.unsupported.extend(over.unsupported.iter().cloned());
-        list.tracked |= over.tracked;
-        list.rules
-            .sort_by(|a, b| (a.important, &a.rank).cmp(&(b.important, &b.rank)));
-        list
     }
 }
 
@@ -923,7 +833,7 @@ pub fn parse(theme: &Theme, classes: &str) -> ClassList {
     for token in classes.split_ascii_whitespace() {
         match parse_token(theme, token) {
             Some(Token::Rule(rule)) if effect_allowed(&rule) => list.add(rule),
-            Some(Token::Rule(_) | Token::Group(_)) => list.unsupported.push(token.into()),
+            Some(Token::Rule(_) | Token::Group) => list.unsupported.push(token.into()),
             Some(Token::Ignored) => {}
             None => list.unknown.push(token.into()),
         }
@@ -936,7 +846,7 @@ pub fn parse(theme: &Theme, classes: &str) -> ClassList {
 
 enum Token {
     Rule(Rule),
-    Group(Box<str>),
+    Group,
     /// Accepted, but has no effect natively (`antialiased`; [`ignored`]).
     Ignored,
 }
@@ -974,13 +884,8 @@ fn parse_token(theme: &Theme, token: &str) -> Option<Token> {
         utility = u;
         important = true;
     }
-    if variants.is_empty() {
-        if utility == "group" {
-            return Some(Token::Group("".into()));
-        }
-        if let Some(name) = utility.strip_prefix("group/") {
-            return Some(Token::Group(name.into()));
-        }
+    if variants.is_empty() && (utility == "group" || utility.starts_with("group/")) {
+        return Some(Token::Group);
     }
     let mut cond = Condition::default();
     let mut rank = Rank::default();
@@ -990,9 +895,7 @@ fn parse_token(theme: &Theme, token: &str) -> Option<Token> {
     if ignored(utility) {
         return Some(Token::Ignored);
     }
-    let Some(decls) = utilities::parse(theme, utility) else {
-        return None;
-    };
+    let decls = utilities::parse(theme, utility)?;
     if cond.pseudo() && cond.pseudo_color(&decls).is_none() {
         return None;
     }
@@ -1082,11 +985,7 @@ fn decl_allowed(decl: &Decl) -> bool {
     use crate::style::StyleDecl;
     use utilities::PropDecl;
     match decl {
-        Decl::Screen(..)
-        | Decl::Adaptive(..)
-        | Decl::AdaptivePart(_)
-        | Decl::CurrentPart(..)
-        | Decl::Rejected => false,
+        Decl::Screen(..) | Decl::CurrentPart(..) | Decl::Rejected => false,
         Decl::Prop(PropDecl::Caret(_)) => false,
         Decl::Prop(_) | Decl::Ch(..) => true,
         Decl::Part(part) => part_allowed(part),
@@ -1138,7 +1037,6 @@ fn part_allowed(part: &Part) -> bool {
             | Delay(_)
             | TransitionNone
             | Animate(_)
-            | Animation(_)
             | TextShadow(_)
             | TextShadowColor(_)
             | TextShadowAlpha(_)

@@ -111,8 +111,6 @@ pub(crate) enum Part {
     Delay(f32),
     TransitionNone,
     Animate(Option<Keyframes>),
-    /// A keyframe animation with its own timing.
-    Animation(KeyframeAnimation),
     TextShadow(Arc<[TextShadow]>),
     TextShadowColor(Color),
     TextShadowAlpha(f32),
@@ -159,12 +157,6 @@ pub(crate) enum Decl {
     /// A length relative to the window (`w-screen`): `(key, fraction of
     /// width, fraction of height)`.
     Screen(StyleKey, f32, f32),
-    /// One value in light appearance, another in dark (a theme color of a
-    /// Rust component): one declaration, so a later plain one still wins.
-    Adaptive(StyleKey, [PropertyValue; 2]),
-    /// [`Decl::Adaptive`] for a part (a shadow's, ring's or gradient
-    /// stop's theme color).
-    AdaptivePart(Box<[Part; 2]>),
     /// CSS's `currentColor` for a color property, implied as
     /// [`Decl::Default`] is (a border width's color): the node's text
     /// color, its own or the one it inherits.
@@ -185,7 +177,6 @@ pub(crate) enum Decl {
 impl Decl {
     pub(crate) fn apply(
         &self,
-        dark: bool,
         important: bool,
         style: &mut Style,
         props: &mut ClassProps,
@@ -251,10 +242,6 @@ impl Decl {
             Decl::Ch(key, n) => {
                 let _ = style.set_key(*key, StyleValue::Number(n * parts.ch));
             }
-            Decl::Adaptive(key, values) => {
-                let _ = style.apply_value(*key, &values[usize::from(dark)]);
-            }
-            Decl::AdaptivePart(pair) => parts.push(pair[usize::from(dark)].clone()),
             Decl::Rejected => {}
         }
     }
@@ -265,7 +252,6 @@ impl Decl {
             self,
             Decl::Set(StyleKey::BackgroundColor, _)
                 | Decl::SetCurrentColor(StyleKey::BackgroundColor, _)
-                | Decl::Adaptive(StyleKey::BackgroundColor, _)
                 | Decl::Style(StyleDecl::Set(StyleKey::BackgroundColor, _))
         )
     }
@@ -289,7 +275,6 @@ impl Decl {
         match self {
             Decl::Style(StyleDecl::Set(StyleKey::BackgroundImage, _)) => true,
             Decl::Part(p) => gradient(p),
-            Decl::AdaptivePart(p) => gradient(&p[0]),
             _ => false,
         }
     }
@@ -297,16 +282,14 @@ impl Decl {
     pub(crate) fn text_color(&self) -> Option<Color> {
         match self {
             Decl::Set(StyleKey::Color, PropertyValue::Color(c)) => *c,
-            // `placeholder:` rules are Tailwind's: never adaptive.
             _ => None,
         }
     }
 
     /// The text color this sets, if it sets one (`Some(None)`: the default).
-    pub(crate) fn sets_text_color(&self, dark: bool) -> Option<Option<Color>> {
+    pub(crate) fn sets_text_color(&self) -> Option<Option<Color>> {
         let value = match self {
             Decl::Set(StyleKey::Color, v) | Decl::Style(StyleDecl::Set(StyleKey::Color, v)) => v,
-            Decl::Adaptive(StyleKey::Color, values) => &values[usize::from(dark)],
             _ => return None,
         };
         Some(match value {
@@ -329,7 +312,6 @@ impl Decl {
                 (if *w != 0.0 { deps::WIDTH } else { 0 })
                     | (if *h != 0.0 { deps::HEIGHT } else { 0 })
             }
-            Decl::Adaptive(..) | Decl::AdaptivePart(_) => deps::DARK,
             Decl::CurrentColor(_)
             | Decl::CurrentPart(..)
             | Decl::SetCurrentColor(..)
@@ -457,7 +439,7 @@ impl Parts {
             TransitionProps(_) | Duration(_) | Ease(_) | Delay(_) | TransitionNone => {
                 touched::TRANSITION
             }
-            Animate(_) | Animation(_) => touched::ANIMATE,
+            Animate(_) => touched::ANIMATE,
             TextShadow(_) | TextShadowColor(_) | TextShadowAlpha(_) => touched::TEXT_SHADOW,
         };
         self.transform_parts |= match &part {
@@ -560,7 +542,6 @@ impl Parts {
                 self.transition_props = None;
             }
             Animate(k) => self.animate = Some(k.map(preset)),
-            Animation(a) => self.animate = Some(Some(a)),
             TextShadow(layers) => self.text_shadow = Some(layers),
             TextShadowColor(c) => self.text_shadow_color = Some(c),
             TextShadowAlpha(a) => self.text_shadow_alpha = Some(a),
