@@ -6,6 +6,11 @@ import { createStorage, storagePrefix } from "./storage.js";
 import { createNavigation } from "./navigation.js";
 import { createLists } from "./list.js";
 import { createAnimation } from "./animation.js";
+import { createHot } from "./hot.js";
+
+// The native namespaces a development page hands its bundles
+// (`loadDevScript`): the facade's own runtime, ui and rt objects.
+let devNamespaces = null;
 
 /**
  * `options.appId` names the app's `localStorage` prefix (`nlayer.json`'s
@@ -101,14 +106,27 @@ export function createFacade(wasm, requestPump, options = {}) {
 
   const boundaryKey = { boundary: true };
 
+  // A context's default is read by its function; hot updates keep an old
+  // context's identity and give it the default of the one just made.
+  const contextDefaults = new WeakMap();
+
   function context(defaultValue) {
     const key = {};
-    const read = () => call(112, key, defaultValue);
+    const box = { value: defaultValue };
+    const read = () => call(112, key, box.value);
+    contextDefaults.set(read, box);
     read.Provider = (props) => {
       call(113, key, props?.value);
       return props?.children;
     };
     return read;
+  }
+
+  /** Gives context `kept` the default of context `from`. */
+  function adoptContextDefault(kept, from) {
+    const target = contextDefaults.get(kept);
+    const source = contextDefaults.get(from);
+    if (target && source && target !== source) target.value = source.value;
   }
 
   // Rust's catch looks up this object. The facade's key is the one the
@@ -256,7 +274,14 @@ export function createFacade(wasm, requestPump, options = {}) {
     },
   };
 
+  // The hot runtime of a development page (`options.dev`), else null.
+  let devHot = null;
+
   function mount(app, props) {
+    // A module that runs again keeps the mount it made with the same
+    // component and no props; other mounts are undone before this one.
+    const kept = devHot?.reuse(app, props);
+    if (kept) return kept;
     let owner;
     const shown = [];
     call(105, (handle) => {
@@ -265,10 +290,12 @@ export function createFacade(wasm, requestPump, options = {}) {
       if (dynamic(value)) renderEffect(() => show(root, value, shown, null));
       else show(root, value, shown, null);
     });
-    return () => {
+    const dispose = () => {
       call(106, owner);
       show(root, [], shown, null);
     };
+    devHot?.rendered(app, dispose);
+    return dispose;
   }
 
   function event(id, name, payload) {
@@ -473,11 +500,23 @@ export function createFacade(wasm, requestPump, options = {}) {
     untracked,
     cleanup,
     context,
+    adoptContextDefault,
     mount,
     ErrorBoundary,
     resource,
     storage,
   };
+  // A development page runs the factory bundle, which imports
+  // `nlayer:hot` for this global; the packaged page has no hot runtime.
+  if (options.dev) {
+    const report = options.report ?? ((error) => console.error(error));
+    devHot = createHot(runtime, report);
+    Object.defineProperty(globalThis, "__nlayer_hot", {
+      value: devHot.hot,
+      configurable: true,
+      writable: true,
+    });
+  }
   const ui = {
     View: (props) => host("view", props),
     Text: (props) => host("text", props),
@@ -552,6 +591,13 @@ export function createFacade(wasm, requestPump, options = {}) {
     });
   }
 
+  if (options.dev) {
+    devNamespaces = {
+      "@nlayer/runtime": runtime,
+      "@nlayer/ui": ui,
+      "nlayer:rt": rt,
+    };
+  }
   return {
     values,
     imports: values.imports(() => wasm.memory),
@@ -562,27 +608,23 @@ export function createFacade(wasm, requestPump, options = {}) {
     animation,
     event,
     dispatchBack,
+    hot: devHot,
     dispose() {
       live = false;
       values.closed = true;
       media?.removeEventListener?.("change", onScheme);
       animation.dispose();
+      if (devHot && globalThis.__nlayer_hot === devHot.hot) {
+        delete globalThis.__nlayer_hot;
+      }
     },
   };
 }
 
-/** Evaluates `source` (an ES module) in a fresh realm whose import map
- * points the native modules at `namespaces`. */
-export function loadBundle(source, namespaces) {
-  const frame = document.createElement("iframe");
-  frame.hidden = true;
-  frame.setAttribute("aria-hidden", "true");
-  document.documentElement.append(frame);
-  const doc = frame.contentDocument;
-  const realm = frame.contentWindow;
-  realm.__nlayer = namespaces;
+// One blob module per native namespace: exports read the realm's
+// `globalThis.__nlayer`, which the caller sets before the app loads.
+function namespaceImports(doc, namespaces, urls) {
   const imports = {};
-  const urls = [];
   for (const [specifier, namespace] of Object.entries(namespaces)) {
     const body = Object.keys(namespace)
       .map((name, index) => {
@@ -595,10 +637,28 @@ export function loadBundle(source, namespaces) {
     urls.push(url);
     imports[specifier] = url;
   }
+  return imports;
+}
+
+function importMap(doc, imports) {
   const map = doc.createElement("script");
   map.type = "importmap";
   map.textContent = JSON.stringify({ imports });
   doc.head.append(map);
+}
+
+/** Evaluates `source` (an ES module) in a fresh realm whose import map
+ * points the native modules at `namespaces`. */
+export function loadBundle(source, namespaces) {
+  const frame = document.createElement("iframe");
+  frame.hidden = true;
+  frame.setAttribute("aria-hidden", "true");
+  document.documentElement.append(frame);
+  const doc = frame.contentDocument;
+  const realm = frame.contentWindow;
+  realm.__nlayer = namespaces;
+  const urls = [];
+  importMap(doc, namespaceImports(doc, namespaces, urls));
   const app = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
   urls.push(app);
   return new Promise((resolve, reject) => {
@@ -615,6 +675,55 @@ export function loadBundle(source, namespaces) {
     script.type = "module";
     // An inline module's `load` event does not fire in headless Chrome, so
     // the module reports completion itself.
+    script.textContent = `import(${JSON.stringify(app)}).then(() => globalThis.__nlayerBundle(), (error) => globalThis.__nlayerBundle(String(error && (error.stack || error.message) || error)));`;
+    doc.head.append(script);
+  });
+}
+
+/**
+ * Evaluates a development bundle (`source`, an ES module whose
+ * `import "nlayer:hot"` must resolve) in a hidden realm. `nlayer:hot` is a
+ * blob module exporting the page's `__nlayer_hot`; the other native
+ * modules are the namespaces `createFacade({ dev: true })` bound. Returns
+ * when the bundle started; the returned function releases the realm.
+ */
+export function loadDevScript(source, name = "bundle.js") {
+  const frame = document.createElement("iframe");
+  frame.hidden = true;
+  frame.setAttribute("aria-hidden", "true");
+  document.documentElement.append(frame);
+  const doc = frame.contentDocument;
+  const realm = frame.contentWindow;
+  realm.__nlayer = devNamespaces ?? {};
+  realm.__nlayer_hot = globalThis.__nlayer_hot;
+  const urls = [];
+  const imports = namespaceImports(doc, realm.__nlayer, urls);
+  const hot = URL.createObjectURL(
+    new Blob(["export default globalThis.__nlayer_hot;"], { type: "text/javascript" }),
+  );
+  urls.push(hot);
+  imports["nlayer:hot"] = hot;
+  importMap(doc, imports);
+  const label = String(name).replace(/[\r\n]/g, "");
+  const app = URL.createObjectURL(
+    new Blob([`${source}\n//# sourceURL=${label}\n`], { type: "text/javascript" }),
+  );
+  urls.push(app);
+  const release = () => {
+    frame.remove();
+    for (const url of urls) URL.revokeObjectURL(url);
+  };
+  return new Promise((resolve, reject) => {
+    realm.__nlayerBundle = (error) => {
+      if (error) {
+        release();
+        reject(new Error(String(error)));
+      } else {
+        resolve(release);
+      }
+    };
+    const script = doc.createElement("script");
+    script.type = "module";
     script.textContent = `import(${JSON.stringify(app)}).then(() => globalThis.__nlayerBundle(), (error) => globalThis.__nlayerBundle(String(error && (error.stack || error.message) || error)));`;
     doc.head.append(script);
   });

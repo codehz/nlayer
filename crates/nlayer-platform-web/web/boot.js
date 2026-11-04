@@ -13,7 +13,7 @@
 
 import { Player } from "./nlayer.js";
 import { installHost } from "./host.js";
-import { createFacade, loadBundle } from "./browser/runtime.js";
+import { createFacade, loadBundle, loadDevScript } from "./browser/runtime.js";
 
 // A failed start would otherwise only time out in `nlayer test`.
 globalThis.addEventListener?.("error", (event) => {
@@ -52,6 +52,9 @@ let depth = 0;
 const queued = [];
 let timer = 0;
 let pumpQueued = false;
+// The development page's socket and the session that owns it.
+let devSocket = null;
+let devGeneration = 0;
 
 function memory() {
   return wasm.memory.buffer;
@@ -368,8 +371,11 @@ export async function startPage(root, options = {}) {
   if (!wasm) {
     wasm = await instantiate(options.wasm, options);
     watchSurface(root);
+  } else {
+    // A running app is replaced: its graph, realm and views are dropped
+    // first. The document itself stays.
+    teardown();
   }
-  player?.dispose();
   root.replaceChildren();
   player = new Player(
     root,
@@ -528,6 +534,8 @@ export async function startPage(root, options = {}) {
   facade = createFacade(wasm, requestPump, {
     appId: options.appId,
     colorScheme: options.colorScheme,
+    dev: options.dev === true,
+    report: options.report,
   });
   player.setAnimation(facade.animation);
   enter(() => {
@@ -537,29 +545,249 @@ export async function startPage(root, options = {}) {
     wasm.nlayer_insets(top, right, bottom, left, keyboard);
     return wasm.nlayer_pump();
   });
-  releaseBundle = await loadBundle(options.bundle ?? "", {
-    "@nlayer/runtime": facade.runtime,
-    "@nlayer/ui": facade.ui,
-    "nlayer:rt": facade.rt,
-  });
+  if (options.devSource !== undefined && options.devSource !== "") {
+    // A development bundle: module factories started through `__nlayer_hot`.
+    releaseBundle = await loadDevScript(options.devSource, options.devName);
+  } else if (options.devSource === undefined) {
+    releaseBundle = await loadBundle(options.bundle ?? "", {
+      "@nlayer/runtime": facade.runtime,
+      "@nlayer/ui": facade.ui,
+      "nlayer:rt": facade.rt,
+    });
+  }
   enter(() => wasm.nlayer_pump());
   installHost(player, root);
-  globalThis.__nlayerReady = true;
+  // A dev page's idle start (no bundle yet) is not the app.
+  if (!options.idle) globalThis.__nlayerReady = true;
   globalThis.__nlayerFailed = "";
+  return facade;
+}
+
+/** Drops the running app's realm, graph and views. The module stays
+ * loaded, and so does the document. */
+function teardown() {
+  releaseBundle?.();
+  releaseBundle = null;
+  // The wasm side drops values whose finalizer calls `facade.imports`, so
+  // the facade must outlive both wasm calls.
+  if (wasm) {
+    enter(() => wasm.nlayer_browser_dispose());
+    enter(() => wasm.nlayer_stop());
+  }
+  if (facade) {
+    facade.dispose();
+    facade = null;
+  }
+  player?.dispose();
+  player = null;
 }
 
 /** Stops the running app. The module stays loaded. */
 export function stopPage() {
   clearTimeout(timer);
   timer = 0;
-  player?.dispose();
-  player = null;
-  releaseBundle?.();
-  releaseBundle = null;
-  if (facade) {
-    facade.dispose();
-    facade = null;
-    if (wasm) enter(() => wasm.nlayer_browser_dispose());
+  devGeneration++;
+  devSocket?.close();
+  devSocket = null;
+  removeProblem();
+  teardown();
+}
+
+/** The protocol version this page speaks (`nlayer-engine` protocol). */
+const PROTOCOL = 1;
+
+function devUrl(given) {
+  if (given) return given;
+  const scheme = globalThis.location?.protocol === "https:" ? "wss" : "ws";
+  return `${scheme}://${globalThis.location.host}/ws`;
+}
+
+function showStatus(message) {
+  const status = globalThis.document?.getElementById("status");
+  if (!status) return;
+  status.textContent = message;
+  status.style.display = message ? "" : "none";
+}
+
+// The build diagnostic covers the app; it is not a UI component.
+function showProblem(message) {
+  const doc = globalThis.document;
+  if (!doc) return;
+  let element = doc.getElementById("nlayer-problem");
+  if (!element) {
+    element = doc.createElement("div");
+    element.id = "nlayer-problem";
+    element.setAttribute("role", "alert");
+    element.style.cssText =
+      "position:fixed;inset:0;z-index:2147483647;overflow:auto;padding:24px;" +
+      "background:rgba(20,20,22,.94);color:#f2f2f7;" +
+      'font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;';
+    const heading = doc.createElement("h1");
+    heading.textContent = "Build failed";
+    heading.style.cssText = "margin:0 0 12px;font-size:17px;color:#ff6b5f;";
+    const detail = doc.createElement("pre");
+    detail.style.cssText =
+      "margin:0;white-space:pre-wrap;user-select:text;-webkit-user-select:text;" +
+      "font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;";
+    element.append(heading, detail);
+    doc.body.append(element);
   }
-  if (wasm) enter(() => wasm.nlayer_stop());
+  element.querySelector("pre").textContent = message;
+}
+
+function removeProblem() {
+  globalThis.document?.getElementById("nlayer-problem")?.remove();
+}
+
+/** A hot update script's completion value, as the engine's `eval_script`:
+ * a classic script in the page's realm, not the caller's scope. */
+function evalPatch(source, name) {
+  const label = String(name).replace(/[\r\n]/g, "");
+  return (0, eval)(`${source}\n//# sourceURL=${label}\n`);
+}
+
+/**
+ * The development page (`nlayer run --target web`): starts the engine,
+ * connects to the dev server's `/ws`, runs its factory bundles and
+ * applies patches in place. A build failure covers the app; the next
+ * success uncovers it. Nothing here reloads the document.
+ *
+ * `options.devUrl` defaults to the same origin's `/ws`. `options.onError`
+ * shows errors the engine cannot draw.
+ */
+export async function startDevPage(root, options = {}) {
+  const report = (error) => console.error("[nlayer]", error);
+  const page = { ...options, dev: true, report };
+  const generation = ++devGeneration;
+  devSocket?.close();
+  devSocket = null;
+  // The build the page runs; null until a bundle started.
+  let running = null;
+  // The bundle being started, if any.
+  let loading = null;
+  // A test session (`hello.test`): no overlay, no patches.
+  let test = false;
+  let retry = 100;
+  // The message whose binary frames are still coming.
+  let pending = null;
+  let chain = Promise.resolve();
+
+  const enqueue = (task) => {
+    chain = chain.then(task).catch((error) => {
+      page.onError?.(String(error?.stack ?? error?.message ?? error));
+    });
+    return chain;
+  };
+
+  // One bundle, in place: the engine and the realm are rebuilt, the
+  // document is not.
+  const mount = (source, name) => startPage(root, { ...page, devSource: source, devName: name });
+
+  const onFrame = async (message, frames) => {
+    const script = frames[0] ? new TextDecoder().decode(frames[0]) : "";
+    if (message.type === "patch") {
+      if (test || loading !== null || running !== message.base) return;
+      let applied = false;
+      try {
+        applied = evalPatch(script, `hot-${message.version}.js`) === true;
+      } catch (error) {
+        globalThis.__nlayerFailed = String(error?.stack ?? error);
+        report(error);
+      }
+      const hot = facade?.hot ?? null;
+      const reload = hot ? hot.takeReload() : false;
+      if (applied && !reload) {
+        running = message.version;
+        removeProblem();
+        showStatus("");
+        if (player) enter(() => wasm.nlayer_pump());
+        return;
+      }
+      // The bundle of this version follows and replaces the app; until it
+      // arrives the last good app stays.
+      running = null;
+      return;
+    }
+    if (message.type !== "bundle") return;
+    if (running === message.version) {
+      // A reconnect's snapshot of the build already running.
+      showStatus("");
+      return;
+    }
+    if (test && running !== null) return;
+    loading = message.version;
+    try {
+      await mount(script, `bundle-${message.version}.js`);
+      running = message.version;
+      removeProblem();
+      showStatus("");
+    } catch (error) {
+      running = null;
+      const text = String(error?.stack ?? error?.message ?? error);
+      globalThis.__nlayerFailed = text;
+      page.onError?.(text);
+    } finally {
+      loading = null;
+    }
+  };
+
+  const onControl = (message) => {
+    if (message.type === "hello") {
+      test = message.test === true;
+      return;
+    }
+    if (message.type === "build_failed" && !test) {
+      showStatus("");
+      showProblem(String(message.message ?? ""));
+    }
+  };
+
+  const connect = () => {
+    if (generation !== devGeneration) return;
+    const socket = new WebSocket(devUrl(options.devUrl));
+    devSocket = socket;
+    socket.binaryType = "arraybuffer";
+    socket.onopen = () => {
+      if (generation !== devGeneration) return;
+      retry = 100;
+      pending = null;
+      socket.send(JSON.stringify({ type: "hello", protocol: PROTOCOL, test: false }));
+    };
+    socket.onmessage = (event) => {
+      if (typeof event.data !== "string") {
+        if (!pending) return;
+        pending.frames.push(new Uint8Array(event.data));
+        if (pending.frames.length < pending.count) return;
+        const { message, frames } = pending;
+        pending = null;
+        enqueue(() => onFrame(message, frames));
+        return;
+      }
+      let message;
+      try {
+        message = JSON.parse(event.data);
+      } catch (error) {
+        report(error);
+        return;
+      }
+      if (message.type === "patch" || message.type === "bundle") {
+        pending = { message, frames: [], count: message.source_map ? 2 : 1 };
+        return;
+      }
+      enqueue(() => onControl(message));
+    };
+    socket.onclose = () => {
+      if (generation !== devGeneration) return;
+      devSocket = null;
+      showStatus("Dev server disconnected — reconnecting…");
+      setTimeout(connect, retry);
+      retry = Math.min(retry * 2, 2000);
+    };
+  };
+
+  // The engine starts as the packaged page's does; the first bundle
+  // replaces this empty app in place and is the first `ready` page.
+  await startPage(root, { ...page, devSource: "", devName: "bundle.js", idle: true });
+  showStatus("Connecting…");
+  connect();
 }

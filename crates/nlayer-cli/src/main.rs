@@ -78,9 +78,9 @@ enum Command {
         #[arg(default_value = ".")]
         dir: PathBuf,
     },
-    /// Run the app. Web serves a browser and publishes on `/ws`. iOS installs
-    /// a host once and leaves it running across rebuilds. Android installs a
-    /// host once, restarts it after a rebuild, and reverses the dev port.
+    /// Run the app. Web serves a browser and publishes on `/ws`. iOS and
+    /// Android install a host once and leave it running across rebuilds;
+    /// Android also reverses the dev port.
     Run {
         /// The entry module, or the app's directory (default: the current one), whose `App.tsx` is the entry.
         #[arg(default_value = ".")]
@@ -88,9 +88,9 @@ enum Command {
         /// Which host runs the app.
         #[arg(long, value_enum, default_value = "web")]
         target: Target,
-        /// Dev server port. `0` picks a free one. Web binds it. Android
-        /// reverses it onto the device (`adb reverse`) and removes it when
-        /// the run ends.
+        /// Dev server port. `0` picks a free one. Web and iOS bind it.
+        /// Android reverses it onto the device (`adb reverse`) and removes
+        /// it when the run ends.
         #[arg(long, default_value_t = 8733)]
         port: u16,
         /// Minify the bundle.
@@ -119,11 +119,11 @@ enum TestHost {
 enum Target {
     /// This machine's browser.
     Web,
-    /// The iOS simulator. A rebuild writes the bundle and leaves the
+    /// The iOS simulator. A rebuild is pushed over `/ws` and leaves the
     /// process running.
     Ios,
-    /// An Android emulator or a connected device. A rebuild restarts the
-    /// app. The dev port is reversed onto the device until the run ends.
+    /// An Android emulator or a connected device. A rebuild is pushed over
+    /// `/ws`. The dev port is reversed onto the device until the run ends.
     Android,
 }
 
@@ -250,7 +250,11 @@ fn main() -> ExitCode {
                         ExitCode::FAILURE
                     }
                 },
-                Target::Ios => match run_ios(IosOptions { entry, release }) {
+                Target::Ios => match run_ios(IosOptions {
+                    entry,
+                    release,
+                    port,
+                }) {
                     Ok(session) => {
                         session.park();
                         drop(session);

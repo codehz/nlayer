@@ -29,6 +29,8 @@ mod animation;
 #[cfg(target_os = "ios")]
 mod app;
 #[cfg(target_os = "ios")]
+mod dev;
+#[cfg(target_os = "ios")]
 mod driver;
 #[cfg(target_os = "ios")]
 mod host;

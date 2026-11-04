@@ -1,11 +1,11 @@
 //! `nlayer run --target ios`.
 //!
 //! Installs the UIKit host in a simulator the first time (and again when
-//! that binary changes). The app's bundle is written into the host's data
-//! container, not into the signed `.app`. A later rebuild still writes
-//! `app.js` (the host reads it only at launch) but does not `simctl`
-//! relaunch, so the process keeps its state. A failed rebuild is printed
-//! and the running process is left alone.
+//! that binary changes). The development script is written into the host's
+//! data container (`Documents/app.js`), and `Documents/nlayer-dev.json`
+//! names the dev server on this machine. A later rebuild is pushed on
+//! `/ws`. The process is not relaunched. Dropping the session terminates
+//! the app and removes the dev pin.
 
 use std::{
     fs,
@@ -13,20 +13,19 @@ use std::{
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
-        mpsc::{Sender, channel},
     },
-    thread::{self, JoinHandle},
+    thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use nlayer_bundler::{Bundle, BundleOptions, bundle};
+use nlayer_bundler::{BundleOptions, bundle};
 use serde::Deserialize;
 
 use crate::{
     RunError, resolve_entry,
-    run::{Watch, consider, consider_tree, workspace_root},
+    run::{BuildOutcome, DevServer, RunOptions, consider, consider_tree, serve, workspace_root},
 };
 
 pub(crate) const BUNDLE_ID: &str = "dev.nlayer.ios";
@@ -52,15 +51,20 @@ pub struct IosOptions {
     pub entry: PathBuf,
     /// Minify the bundle.
     pub release: bool,
+    /// Dev server port. `0` picks a free one. The simulator connects to
+    /// `127.0.0.1` on this port.
+    pub port: u16,
 }
 
-/// A simulator app. Dropping it terminates the process.
+/// A simulator app. Dropping it terminates the process and removes the dev pin.
 #[must_use = "dropping the session terminates the simulator app"]
 pub struct IosSession {
     udid: String,
-    stop: Arc<AtomicBool>,
-    stop_tx: Option<Sender<()>>,
-    watch: Option<JoinHandle<()>>,
+    docs: PathBuf,
+    /// Copies assets into the container after each successful build.
+    _assets: Option<std::thread::JoinHandle<()>>,
+    /// Kept for the session: dropping it stops the dev server.
+    _server: DevServer,
 }
 
 impl IosSession {
@@ -68,7 +72,7 @@ impl IosSession {
     /// so the simulator process is terminated.
     pub fn park(&self) {
         arm_signals();
-        while !self.stop.load(Ordering::Relaxed) && !STOP.load(Ordering::Relaxed) {
+        while !STOP.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(200));
         }
     }
@@ -76,31 +80,63 @@ impl IosSession {
 
 impl Drop for IosSession {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(tx) = self.stop_tx.take() {
-            let _ = tx.send(());
-        }
-        if let Some(thread) = self.watch.take() {
-            let _ = thread.join();
-        }
         let _ = simctl(&["terminate", &self.udid, BUNDLE_ID]);
+        let _ = fs::remove_file(self.docs.join(DEV_PIN));
     }
 }
 
+const DEV_PIN: &str = "nlayer-dev.json";
+
 /// Builds `options`, installs the host when its binary is not already the
-/// one in the simulator, writes the bundle and launches it.
+/// one in the simulator, writes the development script and launches once.
 ///
-/// The first build finishes before this returns. Later builds run on a
-/// background thread. A later successful rebuild writes files and does not
-/// relaunch. A compile error does not restart the app.
+/// The dev server is up before this returns, including its first build.
+/// Later builds are pushed on `/ws`. This does not `simctl` relaunch.
+/// A compile error is printed and leaves the process running.
 pub fn run_ios(options: IosOptions) -> Result<IosSession, RunError> {
     let entry = resolve_entry(&options.entry)?;
     let app_dir = entry
         .parent()
         .ok_or_else(|| RunError::message("entry has no parent directory"))?
         .to_path_buf();
-    let bundled = bundle(&BundleOptions {
+    let first = Arc::new(Mutex::new(None));
+    let slot = Arc::clone(&first);
+    let (assets_tx, assets_rx) = std::sync::mpsc::channel::<Vec<PathBuf>>();
+    let on_build = Arc::new(move |outcome: BuildOutcome| {
+        let mut slot = slot.lock().expect("build outcome");
+        if slot.is_none() {
+            *slot = Some(outcome);
+            return;
+        }
+        drop(slot);
+        if !outcome.success {
+            eprintln!("{}", outcome.error.trim_end());
+        } else if outcome.updated {
+            eprintln!("rebuilt in {:.0} ms", outcome.elapsed_ms);
+            // Assets are read by `asset:/` paths: bytes change without a
+            // module rerun, so the container is refreshed here.
+            let _ = assets_tx.send(outcome.assets.clone());
+        }
+    });
+    let server = serve(RunOptions {
         entry: entry.clone(),
+        port: options.port,
+        release: options.release,
+        wasm: Vec::new(),
+        on_build: Some(on_build),
+    })?;
+    let first = first.lock().expect("build outcome").clone();
+    let Some(first) = first else {
+        return Err(RunError::message("the app failed to build"));
+    };
+    if !first.success {
+        return Err(RunError::message(first.error));
+    }
+    let Some((_version, script)) = server.dev_bundle() else {
+        return Err(RunError::message("the app failed to build"));
+    };
+    let bundled = bundle(&BundleOptions {
+        entry,
         minify: options.release,
         test: false,
     })
@@ -114,49 +150,77 @@ pub fn run_ios(options: IosOptions) -> Result<IosSession, RunError> {
         record_install(&udid, &host)?;
     }
     let docs = data_container(&udid)?.join("Documents");
-    publish(&docs, &app_dir, &bundled)?;
-    relaunch(&udid)?;
+    publish(&docs, &app_dir, &script, &bundled.assets)?;
+    write_dev_pin(&docs, server.port())?;
+    if let Err(error) = relaunch(&udid) {
+        let _ = fs::remove_file(docs.join(DEV_PIN));
+        return Err(error);
+    }
     eprintln!("launched on {name}");
-    let mut watch = Watch::new(entry, app_dir.clone(), options.release, &bundled);
-    let stop = Arc::new(AtomicBool::new(false));
-    let (stop_tx, stop_rx) = channel();
-    let shared = Arc::new(Shared { app_dir, docs });
-    let watch = thread::Builder::new()
-        .name("nlayer-ios".to_owned())
+    let assets_docs = docs.clone();
+    let assets_dir = app_dir.clone();
+    let assets = thread::Builder::new()
+        .name("nlayer-ios-assets".to_owned())
         .spawn(move || {
-            watch.run(stop_rx, move |bundled| {
-                // `app.js` is what the host reads at launch. Keep writing
-                // it for the next launch; a later save must not `simctl`
-                // relaunch.
-                if publish(&shared.docs, &shared.app_dir, bundled)? {
-                    eprintln!("rebuilt in {:.0} ms", bundled.elapsed_ms);
+            for list in assets_rx {
+                if let Err(error) = copy_assets(&assets_docs, &assets_dir, &list) {
+                    eprintln!("{error}");
                 }
-                Ok(())
-            });
+            }
         })
-        .map_err(|error| RunError::message(format!("watch thread: {error}")))?;
+        .ok();
     Ok(IosSession {
         udid,
-        stop,
-        stop_tx: Some(stop_tx),
-        watch: Some(watch),
+        docs,
+        _assets: assets,
+        _server: server,
     })
 }
 
-struct Shared {
-    app_dir: PathBuf,
-    docs: PathBuf,
+fn write_dev_pin(docs: &Path, port: u16) -> Result<(), RunError> {
+    fs::create_dir_all(docs)?;
+    let body = serde_json::json!({
+        "host": "127.0.0.1",
+        "port": port,
+        "test": false,
+    });
+    let mut bytes =
+        serde_json::to_vec(&body).map_err(|error| RunError::message(error.to_string()))?;
+    bytes.push(b'\n');
+    fs::write(docs.join(DEV_PIN), bytes)?;
+    Ok(())
 }
 
-/// Writes the bundle and its imported assets. Returns whether anything
-/// the running app would read was replaced.
+/// Writes the development script and its imported assets. Returns whether
+/// anything the next launch would read was replaced.
 ///
 /// Deletes `nlayer-test.json` when a previous `nlayer test` left one.
-/// That file pins the viewport; `run` follows the window.
-pub(crate) fn publish(docs: &Path, app_dir: &Path, bundled: &Bundle) -> Result<bool, RunError> {
+/// That file pins the viewport; `run` follows the window. The dev pin is
+/// not this file.
+pub(crate) fn publish(
+    docs: &Path,
+    app_dir: &Path,
+    script: &[u8],
+    assets: &[PathBuf],
+) -> Result<bool, RunError> {
     fs::create_dir_all(docs)?;
-    let mut changed = write_if_different(&docs.join("app.js"), bundled.code.as_bytes())?;
-    for rel in &bundled.assets {
+    let mut changed = write_if_different(&docs.join("app.js"), script)?;
+    if copy_assets(docs, app_dir, assets)? {
+        changed = true;
+    }
+    let pin = docs.join("nlayer-test.json");
+    match fs::remove_file(&pin) {
+        Ok(()) => changed = true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    Ok(changed)
+}
+
+/// Writes each asset under `docs`, preserving its relative path.
+fn copy_assets(docs: &Path, app_dir: &Path, assets: &[PathBuf]) -> Result<bool, RunError> {
+    let mut changed = false;
+    for rel in assets {
         let Some(rel) = asset_rel(rel) else {
             return Err(RunError::message(format!(
                 "asset path escapes the app directory: {}",
@@ -171,12 +235,6 @@ pub(crate) fn publish(docs: &Path, app_dir: &Path, bundled: &Bundle) -> Result<b
         if write_if_different(&to, &bytes)? {
             changed = true;
         }
-    }
-    let pin = docs.join("nlayer-test.json");
-    match fs::remove_file(&pin) {
-        Ok(()) => changed = true,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
     }
     Ok(changed)
 }
@@ -649,8 +707,7 @@ fn simctl_ok(args: &[&str]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{DeviceList, asset_rel, host_id, info_plist, publish, select};
-    use nlayer_bundler::Bundle;
+    use super::{DeviceList, asset_rel, host_id, info_plist, publish, select, write_dev_pin};
 
     #[test]
     fn the_plist_opts_into_a_full_screen_ios_15_app() {
@@ -751,16 +808,17 @@ mod tests {
             b"{\"width\":390,\"height\":844}",
         )
         .unwrap();
-        let bundled = Bundle {
-            code: "app".to_owned(),
-            source_map: String::new(),
-            assets: Vec::new(),
-            watch_files: Vec::new(),
-            elapsed_ms: 0.0,
-        };
-        assert!(publish(&docs, &app, &bundled).unwrap());
+        assert!(publish(&docs, &app, b"app", &[]).unwrap());
+        assert_eq!(std::fs::read(docs.join("app.js")).unwrap(), b"app");
         assert!(!docs.join("nlayer-test.json").exists());
-        assert!(!publish(&docs, &app, &bundled).unwrap());
+        assert!(!publish(&docs, &app, b"app", &[]).unwrap());
+        write_dev_pin(&docs, 8733).unwrap();
+        let pin: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(docs.join("nlayer-dev.json")).unwrap())
+                .unwrap();
+        assert_eq!(pin["host"], "127.0.0.1");
+        assert_eq!(pin["port"], 8733);
+        assert_eq!(pin["test"], false);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

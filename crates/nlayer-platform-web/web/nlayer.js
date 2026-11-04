@@ -150,14 +150,20 @@ export class Player {
     root._kind = "view";
     root.classList.add("nl-v", "nl-root");
     this.views.set(1, root);
-    root.addEventListener("pointerdown", (event) => this.pointerDown(event), true);
-    root.addEventListener("pointercancel", (event) => this.pointerCancel(event), true);
-    root.addEventListener("pointermove", (event) => this.pointerMove(event), true);
-    root.addEventListener("pointerup", (event) => this.pointerUp(event), true);
+    // Named so `dispose` can take them off a root that outlives the app.
+    this.onPointerDown = (event) => this.pointerDown(event);
+    this.onPointerCancel = (event) => this.pointerCancel(event);
+    this.onPointerMove = (event) => this.pointerMove(event);
+    this.onPointerUp = (event) => this.pointerUp(event);
+    root.addEventListener("pointerdown", this.onPointerDown, true);
+    root.addEventListener("pointercancel", this.onPointerCancel, true);
+    root.addEventListener("pointermove", this.onPointerMove, true);
+    root.addEventListener("pointerup", this.onPointerUp, true);
     root.addEventListener("touchend", this.onTouchEnd);
     root.addEventListener("touchcancel", this.onTouchEnd);
     const view = this.doc.defaultView;
-    if (view && view.addEventListener && view !== root) {
+    this.pointerView = view && view.addEventListener && view !== root ? view : null;
+    if (this.pointerView) {
       view.addEventListener("touchend", this.onTouchEnd);
       view.addEventListener("touchcancel", this.onTouchEnd);
     }
@@ -1629,6 +1635,16 @@ export class Player {
   }
 
   dispose() {
+    // A page replaces its player between development bundles: a root or
+    // window listener left behind would deliver every event twice.
+    this.root?.removeEventListener?.("pointerdown", this.onPointerDown, true);
+    this.root?.removeEventListener?.("pointercancel", this.onPointerCancel, true);
+    this.root?.removeEventListener?.("pointermove", this.onPointerMove, true);
+    this.root?.removeEventListener?.("pointerup", this.onPointerUp, true);
+    this.root?.removeEventListener?.("touchend", this.onTouchEnd);
+    this.root?.removeEventListener?.("touchcancel", this.onTouchEnd);
+    this.pointerView?.removeEventListener?.("touchend", this.onTouchEnd);
+    this.pointerView?.removeEventListener?.("touchcancel", this.onTouchEnd);
     if (this.onPopState) {
       this.window.removeEventListener?.("popstate", this.onPopState);
       this.onPopState = null;

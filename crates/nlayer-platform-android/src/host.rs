@@ -1,8 +1,8 @@
 //! One running surface: the engine thread and the UI-thread mounter.
 //!
 //! Extracted from `nsh-platform-android/src/host.rs` and cut to one surface,
-//! press, input, scroll events and safe area. There is no dev server, grant
-//! or animation tick.
+//! press, input, scroll events and safe area. The dev server's client lives
+//! in `dev.rs`.
 #![allow(unreachable_pub)]
 
 use std::sync::{Arc, Mutex};
@@ -75,6 +75,12 @@ impl MountSink for Sink {
         report(&self.view, &error.message);
     }
 
+    fn hot_update_failed(&self) {
+        // The engine reloads the last full bundle itself; the overlay is
+        // about builds, not this update.
+        overlay_view(&self.view, None);
+    }
+
     fn back_unhandled(&self) {
         with_env(|env| {
             // SAFETY: matches the signature checked in `java::init`.
@@ -114,6 +120,28 @@ fn report(view: &jni::objects::GlobalRef, message: &str) {
             env.call_method_unchecked(
                 view.as_obj(),
                 java().view_report_error,
+                jni::signature::ReturnType::Primitive(jni::signature::Primitive::Void),
+                &[JValue::Object(&message).as_jni()],
+            )
+        }?;
+        Ok(())
+    });
+}
+
+/// Shows the development overlay over the app, or removes it when `message`
+/// is `None`. Not part of the app tree: the view adds it as its own child,
+/// outside the mounted views. Posts to the UI thread like [`report`].
+pub(crate) fn overlay_view(view: &jni::objects::GlobalRef, message: Option<&str>) {
+    with_env(|env| {
+        let message = match message {
+            Some(message) => env.new_string(message)?.into(),
+            None => JObject::null(),
+        };
+        // SAFETY: matches the signature checked in `java::init`.
+        unsafe {
+            env.call_method_unchecked(
+                view.as_obj(),
+                java().view_overlay,
                 jni::signature::ReturnType::Primitive(jni::signature::Primitive::Void),
                 &[JValue::Object(&message).as_jni()],
             )
@@ -226,6 +254,31 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_load(
         }
         Err(err) => report(&host.view, &err.message),
     }
+}
+
+/// Connects the running engine to a `nlayer run` dev server.
+///
+/// # Safety
+///
+/// `handle` is live. `address` is the dev server (`127.0.0.1` after
+/// `adb reverse`).
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_nlayer_android_Native_dev(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    address: JString<'_>,
+    port: jint,
+    test: jboolean,
+) {
+    if handle == 0 || port <= 0 || port > u16::MAX as jint {
+        return;
+    }
+    let host = unsafe { host(handle) }.clone();
+    let Ok(address) = env.get_string(&address) else {
+        return;
+    };
+    crate::dev::start(host, address.into(), port as u16, test != 0);
 }
 
 /// # Safety

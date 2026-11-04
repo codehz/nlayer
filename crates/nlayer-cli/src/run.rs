@@ -16,7 +16,7 @@ use std::{
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc, LazyLock, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc::{Receiver, Sender, channel},
     },
@@ -30,6 +30,15 @@ use nlayer_engine::protocol::{self, WS_PATH};
 use crate::{BuildError, resolve_entry};
 
 const PAGE_HTML: &str = include_str!("../../nlayer-platform-web/web/index.html");
+
+/// The page `nlayer run --target web` serves: `PAGE_HTML` with the dev
+/// flag the page reads. The packaged page keeps the plain form.
+static DEV_PAGE: LazyLock<String> = LazyLock::new(|| {
+    PAGE_HTML.replace(
+        "<script type=\"module\">",
+        "<script>window.__nlayerDev = true;</script>\n    <script type=\"module\">",
+    )
+});
 
 /// How often the app's sources are checked. A save lands on the next poll.
 const POLL: Duration = Duration::from_millis(150);
@@ -49,6 +58,9 @@ pub struct BuildOutcome {
     pub elapsed_ms: f64,
     /// Colored diagnostic. Empty when `success` is set.
     pub error: String,
+    /// The app's imported asset files, as absolute paths. A native host
+    /// copies them into the device after a successful build.
+    pub assets: Vec<PathBuf>,
 }
 
 /// What `nlayer run --target web` serves.
@@ -188,6 +200,17 @@ impl DevServer {
     /// The plain text of the latest failed build, if it is still the latest.
     pub fn last_error(&self) -> Option<String> {
         self.shared.inner.lock().expect("dev server").error.clone()
+    }
+
+    /// The latest successful development bundle: its version and script
+    /// bytes. A native host writes the script as `app.js` before its first
+    /// launch; later builds arrive over `/ws`.
+    pub fn dev_bundle(&self) -> Option<(u64, Arc<[u8]>)> {
+        let inner = self.shared.inner.lock().expect("dev server");
+        inner
+            .live
+            .as_ref()
+            .map(|live| (live.version, Arc::clone(&live.code)))
     }
 
     /// Blocks while the page is served.
@@ -416,8 +439,9 @@ pub(crate) fn consider_tree(dir: &Path, newest: &mut SystemTime) {
 }
 
 fn rebuild(shared: &Shared) {
-    // The page still executes the ESM from `bundle()`. The socket carries
-    // `bundle_hot` (patch, then the new bundle). Applying that is the host.
+    // The page executes `bundle_hot` from the socket: a patch, then the
+    // new bundle. `bundle()` is still published as `bundle.js` for the
+    // packaged page and the file table.
     let started = Instant::now();
     let elapsed = |from: Instant| from.elapsed().as_secs_f64() * 1000.0;
     let outcome = match bundle(&BundleOptions {
@@ -502,6 +526,7 @@ fn publish(
         first_success,
         elapsed_ms,
         error: String::new(),
+        assets: bundled.assets.clone(),
     }
 }
 
@@ -514,6 +539,7 @@ fn fail_outcome(shared: &Shared, plain: String, colored: String, elapsed_ms: f64
         first_success: false,
         elapsed_ms,
         error: colored,
+        assets: Vec::new(),
     }
 }
 
@@ -642,81 +668,6 @@ pub(crate) fn stamp(paths: &[PathBuf]) -> u64 {
         }
     }
     hasher.finish()
-}
-
-/// A host app after its first build. A watched file that changes rebuilds
-/// once; a failed build prints and leaves the last app running.
-pub(crate) struct Watch {
-    entry: PathBuf,
-    app_dir: PathBuf,
-    release: bool,
-    watched: Vec<PathBuf>,
-    stamp: u64,
-}
-
-impl Watch {
-    /// Starts from `bundled`, which is already published.
-    pub(crate) fn new(entry: PathBuf, app_dir: PathBuf, release: bool, bundled: &Bundle) -> Self {
-        let watched = watch_paths(&app_dir, Some(bundled));
-        let stamp = stamp(&watched);
-        Self {
-            entry,
-            app_dir,
-            release,
-            watched,
-            stamp,
-        }
-    }
-
-    /// Bundles the entry and hands it to `publish`. A compile error prints its
-    /// diagnostic and keeps the last app; its assets leave the watched set
-    /// until a build succeeds. A failed publish prints and is retried on the
-    /// next change. Returns whether `publish` succeeded.
-    pub(crate) fn rebuild(
-        &mut self,
-        publish: impl FnOnce(&Bundle) -> Result<(), RunError>,
-    ) -> bool {
-        let (published, watched) = match bundle(&BundleOptions {
-            entry: self.entry.clone(),
-            minify: self.release,
-            test: false,
-        }) {
-            Ok(bundled) => {
-                let published = match publish(&bundled) {
-                    Ok(()) => true,
-                    Err(error) => {
-                        eprintln!("{error}");
-                        false
-                    }
-                };
-                (published, watch_paths(&self.app_dir, Some(&bundled)))
-            }
-            Err(error) => {
-                eprintln!("{}", error.colored);
-                (false, watch_paths(&self.app_dir, None))
-            }
-        };
-        self.stamp = stamp(&watched);
-        self.watched = watched;
-        published
-    }
-
-    /// Rebuilds whenever a watched file changed, until `stop` closes.
-    pub(crate) fn run(
-        &mut self,
-        stop: Receiver<()>,
-        mut publish: impl FnMut(&Bundle) -> Result<(), RunError>,
-    ) {
-        loop {
-            if stamp(&self.watched) != self.stamp {
-                self.rebuild(&mut publish);
-            }
-            match stop.recv_timeout(POLL) {
-                Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-            }
-        }
-    }
 }
 
 fn watch_loop(shared: Arc<Shared>, stop: Receiver<()>) {
@@ -881,7 +832,7 @@ fn host(path: &str) -> Option<(&'static str, &'static str)> {
 fn dev_page() -> &'static str {
     // The host connects to `/ws` (a hello, then patch and bundle frames).
     // This page does not poll or reload.
-    PAGE_HTML
+    DEV_PAGE.as_str()
 }
 
 fn mime_of(path: &str) -> &'static str {
@@ -1182,62 +1133,7 @@ fn send_event(ws: &mut Client, event: &DevEvent) -> Result<(), ()> {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs,
-        path::{Path, PathBuf},
-        sync::{Arc, Mutex, mpsc::channel},
-        thread,
-        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-    };
-
-    use super::{BundleOptions, RunError, Watch, bundle, route};
-
-    fn source(label: &str) -> String {
-        r#"import { mount } from "@nlayer/runtime";
-import { Text, View } from "@nlayer/ui";
-
-function App() {
-    return <View style={{ width: 80, height: 40 }}><Text>LABEL</Text></View>;
-}
-mount(App);
-"#
-        .replace("LABEL", label)
-    }
-
-    fn scratch(label: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|time| time.as_nanos())
-            .unwrap_or(0);
-        let dir = std::env::temp_dir().join(format!(
-            "nlayer-watch-{label}-{}-{nanos}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("App.tsx"), source("Hello")).unwrap();
-        dir
-    }
-
-    fn built(entry: &Path) -> nlayer_bundler::Bundle {
-        bundle(&BundleOptions {
-            entry: entry.to_path_buf(),
-            minify: false,
-            test: false,
-        })
-        .expect("the app builds")
-    }
-
-    fn wait_for(limit: Duration, mut pred: impl FnMut() -> bool) {
-        let start = Instant::now();
-        while start.elapsed() < limit {
-            if pred() {
-                return;
-            }
-            thread::sleep(Duration::from_millis(30));
-        }
-        assert!(pred(), "timed out");
-    }
+    use super::route;
 
     #[test]
     fn routes_reject_dot_dot_after_decoding() {
@@ -1246,72 +1142,5 @@ mount(App);
         assert!(route("/../Cargo.toml").is_err());
         assert!(route("/%2e%2e/Cargo.toml").is_err());
         assert!(route("/%").is_err());
-    }
-
-    #[test]
-    fn a_watched_change_rebuilds_and_a_broken_source_keeps_the_last_app() {
-        let dir = scratch("run");
-        let entry = dir.join("App.tsx");
-        let mut watch = Watch::new(entry.clone(), dir.clone(), false, &built(&entry));
-        let (stop_tx, stop_rx) = channel();
-        let published: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-        let seen = Arc::clone(&published);
-        let running = thread::spawn(move || {
-            watch.run(stop_rx, move |bundled| {
-                seen.lock().expect("published").push(bundled.code.clone());
-                Ok(())
-            });
-        });
-
-        thread::sleep(Duration::from_millis(400));
-        assert_eq!(published.lock().expect("published").len(), 0);
-
-        fs::write(&entry, source("Hola")).unwrap();
-        wait_for(Duration::from_secs(30), || {
-            !published.lock().expect("published").is_empty()
-        });
-        assert!(published.lock().expect("published")[0].contains("Hola"));
-        thread::sleep(Duration::from_millis(300));
-
-        fs::write(&entry, "const = ;\n").unwrap();
-        thread::sleep(Duration::from_millis(700));
-        assert_eq!(
-            published.lock().expect("published").len(),
-            1,
-            "a broken source must not publish"
-        );
-
-        fs::write(&entry, source("Adios")).unwrap();
-        wait_for(Duration::from_secs(30), || {
-            published.lock().expect("published").len() == 2
-        });
-        assert!(published.lock().expect("published")[1].contains("Adios"));
-
-        stop_tx.send(()).unwrap();
-        running.join().unwrap();
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn a_failed_publish_is_retried_on_the_next_change() {
-        let dir = scratch("publish");
-        let entry = dir.join("App.tsx");
-        let mut watch = Watch::new(entry.clone(), dir.clone(), false, &built(&entry));
-        fs::write(&entry, source("Hola")).unwrap();
-        let mut attempts = 0;
-        assert!(!watch.rebuild(|_| {
-            attempts += 1;
-            Err(RunError::message("the device is gone"))
-        }));
-        assert_eq!(attempts, 1);
-
-        fs::write(&entry, source("Adios")).unwrap();
-        let mut code = String::new();
-        assert!(watch.rebuild(|bundled| {
-            code = bundled.code.clone();
-            Ok(())
-        }));
-        assert!(code.contains("Adios"));
-        let _ = fs::remove_dir_all(&dir);
     }
 }

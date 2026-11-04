@@ -23,6 +23,16 @@ public final class HostView extends FrameLayout {
   private long handle;
   private String code, assetsDir;
   private boolean apkAssets;
+
+  /** The app's `files/`: `app.js`, `nlayer-dev.json`, the pushed assets. */
+  private File files;
+
+  /** The dev client started for this view. */
+  private boolean dev;
+
+  /** The development overlay, when a build failed. */
+  private android.widget.TextView devOverlay;
+
   int safeTop, safeRight, safeBottom, safeLeft, activityKeyboard, keyboard;
 
   /** Last published insets for regression testing. Package-private for JavaTests. */
@@ -148,6 +158,7 @@ public final class HostView extends FrameLayout {
         new Runnable() {
           public void run() {
             removeAllViews();
+            devOverlay = null;
             android.widget.TextView error = new android.widget.TextView(getContext());
             error.setText(message);
             error.setTextColor(Color.WHITE);
@@ -161,11 +172,51 @@ public final class HostView extends FrameLayout {
         });
   }
 
+  /**
+   * The development overlay: {@code message} covers the app, {@code null} takes it away. The view
+   * owns it, outside the mounted views: it is not part of the app's tree, and the app can neither
+   * mount nor style it.
+   */
+  public void overlay(final String message) {
+    main.post(
+        new Runnable() {
+          public void run() {
+            if (message == null) {
+              if (devOverlay != null) {
+                removeView(devOverlay);
+                devOverlay = null;
+              }
+              return;
+            }
+            if (devOverlay == null) {
+              android.widget.TextView text = new android.widget.TextView(getContext());
+              text.setTextColor(Color.WHITE);
+              text.setBackgroundColor(0xcc8b0000);
+              int pad = Math.round(16 * density);
+              text.setPadding(pad, pad, pad, pad);
+              text.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 12);
+              text.setTypeface(android.graphics.Typeface.MONOSPACE);
+              text.setVerticalScrollBarEnabled(true);
+              text.setMovementMethod(new android.text.method.ScrollingMovementMethod());
+              // Above the mounted views even when one is added after it.
+              text.setElevation(8 * density);
+              devOverlay = text;
+            }
+            devOverlay.setText(message);
+            if (devOverlay.getParent() == null) {
+              addView(
+                  devOverlay,
+                  new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+            }
+            devOverlay.bringToFront();
+          }
+        });
+  }
+
   public void load(String code, String assetsDir) {
     this.code = code;
     this.assetsDir = assetsDir;
-    File files =
-        assetsDir == null ? getContext().getFilesDir() : new File(assetsDir).getParentFile();
+    files = assetsDir == null ? getContext().getFilesDir() : new File(assetsDir).getParentFile();
     pin = Pin.read(new File(files, "nlayer-test.json"));
     start();
     if (getWidth() > 0 && getHeight() > 0) finishLoad();
@@ -201,6 +252,19 @@ public final class HostView extends FrameLayout {
       served = true;
       Native.serve(handle, pin.host, pin.port);
     }
+    startDev();
+  }
+
+  /**
+   * `files/nlayer-dev.json` is there when `nlayer run` wrote it: the app then follows that dev
+   * server for the rest of the process.
+   */
+  private void startDev() {
+    if (dev || files == null || handle == 0) return;
+    DevPin devPin = DevPin.read(new File(files, "nlayer-dev.json"));
+    if (devPin == null) return;
+    dev = true;
+    Native.dev(handle, devPin.host, devPin.port, devPin.test);
   }
 
   /** Where the app's storage lives: `nlayer` in the private files directory. */

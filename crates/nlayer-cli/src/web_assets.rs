@@ -41,6 +41,11 @@ pub(crate) const FILES: &[(&str, &str, &str)] = &[
         include_str!("../../nlayer-platform-web/web/browser/runtime.js"),
     ),
     (
+        "browser/hot.js",
+        JS,
+        include_str!("../../nlayer-platform-web/web/browser/hot.js"),
+    ),
+    (
         "browser/list.js",
         JS,
         include_str!("../../nlayer-platform-web/web/browser/list.js"),

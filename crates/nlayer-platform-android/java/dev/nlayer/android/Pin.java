@@ -61,3 +61,34 @@ final class Pin {
     }
   }
 }
+
+/** `files/nlayer-dev.json`, written by `nlayer run --target android`. */
+final class DevPin {
+  final String host;
+  final int port;
+
+  /** A test session keeps the overlay and patches off. */
+  final boolean test;
+
+  private DevPin(String host, int port, boolean test) {
+    this.host = host;
+    this.port = port;
+    this.test = test;
+  }
+
+  static DevPin read(File file) {
+    if (file == null || !file.isFile()) return null;
+    try {
+      JSONObject json =
+          new JSONObject(
+              new String(
+                  java.nio.file.Files.readAllBytes(file.toPath()),
+                  java.nio.charset.StandardCharsets.UTF_8));
+      int port = json.optInt("port", 0);
+      if (port <= 0 || port > 0xffff) return null;
+      return new DevPin(json.optString("host", "127.0.0.1"), port, json.optBoolean("test", false));
+    } catch (Exception e) {
+      return null;
+    }
+  }
+}

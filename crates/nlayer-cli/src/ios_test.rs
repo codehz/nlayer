@@ -71,7 +71,8 @@ impl AppHost for IosHost {
         let docs = ios::data_container(&udid)
             .map_err(|error| error.to_string())?
             .join("Documents");
-        ios::publish(&docs, &app_dir, &bundled).map_err(|error| error.to_string())?;
+        ios::publish(&docs, &app_dir, bundled.code.as_bytes(), &bundled.assets)
+            .map_err(|error| error.to_string())?;
         let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
         let port = listener
             .local_addr()

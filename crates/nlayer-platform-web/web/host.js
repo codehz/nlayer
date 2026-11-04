@@ -110,15 +110,19 @@ export function installHost(player, root) {
  * call still goes through: a blocked popup is the browser's answer, not an
  * error the app sees.
  */
+const OPENED = Symbol.for("nlayer.opened");
 function recordOpened(player) {
   const opened = [];
   const window = player.window;
   if (!window || typeof window.open !== "function") return opened;
-  const open = window.open;
+  // A dev page installs the host once per bundle: the newest host keeps
+  // the real `open` and records, so calls are never recorded twice.
+  const original = window[OPENED] ?? window.open;
   try {
+    window[OPENED] = original;
     window.open = function (url, ...rest) {
       opened.push(String(url));
-      return open.call(this, url, ...rest);
+      return original.call(this, url, ...rest);
     };
   } catch {
     // A window whose `open` cannot be replaced: nothing to record.

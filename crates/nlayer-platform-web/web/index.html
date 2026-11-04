@@ -43,14 +43,18 @@
     <script type="module">
       // Serves `nlayer.wasm` (this crate, wasm32), `nlayer.js`, `boot.js`,
       // `base.css` and the app's `bundle.js` from one directory. `asset:/`
-      // images resolve next to the page.
-      import { startPage } from "./boot.js";
+      // images resolve next to the page. `nlayer run --target web` marks the
+      // page (`__nlayerDev`): it runs the dev server's factory bundles and
+      // never reloads the document. The packaged page runs `bundle.js` as an
+      // ES module, as before.
+      import { startPage, startDevPage } from "./boot.js";
 
+      const dev = globalThis.__nlayerDev === true;
       const status = document.getElementById("status");
       const root = document.getElementById("app");
       try {
         const wasm = await load("./nlayer.wasm", (response) => response.arrayBuffer());
-        const bundle = await load("./bundle.js", (response) => response.text());
+        const bundle = dev ? null : await load("./bundle.js", (response) => response.text());
         const baseCSS = await load("./base.css", (response) => response.text());
         status.style.display = "none";
         const q = new URLSearchParams(location.search);
@@ -67,9 +71,8 @@
               keyboard: Number(q.get("kb") || 0),
             }
           : null;
-        await startPage(root, {
+        const page = {
           wasm,
-          bundle,
           baseCSS,
           assetBase: "./",
           pin,
@@ -78,7 +81,9 @@
             status.style.display = "";
             status.textContent = message;
           },
-        });
+        };
+        if (dev) await startDevPage(root, page);
+        else await startPage(root, { ...page, bundle });
       } catch (error) {
         const message = String(error && error.message ? error.message : error);
         globalThis.__nlayerFailed = message;

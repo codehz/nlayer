@@ -2,9 +2,10 @@
 //!
 //! Builds `libnlayer.so` and the Java host, packages a debug APK with the
 //! SDK's `aapt2` / `d8` / `zipalign` / `apksigner`, and installs it on an
-//! emulator or a connected device. A rebuild pushes `app.js` and restarts
-//! the activity. The APK is not reinstalled unless the host changed, the
-//! package is missing, or its data directory cannot be entered.
+//! emulator or a connected device. The dev script is written once and the
+//! activity is launched once; later builds reach the running app over the
+//! dev server's socket. The APK is not reinstalled unless the host changed,
+//! the package is missing, or its data directory cannot be entered.
 //!
 //! `adb reverse` forwards the dev port to this machine and is removed when
 //! the session drops. No other port is reversed. Packaging follows
@@ -14,15 +15,13 @@
 use std::{
     env, fs,
     io::Write as _,
-    net::TcpListener,
     path::{Component, Path, PathBuf},
     process::Command,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
-        mpsc::{Sender, channel},
     },
-    thread::{self, JoinHandle},
+    thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -31,7 +30,7 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 use crate::{
     RunError, resolve_entry,
-    run::{Watch, consider, consider_tree, workspace_root},
+    run::{BuildOutcome, DevServer, RunOptions, consider, consider_tree, serve, workspace_root},
 };
 
 /// Application id. The activity is [`ACTIVITY`].
@@ -71,14 +70,16 @@ pub struct AndroidOptions {
     pub port: u16,
 }
 
-/// A device session. Dropping it stops the watch and force-stops the app.
+/// A device session. Dropping it force-stops the app and removes the dev pin.
 #[must_use = "dropping the session force-stops the Android app"]
 pub struct AndroidSession {
     serial: String,
     stop: Arc<AtomicBool>,
-    stop_tx: Option<Sender<()>>,
-    watch: Option<JoinHandle<()>>,
-    /// Removed after the watch stops and the activity is force-stopped.
+    /// Pushes assets after each successful build.
+    _assets: Option<thread::JoinHandle<()>>,
+    /// The dev server; later builds reach the app over `/ws`.
+    server: Option<DevServer>,
+    /// Removed after the app is force-stopped.
     reverse: Option<Reverse>,
 }
 
@@ -95,14 +96,11 @@ impl AndroidSession {
 impl Drop for AndroidSession {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(tx) = self.stop_tx.take() {
-            let _ = tx.send(());
-        }
-        if let Some(thread) = self.watch.take() {
-            let _ = thread.join();
-        }
+        drop(self.server.take());
         if let Ok(sdk) = Sdk::find() {
             let _ = adb(&sdk, &self.serial, &["shell", "am", "force-stop", PACKAGE]);
+            // The next launch is a packaged one, not this dev session.
+            remove_dev_pin(&sdk, &self.serial);
         }
         // Removes `adb reverse` now that the app can no longer need it.
         drop(self.reverse.take());
@@ -110,16 +108,19 @@ impl Drop for AndroidSession {
 }
 
 /// Builds `options`, installs the host when it changed or the installed
-/// package cannot take a `run-as` push, pushes the bundle and launches it.
+/// package cannot take a `run-as` push, writes the dev script and pin, and
+/// launches it once.
 ///
-/// The first build finishes before this returns. Later builds run on a
-/// background thread. A compile error does not restart the app.
+/// The dev server watches and rebuilds; later builds reach the running app
+/// over its socket, so the activity is not started again. A compile error
+/// prints and leaves the running app alone.
 pub fn run_android(options: AndroidOptions) -> Result<AndroidSession, RunError> {
     let entry = resolve_entry(&options.entry)?;
     let app_dir = entry
         .parent()
         .ok_or_else(|| RunError::message("entry has no parent directory"))?
         .to_path_buf();
+    // The imported assets are pushed; the script comes from the server.
     let bundled = bundle(&BundleOptions {
         entry: entry.clone(),
         minify: options.release,
@@ -131,45 +132,71 @@ pub fn run_android(options: AndroidOptions) -> Result<AndroidSession, RunError> 
     let abi = device_abi(&sdk, &serial)?;
     let apk = host_apk(&sdk, &abi, options.release)?;
     install_if_needed(&sdk, &serial, &apk)?;
+    // The dev server is the channel: it builds, watches, and serves patches
+    // on `/ws`. A native host has no page, so it loads no wasm.
+    let (assets_tx, assets_rx) = std::sync::mpsc::channel::<Vec<PathBuf>>();
+    let on_build: Arc<dyn Fn(BuildOutcome) + Send + Sync> = Arc::new(move |outcome| {
+        report_build(outcome.clone());
+        if outcome.success && !outcome.first_success && !outcome.assets.is_empty() {
+            // `asset:/` reads the pushed bytes: an asset-only change must
+            // reach the device even though no module runs again.
+            let _ = assets_tx.send(outcome.assets.clone());
+        }
+    });
+    let server = serve(RunOptions {
+        entry,
+        port: options.port,
+        release: options.release,
+        wasm: Vec::new(),
+        on_build: Some(on_build),
+    })?;
+    let port = server.port();
+    let Some((_, script)) = server.dev_bundle() else {
+        return Err(RunError::message(
+            "the app did not compile: see the diagnostic above",
+        ));
+    };
     // The device reaches the dev server as 127.0.0.1 on this port. Only
     // this port is reversed; it is removed when the session drops.
-    let port = dev_port(options.port)?;
     let reverse = Reverse::add(&sdk, &serial, port)?;
-    publish(&sdk, &serial, &app_dir, &bundled)?;
-    relaunch(&sdk, &serial)?;
+    publish_with(&sdk, &serial, &app_dir, &bundled, &script)?;
+    write_dev_pin(&sdk, &serial, port)?;
+    if let Err(error) = relaunch(&sdk, &serial) {
+        remove_dev_pin(&sdk, &serial);
+        return Err(error);
+    }
     eprintln!("launched on {serial}");
-    let mut watch = Watch::new(entry, app_dir.clone(), options.release, &bundled);
-    let stop = Arc::new(AtomicBool::new(false));
-    let (stop_tx, stop_rx) = channel();
-    let shared = Arc::new(Shared {
-        app_dir,
-        sdk,
-        serial: serial.clone(),
-    });
-    let watch = thread::Builder::new()
-        .name("nlayer-android".to_owned())
+    let assets_push_serial = serial.clone();
+    let assets = thread::Builder::new()
+        .name("nlayer-android-assets".to_owned())
         .spawn(move || {
-            watch.run(stop_rx, move |bundled| {
-                publish(&shared.sdk, &shared.serial, &shared.app_dir, bundled)?;
-                relaunch(&shared.sdk, &shared.serial)?;
-                eprintln!("rebuilt in {:.0} ms", bundled.elapsed_ms);
-                Ok(())
-            });
+            let Ok(sdk) = Sdk::find() else { return };
+            for list in assets_rx {
+                for rel in &list {
+                    match push_asset(&sdk, &assets_push_serial, &app_dir, rel) {
+                        Ok(()) => {}
+                        Err(error) => eprintln!("{error}"),
+                    }
+                }
+            }
         })
-        .map_err(|error| RunError::message(format!("watch thread: {error}")))?;
+        .ok();
     Ok(AndroidSession {
         serial,
-        stop,
-        stop_tx: Some(stop_tx),
-        watch: Some(watch),
+        stop: Arc::new(AtomicBool::new(false)),
+        _assets: assets,
+        server: Some(server),
         reverse: Some(reverse),
     })
 }
 
-struct Shared {
-    app_dir: PathBuf,
-    sdk: Sdk,
-    serial: String,
+/// Prints what the dev server's watch did: its time, or the diagnostic.
+fn report_build(outcome: BuildOutcome) {
+    if !outcome.success {
+        eprintln!("{}", outcome.error.trim_end());
+    } else if outcome.updated && !outcome.first_success {
+        eprintln!("rebuilt in {:.0} ms", outcome.elapsed_ms);
+    }
 }
 
 pub(crate) struct Sdk {
@@ -992,6 +1019,18 @@ pub(crate) fn publish(
     app_dir: &Path,
     bundled: &Bundle,
 ) -> Result<(), RunError> {
+    publish_with(sdk, serial, app_dir, bundled, bundled.code.as_bytes())
+}
+
+/// `publish`, with `script` as `files/app.js` instead of the bundle's code:
+/// `nlayer run` writes the development script it got over `/ws`.
+fn publish_with(
+    sdk: &Sdk,
+    serial: &str,
+    app_dir: &Path,
+    bundled: &Bundle,
+    script: &[u8],
+) -> Result<(), RunError> {
     let _ = adb(
         sdk,
         serial,
@@ -1002,26 +1041,32 @@ pub(crate) fn publish(
             "rm",
             "-f",
             "files/nlayer-test.json",
+            "files/nlayer-dev.json",
         ],
     );
-    push_bytes(sdk, serial, "files/app.js", bundled.code.as_bytes())?;
+    push_bytes(sdk, serial, "files/app.js", script)?;
     for rel in &bundled.assets {
-        let Some(rel) = asset_rel(rel) else {
-            return Err(RunError::message(format!(
-                "asset path escapes the app directory: {}",
-                rel.display()
-            )));
-        };
-        let bytes = fs::read(app_dir.join(rel))?;
-        let remote = Path::new("files/assets").join(rel);
-        push_bytes(
-            sdk,
-            serial,
-            &remote.to_string_lossy().replace('\\', "/"),
-            &bytes,
-        )?;
+        push_asset(sdk, serial, app_dir, rel)?;
     }
     Ok(())
+}
+
+/// Pushes one asset under `files/assets`, preserving its relative path.
+fn push_asset(sdk: &Sdk, serial: &str, app_dir: &Path, rel: &Path) -> Result<(), RunError> {
+    let Some(rel) = asset_rel(rel) else {
+        return Err(RunError::message(format!(
+            "asset path escapes the app directory: {}",
+            rel.display()
+        )));
+    };
+    let bytes = fs::read(app_dir.join(rel))?;
+    let remote = Path::new("files/assets").join(rel);
+    push_bytes(
+        sdk,
+        serial,
+        &remote.to_string_lossy().replace('\\', "/"),
+        &bytes,
+    )
 }
 
 fn asset_rel(path: &Path) -> Option<&Path> {
@@ -1127,11 +1172,27 @@ impl Drop for Reverse {
     }
 }
 
-fn dev_port(port: u16) -> Result<u16, RunError> {
-    if port != 0 {
-        return Ok(port);
-    }
-    Ok(TcpListener::bind(("127.0.0.1", 0))?.local_addr()?.port())
+/// `files/nlayer-dev.json`: the dev server this launch follows. Separate
+/// from `nlayer-test.json`, which pins a test session.
+fn write_dev_pin(sdk: &Sdk, serial: &str, port: u16) -> Result<(), RunError> {
+    let json = format!("{{\"host\":\"127.0.0.1\",\"port\":{port},\"test\":false}}");
+    push_bytes(sdk, serial, "files/nlayer-dev.json", json.as_bytes())
+}
+
+/// A later launch must not follow a server this session has left.
+fn remove_dev_pin(sdk: &Sdk, serial: &str) {
+    let _ = adb(
+        sdk,
+        serial,
+        &[
+            "shell",
+            "run-as",
+            PACKAGE,
+            "rm",
+            "-f",
+            "files/nlayer-dev.json",
+        ],
+    );
 }
 
 pub(crate) fn relaunch(sdk: &Sdk, serial: &str) -> Result<(), RunError> {

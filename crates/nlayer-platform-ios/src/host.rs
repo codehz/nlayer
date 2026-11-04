@@ -15,7 +15,7 @@ use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_clas
 use objc2_core_foundation::{CGAffineTransform, CGFloat, CGPoint, CGRect, CGSize};
 use objc2_foundation::{NSNotification, NSNotificationCenter, NSOperationQueue, NSValue};
 use objc2_ui_kit::{
-    NSValueUIGeometryExtensions, UIKeyboardFrameEndUserInfoKey,
+    NSValueUIGeometryExtensions, UIColor, UIKeyboardFrameEndUserInfoKey,
     UIKeyboardWillChangeFrameNotification, UIKeyboardWillHideNotification, UILabel, UIResponder,
     UITraitEnvironment, UIUserInterfaceStyle, UIView, UIViewAutoresizing,
 };
@@ -229,6 +229,15 @@ impl MountSink for Queue {
             for batch in batches {
                 mounter.apply(batch);
             }
+            raise_overlay();
+        });
+    }
+
+    fn hot_update_failed(&self) {
+        DispatchQueue::main().exec_async(|| {
+            eprintln!("nlayer: reloading after an update that could not be applied in place");
+            hide_dev_overlay();
+            crate::dev::note_failure();
         });
     }
 
@@ -250,8 +259,17 @@ impl MountSink for Queue {
 thread_local! {
     static MOUNTER: RefCell<Option<Rc<RefCell<Mounter>>>> = const { RefCell::new(None) };
     static QUEUE: RefCell<Option<Arc<Queue>>> = const { RefCell::new(None) };
-    static ERROR: RefCell<Option<Retained<UILabel>>> = const { RefCell::new(None) };
+    static ERROR: RefCell<Option<Retained<UIView>>> = const { RefCell::new(None) };
     static ERROR_TEXT: RefCell<Option<String>> = const { RefCell::new(None) };
+    static ENGINE: RefCell<Option<Engine>> = const { RefCell::new(None) };
+    static ROOT: RefCell<Option<Weak<RootView>>> = const { RefCell::new(None) };
+    static PREPARED: RefCell<Option<Prepared>> = const { RefCell::new(None) };
+}
+
+#[derive(Clone)]
+struct Prepared {
+    scheme: nlayer_core::ColorScheme,
+    pin: Option<crate::pin::Pin>,
 }
 
 pub(crate) fn mounter() -> Option<Rc<RefCell<Mounter>>> {
@@ -263,6 +281,13 @@ fn queue() -> Option<Arc<Queue>> {
 }
 
 fn show_error(message: &str) {
+    show_dev_overlay(message);
+}
+
+/// Covers the app with `message`. Not a UI component: the host draws it and
+/// [`hide_dev_overlay`] removes it. A later mount cannot bury it.
+pub(crate) fn show_dev_overlay(message: &str) {
+    hide_dev_overlay();
     ERROR_TEXT.with(|slot| *slot.borrow_mut() = Some(message.to_owned()));
     eprintln!("nlayer: {message}");
     let Some(mounter) = mounter() else { return };
@@ -271,13 +296,43 @@ fn show_error(message: &str) {
         return;
     };
     let mtm = MainThreadMarker::new().expect("main thread");
-    let label = UILabel::initWithFrame(UILabel::alloc(mtm), root.bounds());
+    let overlay = UIView::initWithFrame(UIView::alloc(mtm), root.bounds());
+    overlay.setAutoresizingMask(
+        UIViewAutoresizing::FlexibleWidth | UIViewAutoresizing::FlexibleHeight,
+    );
+    overlay.setBackgroundColor(Some(&UIColor::whiteColor()));
+    let label = UILabel::initWithFrame(UILabel::alloc(mtm), overlay.bounds());
+    label.setAutoresizingMask(
+        UIViewAutoresizing::FlexibleWidth | UIViewAutoresizing::FlexibleHeight,
+    );
     label.setText(Some(&objc2_foundation::NSString::from_str(message)));
     // SAFETY: a plain setter of a valid color.
-    unsafe { label.setTextColor(Some(&objc2_ui_kit::UIColor::blackColor())) };
+    unsafe { label.setTextColor(Some(&UIColor::blackColor())) };
     label.setNumberOfLines(0);
-    root.addSubview(&label);
-    ERROR.with(|slot| *slot.borrow_mut() = Some(label));
+    overlay.addSubview(&label);
+    root.addSubview(&overlay);
+    root.bringSubviewToFront(&overlay);
+    ERROR.with(|slot| *slot.borrow_mut() = Some(overlay));
+}
+
+/// Removes the dev overlay, if one is showing.
+pub(crate) fn hide_dev_overlay() {
+    if let Some(overlay) = ERROR.with(|slot| slot.borrow_mut().take()) {
+        overlay.removeFromSuperview();
+    }
+    ERROR_TEXT.with(|slot| *slot.borrow_mut() = None);
+}
+
+fn raise_overlay() {
+    ERROR.with(|slot| {
+        let slot = slot.borrow();
+        let Some(overlay) = slot.as_ref() else {
+            return;
+        };
+        if let Some(root) = overlay.superview() {
+            root.bringSubviewToFront(overlay);
+        }
+    });
 }
 
 fn mounter_root(mounter: &Mounter) -> Option<Retained<UIView>> {
@@ -290,13 +345,15 @@ pub(crate) fn boot_error() -> Option<String> {
 
 /// A running app. Dropping it stops the engine.
 pub(crate) struct Session {
-    _engine: Option<Engine>,
     _root: Retained<RootView>,
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
         self._root.stop_observing();
+        ENGINE.with(|slot| {
+            slot.borrow_mut().take();
+        });
     }
 }
 
@@ -364,25 +421,12 @@ pub(crate) fn start(
         root.observe_keyboard();
     }
     MOUNTER.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&mounter)));
-    let queue = Arc::new(Queue {
-        batches: Mutex::new(Vec::new()),
-        scheduled: AtomicBool::new(false),
+    QUEUE.with(|slot| {
+        *slot.borrow_mut() = Some(Arc::new(Queue {
+            batches: Mutex::new(Vec::new()),
+            scheduled: AtomicBool::new(false),
+        }));
     });
-    QUEUE.with(|slot| *slot.borrow_mut() = Some(Arc::clone(&queue)));
-
-    if bundle.is_empty() {
-        show_error("no app.js next to the runner");
-        if let Some(pin) = pin {
-            crate::driver::start(pin);
-        }
-        return Session {
-            _engine: None,
-            _root: root,
-        };
-    }
-
-    let bounds = root.bounds().size;
-    let viewport = Size::new(Points(bounds.width as f32), Points(bounds.height as f32));
     let scheme = pin
         .as_ref()
         .and_then(|pin| pin.color_scheme.as_deref())
@@ -391,14 +435,65 @@ pub(crate) fn start(
             let style = unsafe { container.traitCollection().userInterfaceStyle() };
             nlayer_core::ColorScheme::from_dark(style == UIUserInterfaceStyle::Dark)
         });
+    PREPARED.with(|slot| {
+        *slot.borrow_mut() = Some(Prepared {
+            scheme,
+            pin: pin.clone(),
+        });
+    });
+    ROOT.with(|slot| *slot.borrow_mut() = Some(Weak::new(&root)));
+
+    let dev = crate::pin::load_dev(&assets);
+    let control = if bundle.is_empty() {
+        None
+    } else {
+        match launch(bundle) {
+            Ok(control) => Some(control),
+            Err(error) => {
+                show_dev_overlay(&error.to_string());
+                None
+            }
+        }
+    };
+    // An empty `app.js` with a dev pin waits for the first bundle. The
+    // missing-file error is only for a launch that has nowhere to read one.
+    if bundle.is_empty() && dev.as_ref().is_none_or(|dev| dev.test) {
+        show_dev_overlay("no app.js next to the runner");
+    } else if let Some(dev) = dev.filter(|dev| !dev.test) {
+        let script = if control.is_some() {
+            bundle.to_owned()
+        } else {
+            String::new()
+        };
+        crate::dev::start(dev, script, control);
+    }
+    if let Some(pin) = pin {
+        crate::driver::start(pin);
+    }
+    Session { _root: root }
+}
+
+/// Evaluates `bundle` on the surface prepared by [`start`]. Main thread.
+fn launch(bundle: &str) -> Result<nlayer_engine::EngineControl, EngineError> {
+    let prepared = PREPARED
+        .with(|slot| slot.borrow().clone())
+        .expect("surface");
+    let mounter = mounter().expect("mounter");
+    let queue = queue().expect("queue");
+    let root = {
+        let mounter = mounter.borrow();
+        mounter_root(&mounter).expect("root")
+    };
+    let bounds = root.bounds().size;
+    let viewport = Size::new(Points(bounds.width as f32), Points(bounds.height as f32));
     let mut config = EngineConfig::new(bundle, viewport)
         .with_os(nlayer_engine::Os::Ios)
-        .with_color_scheme(scheme);
+        .with_color_scheme(prepared.scheme);
     // The app's storage: a file in Application Support of its container.
     if let Some(dir) = nlayer_engine::data_dir() {
         config = config.with_data_dir(dir.join("nlayer"));
     }
-    if let Some(pin) = &pin {
+    if let Some(pin) = &prepared.pin {
         config = config.with_insets(
             nlayer_core::geometry::Edges {
                 top: Points(pin.safe_area.top),
@@ -409,25 +504,35 @@ pub(crate) fn start(
             Points(pin.keyboard.unwrap_or(0.0)),
         );
     }
-    let engine = Engine::start(config, CoreTextEngine::default, queue);
-    let engine = match engine {
-        Ok(engine) => {
-            mounter.borrow_mut().set_control(engine.control());
-            root.publish();
-            Some(engine)
-        }
-        Err(err) => {
-            show_error(&err.to_string());
+    let engine = Engine::start(config, CoreTextEngine::default, queue)?;
+    mounter.borrow_mut().set_control(engine.control());
+    republish();
+    let control = engine.control();
+    ENGINE.with(|slot| *slot.borrow_mut() = Some(engine));
+    Ok(control)
+}
+
+/// Starts the engine on `bundle` if it is not running. Main thread.
+/// `None` leaves the overlay up; the dev client can try the next bundle.
+pub(crate) fn boot_engine(bundle: &str) -> Option<nlayer_engine::EngineControl> {
+    if let Some(control) = ENGINE.with(|slot| slot.borrow().as_ref().map(|engine| engine.control()))
+    {
+        return Some(control);
+    }
+    match launch(bundle) {
+        Ok(control) => Some(control),
+        Err(error) => {
+            show_dev_overlay(&error.to_string());
             None
         }
+    }
+}
+
+fn republish() {
+    let Some(root) = ROOT.with(|slot| slot.borrow().as_ref().and_then(|weak| weak.load())) else {
+        return;
     };
-    if let Some(pin) = pin {
-        crate::driver::start(pin);
-    }
-    Session {
-        _engine: engine,
-        _root: root,
-    }
+    root.publish();
 }
 
 #[cfg(feature = "host-tests")]

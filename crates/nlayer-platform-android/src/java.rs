@@ -28,6 +28,7 @@ pub(crate) struct Java {
     /// `dev.nlayer.android.HostView`.
     pub(crate) view_submit: JMethodID,
     pub(crate) view_report_error: JMethodID,
+    pub(crate) view_overlay: JMethodID,
     pub(crate) view_snapshot: JMethodID,
     pub(crate) view_tap: JMethodID,
     pub(crate) view_move: JMethodID,
@@ -81,6 +82,7 @@ pub(crate) fn init(vm: JavaVM) -> jni::errors::Result<()> {
         )?,
         view_submit: env.get_method_id(view_class, "submit", "([B[Ljava/lang/Object;)V")?,
         view_report_error: env.get_method_id(view_class, "reportError", "(Ljava/lang/String;)V")?,
+        view_overlay: env.get_method_id(view_class, "overlay", "(Ljava/lang/String;)V")?,
         view_snapshot: env.get_method_id(view_class, "snapshot", "()Ljava/lang/String;")?,
         view_tap: env.get_method_id(view_class, "tap", "(FFZ)V")?,
         view_move: env.get_method_id(view_class, "move", "(FF)V")?,

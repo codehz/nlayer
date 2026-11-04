@@ -13,7 +13,9 @@
 //! nearest ancestor that does. A scroll view reports `onScroll` (at most once
 //! per frame), drag and momentum, with the content offset, content size and
 //! visible size. `nlayer test` drives the mounted tree through the view
-//! system's own touch, input connection and scroll view.
+//! system's own touch, input connection and scroll view. `nlayer run`'s dev
+//! client (`dev.rs`) applies its patches in place and covers the app while a
+//! build fails.
 
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 mod animation;
@@ -24,6 +26,8 @@ mod scene;
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 mod snapshot;
 
+#[cfg(target_os = "android")]
+mod dev;
 #[cfg(target_os = "android")]
 mod driver;
 #[cfg(target_os = "android")]

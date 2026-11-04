@@ -24,6 +24,9 @@ final class Native {
 
   static native void serve(long handle, String host, int port);
 
+  /** Connects to `nlayer run`'s dev server (`files/nlayer-dev.json`). */
+  static native void dev(long handle, String host, int port, boolean test);
+
   /** The system's color scheme changed. */
   static native void colorScheme(long handle, boolean dark);
 

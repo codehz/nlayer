@@ -1394,6 +1394,7 @@ dependencies = [
  "nlayer-engine",
  "serde",
  "serde_json",
+ "tungstenite",
 ]
 
 [[package]]
@@ -1417,6 +1418,7 @@ dependencies = [
  "rustc-hash",
  "serde",
  "serde_json",
+ "tungstenite",
 ]
 
 [[package]]
