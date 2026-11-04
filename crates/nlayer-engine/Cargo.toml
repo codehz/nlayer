@@ -23,6 +23,7 @@ nlayer-js = { workspace = true, optional = true }
 crossbeam-channel.workspace = true
 log.workspace = true
 thiserror.workspace = true
+serde.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = "3.1"

@@ -15,6 +15,7 @@ workspace = true
 
 [dependencies]
 nlayer-bundler.workspace = true
+nlayer-engine.workspace = true
 nlayer-testing.workspace = true
 clap = { version = "4", features = ["derive"] }
 log.workspace = true
@@ -23,4 +24,8 @@ serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
 plist = "1"
+tungstenite = { version = "0.26.2", default-features = false, features = ["handshake"] }
 zip = { version = "8", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tungstenite = { version = "0.26.2", default-features = false, features = ["handshake"] }

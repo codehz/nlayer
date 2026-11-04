@@ -1,11 +1,12 @@
 //! `nlayer run --target web`.
 //!
 //! Serves the page, the wasm engine, the app's bundle and files next to the
-//! app (a demo's `quote.json`) on this machine.
-//! TSX and imported assets are watched by polling their bytes. A rebuild that
-//! changes the bundle or an asset bumps a generation the page polls; the page
-//! reloads, which drops the running app. A failed rebuild is reported and the
-//! last good bundle stays. This is not hot reload: nothing is patched in place.
+//! app (a demo's `quote.json`) on this machine. TSX and imported assets are
+//! watched by polling their bytes. When JS changes and the new bundle can
+//! patch the previous one, the server sends a patch frame and then the new
+//! bundle on `/ws`. An asset-only change replaces files and sends no patch.
+//! A failed rebuild sends the diagnostic and keeps the previous file table
+//! and the previous bundle for new connections. The page does not reload.
 
 use std::{
     collections::HashMap,
@@ -23,7 +24,8 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use nlayer_bundler::{Bundle, BundleOptions, bundle};
+use nlayer_bundler::{Bundle, BundleOptions, HotBundle, HotPatch, bundle, bundle_hot};
+use nlayer_engine::protocol::{self, WS_PATH};
 
 use crate::{BuildError, resolve_entry};
 
@@ -32,19 +34,6 @@ const PAGE_HTML: &str = include_str!("../../nlayer-platform-web/web/index.html")
 /// How often the app's sources are checked. A save lands on the next poll.
 const POLL: Duration = Duration::from_millis(150);
 
-/// The page reloads when this changes. Full reload, not a patch.
-const RELOAD: &str = r#"<script type="module">
-let seen;
-setInterval(async () => {
-  try {
-    const next = await (await fetch("/__nlayer/generation", { cache: "no-store" })).text();
-    if (seen === undefined) seen = next;
-    else if (seen !== next) location.reload();
-  } catch {}
-}, 200);
-</script>
-"#;
-
 /// What one build attempt did.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BuildOutcome {
@@ -52,7 +41,7 @@ pub struct BuildOutcome {
     pub port: u16,
     /// The app compiled.
     pub success: bool,
-    /// The served bundle or an asset changed, so the page reloads.
+    /// The served files changed, or a new development bundle was published.
     pub updated: bool,
     /// This is the first build the page can run.
     pub first_success: bool,
@@ -115,6 +104,34 @@ impl From<std::io::Error> for RunError {
     }
 }
 
+struct LiveBundle {
+    version: u64,
+    code: Arc<[u8]>,
+    source_map: Option<Arc<[u8]>>,
+}
+
+struct Sub {
+    id: u64,
+    tx: Sender<Arc<DevEvent>>,
+}
+
+enum DevEvent {
+    Patch {
+        version: u64,
+        base: u64,
+        code: Arc<[u8]>,
+        source_map: Option<Arc<[u8]>>,
+    },
+    Bundle {
+        version: u64,
+        code: Arc<[u8]>,
+        source_map: Option<Arc<[u8]>>,
+    },
+    BuildFailed {
+        message: String,
+    },
+}
+
 struct Inner {
     generation: u64,
     error: Option<String>,
@@ -123,6 +140,13 @@ struct Inner {
     files: HashMap<String, Arc<[u8]>>,
     watched: Vec<PathBuf>,
     stamp: u64,
+    /// Last hot bundle a patch can apply to. Kept across a failed rebuild.
+    hot: Option<HotBundle>,
+    /// Script bytes of `generation`, for new sockets. Not the HTTP file:
+    /// that one may carry a `sourceMappingURL` comment.
+    live: Option<LiveBundle>,
+    next_sub: u64,
+    subs: Vec<Sub>,
 }
 
 struct Shared {
@@ -155,7 +179,8 @@ impl DevServer {
         format!("http://127.0.0.1:{}/", self.port())
     }
 
-    /// How many times the served app has changed. `0` means no good build yet.
+    /// Development-bundle version. `0` means no good build yet. Asset-only
+    /// updates do not bump it.
     pub fn generation(&self) -> u64 {
         self.shared.inner.lock().expect("dev server").generation
     }
@@ -217,6 +242,10 @@ pub fn serve(options: RunOptions) -> Result<DevServer, RunError> {
             files,
             watched: Vec::new(),
             stamp: 0,
+            hot: None,
+            live: None,
+            next_sub: 1,
+            subs: Vec::new(),
         }),
     });
     let http_shared = Arc::clone(&shared);
@@ -387,39 +416,23 @@ pub(crate) fn consider_tree(dir: &Path, newest: &mut SystemTime) {
 }
 
 fn rebuild(shared: &Shared) {
+    // The page still executes the ESM from `bundle()`. The socket carries
+    // `bundle_hot` (patch, then the new bundle). Applying that is the host.
     let started = Instant::now();
-    let built = bundle(&BundleOptions {
+    let elapsed = |from: Instant| from.elapsed().as_secs_f64() * 1000.0;
+    let outcome = match bundle(&BundleOptions {
         entry: shared.entry.clone(),
         minify: shared.release,
         test: false,
-    });
-    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-    let outcome = match built {
+    }) {
         Ok(bundled) => match read_app(&shared.app_dir, &bundled) {
-            Ok(app) => publish(shared, app, &bundled, bundled.elapsed_ms),
-            Err(message) => {
-                fail(shared, message.clone());
-                BuildOutcome {
-                    port: shared.port,
-                    success: false,
-                    updated: false,
-                    first_success: false,
-                    elapsed_ms,
-                    error: message,
-                }
-            }
+            Ok(app) => match bundle_hot(&shared.entry, false) {
+                Ok(hot) => publish(shared, app, &bundled, hot, elapsed(started)),
+                Err(error) => fail_outcome(shared, error.plain, error.colored, elapsed(started)),
+            },
+            Err(message) => fail_outcome(shared, message.clone(), message, elapsed(started)),
         },
-        Err(error) => {
-            fail(shared, error.plain);
-            BuildOutcome {
-                port: shared.port,
-                success: false,
-                updated: false,
-                first_success: false,
-                elapsed_ms,
-                error: error.colored,
-            }
-        }
+        Err(error) => fail_outcome(shared, error.plain, error.colored, elapsed(started)),
     };
     (shared.on_build)(outcome);
 }
@@ -428,27 +441,79 @@ fn publish(
     shared: &Shared,
     app: HashMap<String, Vec<u8>>,
     bundled: &Bundle,
+    hot: HotBundle,
     elapsed_ms: f64,
 ) -> BuildOutcome {
-    let watched = watch_paths(&shared.app_dir, Some(bundled));
+    let (script, map) = hot.script();
+    let previous = shared.inner.lock().expect("dev server").hot.clone();
+    let patch = previous.as_ref().map(|previous| hot.patch(previous));
+    let watched = watch_hot(&shared.app_dir, bundled, &hot);
     let stamp = stamp(&watched);
     let mut inner = shared.inner.lock().expect("dev server");
     let was_zero = inner.generation == 0;
-    let updated = install_app(&mut inner.files, app);
-    if updated {
-        inner.generation += 1;
-    }
+    let files_changed = install_app(&mut inner.files, app);
     inner.error = None;
     inner.watched = watched;
     inner.stamp = stamp;
+    // `Unchanged` is an asset-only (or empty) rebuild: replace files, no patch.
+    let js_changed = !matches!(patch, Some(HotPatch::Unchanged));
+    if js_changed {
+        inner.generation += 1;
+        let version = inner.generation;
+        let code: Arc<[u8]> = Arc::from(script.into_bytes());
+        let source_map = map.map(|text| Arc::<[u8]>::from(text.into_bytes()));
+        inner.live = Some(LiveBundle {
+            version,
+            code: Arc::clone(&code),
+            source_map: source_map.clone(),
+        });
+        if let Some(HotPatch::Update {
+            code: patch_code,
+            source_map: patch_map,
+        }) = patch
+        {
+            let patch_code: Arc<[u8]> = Arc::from(patch_code.into_bytes());
+            let patch_map = patch_map.map(|text| Arc::<[u8]>::from(text.into_bytes()));
+            fanout(
+                &mut inner,
+                Arc::new(DevEvent::Patch {
+                    version,
+                    base: version - 1,
+                    code: patch_code,
+                    source_map: patch_map,
+                }),
+            );
+        }
+        fanout(
+            &mut inner,
+            Arc::new(DevEvent::Bundle {
+                version,
+                code,
+                source_map,
+            }),
+        );
+    }
+    inner.hot = Some(hot);
     let first_success = was_zero && inner.generation > 0;
     BuildOutcome {
         port: shared.port,
         success: true,
-        updated,
+        updated: files_changed || js_changed,
         first_success,
         elapsed_ms,
         error: String::new(),
+    }
+}
+
+fn fail_outcome(shared: &Shared, plain: String, colored: String, elapsed_ms: f64) -> BuildOutcome {
+    fail(shared, plain);
+    BuildOutcome {
+        port: shared.port,
+        success: false,
+        updated: false,
+        first_success: false,
+        elapsed_ms,
+        error: colored,
     }
 }
 
@@ -456,9 +521,15 @@ fn fail(shared: &Shared, plain: String) {
     let watched = watch_paths(&shared.app_dir, None);
     let stamp = stamp(&watched);
     let mut inner = shared.inner.lock().expect("dev server");
-    inner.error = Some(plain);
+    inner.error = Some(plain.clone());
     inner.watched = watched;
     inner.stamp = stamp;
+    // The previous file table and live bundle stay. New sockets still get
+    // that bundle; this frame is for sockets already connected.
+    fanout(
+        &mut inner,
+        Arc::new(DevEvent::BuildFailed { message: plain }),
+    );
 }
 
 fn install_app(files: &mut HashMap<String, Arc<[u8]>>, app: HashMap<String, Vec<u8>>) -> bool {
@@ -518,6 +589,17 @@ pub(crate) fn watch_paths(app_dir: &Path, bundled: Option<&Bundle>) -> Vec<PathB
         for rel in &bundled.assets {
             paths.push(app_dir.join(rel));
         }
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn watch_hot(app_dir: &Path, bundled: &Bundle, hot: &HotBundle) -> Vec<PathBuf> {
+    let mut paths = watch_paths(app_dir, Some(bundled));
+    paths.extend(hot.watch_files.iter().cloned());
+    for rel in &hot.assets {
+        paths.push(app_dir.join(rel));
     }
     paths.sort();
     paths.dedup();
@@ -658,7 +740,7 @@ fn watch_loop(shared: Arc<Shared>, stop: Receiver<()>) {
 fn http_loop(listener: TcpListener, shared: Arc<Shared>) {
     while !shared.stop.load(Ordering::Relaxed) {
         match listener.accept() {
-            Ok((socket, _)) => handle(socket, &shared),
+            Ok((socket, _)) => handle(socket, Arc::clone(&shared)),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(20));
             }
@@ -667,7 +749,7 @@ fn http_loop(listener: TcpListener, shared: Arc<Shared>) {
     }
 }
 
-fn handle(mut socket: TcpStream, shared: &Shared) {
+fn handle(mut socket: TcpStream, shared: Arc<Shared>) {
     // accept() on macOS keeps the listener's O_NONBLOCK. A body bigger than
     // the send buffer then stops at WouldBlock, and the page sees a cut-off
     // wasm. One request, one blocking response.
@@ -696,7 +778,28 @@ fn handle(mut socket: TcpStream, shared: &Shared) {
     };
     let head = text.split("\r\n\r\n").next().unwrap_or("");
     match request_path(head) {
-        Ok(path) => match lookup(shared, &path) {
+        Ok(path) if is_dev_socket(&path) => {
+            let upgrade = websocket_upgrade(head);
+            let complete = buf.windows(4).any(|window| window == b"\r\n\r\n");
+            if !upgrade || !complete {
+                send(
+                    &mut socket,
+                    400,
+                    "Bad Request",
+                    "text/plain",
+                    b"expected a websocket upgrade",
+                );
+                return;
+            }
+            let shared = Arc::clone(&shared);
+            if let Err(error) = thread::Builder::new()
+                .name("nlayer-ws".to_owned())
+                .spawn(move || websocket(socket, buf, shared))
+            {
+                eprintln!("nlayer: {error}");
+            }
+        }
+        Ok(path) => match lookup(&shared, &path) {
             Ok((mime, body)) => send(&mut socket, 200, "OK", mime, body.as_slice()),
             Err(status) => send(
                 &mut socket,
@@ -748,13 +851,6 @@ impl Body {
 }
 
 fn lookup(shared: &Shared, path: &str) -> Result<(&'static str, Body), u16> {
-    if path == "__nlayer/generation" {
-        let generation = shared.inner.lock().expect("dev server").generation;
-        return Ok((
-            "text/plain; charset=utf-8",
-            Body::Bytes(generation.to_string().into_bytes()),
-        ));
-    }
     if let Some((mime, text)) = host(path) {
         return Ok((mime, Body::Text(text)));
     }
@@ -783,12 +879,9 @@ fn host(path: &str) -> Option<(&'static str, &'static str)> {
 }
 
 fn dev_page() -> &'static str {
-    static PAGE: std::sync::LazyLock<String> =
-        std::sync::LazyLock::new(|| match PAGE_HTML.rsplit_once("</body>") {
-            Some((head, tail)) => format!("{head}{RELOAD}</body>{tail}"),
-            None => format!("{PAGE_HTML}{RELOAD}"),
-        });
-    PAGE.as_str()
+    // The host connects to `/ws` (a hello, then patch and bundle frames).
+    // This page does not poll or reload.
+    PAGE_HTML
 }
 
 fn mime_of(path: &str) -> &'static str {
@@ -876,6 +969,215 @@ fn respond(
     )?;
     socket.write_all(body)?;
     socket.flush()
+}
+
+fn is_dev_socket(path: &str) -> bool {
+    path == WS_PATH.trim_start_matches('/')
+}
+
+fn websocket_upgrade(head: &str) -> bool {
+    head.lines().any(|line| {
+        let Some((name, value)) = line.split_once(':') else {
+            return false;
+        };
+        name.eq_ignore_ascii_case("upgrade") && value.trim().eq_ignore_ascii_case("websocket")
+    })
+}
+
+fn open_sub(shared: &Shared) -> (u64, Receiver<Arc<DevEvent>>, Option<Arc<DevEvent>>) {
+    let mut inner = shared.inner.lock().expect("dev server");
+    let id = inner.next_sub;
+    inner.next_sub = inner.next_sub.wrapping_add(1);
+    let (tx, rx) = channel();
+    inner.subs.push(Sub { id, tx });
+    let snap = if let Some(live) = &inner.live {
+        Some(Arc::new(DevEvent::Bundle {
+            version: live.version,
+            code: Arc::clone(&live.code),
+            source_map: live.source_map.clone(),
+        }))
+    } else if let Some(message) = inner.error.clone() {
+        Some(Arc::new(DevEvent::BuildFailed { message }))
+    } else {
+        None
+    };
+    (id, rx, snap)
+}
+
+fn unsubscribe(shared: &Shared, id: u64) {
+    shared
+        .inner
+        .lock()
+        .expect("dev server")
+        .subs
+        .retain(|sub| sub.id != id);
+}
+
+fn fanout(inner: &mut Inner, event: Arc<DevEvent>) {
+    inner
+        .subs
+        .retain(|sub| sub.tx.send(Arc::clone(&event)).is_ok());
+}
+
+/// Bytes already read as the HTTP request, then the rest of the socket.
+struct Prefixed<T> {
+    prefix: std::io::Cursor<Vec<u8>>,
+    inner: T,
+}
+
+impl<T: Read> Read for Prefixed<T> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if (self.prefix.position() as usize) < self.prefix.get_ref().len() {
+            let read = self.prefix.read(buf)?;
+            if read > 0 {
+                return Ok(read);
+            }
+        }
+        self.inner.read(buf)
+    }
+}
+
+impl<T: Write> Write for Prefixed<T> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+type Client = tungstenite::WebSocket<Prefixed<TcpStream>>;
+
+fn websocket(socket: TcpStream, prefix: Vec<u8>, shared: Arc<Shared>) {
+    // Handshake on a blocking socket. After that, reads are non-blocking:
+    // tungstenite treats a read timeout as fatal, and WouldBlock is the
+    // error it expects when the peer has not written a frame.
+    let _ = socket.set_read_timeout(None);
+    let stream = Prefixed {
+        prefix: std::io::Cursor::new(prefix),
+        inner: socket,
+    };
+    let mut ws = match tungstenite::accept(stream) {
+        Ok(ws) => ws,
+        Err(error) => {
+            eprintln!("nlayer: websocket handshake failed: {error}");
+            return;
+        }
+    };
+    if let Err(error) = ws.get_mut().inner.set_nonblocking(true) {
+        eprintln!("nlayer: {error}");
+        return;
+    }
+    let (id, rx, snap) = open_sub(&shared);
+    let mut failed = send_json(&mut ws, &protocol::Hello::new(false)).is_err();
+    if !failed && let Some(event) = snap.as_ref() {
+        failed = send_event(&mut ws, event).is_err();
+    }
+    while !failed && !shared.stop.load(Ordering::Relaxed) {
+        while let Ok(event) = rx.try_recv() {
+            if send_event(&mut ws, &event).is_err() {
+                failed = true;
+                break;
+            }
+        }
+        if failed {
+            break;
+        }
+        match ws.read() {
+            Ok(tungstenite::Message::Close(_)) => break,
+            Ok(_) => {}
+            Err(tungstenite::Error::Io(error))
+                if error.kind() == std::io::ErrorKind::WouldBlock =>
+            {
+                thread::sleep(Duration::from_millis(25));
+            }
+            Err(_) => break,
+        }
+    }
+    unsubscribe(&shared, id);
+}
+
+fn send_json(ws: &mut Client, value: &impl serde::Serialize) -> Result<(), ()> {
+    let text = serde_json::to_string(value).map_err(|error| {
+        eprintln!("nlayer: {error}");
+    })?;
+    send_message(ws, tungstenite::Message::text(text))
+}
+
+fn send_bin(ws: &mut Client, bytes: &[u8]) -> Result<(), ()> {
+    send_message(ws, tungstenite::Message::binary(bytes.to_vec()))
+}
+
+fn send_message(ws: &mut Client, message: tungstenite::Message) -> Result<(), ()> {
+    let started = Instant::now();
+    let mut pending = Some(message);
+    loop {
+        if started.elapsed() > Duration::from_secs(30) {
+            eprintln!("nlayer: websocket write timed out");
+            return Err(());
+        }
+        if let Some(message) = pending.take() {
+            match ws.send(message) {
+                Ok(()) => return Ok(()),
+                Err(tungstenite::Error::WriteBufferFull(message)) => pending = Some(message),
+                Err(tungstenite::Error::Io(error))
+                    if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) => {
+                    eprintln!("nlayer: {error}");
+                    return Err(());
+                }
+            }
+        }
+        match ws.flush() {
+            Ok(()) if pending.is_none() => return Ok(()),
+            Ok(()) => {}
+            Err(tungstenite::Error::Io(error))
+                if error.kind() == std::io::ErrorKind::WouldBlock =>
+            {
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => {
+                eprintln!("nlayer: {error}");
+                return Err(());
+            }
+        }
+    }
+}
+
+fn send_event(ws: &mut Client, event: &DevEvent) -> Result<(), ()> {
+    match event {
+        DevEvent::Patch {
+            version,
+            base,
+            code,
+            source_map,
+        } => {
+            send_json(
+                ws,
+                &protocol::Patch::new(*version, *base, source_map.is_some()),
+            )?;
+            send_bin(ws, code)?;
+            if let Some(map) = source_map {
+                send_bin(ws, map)?;
+            }
+        }
+        DevEvent::Bundle {
+            version,
+            code,
+            source_map,
+        } => {
+            send_json(ws, &protocol::Bundle::new(*version, source_map.is_some()))?;
+            send_bin(ws, code)?;
+            if let Some(map) = source_map {
+                send_bin(ws, map)?;
+            }
+        }
+        DevEvent::BuildFailed { message } => {
+            send_json(ws, &protocol::BuildFailed::new(message.clone()))?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

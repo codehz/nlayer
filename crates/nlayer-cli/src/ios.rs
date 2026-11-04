@@ -2,9 +2,10 @@
 //!
 //! Installs the UIKit host in a simulator the first time (and again when
 //! that binary changes). The app's bundle is written into the host's data
-//! container, not into the signed `.app`, so a rebuild restarts the process
-//! and drops its state without `simctl install`. A failed rebuild is
-//! printed and the running process is left alone.
+//! container, not into the signed `.app`. A later rebuild still writes
+//! `app.js` (the host reads it only at launch) but does not `simctl`
+//! relaunch, so the process keeps its state. A failed rebuild is printed
+//! and the running process is left alone.
 
 use std::{
     fs,
@@ -90,7 +91,8 @@ impl Drop for IosSession {
 /// one in the simulator, writes the bundle and launches it.
 ///
 /// The first build finishes before this returns. Later builds run on a
-/// background thread. A compile error does not restart the app.
+/// background thread. A later successful rebuild writes files and does not
+/// relaunch. A compile error does not restart the app.
 pub fn run_ios(options: IosOptions) -> Result<IosSession, RunError> {
     let entry = resolve_entry(&options.entry)?;
     let app_dir = entry
@@ -118,17 +120,15 @@ pub fn run_ios(options: IosOptions) -> Result<IosSession, RunError> {
     let mut watch = Watch::new(entry, app_dir.clone(), options.release, &bundled);
     let stop = Arc::new(AtomicBool::new(false));
     let (stop_tx, stop_rx) = channel();
-    let shared = Arc::new(Shared {
-        app_dir,
-        udid: udid.clone(),
-        docs,
-    });
+    let shared = Arc::new(Shared { app_dir, docs });
     let watch = thread::Builder::new()
         .name("nlayer-ios".to_owned())
         .spawn(move || {
             watch.run(stop_rx, move |bundled| {
+                // `app.js` is what the host reads at launch. Keep writing
+                // it for the next launch; a later save must not `simctl`
+                // relaunch.
                 if publish(&shared.docs, &shared.app_dir, bundled)? {
-                    relaunch(&shared.udid)?;
                     eprintln!("rebuilt in {:.0} ms", bundled.elapsed_ms);
                 }
                 Ok(())
@@ -145,7 +145,6 @@ pub fn run_ios(options: IosOptions) -> Result<IosSession, RunError> {
 
 struct Shared {
     app_dir: PathBuf,
-    udid: String,
     docs: PathBuf,
 }
 

@@ -1,4 +1,4 @@
-//! `nlayer run` serves the page and replaces it only after a good rebuild.
+//! `nlayer run` serves the page and keeps the last good bundle across a failed rebuild.
 
 use std::{
     fs,
@@ -130,11 +130,22 @@ fn run_serves_the_page_and_keeps_it_across_a_failed_rebuild() {
     let page = get(port, "/");
     assert_eq!(page.status, 200);
     let html = text(&page);
-    assert!(html.contains("__nlayer/generation"), "{html}");
-    assert!(html.contains("location.reload"), "{html}");
+    assert!(!html.contains("location.reload"), "{html}");
+    assert!(!html.contains("__nlayer/generation"), "{html}");
     assert!(html.contains("startPage"), "{html}");
-    assert_eq!(get(port, "/__nlayer/generation").status, 200);
-    assert_eq!(text(&get(port, "/__nlayer/generation")), "1");
+    assert_eq!(get(port, "/__nlayer/generation").status, 404);
+
+    let mut dev = open_dev(port);
+    let hello = frame_text(&mut dev);
+    assert!(hello.contains("\"type\":\"hello\""), "{hello}");
+    assert!(hello.contains("\"protocol\":1"), "{hello}");
+    assert!(hello.contains("\"test\":false"), "{hello}");
+    let announced = frame_text(&mut dev);
+    assert!(announced.contains("\"type\":\"bundle\""), "{announced}");
+    assert!(announced.contains("\"version\":1"), "{announced}");
+    let script =
+        String::from_utf8_lossy(&dev.read().expect("bundle bytes").into_data()).into_owned();
+    assert!(script.contains("Hello"), "{script}");
 
     let bundle = text(&get(port, "/bundle.js"));
     assert!(bundle.contains("Hello"), "{bundle}");
@@ -179,6 +190,14 @@ fn run_serves_the_page_and_keeps_it_across_a_failed_rebuild() {
     assert_eq!(server.generation(), 2, "a failed rebuild must not reload");
     assert!(text(&get(port, "/bundle.js")).contains("Hola"));
     assert!(!server.last_error().unwrap().is_empty());
+    let mut fresh = open_dev(port);
+    let hello = frame_text(&mut fresh);
+    assert!(hello.contains("\"test\":false"), "{hello}");
+    let announced = frame_text(&mut fresh);
+    assert!(
+        announced.contains("\"type\":\"bundle\"") && announced.contains("\"version\":2"),
+        "a new connection keeps the last good bundle, got {announced}"
+    );
 
     fs::write(dir.join("App.tsx"), source("Adios")).unwrap();
     wait_until(Duration::from_secs(30), || {
@@ -189,4 +208,23 @@ fn run_serves_the_page_and_keeps_it_across_a_failed_rebuild() {
 
     drop(server);
     let _ = fs::remove_dir_all(Path::new(&dir));
+}
+
+fn open_dev(port: u16) -> tungstenite::WebSocket<TcpStream> {
+    let stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    tungstenite::client(format!("ws://127.0.0.1:{port}/ws"), stream)
+        .expect("websocket handshake")
+        .0
+}
+
+fn frame_text(socket: &mut tungstenite::WebSocket<TcpStream>) -> String {
+    socket
+        .read()
+        .expect("dev frame")
+        .to_text()
+        .expect("text frame")
+        .to_owned()
 }

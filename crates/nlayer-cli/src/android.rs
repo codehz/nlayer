@@ -6,12 +6,15 @@
 //! the activity. The APK is not reinstalled unless the host changed, the
 //! package is missing, or its data directory cannot be entered.
 //!
-//! Packaging follows `nsh-cli/src/android.rs`, cut to one ABI and the v1
-//! host. There is no Gradle project and no dev server.
+//! `adb reverse` forwards the dev port to this machine and is removed when
+//! the session drops. No other port is reversed. Packaging follows
+//! `nsh-cli/src/android.rs`, cut to one ABI and the v1 host. There is no
+//! Gradle project.
 
 use std::{
     env, fs,
     io::Write as _,
+    net::TcpListener,
     path::{Component, Path, PathBuf},
     process::Command,
     sync::{
@@ -64,6 +67,8 @@ pub struct AndroidOptions {
     pub entry: PathBuf,
     /// Minify the bundle.
     pub release: bool,
+    /// Dev server port to reverse onto the device. `0` picks a free one.
+    pub port: u16,
 }
 
 /// A device session. Dropping it stops the watch and force-stops the app.
@@ -73,6 +78,8 @@ pub struct AndroidSession {
     stop: Arc<AtomicBool>,
     stop_tx: Option<Sender<()>>,
     watch: Option<JoinHandle<()>>,
+    /// Removed after the watch stops and the activity is force-stopped.
+    reverse: Option<Reverse>,
 }
 
 impl AndroidSession {
@@ -97,6 +104,8 @@ impl Drop for AndroidSession {
         if let Ok(sdk) = Sdk::find() {
             let _ = adb(&sdk, &self.serial, &["shell", "am", "force-stop", PACKAGE]);
         }
+        // Removes `adb reverse` now that the app can no longer need it.
+        drop(self.reverse.take());
     }
 }
 
@@ -122,6 +131,10 @@ pub fn run_android(options: AndroidOptions) -> Result<AndroidSession, RunError> 
     let abi = device_abi(&sdk, &serial)?;
     let apk = host_apk(&sdk, &abi, options.release)?;
     install_if_needed(&sdk, &serial, &apk)?;
+    // The device reaches the dev server as 127.0.0.1 on this port. Only
+    // this port is reversed; it is removed when the session drops.
+    let port = dev_port(options.port)?;
+    let reverse = Reverse::add(&sdk, &serial, port)?;
     publish(&sdk, &serial, &app_dir, &bundled)?;
     relaunch(&sdk, &serial)?;
     eprintln!("launched on {serial}");
@@ -149,6 +162,7 @@ pub fn run_android(options: AndroidOptions) -> Result<AndroidSession, RunError> 
         stop,
         stop_tx: Some(stop_tx),
         watch: Some(watch),
+        reverse: Some(reverse),
     })
 }
 
@@ -1074,6 +1088,50 @@ pub(crate) fn push_bytes(
     )?;
     let _ = adb(sdk, serial, &["shell", "rm", "-f", &tmp]);
     Ok(())
+}
+
+/// A port on the device forwarded to this machine (`adb reverse`), removed
+/// when dropped. A dev host left on the device would otherwise reach the
+/// next server on that port. Only the dev port is forwarded.
+struct Reverse {
+    adb: PathBuf,
+    serial: String,
+    port: String,
+}
+
+impl Reverse {
+    fn add(sdk: &Sdk, serial: &str, port: u16) -> Result<Self, RunError> {
+        let spec = format!("tcp:{port}");
+        // A run that died before drop may still hold the binding.
+        let _ = adb(sdk, serial, &["reverse", "--remove", &spec]);
+        adb(sdk, serial, &["reverse", &spec, &spec])?;
+        Ok(Self {
+            adb: sdk.adb(),
+            serial: serial.to_owned(),
+            port: spec,
+        })
+    }
+}
+
+impl Drop for Reverse {
+    fn drop(&mut self) {
+        let removed = Command::new(&self.adb)
+            .args(["-s", &self.serial, "reverse", "--remove", &self.port])
+            .output();
+        if !removed.is_ok_and(|output| output.status.success()) {
+            eprintln!(
+                "could not remove the adb reverse of {} on {}",
+                self.port, self.serial
+            );
+        }
+    }
+}
+
+fn dev_port(port: u16) -> Result<u16, RunError> {
+    if port != 0 {
+        return Ok(port);
+    }
+    Ok(TcpListener::bind(("127.0.0.1", 0))?.local_addr()?.port())
 }
 
 pub(crate) fn relaunch(sdk: &Sdk, serial: &str) -> Result<(), RunError> {

@@ -36,6 +36,7 @@ mod storage;
 pub use nlayer_core::storage::{StorageBackend, StorageChange, Store};
 #[cfg(not(target_arch = "wasm32"))]
 pub use storage::{FileStorage, data_dir};
+pub mod protocol;
 
 use std::{
     collections::HashMap,
@@ -82,6 +83,12 @@ pub trait MountSink: Send + Sync + 'static {
     fn failed(&self, error: EngineError) {
         log::error!("{error}");
     }
+
+    /// A development update ([`EngineControl::hot_update`]) could not be
+    /// applied in place. The engine reloads the latest full bundle in the
+    /// same JS context when it has one; the platform may also load a newer
+    /// bundle with [`EngineControl::replace_bundle`].
+    fn hot_update_failed(&self) {}
 
     /// The back button reached the app and no `BackHandler` listener
     /// handled it: the platform's default (Android: send the task to the
@@ -211,6 +218,20 @@ fn app_storage(config: &EngineConfig) -> Option<Arc<dyn StorageBackend>> {
     None
 }
 
+/// A development update that replaces the app's changed modules in place,
+/// keeping the JS context and the state of modules that did not run again
+/// (made by `nlayer_bundler::HotBundle::patch`).
+#[derive(Debug, Clone)]
+pub struct HotUpdate {
+    /// Script name in stack traces, unique per update (e.g. `hot-3.js`).
+    pub name: String,
+    /// The script.
+    pub code: String,
+    /// Its source map (JSON). This engine has no symbolicator, so the map
+    /// is not applied; it stays on the update for a host that records one.
+    pub source_map: Option<String>,
+}
+
 /// One instruction for the engine thread.
 #[derive(Debug, Clone)]
 enum Message {
@@ -260,6 +281,10 @@ enum Message {
     /// The class warnings recorded so far.
     #[cfg(not(target_arch = "wasm32"))]
     ClassWarnings(Sender<Vec<String>>),
+    /// A development update ([`EngineControl::hot_update`]).
+    Hot(HotUpdate),
+    /// A full development bundle ([`EngineControl::replace_bundle`]).
+    ReplaceBundle(String),
     /// The engine thread was asked to exit.
     #[cfg(not(target_arch = "wasm32"))]
     Stop,
@@ -402,6 +427,20 @@ impl EngineControl {
     /// budget.
     pub fn frame(&self) {
         let _ = self.tx.send(Message::Frame);
+    }
+
+    /// Applies a development update in place. When it cannot be applied,
+    /// [`MountSink::hot_update_failed`] runs and the latest full bundle is
+    /// evaluated again in the same JS context.
+    pub fn hot_update(&self, update: HotUpdate) {
+        let _ = self.tx.send(Message::Hot(update));
+    }
+
+    /// Loads a full development bundle in the same JS context: a base
+    /// mismatch, or a reload after decline. The bundle's top-level runs
+    /// again, so module state is dropped. The process and the engine stay.
+    pub fn replace_bundle(&self, code: impl Into<String>) {
+        let _ = self.tx.send(Message::ReplaceBundle(code.into()));
     }
 }
 
@@ -673,6 +712,10 @@ struct Session<M: TextEngine> {
     sets_seen: HashMap<(u8, NodeId), usize>,
     /// Whether a display frame was requested and has not yet begun.
     frame_requested: bool,
+    /// The latest full bundle. A patch that cannot be applied in place is
+    /// evaluated again from this, in the same JS context.
+    #[cfg(feature = "js")]
+    bundle: String,
 }
 
 /// Rounds of "list asks for items -> JS renders them -> layout" folded into
@@ -731,6 +774,8 @@ impl<M: TextEngine> Session<M> {
             queued_ops: Vec::new(),
             sets_seen: HashMap::new(),
             frame_requested: false,
+            #[cfg(feature = "js")]
+            bundle: config.bundle,
         })
     }
 
@@ -875,6 +920,8 @@ impl<M: TextEngine> Session<M> {
                 self.host.animations_finished(&finished);
             }
             Message::Frame => self.frame_requested = false,
+            Message::Hot(update) => self.hot_update(update),
+            Message::ReplaceBundle(code) => self.replace_bundle(code),
             Message::NetworkDone => {}
             #[cfg(not(target_arch = "wasm32"))]
             Message::Barrier(_) => unreachable!("barriers are handled before apply"),
@@ -1016,6 +1063,68 @@ impl<M: TextEngine> Session<M> {
         #[cfg(feature = "browser")]
         {
             self.host.bind_list(id, binds);
+        }
+    }
+
+    /// Applies a patch in this context. `Ok(false)` or a reload flag is a
+    /// full reload of the stored bundle; an error keeps modules that ran.
+    #[cfg(feature = "js")]
+    fn hot_update(&mut self, update: HotUpdate) {
+        // No symbolicator consumes source maps.
+        let HotUpdate {
+            name,
+            code,
+            source_map: _,
+        } = update;
+        #[cfg(not(target_arch = "wasm32"))]
+        let start = std::time::Instant::now();
+        match self.host.eval_script(&name, &code) {
+            Ok(applied) => {
+                let reload = self.host.take_hot_reload();
+                if applied && !reload {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    log::info!("hot update applied in {}us", start.elapsed().as_micros());
+                    #[cfg(target_arch = "wasm32")]
+                    log::info!("hot update applied");
+                } else {
+                    self.sink.hot_update_failed();
+                    self.reload_full_bundle();
+                }
+            }
+            // The app keeps the modules that ran; the next update can
+            // fix the rest.
+            Err(err) => {
+                let _ = self.host.take_hot_reload();
+                let message = format!("hot update failed: {}", err.message);
+                log::error!("{message}");
+                self.sink.failed(EngineError::new(message));
+            }
+        }
+    }
+
+    #[cfg(feature = "browser")]
+    fn hot_update(&mut self, _update: HotUpdate) {}
+
+    #[cfg(feature = "js")]
+    fn replace_bundle(&mut self, code: String) {
+        self.bundle = code;
+        self.reload_full_bundle();
+    }
+
+    #[cfg(feature = "browser")]
+    fn replace_bundle(&mut self, _code: String) {}
+
+    /// Re-evaluates the stored bundle in this context. Empty means none
+    /// was provided, and the platform reloads on its own.
+    #[cfg(feature = "js")]
+    fn reload_full_bundle(&mut self) {
+        if self.bundle.is_empty() {
+            return;
+        }
+        if let Err(err) = self.host.reload_source(&self.bundle) {
+            let message = format!("bundle reload failed: {}", err.message);
+            log::error!("{message}");
+            self.sink.failed(EngineError::new(message));
         }
     }
 }

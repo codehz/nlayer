@@ -4,10 +4,11 @@
 //! standard input. The default is headless; `--target web` runs the opened app
 //! in a headless browser, `--target ios` in the simulator, and `--target
 //! android` on an emulator or a connected device. `nlayer run --target web`
-//! serves the app to a browser and reloads it after a rebuild. `nlayer run
-//! --target ios` runs it in the simulator and restarts it after a rebuild,
-//! without reinstalling the host. `nlayer run --target android` does the same
-//! on an emulator or a connected device.
+//! serves the app and publishes updates on `/ws` instead of reloading the
+//! page. `nlayer run --target ios` runs it in the simulator; a rebuild
+//! writes the bundle and does not restart the process. `nlayer run
+//! --target android` restarts after a rebuild and reverses the dev port
+//! onto the device until the session drops.
 
 mod android;
 mod android_package;

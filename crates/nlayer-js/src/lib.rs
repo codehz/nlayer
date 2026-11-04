@@ -264,6 +264,20 @@ impl Host {
         self.settle(promise)
     }
 
+    /// Evaluates `source` as the app bundle again in this context.
+    ///
+    /// Drops development hot state first (mounted trees are undone, and
+    /// kept signals are not reused), then the bundle's top-level runs
+    /// again. The VM is the same one.
+    pub fn reload_source(&self, source: &str) -> Result<(), JsError> {
+        self.cx.with(|cx| {
+            // SAFETY: the state `install` made for this context.
+            crate::hot::abandon(cx.as_raw().as_ptr());
+        });
+        self.run_jobs();
+        self.eval_source(source)
+    }
+
     /// Evaluates a classic script named `name` (for stack traces) and
     /// returns whether its completion value is strictly `true`:
     /// development update scripts report whether they could be applied.

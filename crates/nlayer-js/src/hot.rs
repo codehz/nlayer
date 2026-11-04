@@ -221,6 +221,53 @@ impl Hot {
     }
 }
 
+/// Undoes what a development bundle mounted and drops kept signals, so
+/// the next full script starts clean in this context. A module re-run
+/// would keep those signals; a full reload must not.
+pub(crate) fn abandon(cx: *mut JsContext) {
+    let (disposes, undos, renders) = with(cx, |h| {
+        let disposes: Vec<(Vec<Owned>, Owned)> = h
+            .metas
+            .values_mut()
+            .map(|meta| (std::mem::take(&mut meta.dispose), meta.data.clone_ref()))
+            .collect();
+        let undos: Vec<Owned> = std::mem::take(&mut h.undo)
+            .into_values()
+            .flatten()
+            .collect();
+        let mut renders: Vec<Render> = std::mem::take(&mut h.renders)
+            .into_values()
+            .flatten()
+            .collect();
+        renders.extend(std::mem::take(&mut h.pending).into_values().flatten());
+        (disposes, undos, renders)
+    });
+    for (callbacks, data) in &disposes {
+        for cb in callbacks {
+            let ran = call(cx, cb.raw(), &mut [data.raw()]);
+            if is_exception(ran) {
+                report_exception(cx);
+            } else {
+                free(cx, ran);
+            }
+        }
+    }
+    drop(disposes);
+    for cb in &undos {
+        let ran = call(cx, cb.raw(), &mut []);
+        if is_exception(ran) {
+            report_exception(cx);
+        } else {
+            free(cx, ran);
+        }
+    }
+    drop(undos);
+    undo_renders(cx, renders);
+    let old = with(cx, |h| std::mem::take(h));
+    drop(old);
+    hot(cx).reload.set(false);
+}
+
 fn hot(cx: *mut JsContext) -> &'static Hot {
     // SAFETY: the state `install` made, alive for every native call.
     unsafe { &(*state::state(cx)).hot }

@@ -423,3 +423,8 @@ Copied files:
   and Shift+click selection, and the `openUrl` capability grant are not
   copied
 - `MountItem::TrackStates` and the host report follow nsh's `TrackStates` / `set_states`, cut to press, hover, and focus.
+- `EngineControl::hot_update`, `HotUpdate` and `MountSink::hot_update_failed`
+  in `crates/nlayer-engine/src/lib.rs` from `crates/nsh-engine/src/lib.rs`
+  and `script.rs` (a patch script evaluated in place; a failure asks the
+  platform to reload and, here, also re-evaluates the last full bundle in
+  the same JS context. Shader and font re-registration are not copied)

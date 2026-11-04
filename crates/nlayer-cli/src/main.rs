@@ -78,9 +78,9 @@ enum Command {
         #[arg(default_value = ".")]
         dir: PathBuf,
     },
-    /// Run the app. Web serves a browser. iOS and Android install a host once,
-    /// then restart it after a rebuild without reinstalling.
-    /// A failed rebuild is printed; the previous app keeps running.
+    /// Run the app. Web serves a browser and publishes on `/ws`. iOS installs
+    /// a host once and leaves it running across rebuilds. Android installs a
+    /// host once, restarts it after a rebuild, and reverses the dev port.
     Run {
         /// The entry module, or the app's directory (default: the current one), whose `App.tsx` is the entry.
         #[arg(default_value = ".")]
@@ -88,7 +88,9 @@ enum Command {
         /// Which host runs the app.
         #[arg(long, value_enum, default_value = "web")]
         target: Target,
-        /// Port. `0` picks a free one. Web only.
+        /// Dev server port. `0` picks a free one. Web binds it. Android
+        /// reverses it onto the device (`adb reverse`) and removes it when
+        /// the run ends.
         #[arg(long, default_value_t = 8733)]
         port: u16,
         /// Minify the bundle.
@@ -117,10 +119,11 @@ enum TestHost {
 enum Target {
     /// This machine's browser.
     Web,
-    /// The iOS simulator. A rebuild restarts the app and drops its state.
+    /// The iOS simulator. A rebuild writes the bundle and leaves the
+    /// process running.
     Ios,
     /// An Android emulator or a connected device. A rebuild restarts the
-    /// app and drops its state.
+    /// app. The dev port is reversed onto the device until the run ends.
     Android,
 }
 
@@ -258,8 +261,11 @@ fn main() -> ExitCode {
                         ExitCode::FAILURE
                     }
                 },
-                Target::Android => match run_android(nlayer_cli::AndroidOptions { entry, release })
-                {
+                Target::Android => match run_android(nlayer_cli::AndroidOptions {
+                    entry,
+                    release,
+                    port,
+                }) {
                     Ok(session) => {
                         session.park();
                         drop(session);
