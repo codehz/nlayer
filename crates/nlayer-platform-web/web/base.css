@@ -92,6 +92,11 @@
   pointer-events: none;
   box-sizing: border-box;
 }
+.nl-layer {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
 .nl-fill {
   position: absolute;
   left: 0;
@@ -149,15 +154,20 @@ textarea.nl-field {
 .nl-stack {
   overflow: hidden;
 }
-.nl-stack > .nl-screen {
+.nl-stack > .nl-screen,
+.nl-stack > .nl-layer > .nl-screen {
   visibility: hidden;
 }
-.nl-stack > .nl-screen.nl-top {
+.nl-stack > .nl-screen.nl-top,
+.nl-stack > .nl-layer > .nl-screen.nl-top {
   visibility: visible;
 }
-/* Screen clips content */
+/* Screen clips content. A content layer takes that clip so an outer shadow stays. */
 .nl-screen {
   overflow: hidden;
+}
+.nl-v:has(> .nl-layer) {
+  overflow: visible;
 }
 /* HeaderItem sits above content */
 .nl-headeritem {

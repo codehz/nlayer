@@ -9,14 +9,18 @@
 //!
 //! Copied from `nsh-platform-web/src/encode.rs` and `text/css.rs`. The CSS
 //! is the drawn whitelist (fill, radius, opacity, overflow, static
-//! transform, transform origin, border). Text is glyph runs from
+//! transform, transform origin, border, `box-shadow`, gradient
+//! `background-image`). Text is glyph runs from
 //! [`crate::text::WebLayout`]: each run is placed where layout put it.
 //! `activeStyle`, `hoverStyle` and `focusStyle` are rules on the view
 //! (`["rule", ...]`) that the page applies; they do not replace the view's
 //! class.
-//! A view style also sends `["xf", id, steps]` (`{ translateX: 12 }`, angles
-//! in degrees), including an empty list that clears a previous one. The page
-//! paints the CSS and keeps the steps for the test tree.
+//! A view style is `["s", id, class, border, layer]`. `layer` is the content
+//! clip class when a visible outer shadow must stay outside `overflow: clip`;
+//! otherwise null. A scroll is never split. A view style also sends
+//! `["xf", id, steps]` (`{ translateX: 12 }`, angles in degrees), including
+//! an empty list that clears a previous one. The page paints the CSS and
+//! keeps the steps for the test tree.
 //!
 
 use std::fmt::Write as _;
@@ -25,7 +29,8 @@ use nlayer_core::{
     Color, Command, EventKind, EventMask, InputConfig, Interaction, KeyboardType, MountBatch,
     MountItem, NodeId, ResizeMode, ViewKind,
     animation::AnimationProp,
-    geometry::{DefiniteLength, Points, REM_SIZE, relative},
+    effects::{BoxShadow, Gradient, GradientKind, GradientSize},
+    geometry::{DefiniteLength, Points, REM_SIZE, Radians, Size, relative},
     style::{BorderStyle, DecorationStyle, TextAlign, TextStyle, TransformOrigin, ViewStyle},
     text::ResolvedTextStyle,
     transform::{Transform, TransformKind},
@@ -49,6 +54,8 @@ struct Classes {
 #[derive(Default)]
 pub struct Encoder {
     classes: Classes,
+    /// Kind from [`MountItem::Create`], so a scroll is never split.
+    kinds: Vec<Option<ViewKind>>,
 }
 
 impl Encoder {
@@ -69,6 +76,7 @@ impl Encoder {
     fn item(&mut self, out: &mut Out, item: &MountItem) {
         match item {
             MountItem::Create { id, kind } => {
+                self.remember(*id, *kind);
                 out.item("c").num(*id).str(kind_name(*kind)).end();
             }
             MountItem::Insert {
@@ -88,6 +96,9 @@ impl Encoder {
                 if let Some(n) = self.classes.count.get_mut(*id as usize) {
                     *n = 0;
                 }
+                if let Some(kind) = self.kinds.get_mut(*id as usize) {
+                    *kind = None;
+                }
                 out.item("d").num(*id).end();
             }
             MountItem::Frame { id, frame } => {
@@ -100,16 +111,21 @@ impl Encoder {
                     .end();
             }
             MountItem::ViewStyle { id, style } => {
-                let (css, border) = view_css(style);
+                let (css, border, layer) = view_css(style, self.is_scroll(*id));
                 let class = self.class(out, *id, Part::View, &css);
                 let border = match &border {
                     Some(border) => self.class(out, *id, Part::Border, border),
+                    None => Class::None,
+                };
+                let layer = match &layer {
+                    Some(layer) => self.class(out, *id, Part::Layer, layer),
                     None => Class::None,
                 };
                 out.item("s")
                     .num(*id)
                     .class_arg(class)
                     .class_arg(border)
+                    .class_arg(layer)
                     .end();
                 push_transform(out, *id, &style.transform);
             }
@@ -676,6 +692,19 @@ impl Encoder {
         class
     }
 
+    fn remember(&mut self, id: NodeId, kind: ViewKind) {
+        let i = id as usize;
+        if self.kinds.len() <= i {
+            self.kinds.resize(i + 1, None);
+        }
+        self.kinds[i] = Some(kind);
+    }
+
+    /// A scroll, including a list that scrolls itself, clips its own shadow.
+    fn is_scroll(&self, id: NodeId) -> bool {
+        self.kinds.get(id as usize).copied().flatten() == Some(ViewKind::Scroll)
+    }
+
     /// `activeStyle` / `hoverStyle` / `focusStyle`. The class stays on the
     /// view; the page paints the rules while that state holds. Active beats
     /// hover, which beats focus, whatever order the rules were defined in.
@@ -693,7 +722,7 @@ impl Encoder {
             Interaction::Focus => ("f", ":focus-within", 2),
         };
         let name = format!("i{id}{token}");
-        let (view_css, border) = view_css(view);
+        let (view_css, border, _) = view_css(view, self.is_scroll(id));
         let text_css = state_text_css(text);
         let empty = view_css.is_empty() && border.is_none() && text_css.is_empty();
         rule(out, &name, weight, pseudo, "", &view_css);
@@ -706,7 +735,14 @@ impl Encoder {
             border.as_deref().unwrap_or(""),
         );
         rule(out, &name, weight, pseudo, " .nl-text span", &text_css);
-        rule(out, &name, weight, pseudo, " > .nl-field", &text_css);
+        rule(
+            out,
+            &name,
+            weight,
+            pseudo,
+            " > :is(.nl-field, .nl-layer > .nl-field)",
+            &text_css,
+        );
         out.item("st").num(id).str(interaction.name());
         if empty {
             out.raw("null");
@@ -735,6 +771,7 @@ enum Part {
     Border,
     Text(usize),
     Field,
+    Layer,
 }
 
 /// JSON output.
@@ -810,6 +847,7 @@ impl Out {
             Class::Own(id, Part::Border) => write!(self.s, "\"i{id}b\""),
             Class::Own(id, Part::Text(i)) => write!(self.s, "\"i{id}t{i}\""),
             Class::Own(id, Part::Field) => write!(self.s, "\"i{id}f\""),
+            Class::Own(id, Part::Layer) => write!(self.s, "\"i{id}l\""),
         };
     }
 
@@ -945,10 +983,115 @@ fn css_color(c: Color) -> String {
     }
 }
 
-/// The CSS of a view's visual style, and of its border overlay (drawn over
+/// Whether clipping moves to a content layer so a visible outer shadow is
+/// not cut by the view's own overflow. A scroll never splits: it clips
+/// itself, shadow included.
+fn content_layer(s: &ViewStyle) -> bool {
+    s.overflow_hidden
+        && s.effects.as_ref().is_some_and(|effects| {
+            effects
+                .box_shadows
+                .iter()
+                .any(|shadow| !shadow.inset && shadow.is_visible())
+        })
+}
+
+/// `box-shadow` text, top layer first. An empty list emits nothing (`none`
+/// would clear a base shadow a state slot must leave alone).
+fn shadow_css(layers: &[BoxShadow]) -> Option<String> {
+    if layers.is_empty() {
+        return None;
+    }
+    Some(
+        layers
+            .iter()
+            .map(|b| {
+                format!(
+                    "{}{}px {}px {}px {}px {}",
+                    if b.inset { "inset " } else { "" },
+                    b.offset_x.0,
+                    b.offset_y.0,
+                    b.blur.0,
+                    b.spread.0,
+                    css_color(b.color)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(","),
+    )
+}
+
+/// The CSS of `g`. Without lengths, the stops the core resolves, so the
+/// browser places them as every platform does (a negative stop at 0);
+/// with lengths, the stops as written (lengths in pixels), which only the
+/// box resolves.
+fn gradient(g: &Gradient) -> String {
+    let stops: Vec<String> = if g.has_lengths() {
+        g.stops
+            .iter()
+            .map(|s| match s.position {
+                Some(DefiniteLength::Fraction(p)) => {
+                    format!("{} {}%", css_color(s.color), p.0 * 100.0)
+                }
+                Some(DefiniteLength::Absolute(a)) => {
+                    format!("{} {}px", css_color(s.color), a.to_points(REM_SIZE).0)
+                }
+                None => css_color(s.color),
+            })
+            .collect()
+    } else {
+        g.resolved_stops(Size::default())
+            .iter()
+            .map(|(c, p)| format!("{} {}%", css_color(*c), p.0 * 100.0))
+            .collect()
+    };
+    let stops = stops.join(", ");
+    let repeating = if g.repeating { "repeating-" } else { "" };
+    match g.kind {
+        GradientKind::Linear { angle } => {
+            format!("{repeating}linear-gradient({}deg, {stops})", degrees(angle))
+        }
+        GradientKind::LinearCorner { right, bottom } => format!(
+            "{repeating}linear-gradient(to {} {}, {stops})",
+            if bottom { "bottom" } else { "top" },
+            if right { "right" } else { "left" }
+        ),
+        GradientKind::Radial { circle, size, x, y } => {
+            let size = match size {
+                GradientSize::ClosestSide => "closest-side",
+                GradientSize::ClosestCorner => "closest-corner",
+                GradientSize::FarthestSide => "farthest-side",
+                GradientSize::FarthestCorner => "farthest-corner",
+            };
+            format!(
+                "{repeating}radial-gradient({} {size} at {}% {}%, {stops})",
+                if circle { "circle" } else { "ellipse" },
+                x.0 * 100.0,
+                y.0 * 100.0
+            )
+        }
+        GradientKind::Conic { from, x, y } => format!(
+            "{repeating}conic-gradient(from {}deg at {}% {}%, {stops})",
+            degrees(from),
+            x.0 * 100.0,
+            y.0 * 100.0
+        ),
+    }
+}
+
+/// An angle in CSS degrees, rounded to 1e-4 so that whole degrees are
+/// written as the style wrote them (radians to degrees in `f32` can be an
+/// ulp off).
+fn degrees(a: Radians) -> f32 {
+    (a.to_degrees() * 1e4).round() / 1e4
+}
+
+/// The CSS of a view's visual style, of its border overlay (drawn over
 /// the children, as UIKit draws layer borders; also keeps borders out of
-/// the content box, which layout already placed).
-fn view_css(s: &ViewStyle) -> (String, Option<String>) {
+/// the content box, which layout already placed), and of its content layer
+/// when an outer shadow must not be clipped. Filters, masks, outlines and
+/// text shadows are not drawn.
+fn view_css(s: &ViewStyle, scroll: bool) -> (String, Option<String>, Option<String>) {
     let mut css = String::new();
     if !s.background_color.is_transparent() {
         let _ = write!(css, "background-color:{};", css_color(s.background_color));
@@ -970,9 +1113,25 @@ fn view_css(s: &ViewStyle) -> (String, Option<String>) {
         let _ = write!(css, "opacity:{};", s.opacity);
     }
     // `clip`, not `hidden`: a hidden box is still a scroll container, which
-    // the browser scrolls to bring a focused field into view.
-    if s.overflow_hidden {
+    // the browser scrolls to bring a focused field into view. A visible
+    // outer shadow moves that clip onto a content layer so the shadow stays
+    // outside the box. A scroll always clips itself.
+    let split = !scroll && content_layer(s);
+    if s.overflow_hidden && !split {
         css.push_str("overflow:clip;");
+    }
+    if let Some(effects) = &s.effects {
+        if !effects.background_images.is_empty() {
+            let images: Vec<String> = effects.background_images.iter().map(gradient).collect();
+            let _ = write!(css, "background-image:{};", images.join(","));
+        }
+    }
+    if let Some(shadows) = s
+        .effects
+        .as_ref()
+        .and_then(|effects| shadow_css(&effects.box_shadows))
+    {
+        let _ = write!(css, "box-shadow:{shadows};");
     }
     // Laid out, not drawn, and out of the page's hit testing.
     if s.hidden {
@@ -1003,7 +1162,8 @@ fn view_css(s: &ViewStyle) -> (String, Option<String>) {
     } else {
         None
     };
-    (css, border)
+    let layer = split.then(|| "overflow:clip;".to_owned());
+    (css, border, layer)
 }
 
 fn rule(out: &mut Out, name: &str, weight: u8, pseudo: &str, tail: &str, text: &str) {

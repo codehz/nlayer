@@ -471,7 +471,8 @@ function textOf(el) {
 }
 
 function childViews(el) {
-  return [...(el.children ?? [])].filter((child) => child && child._kind);
+  const host = el._layer ?? el;
+  return [...(host.children ?? [])].filter((child) => child && child._kind);
 }
 
 function parentView(el) {

@@ -5,7 +5,8 @@
 // The page's side of a mount batch (`Encoder` in this crate). Extracted
 // from nsh's DOM mounter and cut to views, text, images, one-axis scroll
 // views and single-line inputs: absolute frames, generated classes, a
-// border overlay, a scroll spacer and a field whose value ignores a stale
+// border overlay, a content layer when an outer shadow must stay outside
+// `overflow: clip`, a scroll spacer and a field whose value ignores a stale
 // edit count. `activeStyle`, `hoverStyle` and `focusStyle` are rules the
 // page applies (`rule`) while the pointer state holds (`st`).
 
@@ -363,11 +364,15 @@ export class Player {
     const parent = this.view(parentId);
     const child = this.view(childId);
     if (!parent || !child) return;
+    const host = this.contentHost(parent);
     const before = beforeId == null ? null : this.view(beforeId);
-    parent.insertBefore(
-      child,
-      before && before.parentNode === parent ? before : (parent._spacer ?? null),
-    );
+    const anchor =
+      before && before.parentNode === host
+        ? before
+        : host === parent
+          ? (parent._spacer ?? null)
+          : null;
+    host.insertBefore(child, anchor);
     this.raiseBorder(parent);
     this.trackChange(parent, child);
   }
@@ -375,7 +380,9 @@ export class Player {
   op_r([, id]) {
     const el = this.view(id);
     if (!el) return;
-    const parent = el.parentNode;
+    // The DOM parent may be the content layer. Removal uses that node;
+    // stack tracking wants the view.
+    const parent = this.ownerView(el.parentNode);
     el.remove();
     if (parent) this.trackChange(parent, el);
   }
@@ -383,7 +390,7 @@ export class Player {
   op_d([, id]) {
     const el = this.view(id);
     if (!el) return;
-    const parent = el.parentNode;
+    const parent = this.ownerView(el.parentNode);
     if (this.focused === el) this.focused = null;
     for (const held of this.pressHeld.values()) held.delete(el);
     this.animation?.unbind(id);
@@ -405,7 +412,7 @@ export class Player {
   reconcileStacks() {
     for (const stack of this.changedStacks) {
       if (!this.views.has(stack._id)) continue;
-      const screens = [...stack.children].filter((c) => c._kind === "screen");
+      const screens = this.hosted(stack).filter((c) => c._kind === "screen");
       screens.forEach((screen, i) => {
         const isTop = i === screens.length - 1;
         screen.classList.toggle("nl-top", isTop);
@@ -434,7 +441,7 @@ export class Player {
     s.height = `${h}px`;
   }
 
-  op_s([, id, css, border]) {
+  op_s([, id, css, border, layer]) {
     const el = this.view(id);
     if (!el) return;
     swapClass(el, "_class", this.styleClass(css));
@@ -446,10 +453,64 @@ export class Player {
       el._border.remove();
       el._border = null;
     }
+    this.setContentLayer(el, layer);
   }
 
   raiseBorder(el) {
     if (el._border) el.append(el._border);
+  }
+
+  /** Where engine children go: the clip layer, or the view. */
+  contentHost(el) {
+    return el._layer ?? el;
+  }
+
+  hosted(el) {
+    return [...this.contentHost(el).children];
+  }
+
+  /** The view that owns `node`, skipping a content layer. */
+  ownerView(node) {
+    for (let n = node; n; n = n.parentNode) if (n._kind) return n;
+    return null;
+  }
+
+  /**
+   * Clip children in `.nl-layer` when `name` is set, so an outer shadow
+   * stays on the view. A scroll always clips itself. Switching moves
+   * image, text, field and engine children without reordering them; the
+   * border stays on the view, above the layer.
+   */
+  setContentLayer(el, name) {
+    if (!name || el._kind === "scroll") {
+      this.clearContentLayer(el);
+      return;
+    }
+    let layer = el._layer;
+    if (!layer) {
+      layer = this.doc.createElement("div");
+      layer.className = "nl-layer";
+      const movable = [...el.children].filter((child) => this.movesWithLayer(el, child));
+      // Before engine children (and before the border, which stays outside).
+      el.insertBefore(layer, movable[0] ?? el._border ?? null);
+      for (const child of movable) layer.append(child);
+      el._layer = layer;
+    }
+    swapClass(layer, "_class", this.styleClass(name));
+    this.raiseBorder(el);
+  }
+
+  movesWithLayer(el, child) {
+    return child !== el._border && child !== el._spacer && child !== el._layer;
+  }
+
+  clearContentLayer(el) {
+    const layer = el._layer;
+    if (!layer) return;
+    for (const child of [...layer.children]) el.insertBefore(child, layer);
+    layer.remove();
+    el._layer = null;
+    this.raiseBorder(el);
   }
 
   op_t([
@@ -476,7 +537,7 @@ export class Player {
       box = this.doc.createElement("div");
       box.className = "nl-text";
       el._text = box;
-      el.insertBefore(box, el.firstChild);
+      this.contentHost(el).insertBefore(box, this.contentHost(el).firstChild);
       // A selection the browser starts is not a long press, and the click
       // that ends it reports nothing (see `selecting`).
       box.addEventListener("selectstart", () => this.selectStart(el));
@@ -1225,7 +1286,7 @@ export class Player {
       if (focused) field.focus();
     } else if (!field) {
       field = this.makeField(el, id, tag);
-      el.append(field);
+      this.contentHost(el).append(field);
       if (el._content) this.placeContent(el);
     }
     swapClass(field, "_class", this.styleClass(css));
@@ -1531,7 +1592,7 @@ export class Player {
     }
     for (const el of this.views.values()) {
       if (el._kind === "stack" && el.isConnected) {
-        const screens = [...el.children].filter((c) => c._kind === "screen");
+        const screens = this.hosted(el).filter((c) => c._kind === "screen");
         depth += Math.max(0, screens.length - 1);
       }
     }

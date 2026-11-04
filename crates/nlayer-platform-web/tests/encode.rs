@@ -4,7 +4,8 @@ use std::{process::Command, sync::Arc, time::Duration};
 
 use nlayer_core::{
     Color, MountBatch, MountItem, ViewKind,
-    geometry::{Edges, Size, px},
+    effects::{BoxShadow, ColorStop, Effects, Filter, Gradient, GradientKind, GradientSize},
+    geometry::{DefiniteLength, Edges, Size, deg, percentage, px},
     style::ViewStyle,
     transform::{Transform, TransformKind},
 };
@@ -70,6 +71,20 @@ fn a_style_is_one_class_and_its_border_is_separate() {
         css[1][2].as_str().unwrap().contains("border-top-width:1px"),
         "{json}"
     );
+    let styled: Vec<_> = items(&json)
+        .into_iter()
+        .filter(|item| item[0] == "s")
+        .collect();
+    assert_eq!(styled.len(), 2, "{json}");
+    assert_eq!(
+        styled[0].as_array().unwrap().len(),
+        5,
+        "view class, border class, content layer: {json}"
+    );
+    assert!(styled[0][4].is_null(), "no outer shadow to split: {json}");
+    assert!(styled[1][4].is_null(), "{json}");
+    assert_eq!(styled[0][2], styled[1][2]);
+    assert_eq!(styled[0][3], styled[1][3]);
 }
 
 #[test]
@@ -166,6 +181,286 @@ fn a_state_style_is_a_rule_the_page_applies() {
     assert_eq!(applied[1], 2);
     assert_eq!(applied[2], "hover");
     assert_eq!(applied[3], "i2h");
+}
+
+fn shadow(x: f32, y: f32, blur: f32, spread: f32, color: Color, inset: bool) -> BoxShadow {
+    BoxShadow {
+        offset_x: px(x),
+        offset_y: px(y),
+        blur: px(blur),
+        spread: px(spread),
+        color,
+        inset,
+    }
+}
+
+fn stop(color: Color, position: Option<DefiniteLength>) -> ColorStop {
+    ColorStop { color, position }
+}
+
+fn red_blue() -> Vec<ColorStop> {
+    vec![
+        stop(Color::rgba(255, 0, 0, 255), Some(percentage(0.0).into())),
+        stop(Color::rgba(0, 0, 255, 255), None),
+    ]
+}
+
+fn gradient(kind: GradientKind, stops: Vec<ColorStop>, repeating: bool) -> Gradient {
+    Gradient {
+        kind,
+        stops,
+        repeating,
+    }
+}
+
+fn with_effects(shadows: Vec<BoxShadow>, images: Vec<Gradient>) -> ViewStyle {
+    ViewStyle {
+        effects: Some(Arc::new(Effects {
+            box_shadows: shadows,
+            background_images: images,
+            ..Effects::default()
+        })),
+        ..ViewStyle::default()
+    }
+}
+
+fn encode_one(style: ViewStyle) -> Vec<Value> {
+    items(&Encoder::new().encode(&MountBatch {
+        items: vec![MountItem::ViewStyle {
+            id: 2,
+            style: Box::new(style),
+        }],
+    }))
+}
+
+fn class_text(batch: &[Value], name: &str) -> String {
+    batch
+        .iter()
+        .find(|item| item[0] == "css" && item[1] == name)
+        .unwrap_or_else(|| panic!("missing class {name}: {batch:?}"))[2]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+fn styled(batch: &[Value]) -> (String, Option<String>) {
+    let item = batch.iter().find(|item| item[0] == "s").expect("a style");
+    assert_eq!(
+        item.as_array().unwrap().len(),
+        5,
+        "view, border, content layer: {item}"
+    );
+    let view = class_text(batch, item[2].as_str().unwrap());
+    let layer = item[4].as_str().map(|name| class_text(batch, name));
+    (view, layer)
+}
+
+#[test]
+fn shadows_and_gradients_are_css_and_empty_lists_emit_nothing() {
+    let outer = shadow(1.0, 2.0, 3.0, 4.0, Color::BLACK, false);
+    let inset = shadow(0.0, 1.0, 2.0, -1.0, Color::rgba(255, 0, 0, 255), true);
+    let linear = gradient(
+        GradientKind::Linear { angle: deg(180.0) },
+        red_blue(),
+        false,
+    );
+    let corner = gradient(
+        GradientKind::LinearCorner {
+            right: true,
+            bottom: true,
+        },
+        red_blue(),
+        false,
+    );
+    let radial = gradient(
+        GradientKind::Radial {
+            circle: true,
+            size: GradientSize::ClosestSide,
+            x: percentage(0.25),
+            y: percentage(0.75),
+        },
+        red_blue(),
+        false,
+    );
+    let conic = gradient(
+        GradientKind::Conic {
+            from: deg(90.0),
+            x: percentage(0.5),
+            y: percentage(0.5),
+        },
+        red_blue(),
+        true,
+    );
+    let lengths = gradient(
+        GradientKind::Linear { angle: deg(90.0) },
+        vec![
+            stop(Color::rgba(255, 0, 0, 255), Some(px(10.0).into())),
+            stop(Color::rgba(0, 0, 255, 255), Some(percentage(0.5).into())),
+            stop(Color::rgba(0, 255, 0, 255), None),
+        ],
+        true,
+    );
+    let (view, layer) = styled(&encode_one(with_effects(
+        vec![outer, inset],
+        vec![linear, corner, radial, conic, lengths],
+    )));
+    assert!(layer.is_none(), "overflow is not hidden: {view}");
+    assert!(
+        view.contains("box-shadow:1px 2px 3px 4px #000000,inset 0px 1px 2px -1px #ff0000;"),
+        "{view}"
+    );
+    assert!(
+        view.contains(
+            "background-image:linear-gradient(180deg, #ff0000 0%, #0000ff 100%),\
+             linear-gradient(to bottom right, #ff0000 0%, #0000ff 100%),\
+             radial-gradient(circle closest-side at 25% 75%, #ff0000 0%, #0000ff 100%),\
+             repeating-conic-gradient(from 90deg at 50% 50%, #ff0000 0%, #0000ff 100%),\
+             repeating-linear-gradient(90deg, #ff0000 10px, #0000ff 50%, #00ff00);"
+        ),
+        "{view}"
+    );
+    assert!(!view.contains("filter"), "{view}");
+    assert!(!view.contains("mask-image"), "{view}");
+    assert!(!view.contains("outline"), "{view}");
+
+    let mut empty = ViewStyle {
+        background_color: Color::rgba(1, 2, 3, 255),
+        effects: Some(Arc::new(Effects {
+            filters: vec![Filter::Blur(px(4.0))],
+            ..Effects::default()
+        })),
+        ..ViewStyle::default()
+    };
+    let (cleared, _) = styled(&encode_one(empty.clone()));
+    assert!(cleared.contains("background-color:#010203"), "{cleared}");
+    assert!(!cleared.contains("box-shadow"), "{cleared}");
+    assert!(!cleared.contains("background-image"), "{cleared}");
+    assert!(!cleared.contains("filter"), "{cleared}");
+    assert!(!cleared.contains("none"), "{cleared}");
+
+    empty.effects = None;
+    let (absent, _) = styled(&encode_one(empty));
+    assert!(!absent.contains("box-shadow"), "{absent}");
+    assert!(!absent.contains("background-image"), "{absent}");
+}
+
+#[test]
+fn an_outer_shadow_moves_overflow_clip_onto_the_content_layer() {
+    let outer = shadow(0.0, 6.0, 18.0, 0.0, Color::rgba(0, 0, 0, 128), false);
+    let mut split = with_effects(vec![outer], vec![]);
+    split.overflow_hidden = true;
+    let (view, layer) = styled(&encode_one(split));
+    assert!(
+        view.contains("box-shadow:0px 6px 18px 0px rgba(0,0,0,0.502);"),
+        "{view}"
+    );
+    assert!(!view.contains("overflow"), "{view}");
+    assert_eq!(layer.as_deref(), Some("overflow:clip;"));
+
+    let mut inset_only = with_effects(vec![shadow(0.0, 1.0, 2.0, 0.0, Color::BLACK, true)], vec![]);
+    inset_only.overflow_hidden = true;
+    let (view, layer) = styled(&encode_one(inset_only));
+    assert!(view.contains("overflow:clip;"), "{view}");
+    assert!(view.contains("inset "), "{view}");
+    assert!(layer.is_none(), "{view}");
+
+    let mut bare = ViewStyle {
+        overflow_hidden: true,
+        ..ViewStyle::default()
+    };
+    let (view, layer) = styled(&encode_one(bare.clone()));
+    assert!(view.contains("overflow:clip;"), "{view}");
+    assert!(!view.contains("box-shadow"), "{view}");
+    assert!(layer.is_none());
+
+    bare.effects = Some(Arc::new(Effects {
+        box_shadows: vec![shadow(4.0, 0.0, 0.0, 0.0, Color::TRANSPARENT, false)],
+        ..Effects::default()
+    }));
+    let (view, layer) = styled(&encode_one(bare));
+    assert!(
+        view.contains("overflow:clip;"),
+        "a transparent outer shadow does not split: {view}"
+    );
+    assert!(layer.is_none(), "{view}");
+
+    let mut encoder = Encoder::new();
+    let _ = encoder.encode(&MountBatch {
+        items: vec![MountItem::Create {
+            id: 4,
+            kind: ViewKind::Scroll,
+        }],
+    });
+    let mut scrolling = with_effects(
+        vec![shadow(0.0, 6.0, 18.0, 0.0, Color::BLACK, false)],
+        vec![],
+    );
+    scrolling.overflow_hidden = true;
+    let later = items(&encoder.encode(&MountBatch {
+        items: vec![MountItem::ViewStyle {
+            id: 4,
+            style: Box::new(scrolling),
+        }],
+    }));
+    let (view, layer) = styled(&later);
+    assert!(
+        view.contains("overflow:clip;"),
+        "a scroll keeps the clip on itself: {view}"
+    );
+    assert!(view.contains("box-shadow:"), "{view}");
+    assert!(layer.is_none(), "{view}");
+}
+
+#[test]
+fn a_state_writes_a_shadow_or_gradient_only_when_its_list_is_set() {
+    let set = with_effects(
+        vec![shadow(0.0, 2.0, 4.0, 0.0, Color::BLACK, false)],
+        vec![gradient(
+            GradientKind::Linear { angle: deg(0.0) },
+            red_blue(),
+            false,
+        )],
+    );
+    let json = Encoder::new().encode(&MountBatch {
+        items: vec![MountItem::StateStyle {
+            id: 2,
+            interaction: nlayer_core::Interaction::Active,
+            view: Box::new(set),
+            text: nlayer_core::style::TextStyle::default(),
+        }],
+    });
+    let rule = items(&json)
+        .into_iter()
+        .find(|item| item[0] == "rule" && item[4] == "")
+        .expect("the view rule");
+    let text = rule[5].as_str().unwrap();
+    assert!(
+        text.contains("box-shadow:0px 2px 4px 0px #000000;"),
+        "{text}"
+    );
+    assert!(
+        text.contains("background-image:linear-gradient(0deg, #ff0000 0%, #0000ff 100%);"),
+        "{text}"
+    );
+    assert!(!text.contains("none"), "{text}");
+
+    let cleared = Encoder::new().encode(&MountBatch {
+        items: vec![MountItem::StateStyle {
+            id: 2,
+            interaction: nlayer_core::Interaction::Hover,
+            view: Box::new(ViewStyle {
+                effects: Some(Arc::new(Effects::default())),
+                ..ViewStyle::default()
+            }),
+            text: nlayer_core::style::TextStyle::default(),
+        }],
+    });
+    let rule = items(&cleared)
+        .into_iter()
+        .find(|item| item[0] == "rule" && item[4] == "")
+        .expect("the view rule");
+    let text = rule[5].as_str().unwrap();
+    assert!(text.is_empty(), "an empty list does not emit none: {text}");
 }
 
 const APP: &str = r#"
