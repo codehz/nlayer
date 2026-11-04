@@ -38,6 +38,9 @@ pub(crate) fn text_cluster_boxes(
 }
 
 /// The pixel size in a CSS `font` shorthand (`16px` in `400 16px …`).
+///
+/// Only the off-wasm stand-in reads it; the page measures for real.
+#[cfg(not(target_arch = "wasm32"))]
 fn font_size(font: &str) -> f32 {
     let Some(px) = font.find("px") else {
         return 14.0;
