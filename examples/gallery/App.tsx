@@ -939,7 +939,7 @@ function ListDemoPage(props: { nav: NavStackHandle }) {
 
 function ViewportParentPage(props: { nav: NavStackHandle }) {
   return (
-    <View testID="viewport-parent-page" class="flex-1 bg-white">
+    <View testID="viewport-parent-page" class="flex-1 min-h-0 bg-white">
       <View class="border-b border-b-slate-200 p-4">
         <Text class="text-xl font-bold">List viewport="parent"</Text>
         <Text
