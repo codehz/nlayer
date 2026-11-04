@@ -127,7 +127,7 @@ function Pointer() {
       <Input
         value={focused()}
         placeholder="Focus"
-        onChange={(value) => focused.set(value)}
+        onChange={({ value }) => focused.set(value)}
         focusStyle={{ backgroundColor: "#ecfeff", color: "#0f172a", width: 10 }}
         class="w-40 rounded-lg border border-[#cbd5e1] bg-white p-2 text-base text-[#0f172a]"
       />
@@ -221,7 +221,7 @@ function Field(props: {
   label: string;
   value: string;
   placeholder: string;
-  onChange?: (value: string) => void;
+  onChange?: (e: { value: string }) => void;
   secureTextEntry?: boolean;
   keyboardType?: "text" | "email" | "number" | "phone";
   disabled?: boolean;
@@ -256,35 +256,35 @@ function Fields() {
         label={`Name: ${name()}`}
         value={name()}
         placeholder="Name"
-        onChange={(value) => name.set(value)}
+        onChange={({ value }) => name.set(value)}
       />
       <Field
         label="Email"
         value={email()}
         placeholder="Email"
         keyboardType="email"
-        onChange={(value) => email.set(value)}
+        onChange={({ value }) => email.set(value)}
       />
       <Field
         label="Amount"
         value={amount()}
         placeholder="Amount"
         keyboardType="number"
-        onChange={(value) => amount.set(value)}
+        onChange={({ value }) => amount.set(value)}
       />
       <Field
         label="Phone"
         value={phone()}
         placeholder="Phone"
         keyboardType="phone"
-        onChange={(value) => phone.set(value)}
+        onChange={({ value }) => phone.set(value)}
       />
       <Field
         label="Password"
         value={secret()}
         placeholder="Password"
         secureTextEntry
-        onChange={(value) => secret.set(value)}
+        onChange={({ value }) => secret.set(value)}
       />
       <Field label={`Locked: ${locked()}`} value={locked()} placeholder="Locked" disabled />
     </Section>
@@ -488,7 +488,7 @@ function StorageDemo() {
       <Input
         testID="storage-input"
         value={inputValue()}
-        onChange={inputValue.set}
+        onChange={({ value }) => inputValue.set(value)}
         placeholder="Enter value to store"
         class="rounded-md border border-[#cbd5e1] p-2"
       />

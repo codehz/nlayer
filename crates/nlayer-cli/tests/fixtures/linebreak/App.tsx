@@ -9,7 +9,7 @@ function App() {
         testID="field"
         multiline
         value={value()}
-        onChange={(text) => value.set(text)}
+        onChange={({ value: next }) => value.set(next)}
         style={{ width: 300, height: 120 }}
       />
       <Text>{value()}</Text>

@@ -1032,8 +1032,7 @@ pub(crate) unsafe extern "C" fn signal(
 }
 
 /// A signal object naming `id`: callable to read it, with its own `set` and
-/// `update` bound to it, so a signal's method works as a callback
-/// (`onChange={value.set}`), as the browser facade's accessor does.
+/// `update` bound to it, as the browser facade's accessor does.
 fn signal_object(cx: *mut JsContext, id: u32) -> JsValue {
     let class = unsafe { graph(cx) }.data.classes.signal;
     let obj = object(cx, class, id);

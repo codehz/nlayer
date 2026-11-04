@@ -24,7 +24,7 @@ function App() {
     return (
         <View style={{ width: 200, height: 80 }} onPress={() => count.set(count() + 1)}>
             <Text>Count: {count()}</Text>
-            <Input value={name()} placeholder="Name" onChange={(value) => name.set(value)} />
+            <Input value={name()} placeholder="Name" onChange={({ value }) => name.set(value)} />
         </View>
     );
 }
@@ -194,7 +194,7 @@ function App() {
     const name = signal("");
     return (
         <View style={{ width: 200, height: 80 }}>
-            <Input testID="name" value={name()} placeholder="Name" onChange={(value) => name.set(value)} />
+            <Input testID="name" value={name()} placeholder="Name" onChange={({ value }) => name.set(value)} />
             <Text testID="done" onPress={() => Keyboard.dismiss()}>done</Text>
         </View>
     );

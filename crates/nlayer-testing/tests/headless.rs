@@ -82,7 +82,7 @@ function App() {
     const text = signal("");
     return (
         <View style={{ width: 300, height: 100 }}>
-            <Input value={text()} onChange={(value: string) => text.set(value)} />
+            <Input value={text()} onChange={({ value }) => text.set(value)} />
             <Text>{`hi ${text()}`}</Text>
         </View>
     );
@@ -98,6 +98,73 @@ mount(App);
     app.type_text(input, "abc");
     assert!(
         app.wait_for("hi abc", Duration::from_secs(1)),
+        "{:?}",
+        app.texts()
+    );
+    assert_eq!(app.screen().input_values(), ["abc"]);
+    app.stop();
+}
+
+#[test]
+fn onchange_is_an_object_and_press_takes_no_args() {
+    let source = r#"
+import { mount, signal } from "@nlayer/runtime";
+import { Input, Text, View } from "@nlayer/ui";
+
+function App() {
+    const text = signal("");
+    const shape = signal("?");
+    const press = signal("press:?");
+    return (
+        <View style={{ width: 300, height: 160 }}>
+            <Input
+                value={text()}
+                onChange={(event) => {
+                    if (typeof event === "string") {
+                        shape.set("bad");
+                        return;
+                    }
+                    if (
+                        event != null &&
+                        typeof event === "object" &&
+                        typeof event.value === "string"
+                    ) {
+                        text.set(event.value);
+                        shape.set(`obj:${event.value}`);
+                        return;
+                    }
+                    shape.set("bad");
+                }}
+            />
+            <Text>{shape()}</Text>
+            <View
+                style={{ width: 120, height: 40 }}
+                onPress={function () {
+                    press.set(`press:${arguments.length}`);
+                }}
+            >
+                <Text>{press()}</Text>
+            </View>
+        </View>
+    );
+}
+mount(App);
+"#;
+    let mut app = app(source);
+    let input = app
+        .screen()
+        .views()
+        .find_map(|(id, view)| (view.kind == ViewKind::Input).then_some(id))
+        .expect("an input");
+    app.type_text(input, "abc");
+    assert!(
+        app.wait_for("obj:abc", Duration::from_secs(1)),
+        "{:?}",
+        app.texts()
+    );
+    assert!(app.press_text("press:?"));
+    assert!(
+        app.wait_for("press:0", Duration::from_secs(1)),
         "{:?}",
         app.texts()
     );

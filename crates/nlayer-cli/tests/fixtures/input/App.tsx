@@ -12,7 +12,7 @@ function App() {
         testID="field"
         multiline
         value={value()}
-        onChange={(text) => value.set(text)}
+        onChange={({ value: next }) => value.set(next)}
         selectedRange={caret()}
         onSelectionChange={(selection) => {
           caret.set(selection);

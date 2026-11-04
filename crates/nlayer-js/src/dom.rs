@@ -2079,10 +2079,42 @@ pub(crate) fn dispatch(
     let Some(handler) = handler(cx, id, event) else {
         return Ok(());
     };
+    // Nothing to report: no argument and no object. `None` on any other
+    // event is still one empty object (pan/pinch/rotation start, a
+    // viewable-items change with no range).
+    if matches!(
+        event,
+        EventKind::Press
+            | EventKind::LongPress
+            | EventKind::Refresh
+            | EventKind::LoadMore
+            | EventKind::BackRequest
+            | EventKind::Dismiss
+            | EventKind::Show
+    ) {
+        let r = unsafe { qjs::JS_Call(cx, handler, UNDEFINED, 0, ptr::null_mut()) };
+        unsafe { qjs::JS_FreeValue(cx, handler) };
+        if unsafe { qjs::JS_IsException(r) } {
+            if catch_listener_failure(cx, id) {
+                return Ok(());
+            } else {
+                return Err(r);
+            }
+        }
+        unsafe { qjs::JS_FreeValue(cx, r) };
+        return Ok(());
+    }
     let value = match payload {
         crate::EventPayload::None => unsafe { qjs::JS_NewObject(cx) },
         crate::EventPayload::Text(text) => unsafe {
-            qjs::JS_NewStringLen(cx, text.as_ptr().cast(), text.len() as _)
+            let object = qjs::JS_NewObject(cx);
+            qjs::JS_SetPropertyStr(
+                cx,
+                object,
+                c"value".as_ptr(),
+                qjs::JS_NewStringLen(cx, text.as_ptr().cast(), text.len() as _),
+            );
+            object
         },
         crate::EventPayload::Selection { start, end } => unsafe {
             let object = qjs::JS_NewObject(cx);

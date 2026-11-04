@@ -12,6 +12,19 @@ import { createHot } from "./hot.js";
 // (`loadDevScript`): the facade's own runtime, ui and rt objects.
 let devNamespaces = null;
 
+// Nothing to report: these handlers are called with no arguments. Every
+// other name still receives its payload, including null.
+const ZERO_ARG_EVENTS = new Set([
+  "onPress",
+  "onLongPress",
+  "onRefresh",
+  "onLoadMore",
+  "onBackPress",
+  "onDismiss",
+  "onShow",
+  "onClose",
+]);
+
 /**
  * `options.appId` names the app's `localStorage` prefix (`nlayer.json`'s
  * id); without one it is the page's directory.
@@ -299,7 +312,10 @@ export function createFacade(wasm, requestPump, options = {}) {
   }
 
   function event(id, name, payload) {
-    handlers.get(id)?.get(name)?.(payload);
+    const handler = handlers.get(id)?.get(name);
+    if (!handler) return;
+    if (ZERO_ARG_EVENTS.has(name)) handler();
+    else handler(payload);
   }
 
   const storage = createStorage(

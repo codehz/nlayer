@@ -23,7 +23,7 @@ fn signals_are_read_by_calling_and_written_with_set_and_update() {
         const untrackedValue = untracked(() => count());
         if (untrackedValue !== 11) throw new Error(`untracked: ${untrackedValue}`);
         if (log.join(",") !== "0/0,1/2,3/6,11/22") throw new Error(log.join(","));
-        // A signal's methods work unbound: `onChange={value.set}`.
+        // A signal's methods work unbound.
         const set = count.set;
         const update = count.update;
         set(4);

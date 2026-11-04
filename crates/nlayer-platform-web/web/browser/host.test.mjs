@@ -180,3 +180,88 @@ test("the page graph and a text mount do not need QuickJS", async () => {
   assert.match(JSON.stringify(frames.at(-1)), /hello/);
   assert.equal(logs.join("\n").includes("UnknownNode"), false);
 });
+
+test("onChange is { value } and onPress is called with no arguments", async () => {
+  const bytes = await readFile(wasmPath);
+  const module = await WebAssembly.compile(bytes);
+  const frames = [];
+  let facade;
+  const imports = {
+    nlayer_browser: {
+      value: (op, a, b, c, number) => facade.imports.value(op, a, b, c, number),
+    },
+    nlayer: {
+      nlayer_submit: (ptr, len) => {
+        const text = new TextDecoder().decode(new Uint8Array(wasm.memory.buffer, ptr, len));
+        frames.push(JSON.parse(text));
+      },
+      nlayer_request_pump: () => {},
+      nlayer_request_frame: () => {},
+      nlayer_report_error: (ptr, len) => {
+        const text = new TextDecoder().decode(new Uint8Array(wasm.memory.buffer, ptr, len));
+        throw new Error(text);
+      },
+      nlayer_log: () => {},
+      measure_text: () => 0,
+      measure_numeric_text: () => 0,
+      text_cluster_boxes: () => {},
+      font_ascent: () => 0,
+      font_descent: () => 0,
+      font_x_height: () => 0,
+    },
+  };
+  globalThis.matchMedia = () => ({
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+  });
+  const instance = await WebAssembly.instantiate(module, imports);
+  const wasm = instance.exports;
+  facade = createFacade(wasm, () => {});
+  wasm.nlayer_browser_initialize();
+  facade.installBoundary();
+
+  let pressLength = null;
+  let changeArg;
+  let changeWasString = null;
+  wasm.nlayer_browser_start(320, 480);
+  facade.runtime.mount(() => {
+    const view = facade.rt.element("view");
+    facade.rt.prop(view, "onPress", function () {
+      pressLength = arguments.length;
+    });
+    const input = facade.rt.element("input");
+    facade.rt.prop(input, "onChange", (arg) => {
+      changeArg = arg;
+      changeWasString = typeof arg === "string";
+    });
+    facade.rt.append(view, input);
+    return view;
+  });
+  wasm.nlayer_pump();
+  const frame = frames.at(-1);
+  const eventId = (name) => {
+    const item = frame.find(
+      (row) => Array.isArray(row) && row[0] === "e" && row[2]?.includes(name),
+    );
+    assert.ok(item, name);
+    return item[1];
+  };
+  const pressId = eventId("onPress");
+  const inputId = eventId("onChange");
+
+  wasm.nlayer_press(pressId);
+  wasm.nlayer_pump();
+  assert.equal(pressLength, 0);
+
+  const encoded = new TextEncoder().encode("abc");
+  const ptr = wasm.nlayer_alloc(encoded.length);
+  new Uint8Array(wasm.memory.buffer, ptr, encoded.length).set(encoded);
+  wasm.nlayer_input(inputId, ptr, encoded.length);
+  wasm.nlayer_dealloc(ptr, encoded.length);
+  wasm.nlayer_pump();
+  assert.equal(changeWasString, false);
+  assert.equal(typeof changeArg, "object");
+  assert.notEqual(changeArg, null);
+  assert.equal(changeArg.value, "abc");
+});

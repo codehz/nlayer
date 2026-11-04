@@ -1156,7 +1156,7 @@ function App() {
         testID="name"
         value={name()}
         placeholder="Name"
-        onChange={(value) => name.set(value)}
+        onChange={({ value }) => name.set(value)}
         style={{ width: 200, height: 32 }}
       />
       <Text>{`input ${name()}`}</Text>

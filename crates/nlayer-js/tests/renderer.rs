@@ -144,8 +144,8 @@ fn test_ids_name_a_view_and_a_nested_span() {
     );
 }
 
-/// `onPress` is a listener on the node, and the handler is called with the
-/// event object.
+/// `onPress` is a listener on the node, and the handler is called with no
+/// arguments.
 #[test]
 fn press_handlers_are_listened_and_called() {
     let host = Host::new().unwrap();
@@ -186,6 +186,93 @@ fn press_handlers_are_listened_and_called() {
         .eval_source("import { signal } from '@nlayer/runtime'; throw new Error('check');")
         .unwrap_err();
     assert!(error.message.contains("check"));
+}
+
+/// `onChange` receives `{ value }`, `onPress` is called with no arguments,
+/// and `onPanStart` with an empty payload is still one object.
+#[test]
+fn change_press_and_pan_start_payloads() {
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r#"
+        import { mount } from "@nlayer/runtime";
+        import { element, prop } from "nlayer:rt";
+
+        function App() {
+            const view = element("view");
+            prop(view, "onChange", function () {
+                globalThis.changeLen = arguments.length;
+                globalThis.changeArg = arguments[0];
+            });
+            prop(view, "onPress", function () {
+                globalThis.pressLen = arguments.length;
+            });
+            prop(view, "onPanStart", function () {
+                globalThis.panLen = arguments.length;
+                globalThis.panArg = arguments[0];
+            });
+            return view;
+        }
+        mount(App);
+        "#,
+    )
+    .unwrap();
+    let mut core = core();
+    let batch = frame(&host, &mut core);
+    let id = batch
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MountItem::Events { id, events }
+                if events.contains(EventKind::Change)
+                    && events.contains(EventKind::Press)
+                    && events.contains(EventKind::PanStart) =>
+            {
+                Some(*id)
+            }
+            _ => None,
+        })
+        .expect("listeners");
+    host.dispatch_event(id, EventKind::Change, &EventPayload::Text("abc".into()));
+    host.dispatch_event(id, EventKind::Press, &EventPayload::None);
+    host.dispatch_event(id, EventKind::PanStart, &EventPayload::None);
+    let error = host
+        .eval_source(
+            r#"
+            const change = globalThis.changeArg;
+            const keys =
+                change !== null && typeof change === "object" ? Object.keys(change) : [];
+            const pan = globalThis.panArg;
+            const ok =
+                globalThis.changeLen === 1 &&
+                change !== null &&
+                typeof change === "object" &&
+                keys.length === 1 &&
+                keys[0] === "value" &&
+                change.value === "abc" &&
+                globalThis.pressLen === 0 &&
+                globalThis.panLen === 1 &&
+                pan !== null &&
+                typeof pan === "object";
+            const seen =
+                "changeLen=" + globalThis.changeLen +
+                " change=" + JSON.stringify(change) +
+                " keys=" + keys.join(",") +
+                " pressLen=" + globalThis.pressLen +
+                " panLen=" + globalThis.panLen +
+                " pan=" + JSON.stringify(pan);
+            if (!ok) throw new Error(seen);
+            throw new Error("shapes " + seen);
+            "#,
+        )
+        .unwrap_err();
+    assert!(
+        error.message.contains(
+            r#"shapes changeLen=1 change={"value":"abc"} keys=value pressLen=0 panLen=1 pan={}"#
+        ),
+        "{}",
+        error.message
+    );
 }
 
 /// A signal read in a dynamic child updates the text in place: the text

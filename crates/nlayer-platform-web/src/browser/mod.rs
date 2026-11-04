@@ -87,7 +87,19 @@ impl Bridge for Runtime {
         };
         let payload = match payload {
             EventPayload::None => Value::null(),
-            EventPayload::Text(text) => Value::string(text).unwrap_or_else(|_| Value::null()),
+            EventPayload::Text(text) => {
+                let object = match Value::object() {
+                    Ok(object) => object,
+                    Err(_) => return,
+                };
+                let Ok(value) = Value::string(text) else {
+                    return;
+                };
+                if object.set("value", value).is_err() {
+                    return;
+                }
+                object
+            }
             EventPayload::Selection { start, end } => {
                 let object = match Value::object() {
                     Ok(object) => object,

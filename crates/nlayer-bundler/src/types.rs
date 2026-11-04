@@ -671,7 +671,7 @@ export interface InputProps extends AccessibilityProps {
   /** Names applied while their value is truthy, after `class`. */
   classList?: Record<string, boolean | null | undefined>;
   value?: string;
-  onChange?: (value: string) => void;
+  onChange?: (e: { value: string }) => void;
   /** Several lines: Return inserts a line break and the text wraps. */
   multiline?: boolean;
   /** The controlled selection, in UTF-16 units. `end` defaults to `start`. */

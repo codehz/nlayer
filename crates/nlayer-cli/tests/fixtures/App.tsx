@@ -14,7 +14,7 @@ function App() {
         testID="name"
         value={name()}
         placeholder="Name"
-        onChange={(value) => name.set(value)}
+        onChange={({ value }) => name.set(value)}
         style={{ height: 24 }}
       />
       <Scroll testID="list" style={{ width: 200, height: 40 }}>
