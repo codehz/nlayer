@@ -17,8 +17,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use rustc_hash::FxHashMap as HashMap;
 
 use dispatch2::{DispatchQueue, DispatchTime};
-use nlayer_core::geometry::{Bounds, Point, Points, Size};
-use nlayer_core::style::{BorderStyle, Color, TextStyle, TransformOrigin, ViewStyle};
+use nlayer_core::effects::{BoxShadow, Effects, Gradient, GradientKind, GradientSize};
+use nlayer_core::geometry::{Bounds, Percentage, Point, Points, Size, deg};
+use nlayer_core::style::{BorderStyle, Color, CornerRadii, TextStyle, TransformOrigin, ViewStyle};
 use nlayer_core::tailwind::state::{FOCUSED, HOVERED, PRESSED};
 use nlayer_core::{
     EventKind, EventMask, ImageSource, Interaction, KeyboardDismiss, KeyboardTaps, MountBatch,
@@ -31,12 +32,13 @@ use objc2::{
     ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel,
 };
 use objc2_core_foundation::{CGFloat, CGPoint, CGRect, CGSize};
-use objc2_core_graphics::CGImage;
+use objc2_core_graphics::{CGImage, CGMutablePath, CGPath};
 use objc2_foundation::NSString;
 use objc2_foundation::{NSRunLoop, NSRunLoopCommonModes};
 use objc2_quartz_core::{
-    CADisplayLink, CAFrameRateRange, CALayer, CAShapeLayer, CATransaction, CATransform3D,
-    kCAGravityResize,
+    CADisplayLink, CAFrameRateRange, CAGradientLayer, CALayer, CAShapeLayer, CATransaction,
+    CATransform3D, kCAFillRuleEvenOdd, kCAGradientLayerAxial, kCAGradientLayerConic,
+    kCAGradientLayerRadial, kCAGravityResize,
 };
 use objc2_ui_kit::{
     NSObjectUIAccessibility, UIAccessibilityTraitAdjustable, UIAccessibilityTraitButton,
@@ -148,6 +150,18 @@ struct Slot {
     refresh_control: Option<Retained<UIRefreshControl>>,
     /// Whether refresh is currently active.
     refreshing: bool,
+    /// Outer box-shadow layers, below the background.
+    shadows: Vec<Retained<CALayer>>,
+    /// Inset box-shadow shapes, above the gradients.
+    insets: Option<(Retained<CALayer>, Vec<Retained<CAShapeLayer>>)>,
+    /// Gradient backgrounds, above the background color.
+    gradients: Vec<Retained<CAGradientLayer>>,
+    /// Clips the children of a plain view whose outer shadow must escape.
+    content: Option<Retained<UIView>>,
+    /// Rounded clip of `content` when the four radii differ.
+    content_mask: Option<Retained<CAShapeLayer>>,
+    /// Holds outer shadows when the view layer itself is masked.
+    shadow_host: Option<Retained<UIView>>,
 }
 
 struct Paint {
@@ -1351,6 +1365,7 @@ impl Mounter {
                 before,
             } => self.insert(parent, child, before),
             MountItem::Remove { id } => {
+                self.detach_shadow_host(id);
                 if self.remove_hosted(id) {
                     return;
                 }
@@ -1373,6 +1388,9 @@ impl Mounter {
                 if let Some(mut slot) = self.take(id) {
                     // A modal deleted while presented (its subtree released
                     // without a remove) goes away too, as on Android.
+                    if let Some(host) = slot.shadow_host.take() {
+                        host.removeFromSuperview();
+                    }
                     if let Native::Modal(modal) = &mut slot.native {
                         modal.dismiss(|| {});
                     }
@@ -1391,7 +1409,7 @@ impl Mounter {
                 {
                     stack.layout();
                 }
-                if let Some(Slot {
+                let header = if let Some(Slot {
                     native: Native::HeaderItem(view),
                     ..
                 }) = self.slot(id)
@@ -1405,14 +1423,22 @@ impl Mounter {
                             frame.size.height.0 as CGFloat,
                         ),
                     ));
+                    true
+                } else {
+                    false
+                };
+                if header {
+                    self.sync_shadow_host(id);
                     return;
                 }
                 // Corners, borders and the image frame depend on the size,
                 // not where the view sits. A move leaves the paint alone.
+                // The shadow host is not a subview, so it follows either way.
                 let resized = self.view(id).is_some_and(|view| set_frame(view, frame));
                 if resized {
                     self.repaint(id);
                 }
+                self.sync_shadow_host(id);
             }
             MountItem::ViewStyle { id, style } => {
                 if let Some(slot) = self.slot_mut(id) {
@@ -1844,14 +1870,39 @@ impl Mounter {
         let Some(child_view) = self.view(child).map(|v| v.retain()) else {
             return;
         };
-        let Some(parent_view) = self.view(parent) else {
+        // A plain view that clips around an outer shadow keeps its children
+        // in `content`. The shadow host stays a sibling of the view itself.
+        let container = self
+            .slot(parent)
+            .and_then(|slot| slot.content.clone())
+            .or_else(|| self.view(parent).map(|view| view.retain()));
+        let Some(container) = container else {
             return;
         };
         match before.and_then(|id| self.view(id)).map(|v| v.retain()) {
-            Some(before) => {
-                parent_view.insertSubview_belowSubview(&child_view, &before);
+            Some(before_view) => {
+                container.insertSubview_belowSubview(&child_view, &before_view);
             }
-            None => parent_view.addSubview(&child_view),
+            None => container.addSubview(&child_view),
+        }
+        // A new sibling sits between a view and the host that was under it.
+        self.sync_shadow_host(child);
+        if let Some(before) = before {
+            self.sync_shadow_host(before);
+        }
+    }
+
+    fn sync_shadow_host(&self, id: NodeId) {
+        let Some(slot) = self.slot(id) else {
+            return;
+        };
+        let view = slot.native.view().retain();
+        place_shadow_host(&view, slot);
+    }
+
+    fn detach_shadow_host(&self, id: NodeId) {
+        if let Some(host) = self.slot(id).and_then(|slot| slot.shadow_host.clone()) {
+            host.removeFromSuperview();
         }
     }
 
@@ -2501,14 +2552,30 @@ impl Mounter {
         let mut ids = Vec::new();
         let mut current = Some(view);
         while let Some(view) = current {
-            let tag = view.tag() as u32;
-            ids.push(tag);
-            if tag == ROOT_ID {
-                break;
+            if let Some(tag) = self.node_id(&view) {
+                ids.push(tag);
+                if tag == ROOT_ID {
+                    break;
+                }
             }
             current = view.superview();
         }
+        if ids.is_empty() {
+            ids.push(id);
+        }
         ids
+    }
+
+    /// The node id of `view`, when it is that node's own native view.
+    /// A content clip and a shadow host share no node.
+    fn node_id(&self, view: &UIView) -> Option<u32> {
+        let tag = view.tag();
+        if tag < 0 {
+            return None;
+        }
+        let id = tag as u32;
+        let ours = self.view(id)?;
+        std::ptr::eq(ours, view).then_some(id)
     }
 
     fn mark_focused(&mut self, ids: &[NodeId], on: bool) {
@@ -2726,11 +2793,15 @@ impl Mounter {
             if !slot.style.transform.is_identity() {
                 node.transform = slot.style.transform.ops().to_vec();
             }
-            let subs = view.subviews();
+            let subs = slot
+                .content
+                .as_ref()
+                .map(|content| content.subviews())
+                .unwrap_or_else(|| view.subviews());
             for index in 0..subs.count() {
                 let child = subs.objectAtIndex(index);
                 let child_id = child.tag() as u32;
-                if self.slot(child_id).is_some() {
+                if child.tag() >= 0 && self.slot(child_id).is_some() {
                     node.children.push(child_id);
                 }
             }
@@ -2768,10 +2839,13 @@ impl Mounter {
     }
 
     fn parent_id(&self, view: &UIView) -> Option<u32> {
-        let parent = view.superview()?;
-        let id = parent.tag() as u32;
-        let ours = self.view(id)?;
-        std::ptr::eq(ours, &*parent).then_some(id)
+        let mut parent = view.superview()?;
+        loop {
+            if let Some(id) = self.node_id(&parent) {
+                return Some(id);
+            }
+            parent = parent.superview()?;
+        }
     }
 
     /// Screens, header items and modals are not subviews of their parent:
@@ -3595,6 +3669,12 @@ impl Slot {
             snap_deceleration: 0.0,
             refresh_control: None,
             refreshing: false,
+            shadows: Vec::new(),
+            insets: None,
+            gradients: Vec::new(),
+            content: None,
+            content_mask: None,
+            shadow_host: None,
         }
     }
 }
@@ -3659,6 +3739,32 @@ fn painted(slot: &Slot) -> ViewStyle {
     if over.hidden {
         style.hidden = true;
     }
+    // A state replaces one list only when it carries that list. The other
+    // list, and filters, stay the base style's.
+    let shadows = over
+        .effects
+        .as_ref()
+        .filter(|effects| !effects.box_shadows.is_empty())
+        .map(|effects| effects.box_shadows.clone());
+    let gradients = over
+        .effects
+        .as_ref()
+        .filter(|effects| !effects.background_images.is_empty())
+        .map(|effects| effects.background_images.clone());
+    if shadows.is_some() || gradients.is_some() {
+        let mut effects = style
+            .effects
+            .clone()
+            .map(|effects| (*effects).clone())
+            .unwrap_or_else(Effects::default);
+        if let Some(shadows) = shadows {
+            effects.box_shadows = shadows;
+        }
+        if let Some(gradients) = gradients {
+            effects.background_images = gradients;
+        }
+        style.effects = Some(Arc::new(effects));
+    }
     style
 }
 
@@ -3678,6 +3784,14 @@ fn winning(slot: &Slot) -> Option<&Paint> {
     }
 }
 
+/// Outer shadows sit under the background. A hole mask keeps them from
+/// covering it, so they can be sublayers and still paint outside the box.
+const SHADOW_Z: CGFloat = -2048.0;
+/// Gradients sit above the background color and below inset shadows.
+const GRADIENT_Z: CGFloat = -1024.0 + 0.25;
+/// Inset shadows sit above gradients and below children and the border.
+const INSET_Z: CGFloat = -1024.0 + 0.5;
+
 fn paint_view(view: &UIView, style: &ViewStyle, slot: &mut Slot, scroll: bool) {
     let layer = view.layer();
     view.setAlpha(style.opacity as CGFloat);
@@ -3689,18 +3803,637 @@ fn paint_view(view: &UIView, style: &ViewStyle, slot: &mut Slot, scroll: bool) {
     };
     layer.setBackgroundColor(color.as_deref());
     let bounds = view.bounds();
+    // Effect layers live in the layer's own space. A scroll view's bounds
+    // origin is its content offset; those views do not draw effects.
+    let local = CGRect::new(CGPoint::ZERO, bounds.size);
     let size = Size::new(
-        Points(bounds.size.width as f32),
-        Points(bounds.size.height as f32),
+        Points(local.size.width as f32),
+        Points(local.size.height as f32),
     );
     let radii = style.radii().fit(size);
     apply_corners(&layer, radii, bounds, &mut slot.mask);
-    // A drag moves children with the content offset. The scroll viewport
-    // clips them, the way `overflow: auto` does. `overflow` only clips a
-    // plain view.
-    layer.setMasksToBounds(style.overflow_hidden || scroll);
+    let outside = draws_outside(style);
+    let own_content = matches!(
+        slot.native,
+        Native::Text(_) | Native::Image(_) | Native::Input(_) | Native::Area(_)
+    );
+    if scroll {
+        // The scroll viewport clips itself. Its outer shadow is clipped too.
+        layer.setMasksToBounds(true);
+        clear_content(view, slot);
+        clear_effects(slot);
+    } else if matches!(slot.native, Native::View(_)) && style.overflow_hidden && outside {
+        // Children move into a clipping subview so the outer layer can
+        // leave `masksToBounds` off and let the shadow out.
+        layer.setMasksToBounds(false);
+        ensure_content(view, slot, local, radii);
+        paint_effects(view, style, slot, local, radii);
+    } else {
+        clear_content(view, slot);
+        if outside && own_content && (!radii.is_zero() || style.overflow_hidden) {
+            // A mask clips the contents to the corners. `masksToBounds`
+            // would clip the shadow sublayers as well, so those move to a
+            // host when the mask is present.
+            layer.setMasksToBounds(false);
+            install_corner_mask(&layer, radii, local, border_outset(style), &mut slot.mask);
+        } else if outside && style.overflow_hidden {
+            // A header, stack or screen has no content view. Keep clipping
+            // its children; the shadow is hosted so this clip does not cut
+            // it off.
+            layer.setMasksToBounds(true);
+        } else if outside {
+            layer.setMasksToBounds(false);
+        } else {
+            layer.setMasksToBounds(style.overflow_hidden);
+        }
+        paint_effects(view, style, slot, local, radii);
+    }
     apply_border(view, style, slot);
     layer.setTransform(transform_3d(style, bounds.size));
+    place_shadow_host(view, slot);
+}
+
+/// A visible outer box shadow. Inset shadows stay inside the box.
+fn draws_outside(style: &ViewStyle) -> bool {
+    style.effects.as_ref().is_some_and(|effects| {
+        effects
+            .box_shadows
+            .iter()
+            .any(|shadow| shadow.is_visible() && !shadow.inset)
+    })
+}
+
+fn border_outset(style: &ViewStyle) -> CGFloat {
+    let width = style
+        .borders
+        .uniform()
+        .map(|(width, _)| width.0)
+        .unwrap_or_else(|| {
+            style
+                .borders
+                .widths
+                .to_array()
+                .into_iter()
+                .map(|width| width.0)
+                .fold(0.0, f32::max)
+        });
+    width as CGFloat / 2.0
+}
+
+/// A corner mask grown by the border's outer half, so the border drawn on
+/// the layer is not sliced while the contents still follow the corners.
+fn install_corner_mask(
+    layer: &CALayer,
+    radii: CornerRadii,
+    local: CGRect,
+    outset: CGFloat,
+    mask: &mut Option<Retained<CAShapeLayer>>,
+) {
+    let shape = mask.get_or_insert_with(CAShapeLayer::layer);
+    shape.setFrame(local);
+    shape.setPath(Some(&rounded_path(
+        grow(local, outset),
+        grown(radii, Points(outset as f32)),
+    )));
+    // SAFETY: a mask layer owned by this slot; the layer retains it.
+    unsafe { layer.setMask(Some(shape)) };
+}
+
+fn paint_effects(
+    view: &UIView,
+    style: &ViewStyle,
+    slot: &mut Slot,
+    local: CGRect,
+    radii: CornerRadii,
+) {
+    let effects = style.effects.as_deref();
+    let shadows = effects.map_or(&[][..], |effects| &effects.box_shadows[..]);
+    let outer: Vec<&BoxShadow> = shadows
+        .iter()
+        .filter(|shadow| !shadow.inset && shadow.is_visible())
+        .collect();
+    // Text is drawn into the layer's contents, under every sublayer, so a
+    // gradient or inset shadow there would cover the glyphs. Outer shadows
+    // stay: they paint outside the box.
+    let text = matches!(slot.native, Native::Text(_));
+    let inner: Vec<&BoxShadow> = if text {
+        Vec::new()
+    } else {
+        shadows
+            .iter()
+            .filter(|shadow| shadow.inset && shadow.is_visible())
+            .collect()
+    };
+    let gradients: &[Gradient] = if text {
+        &[]
+    } else {
+        effects.map_or(&[][..], |effects| &effects.background_images[..])
+    };
+    // A mask or `masksToBounds` clips sublayers, shadow included. The host
+    // is a sibling, so the shadow still paints outside the box.
+    let clips = view.layer().mask().is_some() || view.layer().masksToBounds();
+    let shadow_parent = if clips && !outer.is_empty() {
+        ensure_shadow_host(view, slot).layer()
+    } else {
+        drop_shadow_host(slot);
+        view.layer()
+    };
+    set_shadows(&mut slot.shadows, &shadow_parent, &outer, local, radii);
+    let border = style
+        .borders
+        .uniform()
+        .map(|(width, _)| width.0)
+        .unwrap_or(0.0);
+    set_insets(
+        &mut slot.insets,
+        &view.layer(),
+        &inner,
+        local,
+        radii,
+        border,
+    );
+    set_gradients(&mut slot.gradients, &view.layer(), gradients, local, radii);
+}
+
+fn clear_effects(slot: &mut Slot) {
+    for layer in slot.shadows.drain(..) {
+        layer.removeFromSuperlayer();
+    }
+    if let Some((holder, _)) = slot.insets.take() {
+        holder.removeFromSuperlayer();
+    }
+    for layer in slot.gradients.drain(..) {
+        layer.removeFromSuperlayer();
+    }
+    drop_shadow_host(slot);
+}
+
+/// The subview that clips a plain view's children while the outer layer
+/// stays unmasked so its shadow can paint outside.
+fn ensure_content(view: &UIView, slot: &mut Slot, local: CGRect, radii: CornerRadii) {
+    let content = if let Some(content) = &slot.content {
+        content.clone()
+    } else {
+        let content = UIView::new(view.mtm());
+        content.setTag(-1);
+        content.setOpaque(false);
+        content.setBackgroundColor(Some(&objc2_ui_kit::UIColor::clearColor()));
+        content.setAutoresizingMask(
+            objc2_ui_kit::UIViewAutoresizing::FlexibleWidth
+                | objc2_ui_kit::UIViewAutoresizing::FlexibleHeight,
+        );
+        // Engine children and their shadow hosts. A selection responder
+        // (tag 0) stays on the outer view, which is what finds it.
+        let subs = view.subviews();
+        let children: Vec<Retained<UIView>> = (0..subs.count())
+            .map(|index| subs.objectAtIndex(index))
+            .filter(|child| child.tag() > 0 || child.tag() == -1)
+            .collect();
+        view.addSubview(&content);
+        for child in &children {
+            content.addSubview(child);
+        }
+        slot.content = Some(content.clone());
+        content
+    };
+    content.setFrame(local);
+    let content_layer = content.layer();
+    apply_corners(&content_layer, radii, local, &mut slot.content_mask);
+    content_layer.setMasksToBounds(true);
+}
+
+fn clear_content(view: &UIView, slot: &mut Slot) {
+    let Some(content) = slot.content.take() else {
+        return;
+    };
+    slot.content_mask = None;
+    let subs = content.subviews();
+    let children: Vec<Retained<UIView>> = (0..subs.count())
+        .map(|index| subs.objectAtIndex(index))
+        .collect();
+    for child in &children {
+        view.insertSubview_belowSubview(child, &content);
+    }
+    content.removeFromSuperview();
+}
+
+fn ensure_shadow_host(view: &UIView, slot: &mut Slot) -> Retained<UIView> {
+    let host = if let Some(host) = &slot.shadow_host {
+        host.clone()
+    } else {
+        let host = UIView::new(view.mtm());
+        host.setTag(-1);
+        host.setOpaque(false);
+        host.setUserInteractionEnabled(false);
+        host.setBackgroundColor(Some(&objc2_ui_kit::UIColor::clearColor()));
+        host.layer().setMasksToBounds(false);
+        slot.shadow_host = Some(host.clone());
+        host
+    };
+    place_shadow_host(view, slot);
+    host
+}
+
+fn drop_shadow_host(slot: &mut Slot) {
+    if let Some(host) = slot.shadow_host.take() {
+        host.removeFromSuperview();
+    }
+}
+
+/// Keeps the shadow host directly under its view, in that view's parent,
+/// with the same frame and transform. A move that does not resize never
+/// repaints, so callers place the host on every frame change too.
+fn place_shadow_host(view: &UIView, slot: &Slot) {
+    let Some(host) = &slot.shadow_host else {
+        return;
+    };
+    host.setFrame(view.frame());
+    host.setBounds(CGRect::new(CGPoint::ZERO, view.bounds().size));
+    host.setHidden(view.isHidden());
+    host.setAlpha(view.alpha());
+    host.layer().setTransform(view.layer().transform());
+    if let Some(parent) = view.superview() {
+        parent.insertSubview_belowSubview(host, view);
+    }
+}
+
+fn set_shadows(
+    layers: &mut Vec<Retained<CALayer>>,
+    parent: &CALayer,
+    shadows: &[&BoxShadow],
+    local: CGRect,
+    radii: CornerRadii,
+) {
+    resize(layers, shadows.len(), parent, || {
+        let layer = CALayer::layer();
+        layer.setZPosition(SHADOW_Z);
+        layer
+    });
+    for layer in layers.iter() {
+        parent.addSublayer(layer);
+    }
+    let shape = rounded_path(local, radii);
+    // CSS order is top first; later sublayers draw on top.
+    for (layer, shadow) in layers.iter().zip(shadows.iter().rev()) {
+        let spread = shadow.spread.0 as CGFloat;
+        layer.setFrame(local);
+        layer.setShadowPath(Some(&rounded_path(
+            grow(local, spread),
+            grown(radii, shadow.spread),
+        )));
+        layer.setShadowColor(Some(&*crate::text::cg_color(Color(shadow.color.0 | 0xff))));
+        layer.setShadowOpacity((shadow.color.0 & 0xff) as f32 / 255.0);
+        layer.setShadowOffset(CGSize::new(
+            shadow.offset_x.0 as CGFloat,
+            shadow.offset_y.0 as CGFloat,
+        ));
+        // CSS blur is twice the Gaussian's deviation; Core Animation's
+        // radius is close to the deviation.
+        layer.setShadowRadius(shadow.blur.0 as CGFloat / 2.0);
+        let reach = (shadow.offset_x.0.abs().max(shadow.offset_y.0.abs())
+            + shadow.spread.0.abs()
+            + shadow.blur.0 * 2.0
+            + 4.0) as CGFloat;
+        let mask = mask_layer(layer);
+        let path = CGMutablePath::new();
+        // SAFETY: valid mutable paths and a null transform.
+        unsafe {
+            CGMutablePath::add_rect(Some(&path), std::ptr::null(), grow(local, reach));
+            CGMutablePath::add_path(Some(&path), std::ptr::null(), Some(&shape));
+        }
+        mask.setFrame(local);
+        mask.setPath(Some(&path));
+    }
+}
+
+fn set_insets(
+    insets: &mut Option<(Retained<CALayer>, Vec<Retained<CAShapeLayer>>)>,
+    layer: &CALayer,
+    shadows: &[&BoxShadow],
+    local: CGRect,
+    radii: CornerRadii,
+    border: f32,
+) {
+    if shadows.is_empty() {
+        if let Some((holder, _)) = insets.take() {
+            holder.removeFromSuperlayer();
+        }
+        return;
+    }
+    let (holder, shapes) = insets.get_or_insert_with(|| {
+        let holder = CALayer::layer();
+        holder.setZPosition(INSET_Z);
+        layer.addSublayer(&holder);
+        (holder, Vec::new())
+    });
+    layer.addSublayer(holder);
+    let padding = inset_rect(local, border as CGFloat);
+    let inner_radii = radii.inset(Points(border));
+    holder.setFrame(local);
+    let mask = mask_layer(holder);
+    mask.setFrame(local);
+    mask.setPath(Some(&rounded_path(padding, inner_radii)));
+    resize(shapes, shadows.len(), holder, CAShapeLayer::layer);
+    for (shape, shadow) in shapes.iter().zip(shadows.iter().rev()) {
+        let reach = (shadow.offset_x.0.abs().max(shadow.offset_y.0.abs())
+            + shadow.spread.0.abs()
+            + shadow.blur.0 * 2.0
+            + 4.0) as CGFloat;
+        // The frame around the shifted, shrunk inner shape casts its
+        // shadow inwards (non-zero winding: the hole runs backwards).
+        let hole = offset_rect(
+            grow(padding, -(shadow.spread.0 as CGFloat)),
+            shadow.offset_x.0,
+            shadow.offset_y.0,
+        );
+        let path = CGMutablePath::new();
+        let reversed = reversed_rounded(hole, grown(inner_radii, -shadow.spread));
+        // SAFETY: valid mutable paths and a null transform.
+        unsafe {
+            CGMutablePath::add_rect(Some(&path), std::ptr::null(), grow(local, reach));
+            CGMutablePath::add_path(Some(&path), std::ptr::null(), Some(&reversed));
+        }
+        shape.setFrame(local);
+        shape.setShadowPath(Some(&path));
+        shape.setShadowColor(Some(&*crate::text::cg_color(Color(shadow.color.0 | 0xff))));
+        shape.setShadowOpacity((shadow.color.0 & 0xff) as f32 / 255.0);
+        shape.setShadowOffset(CGSize::ZERO);
+        shape.setShadowRadius(shadow.blur.0 as CGFloat / 2.0);
+        shape.setFillColor(None);
+    }
+}
+
+fn set_gradients(
+    layers: &mut Vec<Retained<CAGradientLayer>>,
+    parent: &CALayer,
+    gradients: &[Gradient],
+    local: CGRect,
+    radii: CornerRadii,
+) {
+    resize(layers, gradients.len(), parent, || {
+        let gradient = CAGradientLayer::new();
+        gradient.setZPosition(GRADIENT_Z);
+        gradient
+    });
+    for layer in layers.iter() {
+        parent.addSublayer(layer);
+    }
+    let shared = radii.shared();
+    // CSS order is top first.
+    for (layer, gradient) in layers.iter().zip(gradients.iter().rev()) {
+        layer.setFrame(local);
+        match shared {
+            Some(radius) => {
+                layer.setCornerRadius(radius.0 as CGFloat);
+                layer.setMaskedCorners(corner_bits(&radii));
+                layer.setMasksToBounds(true);
+                // SAFETY: clearing a mask this layer no longer needs.
+                unsafe { layer.setMask(None) };
+            }
+            None => {
+                layer.setCornerRadius(0.0);
+                layer.setMasksToBounds(false);
+                let mask = mask_layer(layer);
+                mask.setFrame(local);
+                mask.setPath(Some(&rounded_path(local, radii)));
+            }
+        }
+        shape_gradient(layer, gradient, local.size);
+    }
+}
+
+fn corner_bits(radii: &CornerRadii) -> objc2_quartz_core::CACornerMask {
+    let mut bits: usize = 0;
+    if radii.top_left > Points::ZERO {
+        bits |= 1 << 0;
+    }
+    if radii.top_right > Points::ZERO {
+        bits |= 1 << 1;
+    }
+    if radii.bottom_left > Points::ZERO {
+        bits |= 1 << 2;
+    }
+    if radii.bottom_right > Points::ZERO {
+        bits |= 1 << 3;
+    }
+    objc2_quartz_core::CACornerMask(bits)
+}
+
+fn resize<L: AsRef<CALayer>>(
+    layers: &mut Vec<Retained<L>>,
+    count: usize,
+    parent: &CALayer,
+    make: impl Fn() -> Retained<L>,
+) {
+    while layers.len() > count {
+        if let Some(layer) = layers.pop() {
+            layer.as_ref().removeFromSuperlayer();
+        }
+    }
+    while layers.len() < count {
+        let layer = make();
+        parent.addSublayer(layer.as_ref());
+        layers.push(layer);
+    }
+}
+
+/// The even-odd shape mask of `layer`, created on first use.
+fn mask_layer(layer: &CALayer) -> Retained<CAShapeLayer> {
+    if let Some(mask) = layer.mask()
+        && let Ok(mask) = mask.downcast::<CAShapeLayer>()
+    {
+        return mask;
+    }
+    let mask = CAShapeLayer::layer();
+    // SAFETY: an immutable Core Animation constant.
+    mask.setFillRule(unsafe { kCAFillRuleEvenOdd });
+    // SAFETY: a fresh mask layer, owned by `layer`.
+    unsafe { layer.setMask(Some(&mask)) };
+    mask
+}
+
+fn grow(rect: CGRect, d: CGFloat) -> CGRect {
+    CGRect::new(
+        CGPoint::new(rect.origin.x - d, rect.origin.y - d),
+        CGSize::new(
+            (rect.size.width + 2.0 * d).max(0.0),
+            (rect.size.height + 2.0 * d).max(0.0),
+        ),
+    )
+}
+
+fn inset_rect(rect: CGRect, d: CGFloat) -> CGRect {
+    CGRect::new(
+        CGPoint::new(rect.origin.x + d, rect.origin.y + d),
+        CGSize::new(
+            (rect.size.width - 2.0 * d).max(0.0),
+            (rect.size.height - 2.0 * d).max(0.0),
+        ),
+    )
+}
+
+fn offset_rect(rect: CGRect, x: f32, y: f32) -> CGRect {
+    CGRect::new(
+        CGPoint::new(rect.origin.x + x as CGFloat, rect.origin.y + y as CGFloat),
+        rect.size,
+    )
+}
+
+/// Radii grown by `d` (shrunk when negative). A square corner stays square.
+fn grown(radii: CornerRadii, d: Points) -> CornerRadii {
+    let grow_one = |radius: Points| {
+        if radius > Points::ZERO {
+            (radius + d).max(Points::ZERO)
+        } else {
+            Points::ZERO
+        }
+    };
+    CornerRadii {
+        top_left: grow_one(radii.top_left),
+        top_right: grow_one(radii.top_right),
+        bottom_right: grow_one(radii.bottom_right),
+        bottom_left: grow_one(radii.bottom_left),
+        continuous: radii.continuous,
+    }
+}
+
+/// `path` reversed, so it is a hole under the non-zero rule.
+fn reversed_rounded(rect: CGRect, radii: CornerRadii) -> Retained<CGPath> {
+    use objc2_ui_kit::UIBezierPath;
+    UIBezierPath::bezierPathWithCGPath(&rounded_path(rect, radii))
+        .bezierPathByReversingPath()
+        .CGPath()
+}
+
+/// Configures `gradient_layer` to draw `gradient` over a `size` box.
+fn shape_gradient(gradient_layer: &CAGradientLayer, gradient: &Gradient, size: CGSize) {
+    use objc2_foundation::{NSArray, NSNumber};
+    let (w, h) = (size.width.max(1.0), size.height.max(1.0));
+    // How far along the gradient line the layer's `0..1` reaches. A
+    // repeating radial gradient's rings run past the ending shape, out to
+    // the farthest corner: Core Animation repeats nothing itself.
+    let reach = shape_gradient_geometry(gradient_layer, gradient, w, h);
+    let stops = gradient.unrolled_stops(
+        Size::new(Points(w as f32), Points(h as f32)),
+        Percentage(reach as f32),
+    );
+    // A transparent stop takes its neighbor's hue, as CSS's premultiplied
+    // mixing does, so a fade to transparent does not darken.
+    let colors: Vec<Retained<AnyObject>> = (0..stops.len())
+        .map(|index| {
+            let color = stops[index].0;
+            let color = if color.is_transparent() {
+                let neighbor = stops[index + 1..]
+                    .iter()
+                    .chain(stops[..index].iter().rev())
+                    .map(|(neighbor, _)| *neighbor)
+                    .find(|neighbor| !neighbor.is_transparent());
+                neighbor.map_or(color, |neighbor| Color(neighbor.0 & 0xffff_ff00))
+            } else {
+                color
+            };
+            let cg = crate::text::cg_color(color);
+            // SAFETY: a CGColor, which `colors` takes. CF objects are
+            // Objective-C objects.
+            unsafe {
+                Retained::from_raw(
+                    objc2_core_foundation::CFRetained::into_raw(cg)
+                        .as_ptr()
+                        .cast(),
+                )
+                .expect("cg color")
+            }
+        })
+        .collect();
+    let locations: Vec<Retained<NSNumber>> = stops
+        .iter()
+        .map(|(_, position)| NSNumber::numberWithDouble(position.0 as f64))
+        .collect();
+    // SAFETY: an array of CGColors, as `colors` documents.
+    unsafe { gradient_layer.setColors(Some(&NSArray::from_retained_slice(&colors))) };
+    gradient_layer.setLocations(Some(&NSArray::from_retained_slice(&locations)));
+}
+
+/// Sets the layer's type and its start and end points for `gradient` over
+/// a `w` × `h` box. Returns how far along the gradient line the end point is.
+fn shape_gradient_geometry(
+    gradient_layer: &CAGradientLayer,
+    gradient: &Gradient,
+    w: CGFloat,
+    h: CGFloat,
+) -> CGFloat {
+    match gradient.kind {
+        GradientKind::Radial {
+            circle,
+            size: extent,
+            x,
+            y,
+        } => {
+            // SAFETY: an immutable Core Animation constant.
+            gradient_layer.setType(unsafe { kCAGradientLayerRadial });
+            let (cx, cy) = (x.0 as CGFloat * w, y.0 as CGFloat * h);
+            let (dx, dy) = match extent {
+                GradientSize::ClosestSide => (cx.min(w - cx), cy.min(h - cy)),
+                GradientSize::FarthestSide => (cx.max(w - cx), cy.max(h - cy)),
+                GradientSize::ClosestCorner => {
+                    let (a, b) = (cx.min(w - cx), cy.min(h - cy));
+                    (a * std::f64::consts::SQRT_2, b * std::f64::consts::SQRT_2)
+                }
+                GradientSize::FarthestCorner => {
+                    let (a, b) = (cx.max(w - cx), cy.max(h - cy));
+                    (a * std::f64::consts::SQRT_2, b * std::f64::consts::SQRT_2)
+                }
+            };
+            let (rx, ry) = if circle {
+                let radius = match extent {
+                    GradientSize::ClosestSide => dx.min(dy),
+                    GradientSize::FarthestSide => dx.max(dy),
+                    _ => {
+                        let (a, b) = (dx / std::f64::consts::SQRT_2, dy / std::f64::consts::SQRT_2);
+                        (a * a + b * b).sqrt()
+                    }
+                };
+                (radius, radius)
+            } else {
+                (dx, dy)
+            };
+            // The farthest corner, in radii of the ending shape.
+            let reach = if gradient.repeating && rx > 0.0 && ry > 0.0 {
+                (cx.max(w - cx) / rx).hypot(cy.max(h - cy) / ry).max(1.0)
+            } else {
+                1.0
+            };
+            gradient_layer.setStartPoint(CGPoint::new(cx / w, cy / h));
+            gradient_layer.setEndPoint(CGPoint::new((cx + rx * reach) / w, (cy + ry * reach) / h));
+            reach
+        }
+        GradientKind::Conic { from, x, y } => {
+            // SAFETY: an immutable Core Animation constant.
+            gradient_layer.setType(unsafe { kCAGradientLayerConic });
+            let (x, y) = (x.0 as CGFloat, y.0 as CGFloat);
+            gradient_layer.setStartPoint(CGPoint::new(x, y));
+            // Core Animation starts at the end point's direction, clockwise
+            // from the right. CSS starts up.
+            let angle = from.0 as f64 - std::f64::consts::FRAC_PI_2;
+            gradient_layer.setEndPoint(CGPoint::new(x + angle.cos() / 2.0, y + angle.sin() / 2.0));
+            1.0
+        }
+        kind => {
+            // SAFETY: an immutable Core Animation constant.
+            gradient_layer.setType(unsafe { kCAGradientLayerAxial });
+            let box_size = Size::new(Points(w as f32), Points(h as f32));
+            let angle = kind.linear_angle(box_size).unwrap_or(deg(180.0));
+            // CSS: the gradient line through the center at `angle` (0 up,
+            // clockwise), long enough that the corners get the end colors.
+            let (sin, cos) = (angle.0 as f64).sin_cos();
+            let len = (w * sin).abs() + (h * cos).abs();
+            let (dx, dy) = (sin * len / 2.0, -cos * len / 2.0);
+            let (cx, cy) = (w / 2.0, h / 2.0);
+            gradient_layer.setStartPoint(CGPoint::new((cx - dx) / w, (cy - dy) / h));
+            gradient_layer.setEndPoint(CGPoint::new((cx + dx) / w, (cy + dy) / h));
+            1.0
+        }
+    }
 }
 
 fn apply_corners(

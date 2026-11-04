@@ -10,10 +10,11 @@
 //! views, text, images, one-axis scroll views, virtualized lists and inputs
 //! (one line or several): frames,
 //! fill, radius, opacity, overflow, a static transform, solid or dashed
-//! uniform borders, per-side solid borders, `onPress`, the scroll events
-//! (`onScroll` at most once per frame, drag and momentum; payload is the
-//! content offset, content size and visible size), `activeStyle` /
-//! `hoverStyle` / `focusStyle`, safe area, the software
+//! uniform borders, per-side solid borders, outer and inset box shadows,
+//! linear, radial and conic gradient backgrounds (including repeating),
+//! `onPress`, the scroll events (`onScroll` at most once per frame, drag and
+//! momentum; payload is the content offset, content size and visible size),
+//! `activeStyle` / `hoverStyle` / `focusStyle`, safe area, the software
 //! keyboard's height (`env(keyboard-inset-height)`, applied at once, not
 //! animated), PNG, JPEG or WebP from a bundled file or `http(s)`, and a field
 //! with `value`, `onChange`, `placeholder`, `disabled`, `secureTextEntry` and

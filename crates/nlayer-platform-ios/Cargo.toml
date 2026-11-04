@@ -162,6 +162,7 @@ objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
   "CADisplayLink",
   "CAFrameRateRange",
   "CAShapeLayer",
+  "CAGradientLayer",
 ] }
 objc2-image-io = { version = "0.3.2", default-features = false, features = [
   "std",
