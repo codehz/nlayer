@@ -473,6 +473,17 @@ impl HostedApp for WebApp {
         self.call("back", &[]).map(|_| ())
     }
 
+    fn advance(&mut self, ms: f64) -> Result<(), String> {
+        // The page waits real time: modal exits and the animation graph
+        // use the browser clock, not a test clock.
+        let op = crate::session::step_op("advance")?;
+        self.session
+            .as_mut()
+            .ok_or_else(|| "the app is closed".to_owned())?
+            .step(op, "", "", 0.0, 0.0, 0.0, ms)
+            .map(|_| ())
+    }
+
     fn close(&mut self) {
         if let Some(page) = self.page.take()
             && let Ok(mut browser) = self.browser.lock()

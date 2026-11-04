@@ -332,11 +332,15 @@ test("dialog opens and back() closes it", () => {
   app.press("open-dialog-fade");
   app.waitFor("demo-dialog");
 
-  // back() closes the dialog (should trigger onRequestClose with reason="cancel")
+  // back() closes the dialog (onRequestClose reason="cancel"). The
+  // element unmounts at once; hosts keep the layer until the exit motion
+  // ends, so the tree can still show it for that interval.
   app.back();
-
-  // Dialog should be closed
-  const tree = app.tree();
+  let tree = app.tree();
+  for (let i = 0; i < 8 && flat(tree, []).some((n) => n.testID === "demo-dialog"); i++) {
+    app.advance(100);
+    tree = app.tree();
+  }
   const dialog = flat(tree, []).find((n) => n.testID === "demo-dialog");
   expect(dialog).toBe(undefined);
 
