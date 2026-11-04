@@ -8,9 +8,9 @@
 //! is omitted, and the rest of the batch still encodes.
 //!
 //! Copied from `nsh-platform-android/src/encode.rs`. Animation, gestures,
-//! refresh, zoom, paging, shadows, gradients and the other residual style
-//! fields are not encoded. Navigation containers (Stack, Screen, Modal,
-//! HeaderItem) and their configurations are encoded.
+//! refresh, zoom, paging and the other residual style fields are not
+//! encoded. Box shadows and gradient backgrounds are. Navigation containers
+//! (Stack, Screen, Modal, HeaderItem) and their configurations are encoded.
 
 use nlayer_core::geometry::{DefiniteLength, Points, REM_SIZE};
 use nlayer_core::style::{BorderStyle, Color, PositionAxis, TextAlign, TextStyle, ViewStyle};
@@ -507,9 +507,41 @@ fn opt_color(e: &mut Encoded, color: Option<Color>) {
 }
 
 /// Visual style the mounter paints: fill, radii, border, opacity,
-/// overflow, the decomposed transform, hidden, transform origin and
-/// `objectPosition`. Shadows, gradients and the other residual fields
-/// are not written.
+/// overflow, the decomposed transform, hidden, transform origin,
+/// `objectPosition`, transform ops, then box shadows and gradients.
+/// Filters, outlines and the other residual fields are not written.
+///
+/// Effects, after the transform ops. Empty lists are a count of 0.
+/// Lengths are points (dp). Java multiplies those by density.
+///
+/// ```text
+/// shadow_count: i32
+/// for each shadow, top layer first (CSS order):
+///   dx, dy, blur, spread: f32 points
+///   color: i32 ARGB
+///   inset: i32 (0 outer, 1 inset)
+/// gradient_count: i32
+/// for each gradient, top layer first:
+///   kind: i32
+///     0 linear (angle), 1 toward a corner, 2 radial, 3 conic
+///   repeating: i32 bool
+///   circle: i32 bool (radial; otherwise 0)
+///   size: i32 radial size
+///     0 closest-side, 1 closest-corner, 2 farthest-side, 3 farthest-corner
+///   start: f32 fraction of a turn (conic `from`; 0 is up, clockwise).
+///          Kind 1: 1 if the corner is on the right, else 0.
+///   angle: f32 fraction of a turn (linear angle; 0 is up, clockwise).
+///          Kind 1: 1 if the corner is on the bottom, else 0.
+///   center_x, center_y: f32 fractions of the box (radial and conic; 0.5 otherwise)
+///   stop_count: i32
+///   for each stop:
+///     color: i32 ARGB
+///     position kind: i32
+///       0 none (spread between neighbors)
+///       1 fraction of the gradient line
+///       2 absolute length in points (dp)
+///     value: f32 (the fraction, or points when kind is 2; 0 when kind is 0)
+/// ```
 fn view_style(e: &mut Encoded, style: &ViewStyle) {
     e.int(argb(style.background_color));
     let radii = style.radii();
@@ -549,6 +581,87 @@ fn view_style(e: &mut Encoded, style: &ViewStyle) {
     for op in ops {
         e.int(transform_kind(op.kind));
         e.float(op.value);
+    }
+    effects(e, style);
+}
+
+/// Box shadows and gradient backgrounds. See [`view_style`] for the words.
+fn effects(e: &mut Encoded, style: &ViewStyle) {
+    use nlayer_core::effects::GradientKind;
+    use nlayer_core::geometry::DefiniteLength;
+
+    let fx = style.effects.as_deref();
+    let shadows = fx.map_or(&[][..], |f| f.box_shadows.as_slice());
+    e.int(shadows.len() as i32);
+    for shadow in shadows {
+        e.float(shadow.offset_x.0);
+        e.float(shadow.offset_y.0);
+        e.float(shadow.blur.0);
+        e.float(shadow.spread.0);
+        e.int(argb(shadow.color));
+        e.bool(shadow.inset);
+    }
+    let gradients = fx.map_or(&[][..], |f| f.background_images.as_slice());
+    e.int(gradients.len() as i32);
+    for gradient in gradients {
+        let (kind, circle, size, start, angle, cx, cy) = match gradient.kind {
+            GradientKind::Linear { angle } => (0, false, 0, 0.0, turn(angle), 0.5, 0.5),
+            GradientKind::LinearCorner { right, bottom } => (
+                1,
+                false,
+                0,
+                if right { 1.0 } else { 0.0 },
+                if bottom { 1.0 } else { 0.0 },
+                0.5,
+                0.5,
+            ),
+            GradientKind::Radial { circle, size, x, y } => {
+                (2, circle, gradient_size(size), 0.0, 0.0, x.0, y.0)
+            }
+            GradientKind::Conic { from, x, y } => (3, false, 0, turn(from), 0.0, x.0, y.0),
+        };
+        e.int(kind);
+        e.bool(gradient.repeating);
+        e.bool(circle);
+        e.int(size);
+        e.float(start);
+        e.float(angle);
+        e.float(cx);
+        e.float(cy);
+        e.int(gradient.stops.len() as i32);
+        for stop in &gradient.stops {
+            e.int(argb(stop.color));
+            match stop.position {
+                None => {
+                    e.int(0);
+                    e.float(0.0);
+                }
+                Some(DefiniteLength::Fraction(fraction)) => {
+                    e.int(1);
+                    e.float(fraction.0);
+                }
+                Some(DefiniteLength::Absolute(length)) => {
+                    e.int(2);
+                    e.float(length.to_points(REM_SIZE).0);
+                }
+            }
+        }
+    }
+}
+
+/// A CSS angle as a fraction of a turn (0 is up, clockwise), rounded so a
+/// whole degree is exact.
+fn turn(angle: nlayer_core::geometry::Radians) -> f32 {
+    degrees(angle) / 360.0
+}
+
+fn gradient_size(size: nlayer_core::effects::GradientSize) -> i32 {
+    use nlayer_core::effects::GradientSize;
+    match size {
+        GradientSize::ClosestSide => 0,
+        GradientSize::ClosestCorner => 1,
+        GradientSize::FarthestSide => 2,
+        GradientSize::FarthestCorner => 3,
     }
 }
 
@@ -786,6 +899,10 @@ mod tests {
         }
     }
     fn skip_style(words: &mut Words<'_>) {
+        skip_style_prefix(words);
+        skip_effects(words);
+    }
+    fn skip_style_prefix(words: &mut Words<'_>) {
         let _ = words.int();
         for _ in 0..4 {
             let _ = words.float();
@@ -816,6 +933,31 @@ mod tests {
         for _ in 0..ops {
             let _ = words.int();
             let _ = words.float();
+        }
+    }
+    fn skip_effects(words: &mut Words<'_>) {
+        let shadows = words.int();
+        for _ in 0..shadows {
+            for _ in 0..4 {
+                let _ = words.float();
+            }
+            let _ = words.int();
+            let _ = words.int();
+        }
+        let gradients = words.int();
+        for _ in 0..gradients {
+            for _ in 0..4 {
+                let _ = words.int();
+            }
+            for _ in 0..4 {
+                let _ = words.float();
+            }
+            let stops = words.int();
+            for _ in 0..stops {
+                let _ = words.int();
+                let _ = words.int();
+                let _ = words.float();
+            }
         }
     }
     fn style() -> ViewStyle {
@@ -931,6 +1073,203 @@ mod tests {
         assert_eq!(words.int(), 1);
         assert_eq!(words.float(), 0.5);
         assert_eq!(words.int(), 0);
+        assert_eq!(words.int(), 0);
+        assert_eq!(words.int(), 0);
+        assert!(words.done());
+    }
+
+    #[test]
+    fn effects_pack_shadows_and_gradient_stops() {
+        use nlayer_core::effects::{
+            BoxShadow, ColorStop, Effects, Gradient, GradientKind, GradientSize,
+        };
+        use nlayer_core::geometry::{deg, percentage};
+
+        let mut style = ViewStyle::default();
+        style.effects = Some(Arc::new(Effects {
+            box_shadows: vec![
+                BoxShadow {
+                    offset_x: px(1.0),
+                    offset_y: px(-2.0),
+                    blur: px(3.0),
+                    spread: px(-4.0),
+                    color: Color::rgba(1, 2, 3, 4),
+                    inset: false,
+                },
+                BoxShadow {
+                    offset_y: px(1.0),
+                    color: Color::rgba(9, 8, 7, 255),
+                    inset: true,
+                    ..BoxShadow::default()
+                },
+            ],
+            background_images: vec![
+                Gradient {
+                    kind: GradientKind::Linear { angle: deg(180.0) },
+                    repeating: true,
+                    stops: vec![
+                        ColorStop {
+                            color: Color::rgba(255, 0, 0, 255),
+                            position: None,
+                        },
+                        ColorStop {
+                            color: Color::rgba(0, 0, 255, 128),
+                            position: Some(percentage(0.5).into()),
+                        },
+                        ColorStop {
+                            color: Color::rgba(0, 255, 0, 255),
+                            position: Some(px(12.0).into()),
+                        },
+                    ],
+                },
+                Gradient {
+                    kind: GradientKind::LinearCorner {
+                        right: true,
+                        bottom: false,
+                    },
+                    repeating: false,
+                    stops: vec![
+                        ColorStop {
+                            color: Color::rgba(1, 1, 1, 255),
+                            position: Some(percentage(0.0).into()),
+                        },
+                        ColorStop {
+                            color: Color::rgba(2, 2, 2, 255),
+                            position: Some(percentage(1.0).into()),
+                        },
+                    ],
+                },
+                Gradient {
+                    kind: GradientKind::Radial {
+                        circle: true,
+                        size: GradientSize::ClosestSide,
+                        x: percentage(0.25),
+                        y: percentage(0.75),
+                    },
+                    repeating: false,
+                    stops: vec![
+                        ColorStop {
+                            color: Color::rgba(3, 3, 3, 255),
+                            position: None,
+                        },
+                        ColorStop {
+                            color: Color::rgba(4, 4, 4, 255),
+                            position: None,
+                        },
+                    ],
+                },
+                Gradient {
+                    kind: GradientKind::Conic {
+                        from: deg(90.0),
+                        x: percentage(0.1),
+                        y: percentage(0.2),
+                    },
+                    repeating: false,
+                    stops: vec![
+                        ColorStop {
+                            color: Color::rgba(5, 5, 5, 255),
+                            position: Some(percentage(0.0).into()),
+                        },
+                        ColorStop {
+                            color: Color::rgba(6, 6, 6, 255),
+                            position: Some(percentage(1.0).into()),
+                        },
+                    ],
+                },
+            ],
+            ..Effects::default()
+        }));
+        let encoded = super::encode(MountBatch {
+            items: vec![MountItem::ViewStyle {
+                id: 7,
+                style: Box::new(style),
+            }],
+        });
+        let mut words = read(&encoded);
+        assert_eq!(words.int(), super::VIEW_STYLE);
+        assert_eq!(words.int(), 7);
+        skip_style_prefix(&mut words);
+        assert_eq!(words.int(), 2);
+        assert_eq!(
+            (words.float(), words.float(), words.float(), words.float()),
+            (1.0, -2.0, 3.0, -4.0)
+        );
+        assert_eq!(words.int(), 0x0401_0203);
+        assert_eq!(words.int(), 0);
+        assert_eq!(
+            (words.float(), words.float(), words.float(), words.float()),
+            (0.0, 1.0, 0.0, 0.0)
+        );
+        assert_eq!(words.int(), 0xFF09_0807u32 as i32);
+        assert_eq!(words.int(), 1);
+        assert_eq!(words.int(), 4);
+        // Linear, repeating, not a circle, size unused, start 0, half a turn, center 0.5.
+        assert_eq!(words.int(), 0);
+        assert_eq!(words.int(), 1);
+        assert_eq!(words.int(), 0);
+        assert_eq!(words.int(), 0);
+        assert_eq!(words.float(), 0.0);
+        assert_eq!(words.float(), 0.5);
+        assert_eq!(words.float(), 0.5);
+        assert_eq!(words.float(), 0.5);
+        assert_eq!(words.int(), 3);
+        assert_eq!(words.int(), 0xFFFF_0000u32 as i32);
+        assert_eq!(words.int(), 0);
+        assert_eq!(words.float(), 0.0);
+        assert_eq!(words.int(), 0x8000_00FFu32 as i32);
+        assert_eq!(words.int(), 1);
+        assert_eq!(words.float(), 0.5);
+        assert_eq!(words.int(), 0xFF00_FF00u32 as i32);
+        assert_eq!(words.int(), 2);
+        assert_eq!(words.float(), 12.0);
+        // Toward the top-right corner.
+        assert_eq!(words.int(), 1);
+        assert_eq!(words.int(), 0);
+        assert_eq!(words.int(), 0);
+        assert_eq!(words.int(), 0);
+        assert_eq!(words.float(), 1.0);
+        assert_eq!(words.float(), 0.0);
+        assert_eq!(words.float(), 0.5);
+        assert_eq!(words.float(), 0.5);
+        assert_eq!(words.int(), 2);
+        let _ = words.int();
+        let _ = words.int();
+        let _ = words.float();
+        let _ = words.int();
+        let _ = words.int();
+        let _ = words.float();
+        // Radial circle, closest side, center 25% 75%.
+        assert_eq!(words.int(), 2);
+        assert_eq!(words.int(), 0);
+        assert_eq!(words.int(), 1);
+        assert_eq!(words.int(), 0);
+        assert_eq!(words.float(), 0.0);
+        assert_eq!(words.float(), 0.0);
+        assert_eq!(words.float(), 0.25);
+        assert_eq!(words.float(), 0.75);
+        assert_eq!(words.int(), 2);
+        let _ = words.int();
+        let _ = words.int();
+        let _ = words.float();
+        let _ = words.int();
+        let _ = words.int();
+        let _ = words.float();
+        // Conic from a quarter turn, center 10% 20%.
+        assert_eq!(words.int(), 3);
+        assert_eq!(words.int(), 0);
+        assert_eq!(words.int(), 0);
+        assert_eq!(words.int(), 0);
+        assert_eq!(words.float(), 0.25);
+        assert_eq!(words.float(), 0.0);
+        assert_eq!(words.float(), 0.1);
+        assert_eq!(words.float(), 0.2);
+        assert_eq!(words.int(), 2);
+        let _ = words.int();
+        let _ = words.int();
+        let _ = words.float();
+        let _ = words.int();
+        let _ = words.int();
+        let _ = words.float();
         assert!(words.done());
     }
 

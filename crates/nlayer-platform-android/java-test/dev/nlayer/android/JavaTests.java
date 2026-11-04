@@ -40,6 +40,9 @@ public final class JavaTests extends Instrumentation {
     "testMountBatchFramesAndStyles",
     "testTransformOriginFollowsResize",
     "testMountBatchStateStyle",
+    "testStateStyleReplacesOneList",
+    "testOverflowShadowMovesChildren",
+    "testGradientPlaceResolvesStops",
     "testMountBatchFocusAncestors",
     "testMountBatchDelete",
     "testScrollAxisAndOffsets",
@@ -280,6 +283,118 @@ public final class JavaTests extends Instrumentation {
         });
     equal(1f, box.getAlpha(), "base opacity returns");
     equal(0xff0000ff, box.decor.fill, "base fill returns");
+  }
+
+  void testStateStyleReplacesOneList() {
+    HostView host = host();
+    float d = host.density;
+    Batch b = batch();
+    b.word(0).word(2).word(0);
+    b.word(1).word(1).word(2).word(-1);
+    b.word(4).word(2).real(0).real(0).real(20).real(10);
+    b.word(5).word(2);
+    styleHead(b, 0xff0000ff, 0, 1, false, 0.5f, 0.5f, false);
+    b.word(1);
+    shadow(b, 1, 2, 3, -1, 0xff111111, false);
+    b.word(1);
+    // Linear, not repeating, half a turn, two fraction stops.
+    b.word(0).bool(false).bool(false).word(0).real(0).real(0.5f).real(0.5f).real(0.5f);
+    b.word(2);
+    b.word(0xffff0000).word(1).real(0);
+    b.word(0xff0000ff).word(1).real(1);
+    b.word(12).word(2).word(0).word(1); // active: a new shadow, no gradient
+    styleHead(b, 0, 0, 1, false, 0.5f, 0.5f, false);
+    b.word(1);
+    shadow(b, 4, 0, 0, 0, 0xff222222, true);
+    b.word(0);
+    b.bool(false);
+    main(
+        () -> {
+          host.mounter.apply(b.bytes(), b.objects());
+          return null;
+        });
+    Box box = (Box) host.mounter.views.get(2);
+    equal(0xff111111, box.decor.boxShadowColors[0], "base shadow");
+    equal(1, box.decor.gradients.length, "base gradient");
+    equal(1 * d, box.decor.boxShadows[0], "shadow dx in pixels");
+    equal(-1 * d, box.decor.boxShadows[3], "negative spread in pixels");
+    main(
+        () -> {
+          box.setPressed(true);
+          host.mounter.paint(2);
+          return null;
+        });
+    equal(0xff222222, box.decor.boxShadowColors[0], "active shadow replaces the base");
+    equal(1f, box.decor.boxShadows[4], "active shadow is inset");
+    equal(1, box.decor.gradients.length, "an empty gradient list leaves the base");
+    equal(0.5f, box.decor.gradients[0].angle / 360f, "linear angle is a fraction of a turn");
+    main(
+        () -> {
+          box.setPressed(false);
+          host.mounter.paint(2);
+          return null;
+        });
+    equal(0xff111111, box.decor.boxShadowColors[0], "base shadow returns");
+  }
+
+  void testOverflowShadowMovesChildren() {
+    HostView host = host();
+    Batch b = batch();
+    b.word(0).word(2).word(0);
+    b.word(0).word(3).word(0);
+    b.word(1).word(1).word(2).word(-1);
+    b.word(1).word(2).word(3).word(-1);
+    b.word(4).word(2).real(0).real(0).real(40).real(40);
+    b.word(4).word(3).real(4).real(4).real(10).real(10);
+    b.word(5).word(2);
+    styleHead(b, 0xff112233, 8, 1, false, 0.5f, 0.5f, true);
+    b.word(1);
+    shadow(b, 0, 2, 4, 0, 0x88000000, false);
+    b.word(0);
+    main(
+        () -> {
+          host.mounter.apply(b.bytes(), b.objects());
+          return null;
+        });
+    Box box = (Box) host.mounter.views.get(2);
+    View child = host.mounter.views.get(3);
+    equal(1, box.getChildCount(), "the box's only child is the content layer");
+    check(box.getChildAt(0) instanceof Box, "the content layer is a box");
+    check(child.getParent() == box.getChildAt(0), "the child moved into the content box");
+    check(((Box) box.getChildAt(0)).clip, "the content box clips");
+    Batch clear = batch();
+    clear.word(5).word(2);
+    styleHead(clear, 0xff112233, 8, 1, false, 0.5f, 0.5f, true);
+    clear.word(0).word(0);
+    main(
+        () -> {
+          host.mounter.apply(clear.bytes(), clear.objects());
+          return null;
+        });
+    equal(1, box.getChildCount(), "the content layer is gone");
+    check(child.getParent() == box, "the child is back on the box");
+  }
+
+  void testGradientPlaceResolvesStops() {
+    Decor.Gradient g = new Decor.Gradient();
+    g.colors = new int[] {0xffff0000, 0xff00ff00, 0xff0000ff};
+    g.positions = new float[3];
+    g.units = new int[] {0, 2, 1};
+    g.values = new float[] {0, 40, 0.8f};
+    g.repeating = false;
+    g.place(100, 1);
+    equal(0f, g.drawnPositions[0], "a missing first stop starts at 0");
+    equal(0.4f, g.drawnPositions[1], "a length is a fraction of the line");
+    equal(0.8f, g.drawnPositions[2], "a fraction stop stays");
+
+    Decor.Gradient repeating = new Decor.Gradient();
+    repeating.colors = new int[] {0xffff0000, 0xff0000ff};
+    repeating.positions = new float[] {0.2f, 0.6f};
+    repeating.repeating = true;
+    repeating.place(0, 1);
+    equal(6, repeating.drawnPositions.length, "a repeating gradient tiles the line");
+    equal(0f, repeating.drawnPositions[0], "the tile starts at 0");
+    equal(1f, repeating.drawnPositions[5], "the tile ends at 1");
   }
 
   void testMountBatchFocusAncestors() {
@@ -885,7 +1000,8 @@ public final class JavaTests extends Instrumentation {
   /**
    * A view style as {@code encode.rs} writes it: fill, four radii, continuous, four border widths,
    * four border colors, border style, opacity, overflow, eight transform values, hidden, both
-   * transform-origin lengths and both object positions, and no transform ops.
+   * transform-origin lengths and both object positions, no transform ops, and empty shadow and
+   * gradient lists.
    */
   private static void style(Batch b, int fill, float radius, float opacity, boolean hidden) {
     styleOrigin(b, fill, radius, opacity, hidden, 0.5f, 0.5f);
@@ -893,6 +1009,20 @@ public final class JavaTests extends Instrumentation {
 
   private static void styleOrigin(
       Batch b, int fill, float radius, float opacity, boolean hidden, float ox, float oy) {
+    styleHead(b, fill, radius, opacity, hidden, ox, oy, false);
+    b.word(0).word(0);
+  }
+
+  /** The style words before the shadow and gradient lists. */
+  private static void styleHead(
+      Batch b,
+      int fill,
+      float radius,
+      float opacity,
+      boolean hidden,
+      float ox,
+      float oy,
+      boolean overflow) {
     b.word(fill);
     for (int i = 0; i < 4; i++) b.real(radius);
     b.bool(false);
@@ -900,7 +1030,7 @@ public final class JavaTests extends Instrumentation {
     for (int i = 0; i < 4; i++) b.word(0);
     b.word(0);
     b.real(opacity);
-    b.bool(false);
+    b.bool(overflow);
     b.real(0).real(0).real(1).real(1).real(0).real(0).real(0).real(0);
     b.bool(hidden);
     length(b, ox);
@@ -908,6 +1038,12 @@ public final class JavaTests extends Instrumentation {
     position(b, false, 0.5f);
     position(b, false, 0.5f);
     b.word(0);
+  }
+
+  /** One box-shadow layer: dx, dy, blur, spread in points, ARGB, inset. */
+  private static void shadow(
+      Batch b, float dx, float dy, float blur, float spread, int color, boolean inset) {
+    b.real(dx).real(dy).real(blur).real(spread).word(color).bool(inset);
   }
 
   private static void length(Batch b, float fraction) {

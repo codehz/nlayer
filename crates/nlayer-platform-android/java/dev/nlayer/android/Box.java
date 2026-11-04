@@ -5,6 +5,7 @@ import android.graphics.Canvas;
 import android.graphics.Path;
 import android.graphics.Rect;
 import android.view.View;
+import android.view.View.MeasureSpec;
 import android.view.ViewGroup;
 
 class Box extends ViewGroup {
@@ -18,13 +19,28 @@ class Box extends ViewGroup {
   int pointerEvents; // 0 auto, 1 none, 2 box-only, 3 box-none
   int panAxis; // 0 free, 1 horizontal, 2 vertical (nsh convention)
 
+  /** Scroll content never splits: the scroll view clips its own shadow. */
+  boolean maySplit = true;
+
+  /** Children go here while the box both clips and casts an outer shadow. */
+  private Box content;
+
   Box(Context c, Mounter m, int id) {
     super(c);
     this.mounter = m;
     this.id = id;
     setWillNotDraw(false);
+    // Children may draw shadows outside this box. Overflow hidden clips in
+    // dispatchDraw, or in `content` when an outer shadow must survive.
+    setClipChildren(false);
+    setClipToPadding(false);
     decor.bordersAbove = true;
     setBackground(decor);
+  }
+
+  /** Where children are added. */
+  ViewGroup container() {
+    return content != null ? content : this;
   }
 
   @Override
@@ -44,9 +60,16 @@ class Box extends ViewGroup {
 
   @Override
   protected void onMeasure(int ws, int hs) {
-    setMeasuredDimension(MeasureSpec.getSize(ws), MeasureSpec.getSize(hs));
+    int w = MeasureSpec.getSize(ws), h = MeasureSpec.getSize(hs);
+    setMeasuredDimension(w, h);
     for (int i = 0; i < getChildCount(); i++) {
       View v = getChildAt(i);
+      if (v == content) {
+        v.measure(
+            MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(h, MeasureSpec.EXACTLY));
+        continue;
+      }
       v.measure(
           MeasureSpec.makeMeasureSpec(v.getLayoutParams().width, MeasureSpec.EXACTLY),
           MeasureSpec.makeMeasureSpec(v.getLayoutParams().height, MeasureSpec.EXACTLY));
@@ -55,14 +78,25 @@ class Box extends ViewGroup {
 
   @Override
   protected void onLayout(boolean changed, int l, int t, int r, int b) {
+    int w = r - l, h = b - t;
     for (int i = 0; i < getChildCount(); i++) {
       View v = getChildAt(i);
+      if (v == content) {
+        v.layout(0, 0, w, h);
+        continue;
+      }
       ViewGroup.LayoutParams raw = v.getLayoutParams();
       if (raw instanceof ViewGroup.MarginLayoutParams) {
         ViewGroup.MarginLayoutParams p = (ViewGroup.MarginLayoutParams) raw;
         v.layout(p.leftMargin, p.topMargin, p.leftMargin + p.width, p.topMargin + p.height);
       }
     }
+  }
+
+  @Override
+  protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+    super.onSizeChanged(w, h, oldw, oldh);
+    if (content != null) content.layout(0, 0, w, h);
   }
 
   void frame(int x, int y, int w, int h) {
@@ -78,7 +112,8 @@ class Box extends ViewGroup {
   @Override
   protected void dispatchDraw(Canvas canvas) {
     int save = -1;
-    if (clip) {
+    // The content box clips. Clipping here would also clip this box's shadow.
+    if (clip && content == null) {
       save = canvas.save();
       Path p = new Path();
       Rect bounds = new Rect(0, 0, getWidth(), getHeight());
@@ -102,6 +137,41 @@ class Box extends ViewGroup {
     if (save >= 0) canvas.restoreToCount(save);
     decor.setBounds(0, 0, getWidth(), getHeight());
     decor.drawBorders(canvas);
+  }
+
+  /** Applies clipping after a style change. */
+  void updateClip() {
+    boolean split = maySplit && clip && decor.hasOuterShadows();
+    if (split && content == null) {
+      // Clipping this view would clip its shadow: children move into a
+      // content box that clips instead.
+      content = new Box(getContext(), mounter, id);
+      content.maySplit = false;
+      content.setBackground(null);
+      content.setClickable(false);
+      while (getChildCount() > 0) {
+        View child = getChildAt(0);
+        removeViewAt(0);
+        content.addView(child);
+      }
+      addView(content);
+      content.layout(0, 0, getWidth(), getHeight());
+    } else if (!split && content != null) {
+      Box old = content;
+      content = null;
+      removeView(old);
+      while (old.getChildCount() > 0) {
+        View child = old.getChildAt(0);
+        old.removeViewAt(0);
+        addView(child);
+      }
+    }
+    if (content != null) {
+      System.arraycopy(decor.radii, 0, content.decor.radii, 0, 4);
+      content.decor.continuous = decor.continuous;
+      content.clip = true;
+    }
+    invalidate();
   }
 
   @Override

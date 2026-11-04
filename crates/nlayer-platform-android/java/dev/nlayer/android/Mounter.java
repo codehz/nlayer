@@ -605,6 +605,7 @@ final class Mounter {
     }
     // Generic view insertion
     if (p instanceof ScrollBox) p = ((ScrollBox) p).content;
+    if (p instanceof Box) p = ((Box) p).container();
     if (!(p instanceof ViewGroup) || c == null || c == host) return;
     ViewGroup g = (ViewGroup) p;
     if (c.getParent() instanceof ViewGroup) ((ViewGroup) c.getParent()).removeView(c);
@@ -719,6 +720,12 @@ final class Mounter {
     int[] c = new int[4];
     int[] opKind = new int[0];
     float[] opValue = new float[0];
+
+    /** Box shadows (px): dx, dy, blur, spread, inset (1) per layer. */
+    float[] shadows = new float[0];
+
+    int[] shadowColors = new int[0];
+    Decor.Gradient[] gradients = new Decor.Gradient[0];
     boolean continuous, overflow, hidden, oxFraction, oyFraction, xEnd, yEnd;
     int oxKind, oyKind, xKind, yKind;
     float ox, oy, x, y, opacity;
@@ -755,7 +762,67 @@ final class Mounter {
       s.opKind[i] = b.getInt();
       s.opValue[i] = b.getFloat();
     }
+    readEffects(b, s);
     return s;
+  }
+
+  /**
+   * Effects after the transform ops. Word layout is {@code encode.rs} {@code view_style}. Lengths
+   * are points; pixels are {@code points * density}.
+   */
+  private void readEffects(ByteBuffer b, Style s) {
+    int shadows = b.getInt();
+    s.shadows = new float[shadows * 5];
+    s.shadowColors = new int[shadows];
+    for (int i = 0; i < shadows; i++) {
+      for (int k = 0; k < 4; k++) s.shadows[i * 5 + k] = b.getFloat() * density;
+      s.shadowColors[i] = b.getInt();
+      s.shadows[i * 5 + 4] = b.getInt() != 0 ? 1 : 0;
+    }
+    int gradients = b.getInt();
+    s.gradients = new Decor.Gradient[gradients];
+    for (int i = 0; i < gradients; i++) {
+      Decor.Gradient g = new Decor.Gradient();
+      g.kind = b.getInt();
+      g.repeating = b.getInt() != 0;
+      g.circle = b.getInt() != 0;
+      g.size = b.getInt();
+      float start = b.getFloat();
+      float angle = b.getFloat();
+      g.x = b.getFloat();
+      g.y = b.getFloat();
+      if (g.kind == 1) {
+        g.right = start != 0;
+        g.bottom = angle != 0;
+      } else if (g.kind == 3) {
+        g.angle = start * 360f;
+      } else {
+        g.angle = angle * 360f;
+      }
+      int stops = b.getInt();
+      g.colors = new int[stops];
+      g.positions = new float[stops];
+      g.units = new int[stops];
+      g.values = new float[stops];
+      for (int k = 0; k < stops; k++) {
+        g.colors[k] = b.getInt();
+        g.units[k] = b.getInt();
+        float v = b.getFloat();
+        g.values[k] = g.units[k] == 2 ? v * density : v;
+      }
+      // A transparent stop takes its neighbor's hue: fades do not darken.
+      for (int k = 0; k < stops; k++) {
+        if ((g.colors[k] >>> 24) != 0) continue;
+        for (int m = 1; m < stops; m++) {
+          int j = k + m < stops ? k + m : k - m;
+          if (j >= 0 && j < stops && (g.colors[j] >>> 24) != 0) {
+            g.colors[k] = g.colors[j] & 0x00ffffff;
+            break;
+          }
+        }
+      }
+      s.gradients[i] = g;
+    }
   }
 
   private Decor decor(View v) {
@@ -782,6 +849,9 @@ final class Mounter {
       d.originYFraction = s.oyFraction;
       d.originX = s.oxFraction ? s.ox : s.ox * density;
       d.originY = s.oyFraction ? s.oy : s.oy * density;
+      d.boxShadows = s.shadows;
+      d.boxShadowColors = s.shadowColors;
+      d.gradients = s.gradients;
       d.invalidateSelf();
     }
     v.setAlpha(s.opacity);
@@ -795,7 +865,11 @@ final class Mounter {
     v.setRotationY(s.t[6]);
     if (s.t[7] != 0) v.setCameraDistance(-density / s.t[7]);
     if (d != null) d.applyPivot(v);
-    if (v instanceof Box) ((Box) v).clip = s.overflow;
+    if (v instanceof Box) {
+      Box box = (Box) v;
+      box.clip = s.overflow;
+      box.updateClip();
+    }
     if (v instanceof InputBox) ((InputBox) v).clip = s.overflow;
     if (v instanceof ImageBox)
       ((ImageBox) v)
@@ -1233,6 +1307,11 @@ final class Mounter {
             && over.t[6] == 0
             && over.t[7] == 0;
     if (!identity) System.arraycopy(over.t, 0, s.t, 0, 8);
+    if (over.shadowColors.length > 0) {
+      s.shadows = over.shadows;
+      s.shadowColors = over.shadowColors;
+    }
+    if (over.gradients.length > 0) s.gradients = over.gradients;
     return s;
   }
 
@@ -1258,6 +1337,9 @@ final class Mounter {
     s.yEnd = a.yEnd;
     s.yKind = a.yKind;
     s.y = a.y;
+    s.shadows = a.shadows.clone();
+    s.shadowColors = a.shadowColors.clone();
+    s.gradients = a.gradients.clone();
     return s;
   }
 

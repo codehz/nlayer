@@ -1,6 +1,9 @@
 package dev.nlayer.android;
 
 import android.content.Context;
+import android.graphics.Canvas;
+import android.graphics.Path;
+import android.graphics.Rect;
 import android.view.Choreographer;
 import android.view.MotionEvent;
 import android.view.View;
@@ -105,6 +108,20 @@ final class ScrollBox extends FrameLayout {
             size, size, android.view.Gravity.CENTER_HORIZONTAL | android.view.Gravity.TOP));
 
     build(c);
+  }
+
+  private final Path clipPath = new Path();
+
+  /**
+   * A scroll view always clips, including its own outer shadow. It does not split a content box
+   * out: the shadow must not draw outside these bounds.
+   */
+  @Override
+  public void draw(Canvas canvas) {
+    int save = canvas.save();
+    canvas.clipPath(decor.clip(new Rect(0, 0, getWidth(), getHeight()), clipPath));
+    super.draw(canvas);
+    canvas.restoreToCount(save);
   }
 
   private void build(Context c) {
@@ -724,6 +741,7 @@ final class ScrollBox extends FrameLayout {
   final class Content extends Box {
     Content(Context c, Mounter m, int id) {
       super(c, m, id);
+      maySplit = false;
     }
 
     @Override
