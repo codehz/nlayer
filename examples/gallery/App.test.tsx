@@ -462,7 +462,7 @@ test("list demo shows virtual list", () => {
   app.waitFor("list");
   app.waitFor("first");
 
-  app.press("list-back");
+  app.back();
   app.waitFor("open-list");
 });
 
@@ -654,7 +654,7 @@ test("header demo shows title and header props", () => {
   if (drawn && drawn.frame) {
     expect(drawn.frame.y).toBe(0);
   }
-  app.press("header-back");
+  app.back();
   app.waitFor("page"); // Wait for home page scroll view
 });
 

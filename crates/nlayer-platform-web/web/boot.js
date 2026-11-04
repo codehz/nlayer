@@ -527,7 +527,12 @@ export async function startPage(root, options = {}) {
         });
       },
     },
-    { assetBase: options.assetBase ?? "", assetMap: options.assetMap, baseCSS: options.baseCSS },
+    {
+      assetBase: options.assetBase ?? "",
+      assetMap: options.assetMap,
+      baseCSS: options.baseCSS,
+      safeArea: pinned?.safeArea,
+    },
   );
   const [width, height] = surfaceSize(root);
   const [top, right, bottom, left] = readInsets(root);

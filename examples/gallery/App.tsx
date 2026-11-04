@@ -30,7 +30,6 @@ function quoteUrl(): string {
 }
 
 const nav = createNavStack<Route>([{ name: "home" }]);
-type NavStackHandle = typeof nav;
 const detailInterceptBack = signal(false);
 const detailBackIntercepted = signal(false);
 const dismissedCount = signal(0);
@@ -562,7 +561,7 @@ type Route =
   | { name: "reading" }
   | { name: "classes" }
   | { name: "effects" };
-function DialogDemoPage(props: { nav: NavStackHandle }) {
+function DialogDemoPage() {
   const dialogOpen = signal(false);
   const dialogAnimation = signal<"fade" | "slide" | "none">("fade");
   const lastCloseReason = signal<string>("");
@@ -572,9 +571,6 @@ function DialogDemoPage(props: { nav: NavStackHandle }) {
   return (
     <View testID="dialog-page" class="flex-1 bg-white p-4">
       <Text class="mb-4 text-xl font-bold">Dialog Demo</Text>
-      <Text testID="dialog-back" onPress={() => props.nav.pop()} class="mb-4 text-[#3b82f6]">
-        ← Back
-      </Text>
 
       {lastCloseReason() && (
         <Text testID="close-reason" class="mb-3 font-semibold text-[#10b981]">
@@ -668,7 +664,7 @@ function DialogDemoPage(props: { nav: NavStackHandle }) {
   );
 }
 
-function GestureCardPage(props: { nav: NavStackHandle }) {
+function GestureCardPage() {
   const translateX = createAnimatedValue(0);
   const translateY = createAnimatedValue(0);
   const panEndX = signal(0);
@@ -684,9 +680,6 @@ function GestureCardPage(props: { nav: NavStackHandle }) {
     <Scroll testID="gesture-page" class="flex-1 bg-white">
       <View class="p-4">
         <Text class="mb-4 text-xl font-bold">Gestures</Text>
-        <Text testID="gesture-back" onPress={() => props.nav.pop()} class="mb-4 text-[#3b82f6]">
-          ← Back
-        </Text>
 
         <Text class="mb-2 text-base font-semibold">Pan (drag)</Text>
         <Text testID="pan-end" class="mb-2 text-xs text-[#64748b]">
@@ -768,7 +761,7 @@ function GestureCardPage(props: { nav: NavStackHandle }) {
   );
 }
 
-function DetailPage(props: { nav: NavStackHandle }) {
+function DetailPage() {
   return (
     <Scroll testID="detail" class="flex-1 bg-white">
       <View class="p-4">
@@ -776,13 +769,6 @@ function DetailPage(props: { nav: NavStackHandle }) {
           Detail Screen
         </Text>
         <Text class="mb-4">This demonstrates push/pop navigation with native header</Text>
-        <Text
-          testID="go-back"
-          onPress={() => props.nav.pop()}
-          class="mb-4 font-semibold text-[#3b82f6]"
-        >
-          ← Back
-        </Text>
         <Text
           testID="intercept-back"
           onPress={() => detailInterceptBack.set(!detailInterceptBack())}
@@ -801,7 +787,7 @@ function DetailPage(props: { nav: NavStackHandle }) {
   );
 }
 
-function HeaderDemoPage(props: { nav: NavStackHandle }) {
+function HeaderDemoPage() {
   const transparent = signal(false);
 
   return (
@@ -828,20 +814,12 @@ function HeaderDemoPage(props: { nav: NavStackHandle }) {
         >
           {transparent() ? "Transparent ON" : "Toggle Transparent"}
         </Text>
-        <Text
-          testID="header-back"
-          onPress={() => props.nav.pop()}
-          class="font-semibold text-[#3b82f6]"
-          classList={{ "text-white": transparent() }}
-        >
-          ← Back
-        </Text>
       </View>
     </Scroll>
   );
 }
 
-function ListDemoPage(props: { nav: NavStackHandle }) {
+function ListDemoPage() {
   const loaded = signal(1000);
   const refreshing = signal(false);
   const snapEnabled = signal(false);
@@ -861,13 +839,6 @@ function ListDemoPage(props: { nav: NavStackHandle }) {
     <View testID="list-page" class="flex-1 bg-white">
       <View class="border-b border-b-slate-200 p-4">
         <Text class="text-xl font-bold">Virtual List</Text>
-        <Text
-          testID="list-back"
-          onPress={() => props.nav.pop()}
-          class="my-2 font-semibold text-[#3b82f6]"
-        >
-          ← Back
-        </Text>
 
         <View class="mt-2 flex flex-col gap-2">
           <Text
@@ -937,18 +908,11 @@ function ListDemoPage(props: { nav: NavStackHandle }) {
   );
 }
 
-function ViewportParentPage(props: { nav: NavStackHandle }) {
+function ViewportParentPage() {
   return (
     <View testID="viewport-parent-page" class="flex-1 min-h-0 bg-white">
       <View class="border-b border-b-slate-200 p-4">
         <Text class="text-xl font-bold">List viewport="parent"</Text>
-        <Text
-          testID="vp-back"
-          onPress={() => props.nav.pop()}
-          class="mt-2 font-semibold text-[#3b82f6]"
-        >
-          ← Back
-        </Text>
         <Text class="mt-2 text-xs text-[#64748b]">
           List uses outer Scroll's viewport (no nested scroll)
         </Text>
@@ -979,18 +943,11 @@ function ViewportParentPage(props: { nav: NavStackHandle }) {
     </View>
   );
 }
-function ReadingPage(props: { nav: NavStackHandle }) {
+function ReadingPage() {
   const pressed = signal(0);
   return (
     <Scroll testID="reading-page" class="flex-1 bg-slate-50">
       <View class="pt-[calc(env(safe-area-inset-top)+16px)] pr-[calc(env(safe-area-inset-right)+16px)] pb-8 pl-[calc(env(safe-area-inset-left)+16px)]">
-        <Text
-          testID="reading-back"
-          onPress={() => props.nav.pop()}
-          class="mb-2 font-semibold text-[#3b82f6]"
-        >
-          ← Gallery
-        </Text>
         <Text class="text-[28px] font-bold text-[#0f172a]">Reading</Text>
         <Text class="text-sm text-[#64748b]">v4: selectable text, inline views, href links</Text>
 
@@ -1080,13 +1037,10 @@ function ClassSample(props: { name: string; code: string; children?: unknown }) 
   );
 }
 
-function ClassesPage(props: { nav: NavStackHandle }) {
+function ClassesPage() {
   return (
     <Scroll testID="classes-page" class="flex-1 bg-slate-50">
       <View class="pt-[calc(env(safe-area-inset-top)+16px)] pr-[calc(env(safe-area-inset-right)+16px)] pb-[calc(max(env(safe-area-inset-bottom),env(keyboard-inset-height))+32px)] pl-[calc(env(safe-area-inset-left)+16px)]">
-        <Text onPress={() => props.nav.pop()} class="mb-2 font-semibold text-[#3b82f6]">
-          ← Gallery
-        </Text>
         <Text class="text-[28px] font-bold text-[#0f172a]">Classes</Text>
         <Text class="text-sm text-[#64748b]">
           v5: layout, color, state, and names that only warn
@@ -1256,13 +1210,10 @@ function ClassesPage(props: { nav: NavStackHandle }) {
   );
 }
 
-function EffectsPage(props: { nav: NavStackHandle }) {
+function EffectsPage() {
   return (
     <Scroll testID="effects-page" class="flex-1 bg-slate-50">
       <View class="pt-[calc(env(safe-area-inset-top)+16px)] pr-[calc(env(safe-area-inset-right)+16px)] pb-[calc(max(env(safe-area-inset-bottom),env(keyboard-inset-height))+32px)] pl-[calc(env(safe-area-inset-left)+16px)]">
-        <Text onPress={() => props.nav.pop()} class="mb-2 font-semibold text-[#3b82f6]">
-          ← Gallery
-        </Text>
         <Text class="text-[28px] font-bold text-[#0f172a]">Effects</Text>
         <Text class="text-sm text-[#64748b]">v7: shadows and gradients</Text>
 
@@ -1463,6 +1414,18 @@ function HomePage() {
   );
 }
 
+/** Web draws this (`header`). iOS and Android keep the system bar. */
+function PageHeader(props: { title: string }) {
+  return (
+    <View class="h-11 flex-row items-center gap-3 border-b border-b-slate-200 bg-white px-3">
+      <Text onPress={() => nav.pop()} class="font-semibold text-[#3b82f6]">
+        ← Back
+      </Text>
+      <Text class="text-[15px] font-semibold text-[#0f172a]">{props.title}</Text>
+    </View>
+  );
+}
+
 function App() {
   return (
     <NavStack state={nav} class="flex-1">
@@ -1481,20 +1444,20 @@ function App() {
           content = <HomePage />;
           title = "Gallery";
         } else if (r.name === "detail") {
-          content = <DetailPage nav={nav} />;
+          content = <DetailPage />;
           title = "Detail";
           headerStyle = { backgroundColor: "#3b82f6", color: "#fff", tintColor: "#fff" };
         } else if (r.name === "dialog") {
-          content = <DialogDemoPage nav={nav} />;
+          content = <DialogDemoPage />;
           title = "Dialog";
         } else if (r.name === "gesture") {
-          content = <GestureCardPage nav={nav} />;
+          content = <GestureCardPage />;
           title = "Gestures";
         } else if (r.name === "list") {
-          content = <ListDemoPage nav={nav} />;
+          content = <ListDemoPage />;
           title = "Virtual List";
         } else if (r.name === "header") {
-          content = <HeaderDemoPage nav={nav} />;
+          content = <HeaderDemoPage />;
           title = "Header";
           headerStyle = { backgroundColor: "#10b981", color: "#fff", tintColor: "#fff" };
           // iOS and Android put these in the system header; web draws
@@ -1522,19 +1485,23 @@ function App() {
             </View>
           );
         } else if (r.name === "viewport-parent") {
-          content = <ViewportParentPage nav={nav} />;
+          content = <ViewportParentPage />;
           title = "Viewport Parent";
         } else if (r.name === "reading") {
-          content = <ReadingPage nav={nav} />;
+          content = <ReadingPage />;
           title = "Reading";
         } else if (r.name === "classes") {
-          content = <ClassesPage nav={nav} />;
+          content = <ClassesPage />;
           title = "Classes";
         } else if (r.name === "effects") {
-          content = <EffectsPage nav={nav} />;
+          content = <EffectsPage />;
           title = "Effects";
         } else {
           content = <Text>Unknown route</Text>;
+        }
+
+        if (header == null && r.name !== "home" && title) {
+          header = <PageHeader title={title} />;
         }
 
         return (

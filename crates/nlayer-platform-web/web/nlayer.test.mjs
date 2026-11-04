@@ -83,6 +83,63 @@ test("Player applies screen config", () => {
   assert.equal(el._screenConfig.animation, "default");
 });
 
+test("Screen places only the header slot and covers the top inset", () => {
+  const { player } = createTestEnv();
+  const calls = [];
+  player.host.setRootSize = (...args) => calls.push(args);
+  player.safeArea = { top: 22, right: 8, bottom: 14, left: 10 };
+
+  player.apply([
+    ["c", 2, "stack"],
+    ["c", 3, "screen"],
+    ["c", 4, "headeritem"],
+    ["c", 5, "headeritem"],
+    ["i", 1, 2, null],
+    ["i", 2, 3, null],
+    ["i", 3, 4, null],
+    ["i", 3, 5, null],
+    ["f", 2, 0, 0, 390, 800],
+    [
+      "scr",
+      3,
+      {
+        headerHeight: 44,
+        headerVisible: true,
+        headerView: 4,
+        left: 5,
+        animation: "default",
+      },
+    ],
+  ]);
+
+  const screen = player.view(3);
+  assert.equal(player.view(4).parentNode, screen);
+  assert.equal(player.view(5).parentNode, null);
+  const reported = calls.filter((call) => call[0] === 3);
+  const last = reported.at(-1);
+  assert.ok(last, "screen reports its size");
+  assert.deepEqual(last.slice(1), [390, 800, 0, 8, 14, 10]);
+});
+
+test("Screen without a header reports the window safe area", () => {
+  const { player } = createTestEnv();
+  const calls = [];
+  player.host.setRootSize = (...args) => calls.push(args);
+  player.safeArea = { top: 22, right: 8, bottom: 14, left: 10 };
+
+  player.apply([
+    ["c", 2, "stack"],
+    ["c", 3, "screen"],
+    ["i", 1, 2, null],
+    ["i", 2, 3, null],
+    ["f", 3, 0, 0, 390, 800],
+  ]);
+
+  const last = calls.filter((call) => call[0] === 3).at(-1);
+  assert.ok(last);
+  assert.deepEqual(last.slice(1), [390, 800, 22, 8, 14, 10]);
+});
+
 test("Player applies modal config", () => {
   const { player } = createTestEnv();
 

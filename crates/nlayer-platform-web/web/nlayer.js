@@ -364,6 +364,14 @@ export class Player {
     const parent = this.view(parentId);
     const child = this.view(childId);
     if (!parent || !child) return;
+    // A header item is not a normal child. `placeHeader` puts the `header`
+    // slot on the screen; left / right / title stay detached (the system
+    // header's, which the web does not draw).
+    if (child._kind === "headeritem") {
+      child._headerParent = parent;
+      if (parent._kind === "screen") this.placeHeader(parent);
+      return;
+    }
     const host = this.contentHost(parent);
     const before = beforeId == null ? null : this.view(beforeId);
     const anchor =
@@ -383,6 +391,7 @@ export class Player {
     // The DOM parent may be the content layer. Removal uses that node;
     // stack tracking wants the view.
     const parent = this.ownerView(el.parentNode);
+    this.detachHeader(el);
     el.remove();
     if (parent) this.trackChange(parent, el);
   }
@@ -391,6 +400,7 @@ export class Player {
     const el = this.view(id);
     if (!el) return;
     const parent = this.ownerView(el.parentNode);
+    this.detachHeader(el);
     if (this.focused === el) this.focused = null;
     for (const held of this.pressHeld.values()) held.delete(el);
     this.animation?.unbind(id);
@@ -439,6 +449,13 @@ export class Player {
     s.top = `${y}px`;
     s.width = `${w}px`;
     s.height = `${h}px`;
+    if (el._kind === "stack") {
+      for (const screen of this.hosted(el)) {
+        if (screen._kind === "screen") this.reportScreenFromFrame(screen);
+      }
+    } else if (el._kind === "screen") {
+      this.reportScreenFromFrame(el);
+    }
   }
 
   op_s([, id, css, border, layer]) {
@@ -501,7 +518,9 @@ export class Player {
   }
 
   movesWithLayer(el, child) {
-    return child !== el._border && child !== el._spacer && child !== el._layer;
+    return (
+      child !== el._border && child !== el._spacer && child !== el._layer && child !== el._header
+    );
   }
 
   clearContentLayer(el) {
@@ -1494,7 +1513,59 @@ export class Player {
     const el = this.view(id);
     if (!el) return;
     el._screenConfig = config;
+    el._reported = null;
+    this.placeHeader(el);
+    this.reportScreenFromFrame(el);
     this.syncHistorySoon();
+  }
+
+  /** Drops `el` if it is the screen's placed header. */
+  detachHeader(el) {
+    const screen = el?._headerParent;
+    if (screen?._header === el) {
+      screen._header = null;
+      screen._reported = null;
+    }
+  }
+
+  /** Puts screen `screen`'s `header` (the app's view, which the core places
+   * at its top) in it, above its content. The web draws no system header. */
+  placeHeader(screen) {
+    const id = screen._screenConfig?.headerView;
+    const header = id != null ? this.view(id) : null;
+    if (screen._header && screen._header !== header) screen._header.remove();
+    screen._header = header ?? null;
+    if (!header) return;
+    if (header.parentNode !== screen) screen.append(header);
+  }
+
+  /** The insets of screen `screen`'s content: the window's safe area, but
+   * the top's when its `header` covers it. */
+  screenInsets(screen) {
+    const safe = this.readInsets();
+    return screen._screenConfig?.headerView != null ? [0, safe[1], safe[2], safe[3]] : safe;
+  }
+
+  reportScreenFromFrame(screen) {
+    if (!screen || screen._kind !== "screen") return;
+    const frame = screen._frame;
+    if (frame && frame[2] > 0 && frame[3] > 0) {
+      this.reportScreen(screen, frame[2], frame[3]);
+      return;
+    }
+    const stack = this.ownerView(screen.parentNode);
+    const stackFrame = stack?._kind === "stack" ? stack._frame : null;
+    if (stackFrame && stackFrame[2] > 0 && stackFrame[3] > 0) {
+      this.reportScreen(screen, stackFrame[2], stackFrame[3]);
+    }
+  }
+
+  reportScreen(screen, width, height) {
+    const insets = this.screenInsets(screen);
+    const key = `${width},${height},${insets.join(",")}`;
+    if (screen._reported === key) return;
+    screen._reported = key;
+    this.host.setRootSize?.(screen._id, width, height, ...insets);
   }
 
   op_mc([, id, config]) {
@@ -1565,6 +1636,10 @@ export class Player {
   windowResized() {
     for (const el of this.views.values()) {
       if (el._kind === "modal" && el.isConnected) this.placeModal(el);
+      if (el._kind === "screen" && el.isConnected) {
+        el._reported = null;
+        this.reportScreenFromFrame(el);
+      }
     }
   }
 
