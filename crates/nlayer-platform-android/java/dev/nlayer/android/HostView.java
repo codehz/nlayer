@@ -372,9 +372,14 @@ public final class HostView extends FrameLayout {
 
   /** The back button reached the app. The engine reports it to `BackHandler`. */
   public boolean back() {
-    if (!started) return false;
-    Native.back(handle);
-    return true;
+    return onMain(
+        new Main<Boolean>() {
+          public Boolean run() {
+            if (!started) return false;
+            Native.back(handle);
+            return true;
+          }
+        });
   }
 
   /** No `BackHandler` handled the back: Android sends the task to the background. */
