@@ -421,6 +421,99 @@ test("Modal insert calls setRootSize with dimensions and insets", () => {
   assert.equal(left, 0);
 });
 
+/** Replaces the page clock so a test can finish a modal's exit. */
+function holdTimers(player) {
+  const queued = [];
+  player.window.setTimeout = (fn, ms) => {
+    queued.push({ fn, ms });
+    return queued.length;
+  };
+  player.window.clearTimeout = (id) => {
+    const item = queued[id - 1];
+    if (item) item.fn = null;
+  };
+  return queued;
+}
+
+function mountModal(player, animation) {
+  player.host.setRootSize = () => {};
+  player.apply([
+    ["c", 20, "modal"],
+    ["c", 21, "view"],
+    ["i", 1, 20, null],
+    ["i", 20, 21, null],
+    ["f", 20, 0, 0, 100, 400],
+    ["mc", 20, { animation }],
+  ]);
+  return { modal: player.view(20), child: player.view(21) };
+}
+
+test("a removed modal keeps its content until the exit motion ends", () => {
+  const { player, root } = createTestEnv();
+  const queued = holdTimers(player);
+  const { modal, child } = mountModal(player, "slide");
+  // The child is released first. It still has to ride the modal out.
+  player.apply([
+    ["d", 21],
+    ["d", 20],
+  ]);
+  assert.equal(player.view(20), undefined, "the element is already gone from the app");
+  assert.equal(modal.isConnected, true, "the layer stays up for the exit");
+  assert.equal(child.parentNode, modal, "content removed with the modal stays in it");
+  assert.equal(modal.style.transform, "translateY(400px)");
+  assert.equal(modal.style.pointerEvents, "none");
+  assert.equal(player.backDepth(), 0, "a leaving modal is not a history entry");
+  assert.equal(root.contains(modal), true);
+  const leave = queued.find((item) => item.ms === 350);
+  assert.ok(leave, "slide exits over 350ms");
+  leave.fn();
+  assert.equal(modal.isConnected, false);
+  assert.equal(child.isConnected, false);
+});
+
+test("a fade modal exits by opacity and none waits only a turn", () => {
+  const { player } = createTestEnv();
+  const queued = holdTimers(player);
+  const faded = mountModal(player, "fade");
+  player.apply([
+    ["d", 21],
+    ["d", 20],
+  ]);
+  assert.equal(faded.modal.style.opacity, "0");
+  assert.equal(faded.modal.style.transform, "");
+  assert.equal(faded.child.parentNode, faded.modal);
+  queued.find((item) => item.ms === 250).fn();
+  assert.equal(faded.modal.isConnected, false);
+
+  const none = mountModal(player, "none");
+  const before = queued.length;
+  player.apply([
+    ["d", 21],
+    ["d", 20],
+  ]);
+  assert.equal(none.modal.isConnected, true);
+  assert.equal(none.modal.style.opacity, "");
+  assert.equal(none.child.parentNode, none.modal);
+  const leave = queued.slice(before).find((item) => item.ms === 0 && item.fn);
+  assert.ok(leave, "none leaves on the next turn");
+  leave.fn();
+  assert.equal(none.modal.isConnected, false);
+});
+
+test("inserting a modal again cancels an exit that has not finished", () => {
+  const { player } = createTestEnv();
+  holdTimers(player);
+  const { modal } = mountModal(player, "slide");
+  player.apply([["r", 20]]);
+  assert.equal(modal._leaving, true);
+  assert.equal(modal.style.transform, "translateY(400px)");
+  player.apply([["i", 1, 20, null]]);
+  assert.equal(modal._leaving, false);
+  assert.equal(modal.style.transform, "");
+  assert.equal(modal.style.pointerEvents, "");
+  assert.equal(modal.isConnected, true);
+});
+
 test("Modal does not call setRootSize again if size unchanged", () => {
   const { player } = createTestEnv();
   const calls = [];

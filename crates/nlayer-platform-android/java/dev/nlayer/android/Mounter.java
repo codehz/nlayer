@@ -90,6 +90,9 @@ final class Mounter {
   final SparseArray<int[]> headerSizes = new SparseArray<>();
   final SparseArray<ModalHost> modals = new SparseArray<>();
 
+  /** Modals whose exit motion is still drawing. Their views stay until it ends. */
+  final java.util.ArrayList<ModalHost> closingModals = new java.util.ArrayList<>();
+
   /** Bits the core asked to hear (`active:` 1, `hover:` 2). Focus is always reported. */
   private final android.util.SparseIntArray trackedStates = new android.util.SparseIntArray();
 
@@ -645,9 +648,35 @@ final class Mounter {
       hosts.delete(id);
       return;
     }
-    // Generic view removal
+    // Generic view removal. A dialog that is leaving keeps the view: the
+    // element is already gone, and the exit motion still has to show it.
     View v = views.get(id);
+    if (v != null && keptForModalExit(v)) return;
     if (v != null && v.getParent() instanceof ViewGroup) ((ViewGroup) v.getParent()).removeView(v);
+  }
+
+  void retainClosing(ModalHost modal) {
+    if (!closingModals.contains(modal)) closingModals.add(modal);
+  }
+
+  void releaseClosing(ModalHost modal) {
+    closingModals.remove(modal);
+  }
+
+  /**
+   * True when `v` belongs to a modal that is playing its exit, or that this batch already unhosted
+   * and will dismiss once the batch ends.
+   */
+  private boolean keptForModalExit(View v) {
+    for (int i = closingModals.size() - 1; i >= 0; i--) {
+      if (closingModals.get(i).holds(v)) return true;
+    }
+    for (int id : dirtyModals) {
+      if (hosts.indexOfKey(id) >= 0) continue;
+      ModalHost modal = modals.get(id);
+      if (modal != null && modal.holds(v)) return true;
+    }
+    return false;
   }
 
   private void delete(int id) {

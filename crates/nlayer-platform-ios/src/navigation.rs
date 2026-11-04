@@ -1065,6 +1065,11 @@ pub(crate) fn controller_of(view: &UIView) -> Option<Retained<UIViewController>>
     }
     None
 }
+/// `view` sits in a modal UIKit is dismissing. The app already dropped the
+/// element; the view stays so the transition still has its content.
+pub(crate) fn in_dismissing_modal(view: &UIView) -> bool {
+    controller_of(view).is_some_and(|controller| controller.isBeingDismissed())
+}
 
 #[cfg(feature = "host-tests")]
 pub(crate) mod tests {

@@ -158,6 +158,7 @@ final class ModalHost {
     Dialog d = dialog;
     Runnable done =
         () -> {
+          mounter.releaseClosing(ModalHost.this);
           d.dismiss();
           if (dialog == d) dialog = null;
           closing = false;
@@ -166,6 +167,9 @@ final class ModalHost {
       done.run();
       return;
     }
+    // The app already dropped the element. Keep this window's views until
+    // the motion ends; the batch's deletes would otherwise empty it first.
+    mounter.retainClosing(this);
     container
         .animate()
         .alpha(animation == 1 ? 0 : 1)
@@ -180,6 +184,14 @@ final class ModalHost {
               }
             })
         .start();
+  }
+
+  /** `v` is this dialog's content, so an exit motion still has to draw it. */
+  boolean holds(View v) {
+    for (android.view.ViewParent p = v.getParent(); p instanceof View; p = p.getParent()) {
+      if (p == container) return true;
+    }
+    return false;
   }
 
   void configure(

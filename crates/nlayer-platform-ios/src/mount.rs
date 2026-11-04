@@ -1371,7 +1371,11 @@ impl Mounter {
                 }
                 self.detach_area(id);
                 if let Some(view) = self.view(id) {
-                    view.removeFromSuperview();
+                    // Inside a modal that is dismissing: leave it for that
+                    // animation. UIKit drops it with the controller.
+                    if !crate::navigation::in_dismissing_modal(view) {
+                        view.removeFromSuperview();
+                    }
                 }
             }
             MountItem::Delete { id } => {
@@ -1394,7 +1398,11 @@ impl Mounter {
                     if let Native::Modal(modal) = &mut slot.native {
                         modal.dismiss(|| {});
                     }
-                    slot.native.view().removeFromSuperview();
+                    // An animated dismiss keeps the view. Removing it here
+                    // would play the transition on an empty controller.
+                    if !crate::navigation::in_dismissing_modal(slot.native.view()) {
+                        slot.native.view().removeFromSuperview();
+                    }
                 }
             }
             MountItem::Frame { id, frame } => {

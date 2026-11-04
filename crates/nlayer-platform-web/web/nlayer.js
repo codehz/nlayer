@@ -187,6 +187,9 @@ export class Player {
     this.safeArea = options.safeArea ?? null;
     this.changedStacks = new Set();
     this.changedModals = false;
+    // Detaches deferred to the end of the batch, so a modal's exit motion
+    // can keep the content the same batch removed.
+    this.removals = [];
   }
 
   /** `env(keyboard-inset-height)`. A pin of 0 leaves taps alone. */
@@ -207,6 +210,7 @@ export class Player {
       const handler = this[`op_${item[0]}`];
       if (handler) handler.call(this, item);
     }
+    this.finishRemovals();
     this.reconcileStacks();
   }
 
@@ -380,6 +384,10 @@ export class Player {
         : host === parent
           ? (parent._spacer ?? null)
           : null;
+    // Back before a deferred removal (or a modal exit) finished.
+    child._removing = false;
+    child._leftWith = null;
+    if (child._kind === "modal" && child._leaving) this.cancelModalExit(child);
     host.insertBefore(child, anchor);
     this.raiseBorder(parent);
     this.trackChange(parent, child);
@@ -392,7 +400,8 @@ export class Player {
     // stack tracking wants the view.
     const parent = this.ownerView(el.parentNode);
     this.detachHeader(el);
-    el.remove();
+    if (el._kind === "modal") this.dismissModal(el);
+    else this.queueRemoval(el);
     if (parent) this.trackChange(parent, el);
   }
 
@@ -405,8 +414,95 @@ export class Player {
     for (const held of this.pressHeld.values()) held.delete(el);
     this.animation?.unbind(id);
     this.views.delete(id);
-    el.remove();
+    if (el._kind === "modal") this.dismissModal(el);
+    else this.queueRemoval(el);
     if (parent) this.trackChange(parent, el);
+  }
+
+  /** Leave `el` in the tree until the batch ends. */
+  queueRemoval(el) {
+    if (el._removing || el._leaving) return;
+    el._removing = true;
+    this.removals.push(el);
+  }
+
+  /**
+   * Views removed with a modal stay in it (`_leftWith`) until the exit
+   * motion ends. Everything else leaves now. The app already unmounted;
+   * the pixels are what remain.
+   */
+  finishRemovals() {
+    const removals = this.removals;
+    this.removals = [];
+    for (const el of removals) {
+      if (!el._removing) continue;
+      el._removing = false;
+      let up = el.parentNode;
+      while (up && up !== this.root && !up._leaving) up = up.parentNode;
+      if (up && up !== this.root) el._leftWith = up;
+      else el.remove();
+    }
+  }
+
+  /** `"slide"`, `"fade"` or `"none"`. Less motion turns a slide into a fade. */
+  modalMotion(el) {
+    const name = el._modalConfig?.animation ?? "slide";
+    const animation = name === "fade" || name === "none" || name === "slide" ? name : "slide";
+    if (animation !== "slide") return animation;
+    let reduce = false;
+    try {
+      reduce = !!this.window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    } catch {
+      reduce = false;
+    }
+    return reduce ? "fade" : "slide";
+  }
+
+  /**
+   * The modal element is gone from the app. Keep it on screen and play
+   * `animation`, then drop it and the content removed with it.
+   */
+  dismissModal(el) {
+    if (el._leaving) return;
+    el._leaving = true;
+    el.style.pointerEvents = "none";
+    const motion = this.modalMotion(el);
+    if (motion === "slide") {
+      const height = el._frame?.[3] || this.rootSize()[1] || 0;
+      el.style.transform = `translateY(${height}px)`;
+    } else if (motion === "fade") {
+      el.style.opacity = "0";
+    }
+    const delay = motion === "none" ? 0 : motion === "fade" ? 250 : 350;
+    el._leaveTimer = this.window.setTimeout(() => {
+      el._leaveTimer = 0;
+      if (!el._leaving) return;
+      el.remove();
+      this.dropLeftWith(el);
+    }, delay);
+  }
+
+  /** A modal inserted again before its exit finished stays. */
+  cancelModalExit(el) {
+    el._leaving = false;
+    if (el._leaveTimer) {
+      this.window.clearTimeout(el._leaveTimer);
+      el._leaveTimer = 0;
+    }
+    this.dropLeftWith(el);
+    el.style.pointerEvents = "";
+    el.style.transform = "";
+    el.style.opacity = "";
+  }
+
+  /** Views removed inside `el` while it left now leave it. */
+  dropLeftWith(el) {
+    for (const child of el.querySelectorAll(".nl-v")) {
+      if (child._leftWith !== el) continue;
+      child._leftWith = null;
+      child.style.pointerEvents = "";
+      child.remove();
+    }
   }
 
   trackChange(parent, child) {
@@ -432,7 +528,7 @@ export class Player {
     if (this.changedModals) {
       this.changedModals = false;
       for (const el of this.views.values()) {
-        if (el._kind !== "modal" || !el.isConnected) continue;
+        if (el._kind !== "modal" || !el.isConnected || el._leaving) continue;
         // A modal covers the window wherever the app rendered it.
         if (el.parentNode !== this.root) this.root.append(el);
         this.placeModal(el);
@@ -1635,7 +1731,7 @@ export class Player {
 
   windowResized() {
     for (const el of this.views.values()) {
-      if (el._kind === "modal" && el.isConnected) this.placeModal(el);
+      if (el._kind === "modal" && el.isConnected && !el._leaving) this.placeModal(el);
       if (el._kind === "screen" && el.isConnected) {
         el._reported = null;
         this.reportScreenFromFrame(el);
@@ -1663,7 +1759,7 @@ export class Player {
   backDepth() {
     let depth = 0;
     for (const el of this.root.children) {
-      if (el._kind === "modal") depth++;
+      if (el._kind === "modal" && !el._leaving) depth++;
     }
     for (const el of this.views.values()) {
       if (el._kind === "stack" && el.isConnected) {
