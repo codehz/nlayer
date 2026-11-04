@@ -1,12 +1,18 @@
 //! `nlayer run --target web`.
 //!
-//! Serves the page, the wasm engine, the app's bundle and files next to the
-//! app (a demo's `quote.json`) on this machine. TSX and imported assets are
-//! watched by polling their bytes. When JS changes and the new bundle can
-//! patch the previous one, the server sends a patch frame and then the new
-//! bundle on `/ws`. An asset-only change replaces files and sends no patch.
-//! A failed rebuild sends the diagnostic and keeps the previous file table
-//! and the previous bundle for new connections. The page does not reload.
+//! Serves the page, the wasm engine, the app's development bundle and files
+//! next to the app (a demo's `quote.json`) on this machine. TSX and imported
+//! assets are watched by polling their bytes. When JS changes and the new
+//! bundle can patch the previous one, the server sends a patch frame and
+//! then the new bundle on `/ws`. An asset-only change replaces files and
+//! sends no patch. A failed rebuild sends the diagnostic and keeps the
+//! previous file table and the previous bundle for new connections. The page
+//! does not reload.
+//!
+//! One build is one [`bundle_hot`]: the page runs that bundle, so no cold
+//! `bundle()` runs beside it. That one would compile every module a second
+//! time, and report its classes a second time, for a `bundle.js` the page
+//! never loads.
 
 use std::{
     collections::HashMap,
@@ -24,7 +30,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use nlayer_bundler::{Bundle, BundleOptions, HotBundle, HotPatch, bundle, bundle_hot};
+use nlayer_bundler::{HotBundle, HotPatch, bundle_hot};
 use nlayer_engine::protocol::{self, WS_PATH};
 
 use crate::{BuildError, resolve_entry};
@@ -69,7 +75,9 @@ pub struct RunOptions {
     pub entry: PathBuf,
     /// `0` asks the OS for a port.
     pub port: u16,
-    /// Minify the bundle.
+    /// Kept for callers of `nlayer run --release`. The development script is
+    /// the hot bundle and is not minified, so the dev server does not read
+    /// this.
     pub release: bool,
     /// The wasm the page instantiates (`nlayer.wasm`).
     pub wasm: Vec<u8>,
@@ -166,7 +174,6 @@ struct Shared {
     port: u16,
     entry: PathBuf,
     app_dir: PathBuf,
-    release: bool,
     on_build: Arc<dyn Fn(BuildOutcome) + Send + Sync>,
     inner: Mutex<Inner>,
 }
@@ -257,7 +264,6 @@ pub fn serve(options: RunOptions) -> Result<DevServer, RunError> {
         port,
         entry,
         app_dir,
-        release: options.release,
         on_build,
         inner: Mutex::new(Inner {
             generation: 0,
@@ -439,21 +445,14 @@ pub(crate) fn consider_tree(dir: &Path, newest: &mut SystemTime) {
 }
 
 fn rebuild(shared: &Shared) {
-    // The page executes `bundle_hot` from the socket: a patch, then the
-    // new bundle. `bundle()` is still published as `bundle.js` for the
-    // packaged page and the file table.
+    // One build: the page runs the hot bundle from the socket (a patch, then
+    // the new bundle). A cold `bundle()` beside it would compile every module
+    // again and report its classes twice for an output nothing loads.
     let started = Instant::now();
     let elapsed = |from: Instant| from.elapsed().as_secs_f64() * 1000.0;
-    let outcome = match bundle(&BundleOptions {
-        entry: shared.entry.clone(),
-        minify: shared.release,
-        test: false,
-    }) {
-        Ok(bundled) => match read_app(&shared.app_dir, &bundled) {
-            Ok(app) => match bundle_hot(&shared.entry, false) {
-                Ok(hot) => publish(shared, app, &bundled, hot, elapsed(started)),
-                Err(error) => fail_outcome(shared, error.plain, error.colored, elapsed(started)),
-            },
+    let outcome = match bundle_hot(&shared.entry, false) {
+        Ok(hot) => match read_assets(&shared.app_dir, &hot) {
+            Ok(app) => publish(shared, app, hot, elapsed(started)),
             Err(message) => fail_outcome(shared, message.clone(), message, elapsed(started)),
         },
         Err(error) => fail_outcome(shared, error.plain, error.colored, elapsed(started)),
@@ -464,14 +463,14 @@ fn rebuild(shared: &Shared) {
 fn publish(
     shared: &Shared,
     app: HashMap<String, Vec<u8>>,
-    bundled: &Bundle,
     hot: HotBundle,
     elapsed_ms: f64,
 ) -> BuildOutcome {
     let (script, map) = hot.script();
+    let assets = hot.assets.clone();
     let previous = shared.inner.lock().expect("dev server").hot.clone();
     let patch = previous.as_ref().map(|previous| hot.patch(previous));
-    let watched = watch_hot(&shared.app_dir, bundled, &hot);
+    let watched = watch_paths(&shared.app_dir, Some(&hot));
     let stamp = stamp(&watched);
     let mut inner = shared.inner.lock().expect("dev server");
     let was_zero = inner.generation == 0;
@@ -526,7 +525,7 @@ fn publish(
         first_success,
         elapsed_ms,
         error: String::new(),
-        assets: bundled.assets.clone(),
+        assets,
     }
 }
 
@@ -580,19 +579,11 @@ fn install_app(files: &mut HashMap<String, Arc<[u8]>>, app: HashMap<String, Vec<
     true
 }
 
-fn read_app(app_dir: &Path, bundled: &Bundle) -> Result<HashMap<String, Vec<u8>>, String> {
+/// The app's imported assets, as the page fetches them. `bundle.js` is not
+/// among them: the development bundle arrives on `/ws`.
+fn read_assets(app_dir: &Path, hot: &HotBundle) -> Result<HashMap<String, Vec<u8>>, String> {
     let mut files = HashMap::new();
-    let mut code = bundled.code.clone();
-    if !code.ends_with('\n') {
-        code.push('\n');
-    }
-    code.push_str("//# sourceMappingURL=bundle.js.map\n");
-    files.insert("bundle.js".to_owned(), code.into_bytes());
-    files.insert(
-        "bundle.js.map".to_owned(),
-        bundled.source_map.clone().into_bytes(),
-    );
-    for rel in &bundled.assets {
+    for rel in &hot.assets {
         let key = rel.to_string_lossy().replace('\\', "/");
         if reserved(&key) {
             return Err(format!("asset `{key}` uses a path the page reserves"));
@@ -607,25 +598,14 @@ fn reserved(path: &str) -> bool {
     crate::web_assets::reserved(path)
 }
 
-pub(crate) fn watch_paths(app_dir: &Path, bundled: Option<&Bundle>) -> Vec<PathBuf> {
+pub(crate) fn watch_paths(app_dir: &Path, hot: Option<&HotBundle>) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     collect_sources(app_dir, &mut paths);
-    if let Some(bundled) = bundled {
-        paths.extend(bundled.watch_files.iter().cloned());
-        for rel in &bundled.assets {
+    if let Some(hot) = hot {
+        paths.extend(hot.watch_files.iter().cloned());
+        for rel in &hot.assets {
             paths.push(app_dir.join(rel));
         }
-    }
-    paths.sort();
-    paths.dedup();
-    paths
-}
-
-fn watch_hot(app_dir: &Path, bundled: &Bundle, hot: &HotBundle) -> Vec<PathBuf> {
-    let mut paths = watch_paths(app_dir, Some(bundled));
-    paths.extend(hot.watch_files.iter().cloned());
-    for rel in &hot.assets {
-        paths.push(app_dir.join(rel));
     }
     paths.sort();
     paths.dedup();
@@ -1133,7 +1113,38 @@ fn send_event(ws: &mut Client, event: &DevEvent) -> Result<(), ()> {
 
 #[cfg(test)]
 mod tests {
-    use super::route;
+    use super::{RunOptions, fs, route, serve};
+    use std::sync::{Mutex, Once};
+
+    /// `nlayer::build` lines this binary has logged.
+    static BUILD_LINES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    struct BuildLog;
+
+    impl log::Log for BuildLog {
+        fn enabled(&self, meta: &log::Metadata<'_>) -> bool {
+            meta.target() == "nlayer::build" && meta.level() <= log::Level::Warn
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            if self.enabled(record.metadata()) {
+                BUILD_LINES
+                    .lock()
+                    .expect("build lines")
+                    .push(record.args().to_string());
+            }
+        }
+
+        fn flush(&self) {}
+    }
+
+    fn capture_build_lines() {
+        static INSTALL: Once = Once::new();
+        INSTALL.call_once(|| {
+            let _ = log::set_logger(&BuildLog);
+            log::set_max_level(log::LevelFilter::Warn);
+        });
+    }
 
     #[test]
     fn routes_reject_dot_dot_after_decoding() {
@@ -1142,5 +1153,50 @@ mod tests {
         assert!(route("/../Cargo.toml").is_err());
         assert!(route("/%2e%2e/Cargo.toml").is_err());
         assert!(route("/%").is_err());
+    }
+
+    /// One build parses each class string once, so a class is reported once.
+    /// A second compiler run per build would report it again.
+    #[test]
+    fn a_build_reports_an_unknown_class_once() {
+        capture_build_lines();
+        let dir = std::env::temp_dir().join(format!("nlayer-run-warn-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("temp dir");
+        fs::write(
+            dir.join("App.tsx"),
+            r#"import { mount } from "@nlayer/runtime";
+import { Text, View } from "@nlayer/ui";
+
+function App() {
+  return (
+    <View class="classwarnzz">
+      <Text>one</Text>
+    </View>
+  );
+}
+mount(App);
+"#,
+        )
+        .expect("the app");
+        BUILD_LINES.lock().expect("build lines").clear();
+        let server = match serve(RunOptions {
+            entry: dir.clone(),
+            port: 0,
+            release: false,
+            wasm: Vec::new(),
+            on_build: None,
+        }) {
+            Ok(server) => server,
+            Err(error) => panic!("the server starts: {error}"),
+        };
+        let lines = BUILD_LINES.lock().expect("build lines").clone();
+        drop(server);
+        let _ = fs::remove_dir_all(&dir);
+        let reported = lines
+            .iter()
+            .filter(|line| line.ends_with("unknown classes: classwarnzz"))
+            .count();
+        assert_eq!(reported, 1, "one build reports a class once: {lines:#?}");
     }
 }

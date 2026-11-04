@@ -20,7 +20,6 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use nlayer_bundler::{BundleOptions, bundle};
 use serde::Deserialize;
 
 use crate::{
@@ -49,7 +48,8 @@ extern "C" fn on_signal(_signal: libc::c_int) {
 pub struct IosOptions {
     /// An entry module, or a directory whose `App.tsx` is the entry.
     pub entry: PathBuf,
-    /// Minify the bundle.
+    /// Kept for `nlayer run --release`. The development script is the hot
+    /// bundle and is not minified, so it is not read.
     pub release: bool,
     /// Dev server port. `0` picks a free one. The simulator connects to
     /// `127.0.0.1` on this port.
@@ -119,7 +119,7 @@ pub fn run_ios(options: IosOptions) -> Result<IosSession, RunError> {
         }
     });
     let server = serve(RunOptions {
-        entry: entry.clone(),
+        entry,
         port: options.port,
         release: options.release,
         wasm: Vec::new(),
@@ -135,12 +135,6 @@ pub fn run_ios(options: IosOptions) -> Result<IosSession, RunError> {
     let Some((_version, script)) = server.dev_bundle() else {
         return Err(RunError::message("the app failed to build"));
     };
-    let bundled = bundle(&BundleOptions {
-        entry,
-        minify: options.release,
-        test: false,
-    })
-    .map_err(|error| RunError::message(error.colored))?;
     let host = ios_host()?;
     let (udid, name) = simulator()?;
     let app = package(&host)?;
@@ -150,7 +144,9 @@ pub fn run_ios(options: IosOptions) -> Result<IosSession, RunError> {
         record_install(&udid, &host)?;
     }
     let docs = data_container(&udid)?.join("Documents");
-    publish(&docs, &app_dir, &script, &bundled.assets)?;
+    // The script and its assets are the first build's: the same build the
+    // server publishes, not a cold second one.
+    publish(&docs, &app_dir, &script, &first.assets)?;
     write_dev_pin(&docs, server.port())?;
     if let Err(error) = relaunch(&udid) {
         let _ = fs::remove_file(docs.join(DEV_PIN));

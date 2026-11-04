@@ -18,14 +18,14 @@ use std::{
     path::{Component, Path, PathBuf},
     process::Command,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use nlayer_bundler::{Bundle, BundleOptions, bundle};
+use nlayer_bundler::Bundle;
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 use crate::{
@@ -64,7 +64,8 @@ extern "C" fn on_signal(_signal: libc::c_int) {
 pub struct AndroidOptions {
     /// An entry module, or a directory whose `App.tsx` is the entry.
     pub entry: PathBuf,
-    /// Minify the bundle.
+    /// Build the release host APK. The development script is the hot bundle
+    /// and is not minified.
     pub release: bool,
     /// Dev server port to reverse onto the device. `0` picks a free one.
     pub port: u16,
@@ -120,24 +121,19 @@ pub fn run_android(options: AndroidOptions) -> Result<AndroidSession, RunError> 
         .parent()
         .ok_or_else(|| RunError::message("entry has no parent directory"))?
         .to_path_buf();
-    // The imported assets are pushed; the script comes from the server.
-    let bundled = bundle(&BundleOptions {
-        entry: entry.clone(),
-        minify: options.release,
-        test: false,
-    })
-    .map_err(|error| RunError::message(error.colored))?;
-    let sdk = Sdk::find()?;
-    let serial = device(&sdk)?;
-    let abi = device_abi(&sdk, &serial)?;
-    let apk = host_apk(&sdk, &abi, options.release)?;
-    install_if_needed(&sdk, &serial, &apk)?;
     // The dev server is the channel: it builds, watches, and serves patches
-    // on `/ws`. A native host has no page, so it loads no wasm.
+    // on `/ws`. A native host has no page, so it loads no wasm. Its first
+    // build is also the one whose script and assets reach the device.
     let (assets_tx, assets_rx) = std::sync::mpsc::channel::<Vec<PathBuf>>();
+    let first_assets = Arc::new(Mutex::new(None::<Vec<PathBuf>>));
+    let launch_assets = Arc::clone(&first_assets);
     let on_build: Arc<dyn Fn(BuildOutcome) + Send + Sync> = Arc::new(move |outcome| {
+        if outcome.success && outcome.first_success {
+            *launch_assets.lock().expect("first assets") = Some(outcome.assets.clone());
+            return;
+        }
         report_build(outcome.clone());
-        if outcome.success && !outcome.first_success && !outcome.assets.is_empty() {
+        if outcome.success && !outcome.assets.is_empty() {
             // `asset:/` reads the pushed bytes: an asset-only change must
             // reach the device even though no module runs again.
             let _ = assets_tx.send(outcome.assets.clone());
@@ -150,16 +146,26 @@ pub fn run_android(options: AndroidOptions) -> Result<AndroidSession, RunError> 
         wasm: Vec::new(),
         on_build: Some(on_build),
     })?;
+    let assets = first_assets
+        .lock()
+        .expect("first assets")
+        .take()
+        .ok_or_else(|| RunError::message("the app did not compile: see the diagnostic above"))?;
     let port = server.port();
     let Some((_, script)) = server.dev_bundle() else {
         return Err(RunError::message(
             "the app did not compile: see the diagnostic above",
         ));
     };
+    let sdk = Sdk::find()?;
+    let serial = device(&sdk)?;
+    let abi = device_abi(&sdk, &serial)?;
+    let apk = host_apk(&sdk, &abi, options.release)?;
+    install_if_needed(&sdk, &serial, &apk)?;
     // The device reaches the dev server as 127.0.0.1 on this port. Only
     // this port is reversed; it is removed when the session drops.
     let reverse = Reverse::add(&sdk, &serial, port)?;
-    publish_with(&sdk, &serial, &app_dir, &bundled, &script)?;
+    publish_script(&sdk, &serial, &app_dir, &assets, &script)?;
     write_dev_pin(&sdk, &serial, port)?;
     if let Err(error) = relaunch(&sdk, &serial) {
         remove_dev_pin(&sdk, &serial);
@@ -1019,16 +1025,22 @@ pub(crate) fn publish(
     app_dir: &Path,
     bundled: &Bundle,
 ) -> Result<(), RunError> {
-    publish_with(sdk, serial, app_dir, bundled, bundled.code.as_bytes())
+    publish_script(
+        sdk,
+        serial,
+        app_dir,
+        &bundled.assets,
+        bundled.code.as_bytes(),
+    )
 }
 
 /// `publish`, with `script` as `files/app.js` instead of the bundle's code:
 /// `nlayer run` writes the development script it got over `/ws`.
-fn publish_with(
+fn publish_script(
     sdk: &Sdk,
     serial: &str,
     app_dir: &Path,
-    bundled: &Bundle,
+    assets: &[PathBuf],
     script: &[u8],
 ) -> Result<(), RunError> {
     let _ = adb(
@@ -1045,7 +1057,7 @@ fn publish_with(
         ],
     );
     push_bytes(sdk, serial, "files/app.js", script)?;
-    for rel in &bundled.assets {
+    for rel in assets {
         push_asset(sdk, serial, app_dir, rel)?;
     }
     Ok(())

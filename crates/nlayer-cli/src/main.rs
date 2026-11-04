@@ -93,7 +93,8 @@ enum Command {
         /// it when the run ends.
         #[arg(long, default_value_t = 8733)]
         port: u16,
-        /// Minify the bundle.
+        /// Build the release Android host. The development script is the
+        /// hot bundle and is not minified; web and iOS ignore this.
         #[arg(long)]
         release: bool,
         /// Do not open a browser. Web only.

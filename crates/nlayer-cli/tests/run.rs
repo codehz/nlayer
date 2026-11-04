@@ -26,7 +26,7 @@ import icon from "./img/icon.png";
 
 function App() {
   return (
-    <View style={{ width: 20, height: 20 }}>
+    <View class="classwarnzz" style={{ width: 20, height: 20 }}>
       <Text>LABEL</Text>
       <Image src={icon} />
     </View>
@@ -146,15 +146,13 @@ fn run_serves_the_page_and_keeps_it_across_a_failed_rebuild() {
     let script =
         String::from_utf8_lossy(&dev.read().expect("bundle bytes").into_data()).into_owned();
     assert!(script.contains("Hello"), "{script}");
+    assert!(script.contains("asset:/img/icon.png"), "{script}");
+    let map = String::from_utf8_lossy(&dev.read().expect("source map").into_data()).into_owned();
+    assert!(map.contains("App.tsx"), "{map}");
+    drop(dev);
 
-    let bundle = text(&get(port, "/bundle.js"));
-    assert!(bundle.contains("Hello"), "{bundle}");
-    assert!(bundle.contains("asset:/img/icon.png"), "{bundle}");
-    assert!(
-        bundle.contains("sourceMappingURL=bundle.js.map"),
-        "{bundle}"
-    );
-    assert!(text(&get(port, "/bundle.js.map")).contains("App.tsx"));
+    // The bundle the page runs comes over `/ws`: no cold ESM is published.
+    assert_eq!(get(port, "/bundle.js").status, 404);
     assert!(text(&get(port, "/boot.js")).contains("startPage"));
     assert!(text(&get(port, "/host.js")).contains("installHost"));
     assert!(text(&get(port, "/browser/runtime.js")).contains("createFacade"));
@@ -178,33 +176,26 @@ fn run_serves_the_page_and_keeps_it_across_a_failed_rebuild() {
     assert_eq!(get(port, "/%2e%2e/Cargo.toml").status, 400);
 
     fs::write(dir.join("App.tsx"), source("Hola")).unwrap();
-    wait_until(Duration::from_secs(30), || {
-        text(&get(port, "/bundle.js")).contains("Hola")
-    });
-    assert_eq!(server.generation(), 2);
+    wait_until(Duration::from_secs(30), || server.generation() == 2);
     assert!(server.last_error().is_none());
-    assert!(!text(&get(port, "/bundle.js")).contains("Hello"));
+    let (script, _map, announced) = live(port);
+    assert!(announced.contains("\"version\":2"), "{announced}");
+    assert!(script.contains("Hola"), "{script}");
+    assert!(!script.contains("Hello"), "{script}");
 
     fs::write(dir.join("App.tsx"), "const = ;\n").unwrap();
     wait_until(Duration::from_secs(30), || server.last_error().is_some());
     assert_eq!(server.generation(), 2, "a failed rebuild must not reload");
-    assert!(text(&get(port, "/bundle.js")).contains("Hola"));
+    let (script, _map, announced) = live(port);
+    assert!(announced.contains("\"version\":2"), "{announced}");
+    assert!(script.contains("Hola"), "{script}");
     assert!(!server.last_error().unwrap().is_empty());
-    let mut fresh = open_dev(port);
-    let hello = frame_text(&mut fresh);
-    assert!(hello.contains("\"test\":false"), "{hello}");
-    let announced = frame_text(&mut fresh);
-    assert!(
-        announced.contains("\"type\":\"bundle\"") && announced.contains("\"version\":2"),
-        "a new connection keeps the last good bundle, got {announced}"
-    );
 
     fs::write(dir.join("App.tsx"), source("Adios")).unwrap();
-    wait_until(Duration::from_secs(30), || {
-        text(&get(port, "/bundle.js")).contains("Adios")
-    });
-    assert_eq!(server.generation(), 3);
+    wait_until(Duration::from_secs(30), || server.generation() == 3);
     assert!(server.last_error().is_none());
+    let (script, _map, _announced) = live(port);
+    assert!(script.contains("Adios"), "{script}");
 
     drop(server);
     let _ = fs::remove_dir_all(Path::new(&dir));
@@ -227,4 +218,20 @@ fn frame_text(socket: &mut tungstenite::WebSocket<TcpStream>) -> String {
         .to_text()
         .expect("text frame")
         .to_owned()
+}
+
+/// What a new connection gets: the script, its source map, and the
+/// `bundle` frame that announced them.
+fn live(port: u16) -> (String, String, String) {
+    let mut socket = open_dev(port);
+    let hello = frame_text(&mut socket);
+    assert!(hello.contains("\"type\":\"hello\""), "{hello}");
+    assert!(hello.contains("\"test\":false"), "{hello}");
+    let announced = frame_text(&mut socket);
+    assert!(announced.contains("\"type\":\"bundle\""), "{announced}");
+    assert!(announced.contains("\"source_map\":true"), "{announced}");
+    let script =
+        String::from_utf8_lossy(&socket.read().expect("bundle bytes").into_data()).into_owned();
+    let map = String::from_utf8_lossy(&socket.read().expect("source map").into_data()).into_owned();
+    (script, map, announced)
 }
