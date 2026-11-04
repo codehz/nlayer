@@ -1,14 +1,11 @@
 //! `nlayer test --target android`.
 //!
 //! The test file still runs in QuickJS. `open` writes the app into the
-//! device's private files and listens on a socket. `adb reverse` lets the
-//! app connect, including the loopback file server its `fetch` uses. It
-//! answers one JSON line per step. Press, type and scroll go through the
-//! view system.
+//! device's private files and starts a test session. `adb reverse` lets the
+//! app connect, including the loopback file server its `fetch` uses. Press,
+//! type and scroll go through the view system.
 
 use std::{
-    io::{BufRead, BufReader, Write},
-    net::TcpListener,
     thread,
     time::{Duration, Instant},
 };
@@ -60,7 +57,7 @@ impl AppHost for AndroidHost {
             .ok_or_else(|| "entry has no parent directory".to_owned())?
             .to_path_buf();
         let mut bundled = bundle(&BundleOptions {
-            entry,
+            entry: entry.clone(),
             minify: false,
             test: false,
         })
@@ -70,11 +67,12 @@ impl AppHost for AndroidHost {
         let sdk = &boot.sdk;
         let serial = boot.serial.clone();
         android::publish(sdk, &serial, &app_dir, &bundled).map_err(|error| error.to_string())?;
-        let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
-        let port = listener
-            .local_addr()
-            .map_err(|error| error.to_string())?
-            .port();
+        // The socket's development bundle is the only script. An ESM
+        // `app.js` would mount a second tree beside it.
+        android::push_bytes(sdk, &serial, "files/app.js", b"")
+            .map_err(|error| error.to_string())?;
+        let session = crate::TestSession::start(&entry, true)?;
+        let port = session.port();
         let pin = json!({
             "width": request.width,
             "height": request.height,
@@ -82,6 +80,7 @@ impl AppHost for AndroidHost {
             "safeArea": area(request.safe_area),
             "host": "127.0.0.1",
             "port": port,
+            "test": true,
             "colorScheme": request.color_scheme.map(|scheme| scheme.name()),
         });
         android::push_bytes(
@@ -107,19 +106,8 @@ impl AppHost for AndroidHost {
         android::adb(sdk, &serial, &["reverse", &forwarded, &forwarded])
             .map_err(|error| error.to_string())?;
         android::relaunch(sdk, &serial).map_err(|error| error.to_string())?;
-        let stream = accept(&listener)?;
-        let mut reader = BufReader::new(stream.try_clone().map_err(|error| error.to_string())?);
-        let mut line = String::new();
-        reader
-            .read_line(&mut line)
-            .map_err(|error| error.to_string())?;
-        let value = answer(&line)?;
-        if value.as_str() != Some("ready") {
-            return Err(format!("the device said {value}"));
-        }
         Ok(Box::new(AndroidApp {
-            writer: stream,
-            reader,
+            session: Some(session),
             sdk_root: sdk.adb(),
             serial,
             port,
@@ -130,8 +118,7 @@ impl AppHost for AndroidHost {
 }
 
 struct AndroidApp {
-    writer: std::net::TcpStream,
-    reader: BufReader<std::net::TcpStream>,
+    session: Option<crate::TestSession>,
     /// `adb` binary. Kept so close can drop the reverse without the SDK struct.
     sdk_root: std::path::PathBuf,
     serial: String,
@@ -165,25 +152,18 @@ impl AndroidApp {
         if !self.open {
             return Err("the app is closed".into());
         }
-        let line = json!({
-            "op": op,
-            "selector": selector,
-            "text": text,
-            "distance": distance,
-            "x": x,
-            "y": y,
-            "ms": ms,
-        });
-        writeln!(self.writer, "{line}").map_err(|error| error.to_string())?;
-        self.writer.flush().map_err(|error| error.to_string())?;
-        let mut response = String::new();
-        self.reader
-            .read_line(&mut response)
-            .map_err(|error| error.to_string())?;
-        if response.is_empty() {
-            return Err("the Android app stopped".into());
+        let op = crate::session::step_op(op)?;
+        let session = self
+            .session
+            .as_mut()
+            .ok_or_else(|| "the app is closed".to_owned())?;
+        match session.step(op, selector, text, distance, x, y, ms) {
+            Err(error) if error == "the app stopped" => Err("the Android app stopped".into()),
+            Err(error) if error == "the app did not connect" => {
+                Err("the device did not connect".into())
+            }
+            other => other,
         }
-        answer(&response)
     }
 }
 
@@ -286,11 +266,49 @@ impl HostedApp for AndroidApp {
             .map(|_| ())
     }
 
+    fn focus(&mut self, selector: &str) -> Result<(), String> {
+        self.call("focus", selector, "", 0.0)?;
+        Ok(())
+    }
+
+    fn down(&mut self, selector: &str) -> Result<(), String> {
+        self.call("down", selector, "", 0.0)?;
+        Ok(())
+    }
+
+    fn up(&mut self) -> Result<(), String> {
+        self.call("up", "", "", 0.0)?;
+        Ok(())
+    }
+
+    fn warnings(&mut self) -> Result<Vec<String>, String> {
+        strings(self.call("warnings", "", "", 0.0)?)
+    }
+
+    fn select(&mut self, selector: &str, start: u32, end: u32) -> Result<(), String> {
+        self.call("select", selector, &format!("{start},{end}"), 0.0)?;
+        Ok(())
+    }
+
+    fn compose(&mut self, selector: &str, text: &str, composing: bool) -> Result<(), String> {
+        self.call_ex(
+            "compose",
+            selector,
+            text,
+            0.0,
+            if composing { 1.0 } else { 0.0 },
+            0.0,
+            0.0,
+        )?;
+        Ok(())
+    }
+
     fn close(&mut self) {
         if !self.open {
             return;
         }
         self.open = false;
+        self.session.take();
         let _ = std::process::Command::new(&self.sdk_root)
             .args(["-s", &self.serial, "shell", "am", "force-stop", PACKAGE])
             .status();
@@ -324,43 +342,6 @@ fn area(insets: Option<HostInsets>) -> Value {
         "bottom": insets.bottom,
         "left": insets.left,
     })
-}
-
-fn accept(listener: &TcpListener) -> Result<std::net::TcpStream, String> {
-    listener
-        .set_nonblocking(true)
-        .map_err(|error| error.to_string())?;
-    let deadline = Instant::now() + Duration::from_secs(45);
-    loop {
-        match listener.accept() {
-            Ok((stream, _)) => {
-                stream
-                    .set_nonblocking(false)
-                    .map_err(|error| error.to_string())?;
-                let _ = stream.set_nodelay(true);
-                return Ok(stream);
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(error) => return Err(error.to_string()),
-        }
-        if Instant::now() >= deadline {
-            return Err("the device did not connect".into());
-        }
-        thread::sleep(Duration::from_millis(30));
-    }
-}
-
-fn answer(line: &str) -> Result<Value, String> {
-    let value: Value = serde_json::from_str(line.trim()).map_err(|error| error.to_string())?;
-    if value.get("ok").and_then(Value::as_bool) == Some(true) {
-        Ok(value.get("value").cloned().unwrap_or(Value::Null))
-    } else {
-        Err(value
-            .get("error")
-            .and_then(Value::as_str)
-            .unwrap_or("the step failed")
-            .to_owned())
-    }
 }
 
 fn strings(value: Value) -> Result<Vec<String>, String> {

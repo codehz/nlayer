@@ -1,12 +1,10 @@
 //! `nlayer test --target ios`.
 //!
 //! The test file still runs in QuickJS. `open` writes the app into the
-//! simulator host and listens on a socket. The app connects and answers one
-//! JSON line per step. Press, type and scroll go through UIKit.
+//! simulator host and starts a test session. The app connects on that
+//! socket. Press, type and scroll go through UIKit.
 
 use std::{
-    io::{BufRead, BufReader, Write},
-    net::{TcpListener, TcpStream},
     thread,
     time::{Duration, Instant},
 };
@@ -60,49 +58,35 @@ impl AppHost for IosHost {
             .parent()
             .ok_or_else(|| "entry has no parent directory".to_owned())?
             .to_path_buf();
-        let mut bundled = bundle(&BundleOptions {
-            entry,
+        let bundled = bundle(&BundleOptions {
+            entry: entry.clone(),
             minify: false,
             test: false,
         })
         .map_err(|error| error.colored)?;
-        bundled.code = nlayer_testing::with_fixture_origin(&bundled.code, &app_dir);
         let udid = self.boot()?.udid.clone();
         let docs = ios::data_container(&udid)
             .map_err(|error| error.to_string())?
             .join("Documents");
-        ios::publish(&docs, &app_dir, bundled.code.as_bytes(), &bundled.assets)
-            .map_err(|error| error.to_string())?;
-        let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
-        let port = listener
-            .local_addr()
-            .map_err(|error| error.to_string())?
-            .port();
+        // The test socket pushes the development bundle once. `app.js` stays
+        // empty so the host does not mount an ESM tree and then a second one.
+        ios::publish(&docs, &app_dir, b"", &bundled.assets).map_err(|error| error.to_string())?;
+        let session = crate::TestSession::start(&entry, true)?;
         let pin = json!({
             "width": request.width,
             "height": request.height,
             "keyboard": request.keyboard.unwrap_or(0.0),
             "safeArea": area(request.safe_area),
             "host": "127.0.0.1",
-            "port": port,
+            "port": session.port(),
+            "test": true,
             "colorScheme": request.color_scheme.map(|scheme| scheme.name()),
         });
         std::fs::write(docs.join("nlayer-test.json"), pin.to_string())
             .map_err(|error| error.to_string())?;
         ios::relaunch(&udid).map_err(|error| error.to_string())?;
-        let stream = accept(&listener)?;
-        let mut reader = BufReader::new(stream.try_clone().map_err(|error| error.to_string())?);
-        let mut line = String::new();
-        reader
-            .read_line(&mut line)
-            .map_err(|error| error.to_string())?;
-        let value = answer(&line)?;
-        if value.as_str() != Some("ready") {
-            return Err(format!("the simulator said {value}"));
-        }
         Ok(Box::new(IosApp {
-            writer: stream,
-            reader,
+            session: Some(session),
             udid,
             open: true,
         }))
@@ -110,8 +94,7 @@ impl AppHost for IosHost {
 }
 
 struct IosApp {
-    writer: TcpStream,
-    reader: BufReader<TcpStream>,
+    session: Option<crate::TestSession>,
     udid: String,
     open: bool,
 }
@@ -141,25 +124,18 @@ impl IosApp {
         if !self.open {
             return Err("the app is closed".into());
         }
-        let line = json!({
-            "op": op,
-            "selector": selector,
-            "text": text,
-            "distance": distance,
-            "x": x,
-            "y": y,
-            "ms": ms,
-        });
-        writeln!(self.writer, "{line}").map_err(|error| error.to_string())?;
-        self.writer.flush().map_err(|error| error.to_string())?;
-        let mut response = String::new();
-        self.reader
-            .read_line(&mut response)
-            .map_err(|error| error.to_string())?;
-        if response.is_empty() {
-            return Err("the simulator app stopped".into());
+        let op = crate::session::step_op(op)?;
+        let session = self
+            .session
+            .as_mut()
+            .ok_or_else(|| "the app is closed".to_owned())?;
+        match session.step(op, selector, text, distance, x, y, ms) {
+            Err(error) if error == "the app stopped" => Err("the simulator app stopped".into()),
+            Err(error) if error == "the app did not connect" => {
+                Err("the simulator did not connect".into())
+            }
+            other => other,
         }
-        answer(&response)
     }
 }
 
@@ -262,11 +238,49 @@ impl HostedApp for IosApp {
             .map(|_| ())
     }
 
+    fn focus(&mut self, selector: &str) -> Result<(), String> {
+        self.call("focus", selector, "", 0.0)?;
+        Ok(())
+    }
+
+    fn down(&mut self, selector: &str) -> Result<(), String> {
+        self.call("down", selector, "", 0.0)?;
+        Ok(())
+    }
+
+    fn up(&mut self) -> Result<(), String> {
+        self.call("up", "", "", 0.0)?;
+        Ok(())
+    }
+
+    fn warnings(&mut self) -> Result<Vec<String>, String> {
+        strings(self.call("warnings", "", "", 0.0)?)
+    }
+
+    fn select(&mut self, selector: &str, start: u32, end: u32) -> Result<(), String> {
+        self.call("select", selector, &format!("{start},{end}"), 0.0)?;
+        Ok(())
+    }
+
+    fn compose(&mut self, selector: &str, text: &str, composing: bool) -> Result<(), String> {
+        self.call_ex(
+            "compose",
+            selector,
+            text,
+            0.0,
+            if composing { 1.0 } else { 0.0 },
+            0.0,
+            0.0,
+        )?;
+        Ok(())
+    }
+
     fn close(&mut self) {
         if !self.open {
             return;
         }
         self.open = false;
+        self.session.take();
         let _ = ios::simctl(&["terminate", &self.udid, BUNDLE_ID]);
     }
 }
@@ -290,43 +304,6 @@ fn area(insets: Option<HostInsets>) -> Value {
         "bottom": insets.bottom,
         "left": insets.left,
     })
-}
-
-fn accept(listener: &TcpListener) -> Result<TcpStream, String> {
-    listener
-        .set_nonblocking(true)
-        .map_err(|error| error.to_string())?;
-    let deadline = Instant::now() + Duration::from_secs(45);
-    loop {
-        match listener.accept() {
-            Ok((stream, _)) => {
-                stream
-                    .set_nonblocking(false)
-                    .map_err(|error| error.to_string())?;
-                let _ = stream.set_nodelay(true);
-                return Ok(stream);
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(error) => return Err(error.to_string()),
-        }
-        if Instant::now() >= deadline {
-            return Err("the simulator did not connect".into());
-        }
-        thread::sleep(Duration::from_millis(30));
-    }
-}
-
-fn answer(line: &str) -> Result<Value, String> {
-    let value: Value = serde_json::from_str(line.trim()).map_err(|error| error.to_string())?;
-    if value.get("ok").and_then(Value::as_bool) == Some(true) {
-        Ok(value.get("value").cloned().unwrap_or(Value::Null))
-    } else {
-        Err(value
-            .get("error")
-            .and_then(Value::as_str)
-            .unwrap_or("the step failed")
-            .to_owned())
-    }
 }
 
 fn strings(value: Value) -> Result<Vec<String>, String> {

@@ -447,3 +447,8 @@ Copied files:
   (hello, patch, bundle and build-failed frames). `nlayer run --target ios`
   writes the development script and `nlayer-dev.json` before one launch,
   from `nsh-cli/src/run.rs`'s iOS path minus `simctl` relaunches.
+- `crates/nlayer-cli/src/session.rs`'s step wait from
+  `crates/nsh-dev/src/server.rs` `DevServer::step` and
+  `crates/nsh-cli/src/test_host.rs` (one id, the host's result, or a
+  timeout; a test session pushes one bundle and does not patch). The
+  socket is tungstenite, not the axum server.

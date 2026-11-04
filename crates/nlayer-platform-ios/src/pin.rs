@@ -26,6 +26,10 @@ pub(crate) struct Pin {
     pub host: String,
     #[serde(default)]
     pub port: u16,
+    /// Set by `nlayer test`. Absent is false; the file existing is still a
+    /// test session, and the host connects with `Hello` `test: true`.
+    #[serde(default)]
+    pub test: bool,
 }
 
 /// One `open`'s safe area, in points.

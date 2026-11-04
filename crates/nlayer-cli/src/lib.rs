@@ -19,6 +19,7 @@ mod ios_package;
 mod ios_test;
 mod run;
 mod runtime;
+mod session;
 mod types_version;
 mod web_assets;
 mod web_package;
@@ -38,6 +39,7 @@ pub use ios::{IosHostTests, IosOptions, IosSession, ios_host_tests, run_ios};
 pub use ios_package::package_ios;
 use nlayer_bundler::{BundleError, BundleOptions, bundle};
 pub use run::{BuildOutcome, DevServer, RunError, RunOptions, serve, web_module};
+pub(crate) use session::TestSession;
 pub use types_version::type_package_warning;
 pub use web_package::package_web;
 

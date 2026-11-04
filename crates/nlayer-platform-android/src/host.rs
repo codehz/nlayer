@@ -24,9 +24,19 @@ pub(crate) struct Host {
     pub(crate) view: jni::objects::GlobalRef,
     pub(crate) engine: Mutex<Option<Engine>>,
     pub(crate) control: Mutex<Option<EngineControl>>,
+    /// `app.js` the engine is running, after a start succeeded.
+    pub(crate) boot_script: Mutex<String>,
+    /// What a later bundle needs to start the engine, if the first start failed.
+    launch: Mutex<Option<Launch>>,
     density: Density,
     size: Mutex<Size<Points>>,
     insets: Mutex<Option<(Edges<Points>, Points)>>,
+}
+
+#[derive(Clone)]
+struct Launch {
+    data_dir: String,
+    dark: bool,
 }
 
 struct Sink {
@@ -178,6 +188,8 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_create(
         view,
         engine: Mutex::new(None),
         control: Mutex::new(None),
+        boot_script: Mutex::new(String::new()),
+        launch: Mutex::new(None),
         density: Density::new(density),
         size: Mutex::new(Size::new(px(0.0), px(0.0))),
         insets: Mutex::new(None),
@@ -204,7 +216,8 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_destroy(
 
 /// # Safety
 ///
-/// `handle` is live. `code` is a UTF-8 bundle.
+/// `handle` is live. `code` is a UTF-8 bundle. `quiet` skips the error
+/// cover: a test pin loads its script from the socket instead.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_load(
     mut env: JNIEnv<'_>,
@@ -214,6 +227,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_load(
     _assets: JString<'_>,
     data_dir: JString<'_>,
     dark: jboolean,
+    quiet: jboolean,
 ) {
     if handle == 0 {
         return;
@@ -222,11 +236,70 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_load(
     let bytes = match env.convert_byte_array(code) {
         Ok(bytes) => bytes,
         Err(err) => {
-            report(&host.view, &format!("cannot read the bundle: {err}"));
+            if quiet == 0 {
+                report(&host.view, &format!("cannot read the bundle: {err}"));
+            } else {
+                log::error!("nlayer: cannot read the bundle: {err}");
+            }
             return;
         }
     };
     let bundle = String::from_utf8_lossy(&bytes).into_owned();
+    let dir = env
+        .get_string(&data_dir)
+        .map(|dir| String::from(dir))
+        .unwrap_or_default();
+    *host.launch.lock().unwrap_or_else(|err| err.into_inner()) = Some(Launch {
+        data_dir: dir.clone(),
+        dark: dark != 0,
+    });
+    match start_engine(host, &bundle, &dir, dark != 0) {
+        Ok(()) => {
+            *host
+                .boot_script
+                .lock()
+                .unwrap_or_else(|err| err.into_inner()) = bundle;
+        }
+        Err(err) => {
+            if quiet == 0 {
+                report(&host.view, &err);
+            } else {
+                log::error!("nlayer: {err}");
+            }
+        }
+    }
+}
+
+/// Starts the engine on `code` if it is not running. A test session calls
+/// this when `app.js` never started. No overlay.
+pub(crate) fn boot(host: &Host, code: &str) -> Option<EngineControl> {
+    if let Some(control) = host
+        .control
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .clone()
+    {
+        return Some(control);
+    }
+    let launch = host
+        .launch
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .clone()?;
+    match start_engine(host, code, &launch.data_dir, launch.dark) {
+        Ok(()) => host
+            .control
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .clone(),
+        Err(error) => {
+            log::error!("nlayer: {error}");
+            None
+        }
+    }
+}
+
+fn start_engine(host: &Host, bundle: &str, data_dir: &str, dark: bool) -> Result<(), String> {
     let size = *host.size.lock().unwrap_or_else(|err| err.into_inner());
     let viewport = if size.width.0 > 0.0 && size.height.0 > 0.0 {
         size
@@ -242,17 +315,18 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_load(
         .with_os(Os::Android)
         // Android's toolbar is 56dp; it has no large titles.
         .with_header_heights((Points(56.0), Points(56.0)))
-        .with_color_scheme(nlayer_core::ColorScheme::from_dark(dark != 0));
-    if let Ok(dir) = env.get_string(&data_dir) {
-        config = config.with_data_dir(String::from(dir));
+        .with_color_scheme(nlayer_core::ColorScheme::from_dark(dark));
+    if !data_dir.is_empty() {
+        config = config.with_data_dir(data_dir);
     }
     match Engine::start(config, move || AndroidTextEngine { density }, sink) {
         Ok(engine) => {
             *host.control.lock().unwrap_or_else(|err| err.into_inner()) = Some(engine.control());
             *host.engine.lock().unwrap_or_else(|err| err.into_inner()) = Some(engine);
             apply_insets(host);
+            Ok(())
         }
-        Err(err) => report(&host.view, &err.message),
+        Err(err) => Err(err.message),
     }
 }
 
@@ -449,8 +523,8 @@ fn apply_insets(host: &Host) {
 
 /// # Safety
 ///
-/// `handle` is live. `address` is the test runner (`127.0.0.1` after
-/// `adb reverse`).
+/// `handle` is live. `address` is the dev server (`127.0.0.1` after
+/// `adb reverse`). The host connects `ws://address:port/ws`.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_serve(
     mut env: JNIEnv<'_>,
@@ -470,7 +544,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_serve(
     if address.is_empty() {
         return;
     }
-    crate::driver::start(host, format!("{address}:{port}"));
+    crate::dev::start_test(host, address, port as u16);
 }
 
 /// # Safety

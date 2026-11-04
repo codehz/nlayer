@@ -14,6 +14,7 @@
  * @param {Element} root
  */
 export function installHost(player, root) {
+  let held = null;
   const opened = recordOpened(player);
   const host = {
     texts() {
@@ -100,9 +101,172 @@ export function installHost(player, root) {
         return { state: "fail", error: message };
       }
     },
+    /** Class warnings the engine has logged, in order. */
+    warnings() {
+      const list = globalThis.__nlayerWarnings;
+      return Array.isArray(list) ? list.slice() : [];
+    },
+    hover(selector) {
+      const target = one(player, root, selector);
+      visible(root, target, selector);
+      const point = pointOf(target);
+      for (let node = target.el; node; node = node.parentNode) {
+        node.dispatchEvent?.(domPointer("pointerenter", point.x, point.y));
+      }
+    },
+    focus(selector) {
+      const target = one(player, root, selector);
+      visible(root, target, selector);
+      const field = inputField(target) ?? target.el;
+      if (typeof field.focus === "function") field.focus();
+      else field.dispatchEvent?.(focusEvent());
+    },
+    /** Holds a press without firing it. `up` releases it. */
+    down(selector) {
+      const target = one(player, root, selector);
+      visible(root, target, selector);
+      const point = pointOf(target);
+      held = { target, x: point.x, y: point.y };
+      target.el.dispatchEvent?.(domPointer("pointerdown", point.x, point.y));
+    },
+    up() {
+      releaseHeld();
+    },
+    type(selector, text) {
+      const field = fieldOf(player, root, selector);
+      if (typeof field.focus === "function") field.focus();
+      let value = field.value ?? "";
+      for (const ch of String(text ?? "")) {
+        value += ch;
+        field.value = value;
+        field.dispatchEvent?.(new Event("input", { bubbles: true }));
+      }
+    },
+    /** `text` is `start,end` (UTF-16), the range the step frame carries. */
+    select(selector, text) {
+      const field = fieldOf(player, root, selector);
+      const [start, end] = selectionRange(text);
+      if (typeof field.focus === "function") field.focus();
+      if (typeof field.setSelectionRange === "function") field.setSelectionRange(start, end);
+      else {
+        field.selectionStart = start;
+        field.selectionEnd = end;
+      }
+      field.dispatchEvent?.(new Event("select", { bubbles: true }));
+    },
+    compose(selector, text) {
+      const field = fieldOf(player, root, selector);
+      const data = String(text ?? "");
+      const composing = data !== "";
+      const type = !composing
+        ? "compositionend"
+        : field._composing
+          ? "compositionupdate"
+          : "compositionstart";
+      field._composing = composing;
+      field.dispatchEvent?.(compositionEvent(type, data));
+    },
+    drag(selector, x, y) {
+      host.dragAndHold(selector, x, y);
+      host.drop();
+    },
+    dragAndHold(selector, x, y) {
+      const target = one(player, root, selector);
+      visible(root, target, selector);
+      const origin = pointOf(target);
+      const dx = Number(x) || 0;
+      const dy = Number(y) || 0;
+      target.el.dispatchEvent?.(domPointer("pointerdown", origin.x, origin.y));
+      const steps = 5;
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        target.el.dispatchEvent?.(domPointer("pointermove", origin.x + dx * t, origin.y + dy * t));
+      }
+      held = { target, x: origin.x + dx, y: origin.y + dy };
+    },
+    drop() {
+      releaseHeld();
+    },
+    /** Waits real time. The page has no separate test clock. */
+    advance(ms) {
+      const wait = Math.max(0, Number(ms) || 0);
+      return new Promise((resolve) => setTimeout(resolve, wait));
+    },
+    close() {},
   };
   globalThis.__nlayerHost = host;
+
+  function releaseHeld() {
+    if (!held) return;
+    const { target, x, y } = held;
+    held = null;
+    target.el.dispatchEvent?.(domPointer("pointerup", x, y));
+  }
+
   return host;
+}
+
+function fieldOf(player, root, selector) {
+  const target = one(player, root, selector);
+  visible(root, target, selector);
+  const field = inputField(target);
+  if (!field) throw new Error(`\`${selector}\` is not an input`);
+  if (field.disabled) throw new Error(`\`${selector}\` is disabled`);
+  return field;
+}
+
+/** `start,end`, `start end`, or a JSON pair. One number selects a caret. */
+function selectionRange(text) {
+  const raw = String(text ?? "").trim();
+  if (raw === "") return [0, 0];
+  let parts;
+  if (raw.startsWith("[")) {
+    const parsed = JSON.parse(raw);
+    parts = [parsed[0], parsed[1]];
+  } else {
+    parts = raw.split(/[, ]+/);
+  }
+  const start = Number(parts[0]);
+  const end = parts.length > 1 && parts[1] !== "" ? Number(parts[1]) : start;
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    throw new Error("select range is not a number");
+  }
+  return [start, end];
+}
+
+function domPointer(type, x, y) {
+  const init = {
+    bubbles: type !== "pointerenter" && type !== "pointerleave",
+    cancelable: true,
+    clientX: x,
+    clientY: y,
+    pointerId: 1,
+    pointerType: "mouse",
+    button: 0,
+    buttons: type === "pointerup" || type === "pointerenter" ? 0 : 1,
+  };
+  if (typeof PointerEvent === "function") return new PointerEvent(type, init);
+  const event = new Event(type, { bubbles: init.bubbles, cancelable: true });
+  event.clientX = x;
+  event.clientY = y;
+  event.pointerId = 1;
+  event.pointerType = "mouse";
+  event.button = 0;
+  event.buttons = init.buttons;
+  return event;
+}
+
+function focusEvent() {
+  return new Event("focus");
+}
+
+function compositionEvent(type, data) {
+  if (typeof CompositionEvent === "function") {
+    return new CompositionEvent(type, { data, bubbles: true });
+  }
+  const event = new Event(type, { bubbles: true });
+  event.data = data;
+  return event;
 }
 
 /**

@@ -1,12 +1,14 @@
-//! The socket `nlayer test --target ios` drives.
+//! Steps `nlayer test --target ios` runs on the shared dev socket.
 //!
-//! The test runner listens; this process connects and answers one JSON line
-//! per step. A press is a touch UIKit hit-tests. Typing goes through the
-//! software keyboard into the focused field. A scroll sets the scroll
-//! view's own offset.
+//! [`crate::dev::start_test`] connects to `ws://host:port/ws`. This module
+//! turns each [`Step`] into the JSON line the UIKit steps already match and
+//! parses the answer. A press is a touch UIKit hit-tests. Typing goes
+//! through the software keyboard into the focused field. A scroll sets the
+//! scroll view's own offset.
+//!
+//! The runner is ready once the first bundle has loaded and a step can run.
+//! There is no separate ready line: the CLI waits on the first step result.
 
-use std::io::{BufRead, BufReader, Write};
-use std::net::TcpStream;
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -19,9 +21,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use nlayer_core::ROOT_ID;
+use nlayer_engine::protocol::{Step, StepOp, StepResult};
 
 use crate::mount::Mounter;
-use crate::pin::Pin;
 use crate::scene::{self, Press, Query, Scene};
 use crate::synth::{self, Phase};
 
@@ -32,80 +34,53 @@ const SETTLE: Duration = Duration::from_millis(300);
 static DRAG_STATE: Mutex<Option<(f64, f64)>> = Mutex::new(None);
 const KEY: Duration = Duration::from_millis(40);
 
-pub(crate) fn start(pin: Pin) {
-    if pin.port == 0 || pin.host.is_empty() {
-        return;
-    }
-    thread::Builder::new()
-        .name("nlayer-test".into())
-        .spawn(move || serve(pin))
-        .ok();
+/// Runs `step` through the UIKit steps and turns the line answer into a
+/// [`StepResult`].
+pub(crate) fn run_step(step: &Step) -> StepResult {
+    let line = json!({
+        "op": op_name(step.op),
+        "selector": step.selector,
+        "text": step.text,
+        "distance": step.distance,
+        "x": step.x,
+        "y": step.y,
+        "ms": step.ms,
+    })
+    .to_string();
+    step_result(step.id, &self::step(&line))
 }
 
-fn serve(pin: Pin) {
-    let address = format!("{}:{}", pin.host, pin.port);
-    let Some(stream) = connect(&address) else {
-        eprintln!("nlayer test: could not reach {address}");
-        return;
+/// `waitFor` is the protocol name; the steps match `query`.
+fn op_name(op: StepOp) -> String {
+    if op == StepOp::WaitFor {
+        return "query".to_owned();
+    }
+    serde_json::to_value(op)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "unknown".to_owned())
+}
+
+fn step_result(id: u64, line: &str) -> StepResult {
+    let value: Value = match serde_json::from_str(line) {
+        Ok(value) => value,
+        Err(error) => return StepResult::error(id, error.to_string()),
     };
-    let mut writer = stream;
-    let mut reader = match writer.try_clone() {
-        Ok(stream) => BufReader::new(stream),
-        Err(error) => {
-            eprintln!("nlayer test: {error}");
-            return;
-        }
-    };
-    if let Err(error) = wait_until_mounted() {
-        let _ = writeln!(writer, "{}", fail(&error));
-        return;
+    let ok = value.get("ok").and_then(Value::as_bool).unwrap_or(false);
+    if !ok {
+        let error = value
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("step failed");
+        return StepResult::error(id, error);
     }
-    if writeln!(writer, "{}", ok(json!("ready"))).is_err() {
-        return;
-    }
-    let _ = writer.flush();
-    let mut line = String::new();
-    loop {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) | Err(_) => return,
-            Ok(_) => {}
-        }
-        let response = step(line.trim());
-        if writeln!(writer, "{response}").is_err() {
-            return;
-        }
-        let _ = writer.flush();
+    match value.get("value") {
+        Some(value) if !value.is_null() => StepResult::done(id, value.clone()),
+        _ => StepResult::ok(id),
     }
 }
 
-fn connect(address: &str) -> Option<TcpStream> {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while Instant::now() < deadline {
-        if let Ok(stream) = TcpStream::connect(address) {
-            let _ = stream.set_nodelay(true);
-            return Some(stream);
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
-    None
-}
-
-fn wait_until_mounted() -> Result<(), String> {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        match on_ui(mounted)? {
-            Ok(()) => return Ok(()),
-            Err(error) if error == "wait" => {}
-            Err(error) => return Err(error),
-        }
-        if Instant::now() >= deadline {
-            return Err("the app did not mount".into());
-        }
-        thread::sleep(Duration::from_millis(30));
-    }
-}
-
+#[cfg(feature = "host-tests")]
 fn mounted() -> Result<(), String> {
     if let Some(error) = crate::host::boot_error() {
         return Err(error);
@@ -124,7 +99,6 @@ fn mounted() -> Result<(), String> {
         Ok(())
     }
 }
-
 #[derive(Deserialize)]
 struct Request {
     op: String,

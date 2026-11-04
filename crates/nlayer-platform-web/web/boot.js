@@ -55,6 +55,10 @@ let pumpQueued = false;
 // The development page's socket and the session that owns it.
 let devSocket = null;
 let devGeneration = 0;
+// `unknown classes` / `unsupported classes` lines, in log order. The engine
+// logs each string once; `warnings` reads this list.
+const classWarnings = [];
+globalThis.__nlayerWarnings = classWarnings;
 
 function memory() {
   return wasm.memory.buffer;
@@ -240,6 +244,9 @@ function importsFor(options) {
       },
       nlayer_log(level, ptr, len) {
         const message = text(ptr, len);
+        if (message.startsWith("unknown classes") || message.startsWith("unsupported classes")) {
+          classWarnings.push(message);
+        }
         const name = LEVELS[level] ?? "log";
         (console[name] ?? console.log).call(console, message);
         options.onLog?.(name, message);
@@ -367,6 +374,7 @@ function watchSurface(root) {
  * its state is dropped. Returns when the first frame has been applied.
  */
 export async function startPage(root, options = {}) {
+  classWarnings.length = 0;
   if (options.pin) pinned = options.pin;
   if (!wasm) {
     wasm = await instantiate(options.wasm, options);
@@ -580,6 +588,7 @@ function teardown() {
   }
   player?.dispose();
   player = null;
+  globalThis.__nlayerHost = null;
 }
 
 /** Stops the running app. The module stays loaded. */
@@ -646,14 +655,117 @@ function evalPatch(source, name) {
   return (0, eval)(`${source}\n//# sourceURL=${label}\n`);
 }
 
+/** Steps that read. Acting steps omit `value`. */
+const STEP_READS = new Set([
+  "texts",
+  "inputs",
+  "warnings",
+  "waitFor",
+  "tree",
+  "selectionOwner",
+  "openedUrls",
+]);
+
+function stepArgs(step) {
+  const selector = step.selector ?? "";
+  const text = step.text ?? "";
+  switch (step.op) {
+    case "texts":
+    case "inputs":
+    case "warnings":
+    case "tree":
+    case "openedUrls":
+    case "up":
+    case "drop":
+    case "back":
+    case "close":
+      return [];
+    case "press":
+    case "hover":
+    case "focus":
+    case "down":
+    case "longPress":
+    case "selectionOwner":
+      return [selector];
+    case "type":
+    case "select":
+    case "compose":
+      return [selector, text];
+    case "scroll":
+      return [selector, step.distance ?? 0];
+    case "drag":
+    case "dragAndHold":
+      return [selector, step.x ?? 0, step.y ?? 0];
+    case "advance":
+      return [step.ms ?? 0];
+    default:
+      return null;
+  }
+}
+
+/** One step against `__nlayerHost`. `waitFor` is the query helper; `back`
+ * and `advance` are the helpers the page already has. */
+async function runStep(step) {
+  const host = globalThis.__nlayerHost;
+  if (!host) throw new Error("the page has no host");
+  const op = String(step.op ?? "");
+  let value;
+  if (op === "waitFor") value = host.query(step.selector ?? "");
+  else if (op === "back") value = host.back();
+  else if (op === "advance") value = await host.advance(step.ms ?? 0);
+  else {
+    const args = stepArgs(step);
+    const member = host[op];
+    if (!args || typeof member !== "function") throw new Error(`unknown test op \`${op}\``);
+    value = await member.apply(host, args);
+  }
+  if (value && typeof value === "object" && !Array.isArray(value) && value.ok === false) {
+    const error = value.error;
+    throw new Error(typeof error === "string" && error !== "" ? error : "the step failed");
+  }
+  return value;
+}
+
+function sendResult(socket, value) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  try {
+    socket.send(JSON.stringify(value));
+  } catch {
+    // The session already closed.
+  }
+}
+
+async function answerStep(socket, step) {
+  const id = step.id ?? 0;
+  try {
+    const value = await runStep(step);
+    const result = { type: "step_result", id, ok: true };
+    if (STEP_READS.has(step.op)) result.value = value === undefined ? null : value;
+    sendResult(socket, result);
+  } catch (error) {
+    sendResult(socket, {
+      type: "step_result",
+      id,
+      ok: false,
+      error: String(error?.message ?? error),
+    });
+  }
+  if (step.op === "close" && socket === devSocket) {
+    devGeneration++;
+    socket.close();
+  }
+}
+
 /**
  * The development page (`nlayer run --target web`): starts the engine,
  * connects to the dev server's `/ws`, runs its factory bundles and
  * applies patches in place. A build failure covers the app; the next
  * success uncovers it. Nothing here reloads the document.
  *
- * `options.devUrl` defaults to the same origin's `/ws`. `options.onError`
- * shows errors the engine cannot draw.
+ * `options.devUrl` defaults to the same origin's `/ws`. `options.session`
+ * is a test socket (`?session=`): that URL, `Hello.test`, one bundle, then
+ * steps. No overlay, no patches, no reconnect. `options.onError` shows
+ * errors the engine cannot draw.
  */
 export async function startDevPage(root, options = {}) {
   const report = (error) => console.error("[nlayer]", error);
@@ -665,8 +777,10 @@ export async function startDevPage(root, options = {}) {
   let running = null;
   // The bundle being started, if any.
   let loading = null;
-  // A test session (`hello.test`): no overlay, no patches.
-  let test = false;
+  // `options.session` is the test socket. A server hello can also mark one.
+  const sessionUrl = typeof options.session === "string" ? options.session : "";
+  const testSession = sessionUrl !== "";
+  let test = testSession;
   let retry = 100;
   // The message whose binary frames are still coming.
   let pending = null;
@@ -718,6 +832,12 @@ export async function startDevPage(root, options = {}) {
     loading = message.version;
     try {
       await mount(script, `bundle-${message.version}.js`);
+      if (test && devSocket?.readyState !== WebSocket.OPEN) {
+        running = null;
+        globalThis.__nlayerReady = false;
+        if (!globalThis.__nlayerFailed) globalThis.__nlayerFailed = "the test session closed";
+        return;
+      }
       running = message.version;
       removeProblem();
       showStatus("");
@@ -733,25 +853,30 @@ export async function startDevPage(root, options = {}) {
 
   const onControl = (message) => {
     if (message.type === "hello") {
-      test = message.test === true;
+      test = testSession || message.test === true;
       return;
     }
-    if (message.type === "build_failed" && !test) {
-      showStatus("");
-      showProblem(String(message.message ?? ""));
+    if (message.type !== "build_failed") return;
+    const detail = String(message.message ?? "");
+    if (test) {
+      // A test session fails `open`. The build overlay stays down.
+      globalThis.__nlayerFailed = detail || "the build failed";
+      return;
     }
+    showStatus("");
+    showProblem(detail);
   };
 
   const connect = () => {
     if (generation !== devGeneration) return;
-    const socket = new WebSocket(devUrl(options.devUrl));
+    const socket = new WebSocket(testSession ? sessionUrl : devUrl(options.devUrl));
     devSocket = socket;
     socket.binaryType = "arraybuffer";
     socket.onopen = () => {
       if (generation !== devGeneration) return;
       retry = 100;
       pending = null;
-      socket.send(JSON.stringify({ type: "hello", protocol: PROTOCOL, test: false }));
+      socket.send(JSON.stringify({ type: "hello", protocol: PROTOCOL, test: testSession }));
     };
     socket.onmessage = (event) => {
       if (typeof event.data !== "string") {
@@ -774,11 +899,22 @@ export async function startDevPage(root, options = {}) {
         pending = { message, frames: [], count: message.source_map ? 2 : 1 };
         return;
       }
+      if (message.type === "step") {
+        enqueue(() => answerStep(socket, message));
+        return;
+      }
       enqueue(() => onControl(message));
     };
     socket.onclose = () => {
       if (generation !== devGeneration) return;
-      devSocket = null;
+      if (devSocket === socket) devSocket = null;
+      pending = null;
+      if (testSession) {
+        if (globalThis.__nlayerReady !== true && !globalThis.__nlayerFailed) {
+          globalThis.__nlayerFailed = "the test session closed";
+        }
+        return;
+      }
       showStatus("Dev server disconnected — reconnecting…");
       setTimeout(connect, retry);
       retry = Math.min(retry * 2, 2000);

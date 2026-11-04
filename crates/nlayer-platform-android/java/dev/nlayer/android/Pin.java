@@ -12,6 +12,9 @@ final class Pin {
   /** `light` or `dark`, pinned by `nlayer test`; null follows the system. */
   final String colorScheme;
 
+  /** Set by `nlayer test`. Absent is false; the file existing is still a test session. */
+  final boolean test;
+
   private Pin(
       float width,
       float height,
@@ -22,7 +25,8 @@ final class Pin {
       float left,
       String host,
       int port,
-      String colorScheme) {
+      String colorScheme,
+      boolean test) {
     this.width = width;
     this.height = height;
     this.keyboard = keyboard;
@@ -33,6 +37,7 @@ final class Pin {
     this.host = host;
     this.port = port;
     this.colorScheme = colorScheme;
+    this.test = test;
   }
 
   static Pin read(File file) {
@@ -55,7 +60,8 @@ final class Pin {
           (float) area.optDouble("left", 0),
           json.optString("host", ""),
           json.optInt("port", 0),
-          json.has("colorScheme") ? json.optString("colorScheme", null) : null);
+          json.has("colorScheme") ? json.optString("colorScheme", null) : null,
+          json.optBoolean("test", false));
     } catch (Exception e) {
       return null;
     }

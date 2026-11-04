@@ -1,9 +1,9 @@
 //! `nlayer test --target web`.
 //!
 //! The test file still runs in QuickJS. `open` serves the app and loads it
-//! in a headless browser: the page executes the bundle, and press, type, and
-//! scroll are the browser's own input (`Input.dispatch*`), which pages
-//! cannot tell from a user's. Assertions read the mounted DOM.
+//! in a headless browser with `?session=` pointing at a test session. Press,
+//! type, and scroll are the browser's own input (`Input.dispatch*`). Read
+//! steps go through that session.
 
 use std::{
     fs,
@@ -89,7 +89,12 @@ impl WebHost {
                 .last_error()
                 .unwrap_or_else(|| "the app failed to build".to_owned()));
         }
-        let url = pinned_url(&server.url(), &request);
+        let session = crate::TestSession::start(&request.entry, false)?;
+        let url = format!(
+            "{}&session=ws://127.0.0.1:{}/ws",
+            pinned_url(&server.url(), &request),
+            session.port(),
+        );
         let mut guard = browser.lock().map_err(|error| error.to_string())?;
         let page = guard.open_page(&url, request.width, request.height)?;
         drop(guard);
@@ -103,6 +108,7 @@ impl WebHost {
             browser,
             page: Some(page),
             server: Some(server),
+            session: Some(session),
         })
     }
 }
@@ -112,6 +118,7 @@ pub struct WebApp {
     browser: Arc<Mutex<Browser>>,
     page: Option<Page>,
     server: Option<crate::DevServer>,
+    session: Option<crate::TestSession>,
 }
 
 impl WebApp {
@@ -137,6 +144,15 @@ impl WebApp {
         }
         expression.push(')');
         self.eval(&expression)
+    }
+
+    /// A read step on the test session. Input stays on the page.
+    fn query_step(&mut self, op: &str, selector: &str) -> Result<Value, String> {
+        let op = crate::session::step_op(op)?;
+        self.session
+            .as_mut()
+            .ok_or_else(|| "the app is closed".to_owned())?
+            .step(op, selector, "", 0.0, 0.0, 0.0, 0.0)
     }
 
     /// The page's point for `method(selector)`, in CSS pixels.
@@ -245,11 +261,11 @@ fn number(value: &Value, key: &str) -> Result<f64, String> {
 
 impl HostedApp for WebApp {
     fn texts(&mut self) -> Result<Vec<String>, String> {
-        strings(self.call("texts", &[])?)
+        strings(self.query_step("texts", "")?)
     }
 
     fn inputs(&mut self) -> Result<Vec<String>, String> {
-        strings(self.call("inputs", &[])?)
+        strings(self.query_step("inputs", "")?)
     }
 
     fn press(&mut self, selector: &str) -> Result<(), String> {
@@ -369,7 +385,7 @@ impl HostedApp for WebApp {
     fn wait_for(&mut self, selector: &str) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let value = self.call("query", &[json!(selector)])?;
+            let value = self.query_step("query", selector)?;
             match value.get("state").and_then(Value::as_str) {
                 Some("ready") => return Ok(()),
                 Some("wait") => {}
@@ -390,11 +406,11 @@ impl HostedApp for WebApp {
     }
 
     fn tree(&mut self) -> Result<Value, String> {
-        self.call("tree", &[])
+        self.query_step("tree", "")
     }
 
     fn selection_owner(&mut self, selector: &str) -> Result<Option<NodeId>, String> {
-        match self.call("selectionOwner", &[json!(selector)])? {
+        match self.query_step("selectionOwner", selector)? {
             Value::Null => Ok(None),
             Value::Number(number) => number
                 .as_u64()
@@ -406,7 +422,11 @@ impl HostedApp for WebApp {
     }
 
     fn opened_urls(&mut self) -> Result<Vec<String>, String> {
-        strings(self.call("openedUrls", &[])?)
+        strings(self.query_step("openedUrls", "")?)
+    }
+
+    fn warnings(&mut self) -> Result<Vec<String>, String> {
+        strings(self.query_step("warnings", "")?)
     }
 
     fn drag(&mut self, selector: &str, x: f32, y: f32) -> Result<(), String> {
@@ -456,6 +476,7 @@ impl HostedApp for WebApp {
         {
             browser.close_page(&page);
         }
+        self.session.take();
         self.server.take();
     }
 }

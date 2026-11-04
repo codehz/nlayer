@@ -245,10 +245,12 @@ public final class HostView extends FrameLayout {
           code.getBytes(java.nio.charset.StandardCharsets.UTF_8),
           assetsDir,
           dataDir(),
-          scheme);
+          scheme,
+          pin != null);
       code = null;
     }
-    if (!served && pin != null && pin.port != 0) {
+    // `pin.test` is the CLI's flag. The file existing, with a port, is the session.
+    if (!served && pin != null && (pin.port != 0 || pin.test)) {
       served = true;
       Native.serve(handle, pin.host, pin.port);
     }

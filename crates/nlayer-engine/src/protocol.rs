@@ -241,7 +241,7 @@ impl Step {
 }
 
 /// How a [`Step`] ended.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StepResult {
     #[serde(rename = "type")]
     tag: StepResultTag,
@@ -252,6 +252,10 @@ pub struct StepResult {
     /// Set when [`Self::ok`] is false.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// What the step read (`texts`, `tree`, a `waitFor` state, …). Absent
+    /// for steps that only act.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<serde_json::Value>,
 }
 
 impl StepResult {
@@ -262,6 +266,18 @@ impl StepResult {
             id,
             ok: true,
             error: None,
+            value: None,
+        }
+    }
+
+    /// The step `id` finished, reading `value`.
+    pub fn done(id: u64, value: serde_json::Value) -> Self {
+        Self {
+            tag: StepResultTag::Tag,
+            id,
+            ok: true,
+            error: None,
+            value: Some(value),
         }
     }
 
@@ -272,6 +288,7 @@ impl StepResult {
             id,
             ok: false,
             error: Some(message.into()),
+            value: None,
         }
     }
 }

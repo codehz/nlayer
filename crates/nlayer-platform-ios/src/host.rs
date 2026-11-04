@@ -339,6 +339,7 @@ fn mounter_root(mounter: &Mounter) -> Option<Retained<UIView>> {
     mounter.view_of(nlayer_core::ROOT_ID)
 }
 
+#[cfg_attr(not(feature = "host-tests"), allow(dead_code))]
 pub(crate) fn boot_error() -> Option<String> {
     ERROR_TEXT.with(|slot| slot.borrow().clone())
 }
@@ -450,14 +451,20 @@ pub(crate) fn start(
         match launch(bundle) {
             Ok(control) => Some(control),
             Err(error) => {
-                show_dev_overlay(&error.to_string());
+                // A test pin loads its script from the socket. No overlay.
+                if pin.is_none() {
+                    show_dev_overlay(&error.to_string());
+                } else {
+                    eprintln!("nlayer: {error}");
+                }
                 None
             }
         }
     };
-    // An empty `app.js` with a dev pin waits for the first bundle. The
-    // missing-file error is only for a launch that has nowhere to read one.
-    if bundle.is_empty() && dev.as_ref().is_none_or(|dev| dev.test) {
+    // An empty `app.js` with a dev pin waits for the first bundle. A test
+    // pin does too, and does not cover the app. The missing-file error is
+    // only for a launch that has nowhere to read one.
+    if bundle.is_empty() && pin.is_none() && dev.as_ref().is_none_or(|dev| dev.test) {
         show_dev_overlay("no app.js next to the runner");
     } else if let Some(dev) = dev.filter(|dev| !dev.test) {
         let script = if control.is_some() {
@@ -465,10 +472,15 @@ pub(crate) fn start(
         } else {
             String::new()
         };
-        crate::dev::start(dev, script, control);
+        crate::dev::start(dev, script, control.clone());
     }
     if let Some(pin) = pin {
-        crate::driver::start(pin);
+        let script = if control.is_some() {
+            bundle.to_owned()
+        } else {
+            String::new()
+        };
+        crate::dev::start_test(pin, script, control);
     }
     Session { _root: root }
 }
@@ -515,6 +527,15 @@ fn launch(bundle: &str) -> Result<nlayer_engine::EngineControl, EngineError> {
 /// Starts the engine on `bundle` if it is not running. Main thread.
 /// `None` leaves the overlay up; the dev client can try the next bundle.
 pub(crate) fn boot_engine(bundle: &str) -> Option<nlayer_engine::EngineControl> {
+    boot_engine_showing(bundle, true)
+}
+
+/// [`boot_engine`] without the dev overlay. A test session uses this.
+pub(crate) fn boot_engine_quiet(bundle: &str) -> Option<nlayer_engine::EngineControl> {
+    boot_engine_showing(bundle, false)
+}
+
+fn boot_engine_showing(bundle: &str, overlay: bool) -> Option<nlayer_engine::EngineControl> {
     if let Some(control) = ENGINE.with(|slot| slot.borrow().as_ref().map(|engine| engine.control()))
     {
         return Some(control);
@@ -522,7 +543,11 @@ pub(crate) fn boot_engine(bundle: &str) -> Option<nlayer_engine::EngineControl> 
     match launch(bundle) {
         Ok(control) => Some(control),
         Err(error) => {
-            show_dev_overlay(&error.to_string());
+            if overlay {
+                show_dev_overlay(&error.to_string());
+            } else {
+                eprintln!("nlayer: {error}");
+            }
             None
         }
     }

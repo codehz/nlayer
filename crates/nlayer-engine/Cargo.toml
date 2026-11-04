@@ -24,10 +24,11 @@ crossbeam-channel.workspace = true
 log.workspace = true
 thiserror.workspace = true
 serde.workspace = true
+# The protocol's step values are JSON on every target, wasm included.
+serde_json.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = "3.1"
-serde_json.workspace = true
 
 [dev-dependencies]
 nlayer-bundler.workspace = true

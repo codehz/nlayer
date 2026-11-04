@@ -9,7 +9,8 @@ final class Native {
 
   static native void destroy(long handle);
 
-  static native void load(long handle, byte[] code, String assetsDir, String dataDir, boolean dark);
+  static native void load(
+      long handle, byte[] code, String assetsDir, String dataDir, boolean dark, boolean quiet);
 
   static native void resize(long handle, float widthDp, float heightDp);
 

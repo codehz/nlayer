@@ -82,7 +82,9 @@
             status.textContent = message;
           },
         };
-        if (dev) await startDevPage(root, page);
+        // `?session=` is a test socket. Production still loads `bundle.js`.
+        const session = q.get("session");
+        if (dev) await startDevPage(root, session ? { ...page, session } : page);
         else await startPage(root, { ...page, bundle });
       } catch (error) {
         const message = String(error && error.message ? error.message : error);
