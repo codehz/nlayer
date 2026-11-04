@@ -1450,7 +1450,14 @@ fn keyword(u: &str) -> Option<Vec<Decl>> {
             return Some(vec![
                 setn(K::FlexGrow, 1.0),
                 setn(K::FlexShrink, 1.0),
-                setn(K::FlexBasis, 0.0),
+                sets(K::FlexBasis, "0%"),
+                // CSS's automatic minimum. A length minimum of 0 lets a
+                // content-sized column treat `flex-basis: 0%` as definite
+                // and shrink the item under its children, which then paint
+                // over the next sibling. A scroll container's minimum stays
+                // 0 (it is a scroll container).
+                sets(K::MinWidth, "auto"),
+                sets(K::MinHeight, "auto"),
             ]);
         }
         "flex-auto" => {
@@ -2047,7 +2054,9 @@ static PREFIXES: &[(&str, Handler)] = &[
             return Some(vec![
                 setn(K::FlexGrow, n),
                 setn(K::FlexShrink, 1.0),
-                setn(K::FlexBasis, 0.0),
+                sets(K::FlexBasis, "0%"),
+                sets(K::MinWidth, "auto"),
+                sets(K::MinHeight, "auto"),
             ]);
         }
         // `flex-[2]`, `flex-[2_1_0%]`, `flex-[auto]`: the CSS shorthand,

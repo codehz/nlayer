@@ -9925,4 +9925,79 @@ mod tests {
             "{again:?}"
         );
     }
+
+    #[test]
+    fn flex_1_in_an_auto_height_column_keeps_its_content() {
+        let mut c = Core::new(FakeEngine, size(px(390.0), px(700.0)));
+        view(&mut c, 2);
+        view(&mut c, 3);
+        view(&mut c, 4);
+        view(&mut c, 5);
+        view(&mut c, 6);
+        set_class(&mut c, 2, "flex flex-col");
+        set_class(&mut c, 3, "flex flex-1 flex-col");
+        set_class(&mut c, 4, "h-20");
+        set_class(&mut c, 5, "flex flex-1 flex-col");
+        set_class(&mut c, 6, "h-5");
+        for (parent, child) in [(2, 3), (3, 4), (2, 5), (5, 6)] {
+            c.apply(Op::Insert {
+                parent,
+                child,
+                before: None,
+            })
+            .unwrap();
+        }
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        let column = frame(&batch, 2);
+        let tall = frame(&batch, 3);
+        let short = frame(&batch, 5);
+        let block = frame(&batch, 4);
+        assert!(
+            tall.size.height.0 + 0.5 >= block.size.height.0,
+            "flex-1 item {} shorter than its content {}",
+            tall.size.height.0,
+            block.size.height.0
+        );
+        assert!(
+            tall.origin.y.0 + tall.size.height.0 <= short.origin.y.0 + 0.5,
+            "items overlap: {tall:?} {short:?}"
+        );
+        assert!(
+            column.size.height.0 + 0.5 >= tall.size.height.0 + short.size.height.0,
+            "column {} does not hold {} + {}",
+            column.size.height.0,
+            tall.size.height.0,
+            short.size.height.0
+        );
+    }
+
+    #[test]
+    fn flex_1_in_a_definite_row_splits_the_width() {
+        let mut c = Core::new(FakeEngine, size(px(300.0), px(200.0)));
+        view(&mut c, 2);
+        view(&mut c, 3);
+        view(&mut c, 4);
+        set_class(&mut c, 2, "flex w-full flex-row");
+        set_class(&mut c, 3, "flex-1");
+        set_class(&mut c, 4, "flex-1");
+        for (parent, child) in [(2, 3), (2, 4), (ROOT_ID, 2)] {
+            c.apply(Op::Insert {
+                parent,
+                child,
+                before: None,
+            })
+            .unwrap();
+        }
+        let batch = c.commit().unwrap();
+        let left = frame(&batch, 3);
+        let right = frame(&batch, 4);
+        assert_eq!(left.size.width, right.size.width);
+        assert!(left.size.width.0 > 100.0, "{}", left.size.width.0);
+    }
 }
