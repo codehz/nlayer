@@ -544,16 +544,6 @@ pub(crate) fn recycle(host: &Host, next: nlayer_engine::protocol::Recycle) -> Re
             .unwrap_or_else(|err| err.into_inner())
             .take(),
     );
-    if let Some(dir) = host
-        .launch
-        .lock()
-        .unwrap_or_else(|err| err.into_inner())
-        .as_ref()
-        .map(|launch| launch.data_dir.clone())
-        .filter(|dir| !dir.is_empty())
-    {
-        nlayer_engine::clear_storage(std::path::Path::new(&dir));
-    }
     *host.control.lock().unwrap_or_else(|err| err.into_inner()) = None;
     *host
         .boot_script

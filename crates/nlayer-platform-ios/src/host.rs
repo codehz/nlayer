@@ -628,9 +628,6 @@ pub(crate) fn recycle(next: nlayer_engine::protocol::Recycle) {
     ENGINE.with(|slot| {
         slot.borrow_mut().take();
     });
-    if let Some(dir) = nlayer_engine::data_dir() {
-        nlayer_engine::clear_storage(&dir.join("nlayer"));
-    }
     if let Some(queue) = queue() {
         queue.epoch.fetch_add(1, Ordering::AcqRel);
     }

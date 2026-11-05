@@ -35,7 +35,7 @@ mod storage;
 
 pub use nlayer_core::storage::{StorageBackend, StorageChange, Store};
 #[cfg(not(target_arch = "wasm32"))]
-pub use storage::{FileStorage, clear as clear_storage, data_dir};
+pub use storage::{FileStorage, data_dir};
 pub mod protocol;
 
 use std::{
