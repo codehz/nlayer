@@ -651,12 +651,16 @@ test("header demo shows title and header props", () => {
 
   const texts = app.texts();
   expect(texts).toContain("Header Demo");
+  expect(texts).toContain("Back");
+  expect(texts).toContain("Right");
+  expect(texts).toContain("Header");
 
   // Web has no native header: it draws the app's `header` slot at the top
-  // instead (iOS and Android show the system header, not in the tree).
+  // (back, centered title, right). iOS and Android show the system header.
   const drawn = flat(app.tree(), []).find((n) => n.testID === "drawn-header");
   if (drawn && drawn.frame) {
     expect(drawn.frame.y).toBe(0);
+    expect(drawn.frame.height > 0).toBe(true);
   }
   app.back();
   app.waitFor("page"); // Wait for home page scroll view

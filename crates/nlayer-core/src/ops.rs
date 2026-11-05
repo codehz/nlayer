@@ -1022,8 +1022,9 @@ pub enum ScreenProp {
     /// `headerVisible`: the system header shows (default true; iOS and
     /// Android).
     HeaderVisible(bool),
-    /// `headerTransparent`: the content extends under the system header
-    /// (iOS and Android).
+    /// `headerTransparent`: content starts at the top of the page and
+    /// shows through the header (the system bar on iOS and Android, the
+    /// app's `header` slot on the web).
     HeaderTransparent(bool),
     /// `headerBackVisible`: the system header's back button shows (default
     /// true; iOS and Android).

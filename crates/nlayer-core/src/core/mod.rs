@@ -4227,7 +4227,10 @@ impl<M: TextEngine> Core<M> {
             self.layout.set_style(layout, style);
         } else if kind != Kind::HeaderItem {
             let config_padding = match kind {
-                Kind::Screen if native_header && root.screen.header_transparent => 0.0,
+                // A transparent header stays on top: the system bar on
+                // iOS and Android, the app's `header` slot on the web.
+                // Content starts at the top and shows through it.
+                Kind::Screen if root.screen.header_transparent => 0.0,
                 _ => header,
             };
             let mut style = self.nodes[key as usize]
@@ -8781,6 +8784,93 @@ mod tests {
 
         let child_frame = c.nodes.iter().find(|(_, n)| n.id == 4).unwrap().1.frame;
         assert_eq!(child_frame.origin.y.0, 0.0);
+    }
+
+    #[test]
+    fn drawn_header_transparent_lets_content_start_at_top() {
+        let mut c = Core::new(FakeEngine, size_pt(400.0, 800.0));
+        c.set_header_heights(Points::ZERO, Points::ZERO);
+        for (id, tag) in [(2, Tag::Stack), (3, Tag::Screen), (4, Tag::HeaderItem)] {
+            c.apply(Op::Create { id, tag }).unwrap();
+        }
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 4,
+            prop: Prop::HeaderSlot(crate::ops::HeaderSlot::Header),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 3,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 5,
+            tag: Tag::View,
+        })
+        .unwrap();
+        c.apply(Op::SetStyle {
+            id: 5,
+            style: Box::new(Style {
+                layout: taffy::Style {
+                    size: taffy::Size {
+                        width: Dimension::length(100.0),
+                        height: Dimension::length(50.0),
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            patch: StylePatch::default(),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 4,
+            child: 5,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 6,
+            tag: Tag::View,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 3,
+            child: 6,
+            before: None,
+        })
+        .unwrap();
+        c.commit().expect("the screen lays out");
+
+        let content = c.nodes.iter().find(|(_, n)| n.id == 6).unwrap().1.frame;
+        let header = c.nodes.iter().find(|(_, n)| n.id == 4).unwrap().1.frame;
+        assert_eq!(header.size.height.0, 50.0);
+        assert_eq!(content.origin.y.0, 50.0);
+
+        c.apply(Op::SetProp {
+            id: 3,
+            prop: Prop::Screen(crate::ops::ScreenProp::HeaderTransparent(true)),
+        })
+        .unwrap();
+        c.commit().expect("transparent relayout");
+
+        let content = c.nodes.iter().find(|(_, n)| n.id == 6).unwrap().1.frame;
+        let header = c.nodes.iter().find(|(_, n)| n.id == 4).unwrap().1.frame;
+        assert_eq!(header.size.height.0, 50.0, "the bar still lays out");
+        assert_eq!(content.origin.y.0, 0.0);
     }
 
     #[test]

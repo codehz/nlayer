@@ -19,20 +19,42 @@ import { ListDemoPage } from "./screens/list";
 import { ReadingPage } from "./screens/reading";
 import { ViewportParentPage } from "./screens/viewport";
 
-/** Web draws this (`header`). iOS and Android keep the system bar. */
+/** Web draws this (`header`). iOS and Android keep the system bar.
+ * Its nodes are not the `headerLeft` / `headerRight` slots: the web does
+ * not place those, and one node cannot sit in both. */
 function PageHeader(props: {
   title: string;
   /** Bottom of the stack: no back control. */
   root?: boolean;
-  left?: unknown;
-  right?: unknown;
+  /** Header demo: leading and trailing controls, like the native slots. */
+  slots?: boolean;
   background?: string;
   color?: string;
   tint?: string;
   transparent?: boolean;
 }) {
-  const back = !props.left && !props.root;
+  const tint = props.transparent ? "#fff" : (props.tint ?? "#3b82f6");
+  const color = props.transparent ? "#fff" : (props.color ?? "#0f172a");
   const hairline = !props.transparent && props.background == null;
+  const leading = props.slots ? (
+    <Text onPress={() => nav.pop()} class="font-semibold" style={{ color: tint }}>
+      Back
+    </Text>
+  ) : props.root ? null : (
+    <Text
+      testID="drawn-header-back"
+      onPress={() => nav.pop()}
+      class="font-semibold"
+      style={{ color: tint }}
+    >
+      ← Back
+    </Text>
+  );
+  const trailing = props.slots ? (
+    <Text class="font-semibold" style={{ color: tint }}>
+      Right
+    </Text>
+  ) : null;
   return (
     <View
       testID="drawn-header"
@@ -48,26 +70,21 @@ function PageHeader(props: {
           borderBottomColor: "#e2e8f0",
         }}
       >
-        {props.left}
-        {back ? (
-          <Text
-            testID="drawn-header-back"
-            onPress={() => nav.pop()}
-            class="font-semibold"
-            style={{ color: props.tint ?? "#3b82f6" }}
-          >
-            ← Back
-          </Text>
+        {props.slots ? (
+          <View class="w-20 flex-row items-center px-3">{leading}</View>
+        ) : (
+          leading
+        )}
+        <Text
+          class="min-w-0 flex-1 text-[15px] font-semibold"
+          classList={{ "text-center": props.slots }}
+          style={{ numberOfLines: 1, color }}
+        >
+          {props.title}
+        </Text>
+        {props.slots ? (
+          <View class="w-20 flex-row items-center justify-end px-3">{trailing}</View>
         ) : null}
-        <View class="min-w-0 flex-1 flex-row items-center">
-          <Text
-            class="flex-1 text-[15px] font-semibold"
-            style={{ numberOfLines: 1, color: props.color ?? "#0f172a" }}
-          >
-            {props.title}
-          </Text>
-        </View>
-        {props.right}
       </View>
     </View>
   );
@@ -117,8 +134,7 @@ function App() {
           <PageHeader
             title={screen.title ?? ""}
             root={index() === 0}
-            left={screen.headerLeft}
-            right={screen.headerRight}
+            slots={route.name === "header"}
             background={transparent ? undefined : screen.headerStyle?.backgroundColor}
             color={screen.headerStyle?.color}
             tint={screen.headerStyle?.tintColor}

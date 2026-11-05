@@ -16,7 +16,7 @@ export function HeaderDemoPage() {
           Header Demo
         </Text>
         <Text class="mb-4 text-[#64748b]" classList={{ "text-sky-50": headerTransparent() }}>
-          iOS/Android: native header. Web: app-drawn header slot.
+          The bar matches the phone: back, title, right. Transparent lets this page show through.
         </Text>
         <Text
           testID="toggle-transparent"
