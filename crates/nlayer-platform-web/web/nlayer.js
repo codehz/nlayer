@@ -212,6 +212,7 @@ export class Player {
     }
     this.finishRemovals();
     this.reconcileStacks();
+    this.passModalPresses();
   }
 
   view(id) {
@@ -607,6 +608,43 @@ export class Player {
         this.placeModal(el);
         this.presentModal(el);
       }
+    }
+  }
+
+  /**
+   * The popup is the view after the backdrop and often fills the dialog
+   * (`flex-1`) to center a smaller card. That box would take every press
+   * that should hit the backdrop. `pointer-events: none` also drops presses
+   * on everything inside it, so each view in the card is set back to `auto`.
+   */
+  passModalPresses() {
+    for (const el of this.views.values()) {
+      if (el._kind !== "modal") continue;
+      const kids = this.hosted(el).filter((child) => child._kind);
+      kids.forEach((child, i) => {
+        this.setPassThrough(child, kids.length > 1 && i > 0);
+      });
+    }
+  }
+
+  setPassThrough(el, pass) {
+    if (pass) {
+      el.style.pointerEvents = "none";
+      el._passThrough = true;
+      for (const node of el.querySelectorAll(".nl-v")) {
+        if (node._passThrough) continue;
+        node.style.pointerEvents = "auto";
+        node._passChild = true;
+      }
+      return;
+    }
+    if (!el._passThrough) return;
+    el.style.pointerEvents = "";
+    el._passThrough = false;
+    for (const node of el.querySelectorAll(".nl-v")) {
+      if (!node._passChild || node._passThrough) continue;
+      node.style.pointerEvents = "";
+      node._passChild = false;
     }
   }
 

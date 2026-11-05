@@ -426,6 +426,28 @@ test("a modal covers the window wherever the app rendered it", () => {
   assert.equal(player.view(2).contains(modal), false);
 });
 
+test("a dialog popup lets presses through to the backdrop", () => {
+  const { player } = createTestEnv();
+  player.host.setRootSize = () => {};
+  player.apply([
+    ["c", 20, "modal"],
+    ["i", 1, 20, null],
+    ["c", 21, "view"],
+    ["c", 22, "view"],
+    ["c", 23, "view"],
+    ["i", 20, 21, null],
+    ["i", 20, 22, null],
+    ["i", 22, 23, null],
+  ]);
+  assert.equal(player.view(21).style.pointerEvents, "", "backdrop keeps presses");
+  assert.equal(player.view(22).style.pointerEvents, "none", "popup does not cover the backdrop");
+  assert.equal(player.view(23).style.pointerEvents, "auto", "the card still takes presses");
+
+  player.apply([["r", 21]]);
+  assert.equal(player.view(22).style.pointerEvents, "", "popup takes presses once it is alone");
+  assert.equal(player.view(23).style.pointerEvents, "", "the card drops the explicit auto");
+});
+
 test("Modal insert calls setRootSize with dimensions and insets", () => {
   const { player, root } = createTestEnv();
   const calls = [];
