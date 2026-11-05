@@ -813,10 +813,14 @@ impl<M: TextEngine> Core<M> {
         // Priority: topmost modal (last created), then topmost screen (last in its stack).
         let mut candidate: Option<(Key, bool)> = None; // (key, is_modal)
 
-        // Find the last live modal in creation order.
+        // Find the last modal still mounted. A removed one stays in `roots`
+        // until release; detached, it is not on screen and must not take back.
         for &key in self.roots.iter().rev() {
-            let node = &self.nodes[key as usize];
-            if node.created && node.kind == Kind::Modal {
+            let mounted = {
+                let node = &self.nodes[key as usize];
+                node.created && node.kind == Kind::Modal
+            };
+            if mounted && self.is_ancestor(self.root, key) {
                 candidate = Some((key, true));
                 break;
             }
@@ -9278,6 +9282,93 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].0, 2);
         assert_eq!(events[0].1, EventKind::RequestClose);
+    }
+
+    #[test]
+    fn removed_modal_does_not_keep_back() {
+        let mut c = core();
+
+        // A page that can pop, with a modal on it. The modal is removed the
+        // way the web runtime drops one (unlink now, release when the JS
+        // object is gone). Back after that has to reach the page.
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Stack,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 4,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 5,
+            tag: Tag::Modal,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 4,
+            child: 5,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Listen {
+            id: 5,
+            event: EventKind::RequestClose,
+            enabled: true,
+        })
+        .unwrap();
+        c.apply(Op::Listen {
+            id: 4,
+            event: EventKind::Dismiss,
+            enabled: true,
+        })
+        .unwrap();
+        c.commit();
+
+        assert!(c.handle_back(), "an open modal takes back");
+        let mut events = Vec::new();
+        c.take_events(&mut events);
+        assert_eq!(events, vec![(5, EventKind::RequestClose)]);
+
+        c.apply(Op::Remove {
+            parent: 4,
+            child: 5,
+        })
+        .unwrap();
+        c.commit();
+
+        assert!(c.handle_back(), "the page under a removed modal still pops");
+        events.clear();
+        c.take_events(&mut events);
+        assert_eq!(
+            events,
+            vec![(4, EventKind::Dismiss)],
+            "a removed modal must not swallow back"
+        );
     }
 
     #[test]
