@@ -424,6 +424,10 @@ Copied files:
   the attachment spans, `attachments` and `hitTest` of `TextLayouts.java`
   from `java/com/longbridge/nsh/TextBox.java` and `TextLayouts.java` (one
   long-press timer; no Java word breaker)
+- `toPixels` and the `StaticLayout` built from the prepared `PrecomputedText` in
+  `crates/nlayer-platform-android/java/dev/nlayer/android/TextLayouts.java` from
+  `java/com/longbridge/nsh/TextLayouts.java` (a width a hair under a whole pixel
+  stays that pixel; letter spacing is not copied)
 - `crates/nlayer-platform-ios/src/text_selection.rs` from
   `crates/nsh-platform-ios/src/text_selection.rs` (non-editable
   `UITextInteraction`; no editable text)

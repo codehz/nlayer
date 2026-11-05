@@ -66,6 +66,7 @@ public final class JavaTests extends Instrumentation {
     "testKeyboardHeightCalculation",
     "testSafeAreaUpdatesWithUnchangedKeyboard",
     "testModalImeUpdatesKeyboardInset",
+    "testTextWidthHairUnderAPixelStaysOneLine",
   };
 
   @Override
@@ -1819,5 +1820,66 @@ public final class JavaTests extends Instrumentation {
           });
       waitForIdleSync();
     }
+  }
+
+  void testTextWidthHairUnderAPixelStaysOneLine() {
+    // 2.625 is the density where 64px comes back as 64/2.625 dp.
+    float density = 2.625f;
+    String text = "Header Demo (title, headerStyle, headerTransparent)";
+    int[] ints = {0, text.length(), 600, 0, 0xff3b82f6};
+    float[] floats = {16f, 0f};
+    Object prepared = TextLayouts.prepare(text, ints, floats, 0, 0, 0, density, null);
+    long natural = TextLayouts.measure(prepared, Float.NaN);
+    float natW = Float.intBitsToFloat((int) (natural >>> 32));
+    float natH = Float.intBitsToFloat((int) natural);
+    check(natW > 0f && natH > 0f, "natural size");
+    equal(1, textLines(prepared, natW, natH, density), "natural width is one line");
+
+    // The measured width is ceil(line px) / density, so it lands on a whole pixel. A hair under
+    // that pixel is what padding subtraction leaves.
+    float hair = natW - 0.0004f / density;
+    long measured = TextLayouts.measure(prepared, hair);
+    float height = Float.intBitsToFloat((int) measured);
+    equal(natH, height, "a width a hair under a whole pixel stays one line");
+    equal(1, textLines(prepared, hair, height, density), "the drawn layout stays one line");
+
+    float narrow = natW / 3f;
+    long wrapped = TextLayouts.measure(prepared, narrow);
+    float wrapH = Float.intBitsToFloat((int) wrapped);
+    check(wrapH > natH + 0.5f, "a narrow box wraps");
+    check(textLines(prepared, narrow, wrapH, density) >= 2, "the drawn layout wraps");
+    float bottom = textBottom(TextLayouts.layout(prepared, narrow, wrapH), density);
+    check(
+        Math.abs(bottom - wrapH) < 0.05f,
+        "measure height is the wrapped layout: " + bottom + " vs " + wrapH);
+
+    for (int step = 0; step <= 8; step++) {
+      float width = natW - step * (natW - narrow) / 8f;
+      long size = TextLayouts.measure(prepared, width);
+      float box = Float.intBitsToFloat((int) size);
+      float drawn = textBottom(TextLayouts.layout(prepared, width, box), density);
+      check(
+          drawn <= box + 0.05f,
+          "drawn text is not taller than the measured box at "
+              + width
+              + ": "
+              + drawn
+              + " > "
+              + box);
+    }
+  }
+
+  private static int textLines(Object prepared, float width, float height, float density) {
+    return TextLayouts.lines(TextLayouts.layout(prepared, width, height), density).length
+        / TextLayouts.LINE_FLOATS;
+  }
+
+  private static float textBottom(Object layout, float density) {
+    float[] lines = TextLayouts.lines(layout, density);
+    float bottom = 0f;
+    for (int i = 0; i < lines.length; i += TextLayouts.LINE_FLOATS) {
+      bottom = Math.max(bottom, lines[i + 3] + lines[i + 5]);
+    }
+    return bottom;
   }
 }
