@@ -45,13 +45,13 @@ use objc2_ui_kit::{
     UIAccessibilityTraitHeader, UIAccessibilityTraitImage, UIAccessibilityTraitKeyboardKey,
     UIAccessibilityTraitLink, UIAccessibilityTraitNone, UIAccessibilityTraitNotEnabled,
     UIAccessibilityTraitSearchField, UIAccessibilityTraitSelected, UIAccessibilityTraitStaticText,
-    UIAccessibilityTraitSummaryElement, UIAccessibilityTraitUpdatesFrequently, UIGestureRecognizer,
-    UIGestureRecognizerDelegate, UIGestureRecognizerState, UIHoverGestureRecognizer,
-    UILongPressGestureRecognizer, UIPanGestureRecognizer, UIPinchGestureRecognizer,
-    UIRefreshControl, UIRotationGestureRecognizer, UIScreen, UIScrollView,
-    UIScrollViewContentInsetAdjustmentBehavior, UIScrollViewDelegate, UITapGestureRecognizer,
-    UITextField, UITextFieldDelegate, UITextView, UITextViewDelegate, UITouch, UIView,
-    UIViewControllerTransitionCoordinator,
+    UIAccessibilityTraitSummaryElement, UIAccessibilityTraitUpdatesFrequently, UIEvent,
+    UIGestureRecognizer, UIGestureRecognizerDelegate, UIGestureRecognizerState,
+    UIHoverGestureRecognizer, UILongPressGestureRecognizer, UIPanGestureRecognizer,
+    UIPinchGestureRecognizer, UIRefreshControl, UIResponder, UIRotationGestureRecognizer, UIScreen,
+    UIScrollView, UIScrollViewContentInsetAdjustmentBehavior, UIScrollViewDelegate,
+    UITapGestureRecognizer, UITextField, UITextFieldDelegate, UITextView, UITextViewDelegate,
+    UITouch, UIView, UIViewControllerTransitionCoordinator,
 };
 
 use crate::input::{AreaInput, Field};
@@ -711,6 +711,55 @@ impl Relay {
     }
 }
 
+struct BoxIvars {
+    /// The view's own box is not a hit. Children still are.
+    pass_box: Cell<bool>,
+}
+
+define_class!(
+    /// A plain view. A dialog popup sets [`BoxView::set_pass_box`]: its box
+    /// would otherwise take every press that should hit the backdrop behind
+    /// it (`flex-1` centering a smaller card).
+    #[unsafe(super(UIView, UIResponder, NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = BoxIvars]
+    struct BoxView;
+
+    unsafe impl NSObjectProtocol for BoxView {}
+
+    impl BoxView {
+        #[unsafe(method_id(hitTest:withEvent:))]
+        fn hit_test(&self, point: CGPoint, event: Option<&UIEvent>) -> Option<Retained<UIView>> {
+            // SAFETY: UIView's hit test. `return` would skip `method_id`'s
+            // retained conversion, so both paths fall out of this block.
+            let hit: Option<Retained<UIView>> =
+                unsafe { msg_send![super(self), hitTest: point, withEvent: event] };
+            if self.ivars().pass_box.get() {
+                // The clipping content view (tag < 0) fills this box and would
+                // take the same press. A node inside it still comes back as itself.
+                let mine = self as *const Self as *const UIView;
+                hit.filter(|found| !std::ptr::eq(Retained::as_ptr(found), mine) && found.tag() >= 0)
+            } else {
+                hit
+            }
+        }
+    }
+);
+
+impl BoxView {
+    fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(BoxIvars {
+            pass_box: Cell::new(false),
+        });
+        // SAFETY: UIView's designated initializer.
+        unsafe { msg_send![super(this), init] }
+    }
+
+    fn set_pass_box(&self, pass: bool) {
+        self.ivars().pass_box.set(pass);
+    }
+}
+
 /// Reports `a` on `view`: element, label, hint, value, traits and whether
 /// the subtree is hidden.
 fn apply_accessibility(view: &UIView, a: &nlayer_core::Accessibility, mtm: MainThreadMarker) {
@@ -1274,6 +1323,7 @@ impl Mounter {
         }
         self.settle_content_sizes();
         self.finish_navigation();
+        self.pass_modal_presses();
         self.apply_animations();
         self.report_finished();
         for (_, area) in &self.areas {
@@ -1869,7 +1919,10 @@ impl Mounter {
 
     fn create(&mut self, id: NodeId, kind: ViewKind) {
         let (native, picture) = match kind {
-            ViewKind::View => (Native::View(UIView::new(self.mtm)), None),
+            ViewKind::View => (
+                Native::View(Retained::into_super(BoxView::new(self.mtm))),
+                None,
+            ),
             ViewKind::Text => (Native::Text(TextView::new(self.mtm)), None),
             ViewKind::Scroll => {
                 let scroll =
@@ -2986,6 +3039,43 @@ impl Mounter {
             _ => {}
         }
         true
+    }
+
+    /// The popup is the view after the backdrop and often fills the dialog
+    /// (`flex-1`) to center a smaller card. That box would take every press
+    /// that should hit the backdrop. Its own box is not a hit; the views
+    /// inside it still are. With no backdrop, the popup takes presses again.
+    fn pass_modal_presses(&self) {
+        let modals: Vec<NodeId> = self
+            .slots
+            .iter()
+            .enumerate()
+            .filter_map(|(index, slot)| {
+                slot.as_ref()
+                    .is_some_and(|slot| matches!(slot.native, Native::Modal(_)))
+                    .then_some(index as NodeId)
+            })
+            .collect();
+        for id in modals {
+            let Some(view) = self.view(id).map(|view| view.retain()) else {
+                continue;
+            };
+            let container = self
+                .slot(id)
+                .and_then(|slot| slot.content.clone())
+                .unwrap_or(view);
+            let subs = container.subviews();
+            let nodes: Vec<Retained<UIView>> = (0..subs.count())
+                .map(|index| subs.objectAtIndex(index))
+                .filter(|child| child.tag() > 0)
+                .collect();
+            let pass = nodes.len() > 1;
+            for (index, node) in nodes.iter().enumerate() {
+                if let Some(box_view) = node.downcast_ref::<BoxView>() {
+                    box_view.set_pass_box(pass && index > 0);
+                }
+            }
+        }
     }
 
     /// Applies the navigation changes of a batch once all its views exist
@@ -5244,6 +5334,10 @@ pub(crate) mod tests {
                 "mount::the_modal_presents_over_the_root",
                 the_modal_presents_over_the_root as fn(),
             ),
+            (
+                "mount::a_dialog_popup_lets_presses_through_to_the_backdrop",
+                a_dialog_popup_lets_presses_through_to_the_backdrop as fn(),
+            ),
         ]
     }
 
@@ -6435,5 +6529,70 @@ pub(crate) mod tests {
                 "modal should no longer be presented after removal"
             );
         }
+    }
+
+    fn hit_tag(view: &UIView, x: f64, y: f64) -> isize {
+        view.hitTest_withEvent(CGPoint::new(x, y), None)
+            .map(|hit| hit.tag())
+            .unwrap_or(-1)
+    }
+
+    fn a_dialog_popup_lets_presses_through_to_the_backdrop() {
+        let mounter = mounter();
+        let full = frame(0.0, 0.0, 320.0, 640.0);
+        let mut items = vec![
+            MountItem::Create {
+                id: 5,
+                kind: ViewKind::Modal,
+            },
+            MountItem::Insert {
+                parent: ROOT_ID,
+                child: 5,
+                before: None,
+            },
+            MountItem::Frame { id: 5, frame: full },
+        ];
+        for (id, parent, at) in [
+            (6, 5, full),
+            (7, 5, full),
+            (8, 7, frame(80.0, 200.0, 160.0, 80.0)),
+        ] {
+            items.push(MountItem::Create {
+                id,
+                kind: ViewKind::View,
+            });
+            items.push(MountItem::Insert {
+                parent,
+                child: id,
+                before: None,
+            });
+            items.push(MountItem::Frame { id, frame: at });
+        }
+        apply(&mounter, items);
+
+        let modal = mounter.borrow().view(5).unwrap().retain();
+        assert_eq!(
+            hit_tag(&modal, 100.0, 240.0),
+            8,
+            "the card still takes presses"
+        );
+        assert_eq!(
+            hit_tag(&modal, 10.0, 10.0),
+            6,
+            "empty popup space hits the backdrop"
+        );
+
+        apply(&mounter, vec![MountItem::Remove { id: 6 }]);
+        let modal = mounter.borrow().view(5).unwrap().retain();
+        assert_eq!(
+            hit_tag(&modal, 10.0, 10.0),
+            7,
+            "a popup alone takes presses"
+        );
+        assert_eq!(
+            hit_tag(&modal, 100.0, 240.0),
+            8,
+            "the card still takes presses"
+        );
     }
 }
