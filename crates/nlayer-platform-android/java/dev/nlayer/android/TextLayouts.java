@@ -24,6 +24,13 @@ final class TextLayouts {
 
   static final class Prepared {
     final CharSequence text;
+
+    /**
+     * What layouts are built from. Not {@link #text}: a {@link StaticLayout} over a {@link
+     * PrecomputedText} reports every caret at the line's end, which breaks span frames.
+     */
+    final CharSequence source;
+
     final TextPaint paint;
     final Layout.Alignment alignment;
     final boolean justify, endAligned;
@@ -36,6 +43,7 @@ final class TextLayouts {
 
     Prepared(
         CharSequence text,
+        CharSequence source,
         TextPaint paint,
         Layout.Alignment alignment,
         boolean justify,
@@ -45,6 +53,7 @@ final class TextLayouts {
         float density,
         TextDirectionHeuristic direction) {
       this.text = text;
+      this.source = source;
       this.paint = paint;
       this.alignment = alignment;
       this.justify = justify;
@@ -71,10 +80,11 @@ final class TextLayouts {
     StaticLayout layout(int width) {
       width = Math.max(0, width);
       for (StaticLayout l : layouts) if (l != null && l.getWidth() == width) return l;
-      // Break strategy and hyphenation match the PrecomputedText params, so the builder reuses
-      // its glyph measurements.
+      // The same break strategy, hyphenation and direction the PrecomputedText measured with. The
+      // characters come from `source`, not the PrecomputedText: its layout would report every caret
+      // at the line's end, and a span's frame would have no width.
       StaticLayout.Builder b =
-          StaticLayout.Builder.obtain(text, 0, text.length(), paint, width)
+          StaticLayout.Builder.obtain(source, 0, source.length(), paint, width)
               .setAlignment(alignment)
               .setTextDirection(direction)
               .setIncludePad(false)
@@ -197,6 +207,7 @@ final class TextLayouts {
             .build();
     return new Prepared(
         PrecomputedText.create(s, params),
+        s,
         paint,
         alignment,
         align == 4,
