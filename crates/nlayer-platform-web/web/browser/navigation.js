@@ -3,8 +3,9 @@
 // Licensed under the Apache License, Version 2.0.
 //
 // Web navigation: reactive route stack, screen and modal DOM mounting,
-// header slots, modal presentation and history integration. Adapted from
-// nsh's browser navigation facade to nlayer's simpler environment model.
+// the default header bar, modal presentation and history integration.
+// Adapted from nsh's browser navigation facade to nlayer's simpler
+// environment model.
 
 // Route state is held by the shared Rust reactive graph. Stack transitions,
 // layout, back handling and modal surfaces remain in the Rust core/platform.
@@ -13,6 +14,14 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
   const rt = dom.rt;
   const pages = new WeakSet();
   const popped = new WeakMap();
+  let headerComponent = null;
+  function currentHeader() {
+    headerComponent ??= signal(null);
+    return headerComponent();
+  }
+  const stackContext = reactive.context(null);
+  const colorScheme = dom.colorScheme ?? (() => "light");
+  const requestBack = dom.requestBack ?? (() => {});
   const except = (props, keys) => {
     const out = {};
     for (const key in props) {
@@ -73,10 +82,15 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
     return state;
   }
 
-  function nativeInsets(topZero) {
+  function nativeInsets(coverTop) {
+    const covers = typeof coverTop === "function" ? coverTop : () => coverTop;
     const reported = signal(null);
     return [
-      computed(() => reported() ?? (topZero ? { ...safeArea(), top: 0 } : safeArea())),
+      computed(() => {
+        const safe = safeArea();
+        if (reported()) return reported();
+        return covers() ? { ...safe, top: 0 } : safe;
+      }),
       ({ top, right, bottom, left }) => reported.set({ top, right, bottom, left }),
     ];
   }
@@ -92,14 +106,95 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
     });
   };
 
+  function setNavHeader(component) {
+    if (component != null && typeof component !== "function") {
+      throw new TypeError("setNavHeader: a component function, or null");
+    }
+    headerComponent ??= signal(null);
+    headerComponent.set(component ?? null);
+  }
+
+  const LIGHT_BAR = { bg: "#ffffff", title: "#0f172a", tint: "#3b82f6", line: "#e2e8f0" };
+  const DARK_BAR = { bg: "#1e293b", title: "#f1f5f9", tint: "#60a5fa", line: "#334155" };
+
+  function absent(value) {
+    return value == null || value === false;
+  }
+
+  function backControl(tint, onBack) {
+    const node = rt.element("text");
+    rt.prop(node, "class", "font-semibold");
+    rt.prop(node, "style", { color: tint });
+    rt.prop(node, "accessibilityLabel", "Back");
+    rt.prop(node, "onPress", () => onBack?.());
+    rt.insert(node, "←");
+    return node;
+  }
+
+  function titleView(title, color) {
+    if (title != null && typeof title === "object") return title;
+    const node = rt.element("text");
+    rt.prop(node, "class", "shrink-0 px-2 text-center text-[15px] font-semibold");
+    rt.prop(node, "style", { color, numberOfLines: 1 });
+    rt.insert(node, title == null ? "" : String(title));
+    return node;
+  }
+
+  function side(end, content) {
+    const node = rt.element("view");
+    rt.prop(
+      node,
+      "class",
+      end
+        ? "min-w-0 flex-1 flex-row items-center justify-end px-3"
+        : "min-w-0 flex-1 flex-row items-center px-3",
+    );
+    if (content != null) rt.insert(node, content);
+    return node;
+  }
+
+  function NavHeader(props) {
+    const scheme = colorScheme() === "dark" ? DARK_BAR : LIGHT_BAR;
+    const transparent = !!props.headerTransparent;
+    const headerStyle = props.headerStyle ?? {};
+    const background = transparent ? "transparent" : (headerStyle.backgroundColor ?? scheme.bg);
+    const titleColor = headerStyle.color ?? (transparent ? "#ffffff" : scheme.title);
+    const tint = headerStyle.tintColor ?? (transparent ? "#ffffff" : scheme.tint);
+    const hairline = !transparent && headerStyle.backgroundColor == null;
+    const customLeading = !absent(props.headerLeft);
+    const showBack = !!props.canGoBack && props.headerBackVisible !== false && !customLeading;
+    const leading = customLeading
+      ? props.headerLeft
+      : showBack
+        ? backControl(tint, props.onBack)
+        : null;
+    const title = absent(props.headerTitle) ? (props.title ?? "") : props.headerTitle;
+    const trailing = absent(props.headerRight) ? null : props.headerRight;
+
+    const root = rt.element("view");
+    rt.prop(root, "style", {
+      paddingTop: "env(safe-area-inset-top)",
+      backgroundColor: background,
+    });
+    const row = rt.element("view");
+    rt.prop(row, "class", "h-11 flex-row items-center");
+    rt.prop(row, "style", {
+      borderBottomWidth: hairline ? 1 : 0,
+      borderBottomColor: scheme.line,
+    });
+    rt.insert(row, [side(false, leading), titleView(title, titleColor), side(true, trailing)]);
+    rt.insert(root, row);
+    return root;
+  }
+
   function NavPage(props) {
     const node = rt.element("screen");
     pages.add(node);
     // popOnBack must be reactive too (separate from spread): the gallery
-    // computes it from detailInterceptBack signal.
+    // computes it from detailInterceptBack signal. `header` is not a prop
+    // anymore: spreading it warns. The slot props are the header's children.
     const restProps = except(props, [
       "children",
-      "header",
       "headerLeft",
       "headerRight",
       "headerTitle",
@@ -112,7 +207,7 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
     if ("popOnBack" in props) {
       rt.bindProp(node, "popOnBack", () => props.popOnBack);
     }
-    const [insets, onInsets] = nativeInsets(true);
+    const [insets, onInsets] = nativeInsets(() => props.headerVisible !== false);
     rt.prop(node, "onInsets", onInsets);
     // `prop`, not `listen`: the engine only emits Dismiss to a screen that
     // told it about the event, and back depends on it.
@@ -125,25 +220,32 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
     if ("onBackPress" in props) {
       rt.bindProp(node, "onBackPress", () => props.onBackPress ?? null);
     }
-    const parts = [
-      ["left", "headerLeft"],
-      ["right", "headerRight"],
-      ["title", "headerTitle"],
-      ["header", "header"],
-    ].map(([slot, key]) =>
-      computed(() => {
-        const content = props[key];
-        if (content == null || content === false) return null;
-        return untracked(() => {
-          const item = rt.element("headeritem");
-          rt.prop(item, "headerSlot", slot);
-          rt.insert(item, content);
-          return item;
-        });
-      }),
-    );
-    parts.push(withInsets(insets, () => props.children));
-    rt.insert(node, parts);
+    const header = computed(() => {
+      if (props.headerVisible === false) return null;
+      const Component = currentHeader() ?? NavHeader;
+      const stack = stackContext();
+      const canGoBack = !!(stack && stack.index() > 0);
+      // A scheme change rebuilds the bar. The build itself is untracked.
+      colorScheme();
+      const model = {
+        title: props.title,
+        headerLeft: props.headerLeft,
+        headerRight: props.headerRight,
+        headerTitle: props.headerTitle,
+        headerBackVisible: props.headerBackVisible,
+        headerStyle: props.headerStyle,
+        headerTransparent: props.headerTransparent,
+        canGoBack,
+        onBack: requestBack,
+      };
+      return untracked(() => {
+        const item = rt.element("headeritem");
+        rt.prop(item, "headerSlot", "header");
+        rt.insert(item, Component(model));
+        return item;
+      });
+    });
+    rt.insert(node, [header, withInsets(insets, () => props.children)]);
     return node;
   }
 
@@ -165,7 +267,12 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
       // The children callback must be reactive: the gallery computes popOnBack
       // from signals, and NavPage props need to update when those change.
       return computed(() => {
-        const rendered = props.children(entry.route, index);
+        const rendered = stackContext.Provider({
+          value: { index },
+          get children() {
+            return props.children(entry.route, index);
+          },
+        });
         return untracked(() => {
           const screenFor = (rendered) => {
             const page = pages.has(rendered) ? rendered : NavPage({ children: rendered });
@@ -292,5 +399,13 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
     });
   }
 
-  return { createNavStack, NavStack, NavPage, Dialog, insetsContext };
+  return {
+    createNavStack,
+    NavStack,
+    NavPage,
+    Dialog,
+    insetsContext,
+    NavHeader,
+    setNavHeader,
+  };
 }

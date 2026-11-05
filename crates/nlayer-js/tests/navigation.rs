@@ -834,7 +834,6 @@ fn nav_page_header_slots_create_header_items_with_slot_prop() {
                 headerLeft: "Left", 
                 headerRight: "Right", 
                 headerTitle: "Title",
-                header: "Custom",
                 children: "content" 
             })
         );
@@ -858,8 +857,8 @@ fn nav_page_header_slots_create_header_items_with_slot_prop() {
         .collect();
     assert_eq!(
         header_items.len(),
-        4,
-        "Should create HeaderItem for each slot"
+        3,
+        "Should create HeaderItem for each system-bar slot"
     );
 
     let slots: Vec<_> = ops
@@ -875,7 +874,40 @@ fn nav_page_header_slots_create_header_items_with_slot_prop() {
     assert!(slots.contains(&HeaderSlot::Left));
     assert!(slots.contains(&HeaderSlot::Right));
     assert!(slots.contains(&HeaderSlot::Title));
-    assert!(slots.contains(&HeaderSlot::Header));
+    assert!(
+        !slots.contains(&HeaderSlot::Header),
+        "the header slot is web-only"
+    );
+}
+
+#[test]
+fn nav_header_draws_title_and_back_and_set_nav_header_is_ignored() {
+    let host = Host::new().unwrap();
+    host.eval_source(
+        r#"
+        import { NavHeader, setNavHeader } from "@nlayer/ui";
+        import { mount } from "@nlayer/runtime";
+        setNavHeader(() => {
+            throw new Error("native setNavHeader is a no-op");
+        });
+        globalThis.dispose = mount(() =>
+            NavHeader({ title: "Hello", canGoBack: true, onBack() {} })
+        );
+        "#,
+    )
+    .unwrap();
+
+    let mut ops = Vec::new();
+    host.take_ops(&mut ops);
+    let texts: Vec<_> = ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::CreateText { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(texts.contains(&"Hello"), "title text, got {texts:?}");
+    assert!(texts.contains(&"←"), "back control, got {texts:?}");
 }
 
 #[test]

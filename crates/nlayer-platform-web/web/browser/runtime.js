@@ -495,6 +495,14 @@ export function createFacade(wasm, requestPump, options = {}) {
     {
       rt,
       back: (handler) => BackHandler.addEventListener(handler),
+      requestBack() {
+        if (typeof wasm.nlayer_back === "function") wasm.nlayer_back();
+        requestPump();
+      },
+      colorScheme() {
+        installColorScheme();
+        return colorScheme();
+      },
       listen: (node, event, handler) => {
         const id = values.nodeIds.get(node);
         if (id === undefined) return;
@@ -545,6 +553,8 @@ export function createFacade(wasm, requestPump, options = {}) {
     createNavStack: navigation.createNavStack,
     NavStack: navigation.NavStack,
     NavPage: navigation.NavPage,
+    NavHeader: navigation.NavHeader,
+    setNavHeader: navigation.setNavHeader,
     Dialog: navigation.Dialog,
     platform: {
       os: "web",

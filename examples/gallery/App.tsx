@@ -19,80 +19,6 @@ import { ListDemoPage } from "./screens/list";
 import { ReadingPage } from "./screens/reading";
 import { ViewportParentPage } from "./screens/viewport";
 
-/** Web draws this (`header`). iOS and Android keep the system bar.
- * Its nodes are not the `headerLeft` / `headerRight` slots: the web does
- * not place those, and one node cannot sit in both. */
-function PageHeader(props: {
-  title: string;
-  /** Bottom of the stack: no back control. */
-  root?: boolean;
-  /** Header demo: leading and trailing controls, like the native slots. */
-  slots?: boolean;
-  background?: string;
-  color?: string;
-  tint?: string;
-  transparent?: boolean;
-}) {
-  const leading = props.slots ? (
-    <Text
-      onPress={() => nav.pop()}
-      class="font-semibold"
-      style={{ color: props.transparent ? "#fff" : (props.tint ?? "#3b82f6") }}
-    >
-      Back
-    </Text>
-  ) : props.root ? null : (
-    <Text
-      testID="drawn-header-back"
-      onPress={() => nav.pop()}
-      class="font-semibold"
-      style={{ color: props.transparent ? "#fff" : (props.tint ?? "#3b82f6") }}
-    >
-      ← Back
-    </Text>
-  );
-  const trailing = props.slots ? (
-    <Text
-      class="font-semibold"
-      style={{ color: props.transparent ? "#fff" : (props.tint ?? "#3b82f6") }}
-    >
-      Right
-    </Text>
-  ) : null;
-  return (
-    <View
-      testID="drawn-header"
-      style={{
-        paddingTop: "env(safe-area-inset-top)",
-        backgroundColor: props.transparent ? "transparent" : (props.background ?? "#fff"),
-      }}
-    >
-      <View
-        class="h-11 flex-row items-center gap-2 px-3"
-        style={{
-          borderBottomWidth: !props.transparent && props.background == null ? 1 : 0,
-          borderBottomColor: "#e2e8f0",
-        }}
-      >
-        {props.slots ? <View class="w-20 flex-row items-center px-3">{leading}</View> : leading}
-        <Text
-          class="min-w-0 flex-1 text-[15px] font-semibold"
-          classList={{ "text-center": props.slots }}
-          style={{
-            numberOfLines: 1,
-            color: props.transparent ? "#fff" : (props.color ?? "#0f172a"),
-          }}
-        >
-          {props.title}
-        </Text>
-        {props.slots ? (
-          <View class="w-20 flex-row items-center justify-end px-3">{trailing}</View>
-        ) : null}
-      </View>
-    </View>
-  );
-}
-
 function page(route: Route) {
   if (route.name === "home") return { content: <HomePage />, title: "Gallery" };
   if (route.name === "detail") {
@@ -130,30 +56,16 @@ function page(route: Route) {
 function App() {
   return (
     <NavStack state={nav} class="flex-1">
-      {(route, index) => {
+      {(route) => {
         const screen = page(route);
         // Read in the JSX prop, not a const: the stack renders a route once,
         // and only a getter keeps `headerTransparent` live after that.
         const headerDemo = route.name === "header";
-        const header = (
-          <PageHeader
-            title={screen.title ?? ""}
-            root={index() === 0}
-            slots={headerDemo}
-            background={
-              headerDemo && headerTransparent() ? undefined : screen.headerStyle?.backgroundColor
-            }
-            color={screen.headerStyle?.color}
-            tint={screen.headerStyle?.tintColor}
-            transparent={headerDemo && headerTransparent()}
-          />
-        );
         return (
           <NavPage
             title={screen.title}
             headerStyle={screen.headerStyle}
             headerTransparent={headerDemo && headerTransparent()}
-            header={header}
             headerLeft={screen.headerLeft}
             headerRight={screen.headerRight}
             onDismiss={() => dismissedCount.set(dismissedCount() + 1)}

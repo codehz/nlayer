@@ -372,9 +372,8 @@ export interface NavPageProps {
   testID?: string;
   /** The page's title. */
   title?: string;
-  /** The app's header (desktops and web). */
-  header?: unknown;
-  /** Whether the header is visible (default true). */
+  /** Whether the header is visible (default true). `false` mounts no header:
+   * web drops the header slot, and the content's top inset is the safe area. */
   headerVisible?: boolean;
   /** Whether the back button is visible (default true). */
   headerBackVisible?: boolean;
@@ -443,10 +442,44 @@ export interface DialogProps {
   children?: unknown;
 }
 
+/** Props of the default header, and of a component passed to `setNavHeader`.
+ * `NavPage` fills `canGoBack` and `onBack` when it mounts the component. */
+export interface NavHeaderProps {
+  /** The page's `title`, when `headerTitle` is absent. */
+  title?: string;
+  /** Replaces the back control. */
+  headerLeft?: unknown;
+  /** Trailing content. */
+  headerRight?: unknown;
+  /** Replaces the title string. */
+  headerTitle?: unknown;
+  /** Whether the back control is visible (default true). */
+  headerBackVisible?: boolean;
+  /** Header colors. `backgroundColor` also drops the hairline. */
+  headerStyle?: {
+    backgroundColor?: ColorValue;
+    color?: ColorValue;
+    tintColor?: ColorValue;
+  };
+  /** Whether the header is transparent. */
+  headerTransparent?: boolean;
+  /** False on the root page, and when the page is not in a stack. */
+  canGoBack?: boolean;
+  /** Engine back: `onBackPress`, then `popOnBack`. Not a direct pop. */
+  onBack?: () => void;
+}
+
 /** Creates a navigation stack state. */
 export function createNavStack<R>(routes: readonly R[]): NavStackState<R>;
 export function NavStack<R>(props: NavStackProps<R>): unknown;
 export function NavPage(props: NavPageProps): unknown;
+/** The default header bar. Web `NavPage` mounts it; an app can also place it. */
+export function NavHeader(props: NavHeaderProps): unknown;
+/** Web: the component `NavPage` mounts in the header slot. `null` restores
+ * `NavHeader`. iOS and Android ignore it. */
+export function setNavHeader(
+  component: ((props: NavHeaderProps) => unknown) | null,
+): void;
 export function Dialog(props: DialogProps): unknown;
 
 

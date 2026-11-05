@@ -338,3 +338,124 @@ test("Dialog slide starts a timing animation", () => {
   assert.equal(started[0].config.duration, 320);
   assert.equal(started[0].value.value, 480);
 });
+
+test("NavPage mounts the default header and can hide or replace it", () => {
+  const reactive = {
+    signal(val) {
+      const subs = new Set();
+      const sig = () => {
+        subs.add(sig);
+        return val;
+      };
+      sig.set = (next) => {
+        val = next;
+        for (const sub of subs) sub();
+      };
+      return sig;
+    },
+    computed(fn) {
+      const read = () => fn();
+      return read;
+    },
+    untracked: (fn) => (typeof fn === "function" ? fn() : fn),
+    batch: (fn) => fn(),
+    context(def) {
+      let value = def;
+      const read = () => value;
+      read.Provider = (props) => {
+        read.provided = props?.value;
+        const previous = value;
+        value = props?.value;
+        const rendered = props?.children;
+        value = previous;
+        return rendered;
+      };
+      return read;
+    },
+  };
+  const tree = [];
+  const rt = {
+    element(tag) {
+      const el = { _tag: tag, props: {}, kids: [] };
+      tree.push(el);
+      return el;
+    },
+    prop(el, name, value) {
+      el.props[name] = value;
+    },
+    bindProp() {},
+    spread() {},
+    insert(parent, kids) {
+      const list = Array.isArray(kids) ? kids : [kids];
+      for (const kid of list) parent.kids.push(typeof kid === "function" ? kid() : kid);
+    },
+  };
+  let backs = 0;
+  const nav = createNavigation(
+    reactive,
+    {
+      rt,
+      listen: () => {},
+      requestBack: () => {
+        backs += 1;
+      },
+      colorScheme: () => "light",
+    },
+    { createAnimatedValue: () => ({}), Animated: { timing: () => ({}) } },
+    () => ({ top: 47, right: 1, bottom: 20, left: 2 }),
+    () => false,
+  );
+
+  const page = nav.NavPage({ title: "Hello", children: "content" });
+  for (const kid of page.kids) if (typeof kid === "function") kid();
+  const slot = tree.find((el) => el.props.headerSlot === "header");
+  assert.ok(slot, "default header slot");
+  const texts = tree.filter((el) => el._tag === "text").map((el) => el.kids.join(""));
+  assert.ok(texts.includes("Hello"));
+  assert.equal(texts.includes("←"), false, "root page has no back control");
+  assert.equal(nav.insetsContext.provided().top, 0, "a visible header covers the top inset");
+
+  tree.length = 0;
+  const pushed = nav.NavHeader({
+    title: "Detail",
+    canGoBack: true,
+    onBack: nav.setNavHeader && (() => backs++),
+  });
+  const pushedTexts = [];
+  const walk = (node) => {
+    if (!node || typeof node !== "object") return;
+    if (node._tag === "text") pushedTexts.push(node.kids.join(""));
+    for (const kid of node.kids ?? []) walk(kid);
+  };
+  walk(pushed);
+  assert.ok(pushedTexts.includes("←"));
+  assert.ok(pushedTexts.includes("Detail"));
+  const back = tree.find((el) => el.props.accessibilityLabel === "Back");
+  back.props.onPress();
+  assert.equal(backs, 1);
+
+  tree.length = 0;
+  nav.setNavHeader(() => {
+    const el = rt.element("view");
+    el.props.marker = "custom";
+    return el;
+  });
+  const custom = nav.NavPage({ title: "Custom", children: "body" });
+  for (const kid of custom.kids) if (typeof kid === "function") kid();
+  assert.ok(tree.some((el) => el.props.marker === "custom"));
+
+  tree.length = 0;
+  nav.setNavHeader(null);
+  const hidden = nav.NavPage({ title: "Hidden", headerVisible: false, children: "body" });
+  for (const kid of hidden.kids) if (typeof kid === "function") kid();
+  assert.equal(
+    tree.some((el) => el.props.headerSlot === "header"),
+    false,
+  );
+  assert.equal(
+    nav.insetsContext.provided().top,
+    47,
+    "no header: the content inset is the safe area",
+  );
+  assert.throws(() => nav.setNavHeader("nope"), /setNavHeader/);
+});

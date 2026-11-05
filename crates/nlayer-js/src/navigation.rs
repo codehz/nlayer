@@ -1,10 +1,12 @@
-//! Navigation and dialogs: `createNavStack`, `NavStack`, `NavPage` and
-//! `Dialog` (`@nlayer/ui` exports them).
+//! Navigation and dialogs: `createNavStack`, `NavStack`, `NavPage`,
+//! `NavHeader`, `setNavHeader` and `Dialog` (`@nlayer/ui` exports them).
 //!
 //! A stack renders each route of its state with the app's function; pages
 //! stay mounted while their route is in the stack. A page the user pops
 //! natively removes its route. Pages and dialogs provide their insets to
-//! what they render.
+//! what they render. `setNavHeader` does nothing here: iOS and Android draw
+//! the system bar. `NavHeader` is the same bar web mounts, for an app that
+//! places it itself.
 //!
 //! M1: JS surface only. Native containers (UINavigationController, Android
 //! stack, web history) come in M2.
@@ -57,8 +59,18 @@ pub(crate) const EXPORTS: &[(&str, ExportFn)] = &[
     ("createNavStack", create_nav_stack_export),
     ("NavStack", stack_export),
     ("NavPage", screen_export),
+    ("NavHeader", nav_header_export),
+    ("setNavHeader", set_nav_header_export),
     ("Dialog", modal_export),
 ];
+
+/// The navigation export named `name` (`undefined` when there is none).
+pub(crate) fn export_named(cx: *mut JsContext, name: &str) -> JsValue {
+    match EXPORTS.iter().find(|(export, _)| *export == name) {
+        Some((_, function)) => function(cx),
+        None => UNDEFINED,
+    }
+}
 
 // --- The navigator --------------------------------------------------------------
 
@@ -508,7 +520,8 @@ fn screen_for(cx: *mut JsContext, rendered: JsValue, popped: JsValue) -> JsValue
 
 // --- Screen -----------------------------------------------------------------------
 
-/// `<NavPage title … header>`: one page of a stack.
+/// `<NavPage title …>`: one page of a stack. `headerLeft` / `headerRight` /
+/// `headerTitle` are system-bar items. `header` is not a prop.
 fn screen_export(cx: *mut JsContext) -> JsValue {
     reactive::new_function(cx, c"NavPage", screen_component, 1)
 }
@@ -530,7 +543,6 @@ unsafe extern "C" fn screen_component(
     // Spread all props except our special ones
     let skip = &[
         "children",
-        "header",
         "headerLeft",
         "headerRight",
         "headerTitle",
@@ -591,12 +603,12 @@ unsafe extern "C" fn screen_component(
     }
     free(cx, on_back);
 
-    // Create header slot items
+    // System-bar items. Web does not create these: they are children of
+    // `NavHeader` there. The `header` slot is web-only and web builds it.
     let slots = [
         ("headerLeft", "left"),
         ("headerRight", "right"),
         ("headerTitle", "title"),
-        ("header", "header"),
     ];
 
     let mut slot_nodes = Vec::new();
@@ -798,6 +810,455 @@ unsafe extern "C" fn unwrap_children(
     } else {
         qjs::JS_DupValue(cx, children)
     }
+}
+
+// --- Default header ---------------------------------------------------------------
+
+fn nav_header_export(cx: *mut JsContext) -> JsValue {
+    reactive::new_function(cx, c"NavHeader", nav_header_component, 1)
+}
+
+fn set_nav_header_export(cx: *mut JsContext) -> JsValue {
+    reactive::new_function(cx, c"setNavHeader", set_nav_header_component, 1)
+}
+
+/// The system bar does not read this. Shared code can still call it.
+unsafe extern "C" fn set_nav_header_component(
+    _cx: *mut JsContext,
+    _this: JsValue,
+    _argc: c_int,
+    _argv: *mut JsValue,
+) -> JsValue {
+    UNDEFINED
+}
+
+unsafe extern "C" fn nav_header_component(
+    cx: *mut JsContext,
+    _this: JsValue,
+    argc: c_int,
+    argv: *mut JsValue,
+) -> JsValue {
+    let props = reactive::arg(argc, argv, 0);
+    match render_nav_header(cx, props) {
+        Ok(node) => node,
+        Err(error) => error,
+    }
+}
+
+struct BarPalette {
+    bg: &'static str,
+    title: &'static str,
+    tint: &'static str,
+    line: &'static str,
+}
+
+fn bar_palette(dark: bool) -> BarPalette {
+    if dark {
+        BarPalette {
+            bg: "#1e293b",
+            title: "#f1f5f9",
+            tint: "#60a5fa",
+            line: "#334155",
+        }
+    } else {
+        BarPalette {
+            bg: "#ffffff",
+            title: "#0f172a",
+            tint: "#3b82f6",
+            line: "#e2e8f0",
+        }
+    }
+}
+
+fn dark_scheme(cx: *mut JsContext) -> bool {
+    // SAFETY: the color-scheme signal of this context, called like
+    // `platform.colorScheme()`.
+    unsafe {
+        let signal = (*crate::state::state(cx)).color_scheme.get();
+        if qjs::JS_IsUndefined(signal) {
+            return false;
+        }
+        let value = qjs::JS_Call(cx, signal, UNDEFINED, 0, std::ptr::null_mut());
+        let dark = dom::string_value(cx, value).as_deref() == Some("dark");
+        free(cx, value);
+        dark
+    }
+}
+
+fn prop_of(cx: *mut JsContext, object: JsValue, name: &str) -> JsValue {
+    let key = format!("{name}\0");
+    match CStr::from_bytes_with_nul(key.as_bytes()) {
+        Ok(name) => unsafe { qjs::JS_GetPropertyStr(cx, object, name.as_ptr()) },
+        Err(_) => UNDEFINED,
+    }
+}
+
+fn put_prop(cx: *mut JsContext, object: JsValue, name: &str, value: JsValue) {
+    let key = format!("{name}\0");
+    match CStr::from_bytes_with_nul(key.as_bytes()) {
+        Ok(name) => unsafe {
+            qjs::JS_SetPropertyStr(cx, object, name.as_ptr(), value);
+        },
+        Err(_) => free(cx, value),
+    }
+}
+
+fn absent(cx: *mut JsContext, value: JsValue) -> bool {
+    unsafe {
+        qjs::JS_IsUndefined(value)
+            || qjs::JS_IsNull(value)
+            || (qjs::JS_IsBool(value) && qjs::JS_ToBool(cx, value) == 0)
+    }
+}
+
+fn prop_flag(cx: *mut JsContext, value: JsValue) -> Option<bool> {
+    unsafe { qjs::JS_IsBool(value).then(|| qjs::JS_ToBool(cx, value) == 1) }
+}
+
+fn style_color(cx: *mut JsContext, style: JsValue, name: &str) -> Option<String> {
+    if absent(cx, style) || unsafe { !qjs::JS_IsObject(style) } {
+        return None;
+    }
+    let value = prop_of(cx, style, name);
+    let color = if absent(cx, value) {
+        None
+    } else {
+        dom::string_value(cx, value)
+    };
+    free(cx, value);
+    color
+}
+
+fn js_string(cx: *mut JsContext, value: JsValue) -> Option<String> {
+    unsafe {
+        qjs::JS_IsString(value)
+            .then(|| dom::string_value(cx, value))
+            .flatten()
+    }
+}
+
+fn release(cx: *mut JsContext, values: &[JsValue]) {
+    for value in values {
+        free(cx, *value);
+    }
+}
+
+fn host_node(cx: *mut JsContext, tag: Tag) -> Result<JsValue, JsValue> {
+    let node = dom::create_element(cx, tag);
+    if unsafe { qjs::JS_IsException(node) } {
+        Err(node)
+    } else {
+        Ok(node)
+    }
+}
+
+fn set_owned(cx: *mut JsContext, node: JsValue, name: &str, value: JsValue) -> Result<(), JsValue> {
+    let result = dom::set_prop_value(cx, node, name, value);
+    free(cx, value);
+    result
+}
+
+fn insert_owned(cx: *mut JsContext, parent: JsValue, child: JsValue) -> Result<(), JsValue> {
+    let result = dom::insert_value_at(cx, parent, child, None);
+    free(cx, child);
+    result
+}
+
+fn style_of(cx: *mut JsContext, fields: &[(&str, JsValue)]) -> JsValue {
+    let object = unsafe { qjs::JS_NewObject(cx) };
+    for (name, value) in fields {
+        put_prop(cx, object, name, *value);
+    }
+    object
+}
+
+fn labeled_text(
+    cx: *mut JsContext,
+    class_name: &str,
+    color: Option<&str>,
+    label: Option<&str>,
+    text: &str,
+    on_press: JsValue,
+) -> Result<JsValue, JsValue> {
+    let node = host_node(cx, Tag::Text)?;
+    if let Err(error) = set_owned(cx, node, "class", new_string(cx, class_name)) {
+        free(cx, node);
+        free(cx, on_press);
+        return Err(error);
+    }
+    if let Some(color) = color {
+        let color_value = new_string(cx, color);
+        let style = if label.is_none() {
+            style_of(
+                cx,
+                &[
+                    ("color", color_value),
+                    ("numberOfLines", qjs::JS_NewFloat64(1.0)),
+                ],
+            )
+        } else {
+            style_of(cx, &[("color", color_value)])
+        };
+        if let Err(error) = set_owned(cx, node, "style", style) {
+            free(cx, node);
+            free(cx, on_press);
+            return Err(error);
+        }
+    }
+    if let Some(label) = label
+        && let Err(error) = set_owned(cx, node, "accessibilityLabel", new_string(cx, label))
+    {
+        free(cx, node);
+        free(cx, on_press);
+        return Err(error);
+    }
+    if unsafe { qjs::JS_IsFunction(cx, on_press) }
+        && let Err(error) = set_owned(cx, node, "onPress", on_press)
+    {
+        free(cx, node);
+        return Err(error);
+    } else if unsafe { !qjs::JS_IsFunction(cx, on_press) } {
+        free(cx, on_press);
+    }
+    // `set_owned` of a function consumes it. The else frees a non-function.
+    // A successful set also consumed it. Don't free twice.
+    if let Err(error) = insert_owned(cx, node, new_string(cx, text)) {
+        free(cx, node);
+        return Err(error);
+    }
+    Ok(node)
+}
+
+fn side_slot(cx: *mut JsContext, end: bool, content: JsValue) -> Result<JsValue, JsValue> {
+    let node = host_node(cx, Tag::View)?;
+    let class_name = if end {
+        "min-w-0 flex-1 flex-row items-center justify-end px-3"
+    } else {
+        "min-w-0 flex-1 flex-row items-center px-3"
+    };
+    if let Err(error) = set_owned(cx, node, "class", new_string(cx, class_name)) {
+        free(cx, node);
+        free(cx, content);
+        return Err(error);
+    }
+    if absent(cx, content) {
+        free(cx, content);
+        return Ok(node);
+    }
+    let child = if dom::is_node_value(cx, content) {
+        content
+    } else if let Some(text) = js_string(cx, content) {
+        free(cx, content);
+        match labeled_text(cx, "font-semibold", None, None, &text, UNDEFINED) {
+            Ok(text) => text,
+            Err(error) => {
+                free(cx, node);
+                return Err(error);
+            }
+        }
+    } else {
+        free(cx, content);
+        return Ok(node);
+    };
+    if let Err(error) = insert_owned(cx, node, child) {
+        free(cx, node);
+        return Err(error);
+    }
+    Ok(node)
+}
+
+fn title_slot(
+    cx: *mut JsContext,
+    header_title: JsValue,
+    title: JsValue,
+    color: &str,
+) -> Result<JsValue, JsValue> {
+    if !absent(cx, header_title) {
+        if dom::is_node_value(cx, header_title) {
+            free(cx, title);
+            return Ok(header_title);
+        }
+        if let Some(text) = js_string(cx, header_title) {
+            free(cx, header_title);
+            free(cx, title);
+            return labeled_text(
+                cx,
+                "shrink-0 px-2 text-center text-[15px] font-semibold",
+                Some(color),
+                None,
+                &text,
+                UNDEFINED,
+            );
+        }
+    }
+    free(cx, header_title);
+    let text = js_string(cx, title).unwrap_or_default();
+    free(cx, title);
+    labeled_text(
+        cx,
+        "shrink-0 px-2 text-center text-[15px] font-semibold",
+        Some(color),
+        None,
+        &text,
+        UNDEFINED,
+    )
+}
+
+fn render_nav_header(cx: *mut JsContext, props: JsValue) -> Result<JsValue, JsValue> {
+    let (props, own_props) = if unsafe { qjs::JS_IsObject(props) && !qjs::JS_IsNull(props) } {
+        (props, false)
+    } else {
+        (unsafe { qjs::JS_NewObject(cx) }, true)
+    };
+    let palette = bar_palette(dark_scheme(cx));
+    let header_style = prop_of(cx, props, "headerStyle");
+    let transparent = prop_of(cx, props, "headerTransparent");
+    let is_transparent = prop_flag(cx, transparent) == Some(true);
+    free(cx, transparent);
+    let custom_background = style_color(cx, header_style, "backgroundColor");
+    let hairline = !is_transparent && custom_background.is_none();
+    let background = if is_transparent {
+        "transparent".to_owned()
+    } else {
+        custom_background.unwrap_or_else(|| palette.bg.to_owned())
+    };
+    let title_color = style_color(cx, header_style, "color").unwrap_or_else(|| {
+        if is_transparent {
+            "#ffffff".to_owned()
+        } else {
+            palette.title.to_owned()
+        }
+    });
+    let tint = style_color(cx, header_style, "tintColor").unwrap_or_else(|| {
+        if is_transparent {
+            "#ffffff".to_owned()
+        } else {
+            palette.tint.to_owned()
+        }
+    });
+    free(cx, header_style);
+
+    let header_left = prop_of(cx, props, "headerLeft");
+    let can_go_back = prop_of(cx, props, "canGoBack");
+    let back_visible = prop_of(cx, props, "headerBackVisible");
+    let show_back = absent(cx, header_left)
+        && prop_flag(cx, can_go_back) == Some(true)
+        && prop_flag(cx, back_visible) != Some(false);
+    free(cx, can_go_back);
+    free(cx, back_visible);
+    let on_back = prop_of(cx, props, "onBack");
+    let header_title = prop_of(cx, props, "headerTitle");
+    let title = prop_of(cx, props, "title");
+    let header_right = prop_of(cx, props, "headerRight");
+    if own_props {
+        free(cx, props);
+    }
+
+    let leading = if absent(cx, header_left) {
+        free(cx, header_left);
+        if show_back {
+            match labeled_text(cx, "font-semibold", Some(&tint), Some("Back"), "←", on_back) {
+                Ok(button) => button,
+                Err(error) => {
+                    release(cx, &[header_title, title, header_right]);
+                    return Err(error);
+                }
+            }
+        } else {
+            free(cx, on_back);
+            UNDEFINED
+        }
+    } else {
+        free(cx, on_back);
+        header_left
+    };
+    let left = match side_slot(cx, false, leading) {
+        Ok(node) => node,
+        Err(error) => {
+            release(cx, &[header_title, title, header_right]);
+            return Err(error);
+        }
+    };
+    let middle = match title_slot(cx, header_title, title, &title_color) {
+        Ok(node) => node,
+        Err(error) => {
+            release(cx, &[left, header_right]);
+            return Err(error);
+        }
+    };
+    let right = match side_slot(cx, true, header_right) {
+        Ok(node) => node,
+        Err(error) => {
+            release(cx, &[left, middle]);
+            return Err(error);
+        }
+    };
+
+    let root = match host_node(cx, Tag::View) {
+        Ok(node) => node,
+        Err(error) => {
+            release(cx, &[left, middle, right]);
+            return Err(error);
+        }
+    };
+    let root_style = style_of(
+        cx,
+        &[
+            ("paddingTop", new_string(cx, "env(safe-area-inset-top)")),
+            ("backgroundColor", new_string(cx, &background)),
+        ],
+    );
+    if let Err(error) = set_owned(cx, root, "style", root_style) {
+        release(cx, &[root, left, middle, right]);
+        return Err(error);
+    }
+    let row = match host_node(cx, Tag::View) {
+        Ok(node) => node,
+        Err(error) => {
+            release(cx, &[root, left, middle, right]);
+            return Err(error);
+        }
+    };
+    if let Err(error) = set_owned(
+        cx,
+        row,
+        "class",
+        new_string(cx, "h-11 flex-row items-center"),
+    ) {
+        release(cx, &[root, row, left, middle, right]);
+        return Err(error);
+    }
+    let row_style = style_of(
+        cx,
+        &[
+            (
+                "borderBottomWidth",
+                qjs::JS_NewFloat64(if hairline { 1.0 } else { 0.0 }),
+            ),
+            ("borderBottomColor", new_string(cx, palette.line)),
+        ],
+    );
+    if let Err(error) = set_owned(cx, row, "style", row_style) {
+        release(cx, &[root, row, left, middle, right]);
+        return Err(error);
+    }
+    if let Err(error) = insert_owned(cx, row, left) {
+        release(cx, &[root, row, middle, right]);
+        return Err(error);
+    }
+    if let Err(error) = insert_owned(cx, row, middle) {
+        release(cx, &[root, row, right]);
+        return Err(error);
+    }
+    if let Err(error) = insert_owned(cx, row, right) {
+        release(cx, &[root, row]);
+        return Err(error);
+    }
+    if let Err(error) = insert_owned(cx, root, row) {
+        free(cx, root);
+        return Err(error);
+    }
+    Ok(root)
 }
 
 // --- Dialog -----------------------------------------------------------------------
