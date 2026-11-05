@@ -27,9 +27,11 @@
 use std::cell::RefCell;
 
 use jni::{
-    JNIEnv,
-    objects::{JClass, JFloatArray, JIntArray, JObject, JObjectArray, JString, JValue},
-    sys::{jboolean, jfloat, jint, jintArray, jlong, jstring},
+    Env, EnvUnowned, JValue,
+    errors::LogErrorAndDefault,
+    jni_sig, jni_str,
+    objects::{JClass, JFloatArray, JIntArray, JObject, JObjectArray, JString},
+    sys::{jboolean, jfloat, jint, jlong},
 };
 use nlayer_core::geometry::{Bounds, Point, Points, bounds, point, px, size};
 use nlayer_core::selection::{Handle, SelectionModel, SelectionTexts, reading_order, reorder};
@@ -50,7 +52,7 @@ struct Texts<'a, 'local> {
     contents: &'a [String],
     keys: &'a [u64],
     frames: &'a [Bounds<Points>],
-    env: RefCell<&'a mut JNIEnv<'local>>,
+    env: RefCell<&'a mut Env<'local>>,
     this: &'a JObject<'local>,
 }
 
@@ -76,8 +78,8 @@ impl SelectionTexts for Texts<'_, '_> {
         let offset = env
             .call_method(
                 self.this,
-                "offsetAt",
-                "(IFF)I",
+                jni_str!("offsetAt"),
+                jni_sig!("(IFF)I"),
                 &[
                     JValue::Int(i as jint),
                     JValue::Float(p.x.0),
@@ -88,9 +90,9 @@ impl SelectionTexts for Texts<'_, '_> {
         match offset {
             Ok(offset) => offset.max(0) as u32,
             Err(err) => {
-                if env.exception_check().unwrap_or(false) {
-                    let _ = env.exception_describe();
-                    let _ = env.exception_clear();
+                if env.exception_check() {
+                    env.exception_describe();
+                    env.exception_clear();
                 }
                 log::error!("selection hit test failed: {err}");
                 0
@@ -137,11 +139,11 @@ unsafe fn area<'a>(handle: jlong) -> &'a mut Area {
 }
 
 /// Frames as Java sends them: x, y, width, height per text (points).
-fn read_frames(env: &JNIEnv<'_>, frames: &JFloatArray<'_>, out: &mut Vec<Bounds<Points>>) {
+fn read_frames(env: &Env<'_>, frames: &JFloatArray<'_>, out: &mut Vec<Bounds<Points>>) {
     out.clear();
-    let len = env.get_array_length(frames).unwrap_or(0).max(0) as usize;
+    let len = frames.len(env).unwrap_or(0);
     let mut values = vec![0.0f32; len];
-    if env.get_float_array_region(frames, 0, &mut values).is_err() {
+    if frames.get_region(env, 0, &mut values).is_err() {
         return;
     }
     out.extend(
@@ -153,7 +155,7 @@ fn read_frames(env: &JNIEnv<'_>, frames: &JFloatArray<'_>, out: &mut Vec<Bounds<
 
 /// Runs `f` with the area's model and its texts.
 fn with_texts<'local, R>(
-    env: &mut JNIEnv<'local>,
+    env: &mut Env<'local>,
     this: &JObject<'local>,
     area: &mut Area,
     f: impl FnOnce(&mut SelectionModel, &Texts<'_, 'local>) -> R,
@@ -177,7 +179,7 @@ fn with_texts<'local, R>(
 /// A new area without a selection.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_nlayer_android_SelectableView_nativeCreate(
-    _: JNIEnv<'_>,
+    _: EnvUnowned<'_>,
     _: JClass<'_>,
 ) -> jlong {
     Box::into_raw(Box::<Area>::default()) as jlong
@@ -186,7 +188,7 @@ pub extern "system" fn Java_dev_nlayer_android_SelectableView_nativeCreate(
 /// Frees an area's handle.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_nlayer_android_SelectableView_nativeDestroy(
-    _: JNIEnv<'_>,
+    _: EnvUnowned<'_>,
     _: JClass<'_>,
     handle: jlong,
 ) {
@@ -201,46 +203,48 @@ pub extern "system" fn Java_dev_nlayer_android_SelectableView_nativeDestroy(
 /// changed.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_nlayer_android_SelectableView_nativeSetTexts<'local>(
-    mut env: JNIEnv<'local>,
+    mut env: EnvUnowned<'local>,
     _: JClass<'local>,
     handle: jlong,
     this: JObject<'local>,
-    contents: JObjectArray<'local>,
+    contents: JObjectArray<'local, JString<'local>>,
     keys: JIntArray<'local>,
     frames: JFloatArray<'local>,
 ) -> jboolean {
-    // SAFETY: Java passes its live handle, on the UI thread.
-    let area = unsafe { area(handle) };
-    let read = (|| -> jni::errors::Result<Vec<String>> {
-        let count = env.get_array_length(&contents)?;
-        let mut out = Vec::with_capacity(count as usize);
-        for i in 0..count {
-            let element = env.get_object_array_element(&contents, i)?;
-            let s = JString::from(element);
-            out.push(String::from(env.get_string(&s)?));
-            env.delete_local_ref(s)?;
+    env.with_env(|env| -> jni::errors::Result<jboolean> {
+        // SAFETY: Java passes its live handle, on the UI thread.
+        let area = unsafe { area(handle) };
+        let read = (|| -> jni::errors::Result<Vec<String>> {
+            let count = contents.len(env)?;
+            let mut out = Vec::with_capacity(count);
+            for i in 0..count {
+                let element = contents.get_element(env, i)?;
+                out.push(element.try_to_string(env)?);
+                env.delete_local_ref(element);
+            }
+            Ok(out)
+        })();
+        match read {
+            Ok(contents) => area.contents = contents,
+            Err(err) => {
+                log::error!("cannot read the selectable view's texts: {err}");
+                area.contents.clear();
+            }
         }
-        Ok(out)
-    })();
-    match read {
-        Ok(contents) => area.contents = contents,
-        Err(err) => {
-            log::error!("cannot read the selectable view's texts: {err}");
-            area.contents.clear();
+        let len = keys.len(env).unwrap_or(0);
+        let mut ids = vec![0; len];
+        if keys.get_region(env, 0, &mut ids).is_err() {
+            ids.clear();
         }
-    }
-    let len = env.get_array_length(&keys).unwrap_or(0).max(0) as usize;
-    let mut ids = vec![0; len];
-    if env.get_int_array_region(&keys, 0, &mut ids).is_err() {
-        ids.clear();
-    }
-    area.keys = ids.into_iter().map(|id| id as u32 as u64).collect();
-    read_frames(&env, &frames, &mut area.frames);
-    // Frames for every text, even if Java's array falls short.
-    area.frames.resize(area.contents.len(), Bounds::default());
-    u8::from(with_texts(&mut env, &this, area, |model, texts| {
-        model.texts_changed(texts)
-    }))
+        area.keys = ids.into_iter().map(|id| id as u32 as u64).collect();
+        read_frames(env, &frames, &mut area.frames);
+        // Frames for every text, even if Java's array falls short.
+        area.frames.resize(area.contents.len(), Bounds::default());
+        Ok(with_texts(env, &this, area, |model, texts| {
+            model.texts_changed(texts)
+        }))
+    })
+    .resolve::<LogErrorAndDefault>()
 }
 
 /// What `nativeGesture`'s `kind` asks.
@@ -258,7 +262,7 @@ const CLEAR: jint = 5;
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
 pub extern "system" fn Java_dev_nlayer_android_SelectableView_nativeGesture<'local>(
-    mut env: JNIEnv<'local>,
+    mut env: EnvUnowned<'local>,
     _: JClass<'local>,
     handle: jlong,
     this: JObject<'local>,
@@ -267,16 +271,13 @@ pub extern "system" fn Java_dev_nlayer_android_SelectableView_nativeGesture<'loc
     x: jfloat,
     y: jfloat,
 ) -> jboolean {
-    // SAFETY: Java passes its live handle, on the UI thread.
-    let area = unsafe { area(handle) };
-    read_frames(&env, &frames, &mut area.frames);
-    area.frames.resize(area.contents.len(), Bounds::default());
-    let at = point(px(x), px(y));
-    u8::from(with_texts(
-        &mut env,
-        &this,
-        area,
-        |model, texts| match kind {
+    env.with_env(|env| -> jni::errors::Result<jboolean> {
+        // SAFETY: Java passes its live handle, on the UI thread.
+        let area = unsafe { area(handle) };
+        read_frames(env, &frames, &mut area.frames);
+        area.frames.resize(area.contents.len(), Bounds::default());
+        let at = point(px(x), px(y));
+        Ok(with_texts(env, &this, area, |model, texts| match kind {
             SELECT_WORD => model.select_word_at(texts, at),
             DRAG => model.drag(texts, at),
             MOVE_START => model.move_handle(texts, Handle::Start, at),
@@ -284,119 +285,126 @@ pub extern "system" fn Java_dev_nlayer_android_SelectableView_nativeGesture<'loc
             SELECT_ALL => model.select_all(texts),
             CLEAR => model.clear(),
             _ => false,
-        },
-    ))
+        }))
+    })
+    .resolve::<LogErrorAndDefault>()
 }
 
 /// What each text has selected: (text, start, end) triples, UTF-16.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_nlayer_android_SelectableView_nativeRanges<'local>(
-    mut env: JNIEnv<'local>,
+    mut env: EnvUnowned<'local>,
     _: JClass<'local>,
     handle: jlong,
     this: JObject<'local>,
-) -> jintArray {
-    // SAFETY: Java passes its live handle, on the UI thread.
-    let area = unsafe { area(handle) };
-    let ranges = with_texts(&mut env, &this, area, |model, texts| model.ranges(texts));
-    let ints: Vec<jint> = ranges
-        .iter()
-        .flat_map(|(i, r)| [*i as jint, r.start as jint, r.end as jint])
-        .collect();
-    ints_array(&env, &ints)
+) -> JIntArray<'local> {
+    env.with_env(|env| -> jni::errors::Result<JIntArray<'local>> {
+        // SAFETY: Java passes its live handle, on the UI thread.
+        let area = unsafe { area(handle) };
+        let ranges = with_texts(env, &this, area, |model, texts| model.ranges(texts));
+        let ints: Vec<jint> = ranges
+            .iter()
+            .flat_map(|(i, r)| [*i as jint, r.start as jint, r.end as jint])
+            .collect();
+        Ok(ints_array(env, &ints))
+    })
+    .resolve::<LogErrorAndDefault>()
 }
 
 /// The selection's start and end (text, offset, text, offset), or an
 /// empty array without one.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_nlayer_android_SelectableView_nativeBounds(
-    env: JNIEnv<'_>,
-    _: JClass<'_>,
+pub extern "system" fn Java_dev_nlayer_android_SelectableView_nativeBounds<'local>(
+    mut env: EnvUnowned<'local>,
+    _: JClass<'local>,
     handle: jlong,
-) -> jintArray {
-    // SAFETY: Java passes its live handle, on the UI thread.
-    let area = unsafe { area(handle) };
-    let ints: Vec<jint> = match area.model.bounds() {
-        Some((start, end)) if !area.model.is_empty() => vec![
-            start.text as jint,
-            start.offset as jint,
-            end.text as jint,
-            end.offset as jint,
-        ],
-        _ => Vec::new(),
-    };
-    ints_array(&env, &ints)
+) -> JIntArray<'local> {
+    env.with_env(|env| -> jni::errors::Result<JIntArray<'local>> {
+        // SAFETY: Java passes its live handle, on the UI thread.
+        let area = unsafe { area(handle) };
+        let ints: Vec<jint> = match area.model.bounds() {
+            Some((start, end)) if !area.model.is_empty() => vec![
+                start.text as jint,
+                start.offset as jint,
+                end.text as jint,
+                end.offset as jint,
+            ],
+            _ => Vec::new(),
+        };
+        Ok(ints_array(env, &ints))
+    })
+    .resolve::<LogErrorAndDefault>()
 }
 
 /// The selected text, as a copy gives it.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_nlayer_android_SelectableView_nativeText<'local>(
-    mut env: JNIEnv<'local>,
+    mut env: EnvUnowned<'local>,
     _: JClass<'local>,
     handle: jlong,
     this: JObject<'local>,
-) -> jstring {
-    // SAFETY: Java passes its live handle, on the UI thread.
-    let area = unsafe { area(handle) };
-    let text = with_texts(&mut env, &this, area, |model, texts| model.text(texts));
-    env.new_string(text)
-        .map_or(std::ptr::null_mut(), |s| s.into_raw())
+) -> JString<'local> {
+    env.with_env(|env| -> jni::errors::Result<JString<'local>> {
+        // SAFETY: Java passes its live handle, on the UI thread.
+        let area = unsafe { area(handle) };
+        let text = with_texts(env, &this, area, |model, texts| model.text(texts));
+        env.new_string(text)
+    })
+    .resolve::<LogErrorAndDefault>()
 }
 
 /// The word at UTF-16 `offset` of `content`: start and end, or empty when
 /// there is nothing to select. A text block's long press asks this; the
 /// breaker is the shared model's.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_nlayer_android_SelectableView_nativeWord(
-    mut env: JNIEnv<'_>,
-    _: JClass<'_>,
-    content: JString<'_>,
+pub extern "system" fn Java_dev_nlayer_android_SelectableView_nativeWord<'local>(
+    mut env: EnvUnowned<'local>,
+    _: JClass<'local>,
+    content: JString<'local>,
     offset: jint,
-) -> jintArray {
-    let Ok(content) = env.get_string(&content) else {
-        return std::ptr::null_mut();
-    };
-    let content = String::from(content);
-    let texts = OneText {
-        content: &content,
-        at: Some(offset.max(0) as u32),
-    };
-    let mut model = SelectionModel::new();
-    model.select_word_at(&texts, point(px(0.0), px(0.0)));
-    let ints: Vec<jint> = model
-        .ranges(&texts)
-        .into_iter()
-        .flat_map(|(_, range)| [range.start as jint, range.end as jint])
-        .collect();
-    ints_array(&env, &ints)
+) -> JIntArray<'local> {
+    env.with_env(|env| -> jni::errors::Result<JIntArray<'local>> {
+        let content = content.try_to_string(env)?;
+        let texts = OneText {
+            content: &content,
+            at: Some(offset.max(0) as u32),
+        };
+        let mut model = SelectionModel::new();
+        model.select_word_at(&texts, point(px(0.0), px(0.0)));
+        let ints: Vec<jint> = model
+            .ranges(&texts)
+            .into_iter()
+            .flat_map(|(_, range)| [range.start as jint, range.end as jint])
+            .collect();
+        Ok(ints_array(env, &ints))
+    })
+    .resolve::<LogErrorAndDefault>()
 }
 
 /// What a copy of `content`'s UTF-16 range [`start`, `end`) gives: the
 /// shared model's text, attachments left out.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_nlayer_android_SelectableView_nativeCopy(
-    mut env: JNIEnv<'_>,
-    _: JClass<'_>,
-    content: JString<'_>,
+pub extern "system" fn Java_dev_nlayer_android_SelectableView_nativeCopy<'local>(
+    mut env: EnvUnowned<'local>,
+    _: JClass<'local>,
+    content: JString<'local>,
     start: jint,
     end: jint,
-) -> jstring {
-    let Ok(content) = env.get_string(&content) else {
-        return std::ptr::null_mut();
-    };
-    let content = String::from(content);
-    let texts = OneText {
-        content: &content,
-        at: None,
-    };
-    let mut model = SelectionModel::new();
-    let start = start.max(0) as f32;
-    let end = end.max(0) as f32;
-    model.press(&texts, point(px(start), px(0.0)), 1, false);
-    model.drag(&texts, point(px(end), px(0.0)));
-    let text = model.text(&texts);
-    env.new_string(text)
-        .map_or(std::ptr::null_mut(), |s| s.into_raw())
+) -> JString<'local> {
+    env.with_env(|env| -> jni::errors::Result<JString<'local>> {
+        let content = content.try_to_string(env)?;
+        let texts = OneText {
+            content: &content,
+            at: None,
+        };
+        let mut model = SelectionModel::new();
+        let start = start.max(0) as f32;
+        let end = end.max(0) as f32;
+        model.press(&texts, point(px(start), px(0.0)), 1, false);
+        model.drag(&texts, point(px(end), px(0.0)));
+        env.new_string(model.text(&texts))
+    })
+    .resolve::<LogErrorAndDefault>()
 }
 
 /// The order of the texts Java listed depth first (`SelectableView.collect`,
@@ -408,56 +416,59 @@ pub extern "system" fn Java_dev_nlayer_android_SelectableView_nativeCopy(
 /// when the order stays.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_nlayer_android_SelectableView_nativeReadingOrder<'local>(
-    env: JNIEnv<'local>,
+    mut env: EnvUnowned<'local>,
     _: JClass<'local>,
     count: jint,
     runs: JFloatArray<'local>,
-) -> jintArray {
-    let len = env.get_array_length(&runs).unwrap_or(0).max(0) as usize;
-    let mut data = vec![0.0; len];
-    if env.get_float_array_region(&runs, 0, &mut data).is_err() {
-        return std::ptr::null_mut();
-    }
-    let mut texts: Vec<jint> = (0..count.max(0)).collect();
-    let mut moved = false;
-    let mut at = 0;
-    while at < data.len() {
-        let n = data[at] as usize;
-        at += 1;
-        let Some(group) = data.get(at..at + n * 6) else {
-            break;
-        };
-        at += n * 6;
-        let group: Vec<_> = group
-            .chunks_exact(6)
-            .map(|r| {
-                (
-                    bounds(point(px(r[0]), px(r[1])), size(px(r[2]), px(r[3]))),
-                    r[4] as usize..r[5] as usize,
-                )
-            })
-            .collect();
-        let start = group.first().map_or(0, |(_, r)| r.start);
-        if group.iter().all(|(_, r)| r.end <= texts.len())
-            && let Some(order) = reading_order(&group)
-        {
-            reorder(&mut texts, start, &order);
-            moved = true;
+) -> JIntArray<'local> {
+    env.with_env(|env| -> jni::errors::Result<JIntArray<'local>> {
+        let len = runs.len(env).unwrap_or(0);
+        let mut data = vec![0.0; len];
+        if runs.get_region(env, 0, &mut data).is_err() {
+            return Ok(JIntArray::null());
         }
-    }
-    if moved {
-        ints_array(&env, &texts)
-    } else {
-        std::ptr::null_mut()
-    }
+        let mut texts: Vec<jint> = (0..count.max(0)).collect();
+        let mut moved = false;
+        let mut at = 0;
+        while at < data.len() {
+            let n = data[at] as usize;
+            at += 1;
+            let Some(group) = data.get(at..at + n * 6) else {
+                break;
+            };
+            at += n * 6;
+            let group: Vec<_> = group
+                .chunks_exact(6)
+                .map(|r| {
+                    (
+                        bounds(point(px(r[0]), px(r[1])), size(px(r[2]), px(r[3]))),
+                        r[4] as usize..r[5] as usize,
+                    )
+                })
+                .collect();
+            let start = group.first().map_or(0, |(_, r)| r.start);
+            if group.iter().all(|(_, r)| r.end <= texts.len())
+                && let Some(order) = reading_order(&group)
+            {
+                reorder(&mut texts, start, &order);
+                moved = true;
+            }
+        }
+        if moved {
+            Ok(ints_array(env, &texts))
+        } else {
+            Ok(JIntArray::null())
+        }
+    })
+    .resolve::<LogErrorAndDefault>()
 }
 
-fn ints_array(env: &JNIEnv<'_>, values: &[jint]) -> jintArray {
-    let Ok(array) = env.new_int_array(values.len() as i32) else {
-        return std::ptr::null_mut();
+fn ints_array<'local>(env: &mut Env<'local>, values: &[jint]) -> JIntArray<'local> {
+    let Ok(array) = JIntArray::new(env, values.len()) else {
+        return JIntArray::null();
     };
-    if env.set_int_array_region(&array, 0, values).is_err() {
-        return std::ptr::null_mut();
+    if array.set_region(env, 0, values).is_err() {
+        return JIntArray::null();
     }
-    array.into_raw()
+    array
 }

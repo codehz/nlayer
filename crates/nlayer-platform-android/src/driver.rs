@@ -13,7 +13,8 @@ use std::sync::{Mutex, atomic::Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use jni::objects::{JString, JValue};
+use jni::JValue;
+use jni::objects::JString;
 use jni::sys::{jboolean, jint};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -352,8 +353,8 @@ pub(crate) fn snapshot(host: &Host) -> Result<String, String> {
         if object.is_null() {
             return Ok(String::new());
         }
-        let string = unsafe { JString::from_raw(object.as_raw()) };
-        Ok(env.get_string(&string)?.into())
+        let string = unsafe { JString::from_raw(env, object.as_raw()) };
+        string.try_to_string(env)
     });
     if text.is_empty() {
         Err("the app did not answer".into())

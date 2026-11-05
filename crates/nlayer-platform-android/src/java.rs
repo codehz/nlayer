@@ -10,15 +10,18 @@
 use std::sync::OnceLock;
 
 use jni::{
-    JNIEnv, JavaVM,
-    objects::{GlobalRef, JClass, JMethodID, JStaticMethodID},
+    Env, JavaVM,
+    ids::{JMethodID, JStaticMethodID},
+    jni_sig, jni_str,
+    objects::JClass,
+    refs::Global,
 };
 
 /// Everything Rust calls in Java.
 pub(crate) struct Java {
     pub(crate) vm: JavaVM,
     /// `dev.nlayer.android.TextLayouts`.
-    pub(crate) text: GlobalRef,
+    pub(crate) text: Global<JClass<'static>>,
     pub(crate) text_prepare: JStaticMethodID,
     pub(crate) text_measure: JStaticMethodID,
     pub(crate) text_layout: JStaticMethodID,
@@ -49,76 +52,106 @@ pub(crate) fn java() -> &'static Java {
 }
 
 pub(crate) fn init(vm: JavaVM) -> jni::errors::Result<()> {
-    let mut env = vm.get_env()?;
-    let class = |env: &mut JNIEnv<'_>, name: &str| -> jni::errors::Result<GlobalRef> {
-        let class = env.find_class(name)?;
-        env.new_global_ref(class)
-    };
-    let text = class(&mut env, "dev/nlayer/android/TextLayouts")?;
-    let view = class(&mut env, "dev/nlayer/android/HostView")?;
-    let text_class: &JClass<'_> = text.as_obj().into();
-    let view_class: &JClass<'_> = view.as_obj().into();
-    let java = Java {
-        text_prepare: env.get_static_method_id(
-            text_class,
-            "prepare",
-            "(Ljava/lang/String;[I[FIIIF[F)Ljava/lang/Object;",
-        )?,
-        text_measure: env.get_static_method_id(text_class, "measure", "(Ljava/lang/Object;F)J")?,
-        text_layout: env.get_static_method_id(
-            text_class,
-            "layout",
-            "(Ljava/lang/Object;FF)Ljava/lang/Object;",
-        )?,
-        text_lines: env.get_static_method_id(text_class, "lines", "(Ljava/lang/Object;F)[F")?,
-        text_attachments: env.get_static_method_id(
-            text_class,
-            "attachments",
-            "(Ljava/lang/Object;F)[F",
-        )?,
-        text_hit_test: env.get_static_method_id(
-            text_class,
-            "hitTest",
-            "(Ljava/lang/Object;FFF)J",
-        )?,
-        view_submit: env.get_method_id(view_class, "submit", "([B[Ljava/lang/Object;)V")?,
-        view_report_error: env.get_method_id(view_class, "reportError", "(Ljava/lang/String;)V")?,
-        view_overlay: env.get_method_id(view_class, "overlay", "(Ljava/lang/String;)V")?,
-        view_snapshot: env.get_method_id(view_class, "snapshot", "()Ljava/lang/String;")?,
-        view_tap: env.get_method_id(view_class, "tap", "(FFZ)V")?,
-        view_move: env.get_method_id(view_class, "move", "(FF)V")?,
-        view_back: env.get_method_id(view_class, "back", "()Z")?,
-        view_type_char: env.get_method_id(view_class, "typeChar", "(ILjava/lang/String;)V")?,
-        view_scroll_to: env.get_method_id(view_class, "scrollTo", "(IFF)V")?,
-        view_hover: env.get_method_id(view_class, "hover", "(FF)V")?,
-        view_back_unhandled: env.get_method_id(view_class, "backUnhandled", "()V")?,
-        view_request_frame: env.get_method_id(view_class, "requestFrame", "()V")?,
-        view_recycle: env.get_method_id(view_class, "recycle", "(FFFFFFFLjava/lang/String;)V")?,
-        text,
-        vm,
-    };
+    let java = vm.attach_current_thread(|env| -> jni::errors::Result<Java> {
+        let text = env.find_class(jni_str!("dev/nlayer/android/TextLayouts"))?;
+        let view_class = env.find_class(jni_str!("dev/nlayer/android/HostView"))?;
+        let text: Global<JClass<'static>> = env.new_global_ref(text)?;
+        let view_class: Global<JClass<'static>> = env.new_global_ref(view_class)?;
+        Ok(Java {
+            vm: vm.clone(),
+            text_prepare: env.get_static_method_id(
+                &text,
+                jni_str!("prepare"),
+                jni_sig!("(Ljava/lang/String;[I[FIIIF[F)Ljava/lang/Object;"),
+            )?,
+            text_measure: env.get_static_method_id(
+                &text,
+                jni_str!("measure"),
+                jni_sig!("(Ljava/lang/Object;F)J"),
+            )?,
+            text_layout: env.get_static_method_id(
+                &text,
+                jni_str!("layout"),
+                jni_sig!("(Ljava/lang/Object;FF)Ljava/lang/Object;"),
+            )?,
+            text_lines: env.get_static_method_id(
+                &text,
+                jni_str!("lines"),
+                jni_sig!("(Ljava/lang/Object;F)[F"),
+            )?,
+            text_attachments: env.get_static_method_id(
+                &text,
+                jni_str!("attachments"),
+                jni_sig!("(Ljava/lang/Object;F)[F"),
+            )?,
+            text_hit_test: env.get_static_method_id(
+                &text,
+                jni_str!("hitTest"),
+                jni_sig!("(Ljava/lang/Object;FFF)J"),
+            )?,
+            view_submit: env.get_method_id(
+                &view_class,
+                jni_str!("submit"),
+                jni_sig!("([B[Ljava/lang/Object;)V"),
+            )?,
+            view_report_error: env.get_method_id(
+                &view_class,
+                jni_str!("reportError"),
+                jni_sig!("(Ljava/lang/String;)V"),
+            )?,
+            view_overlay: env.get_method_id(
+                &view_class,
+                jni_str!("overlay"),
+                jni_sig!("(Ljava/lang/String;)V"),
+            )?,
+            view_snapshot: env.get_method_id(
+                &view_class,
+                jni_str!("snapshot"),
+                jni_sig!("()Ljava/lang/String;"),
+            )?,
+            view_tap: env.get_method_id(&view_class, jni_str!("tap"), jni_sig!("(FFZ)V"))?,
+            view_move: env.get_method_id(&view_class, jni_str!("move"), jni_sig!("(FF)V"))?,
+            view_back: env.get_method_id(&view_class, jni_str!("back"), jni_sig!("()Z"))?,
+            view_type_char: env.get_method_id(
+                &view_class,
+                jni_str!("typeChar"),
+                jni_sig!("(ILjava/lang/String;)V"),
+            )?,
+            view_scroll_to: env.get_method_id(
+                &view_class,
+                jni_str!("scrollTo"),
+                jni_sig!("(IFF)V"),
+            )?,
+            view_hover: env.get_method_id(&view_class, jni_str!("hover"), jni_sig!("(FF)V"))?,
+            view_back_unhandled: env.get_method_id(
+                &view_class,
+                jni_str!("backUnhandled"),
+                jni_sig!("()V"),
+            )?,
+            view_request_frame: env.get_method_id(
+                &view_class,
+                jni_str!("requestFrame"),
+                jni_sig!("()V"),
+            )?,
+            view_recycle: env.get_method_id(
+                &view_class,
+                jni_str!("recycle"),
+                jni_sig!("(FFFFFFFLjava/lang/String;)V"),
+            )?,
+            text,
+        })
+    })?;
     let _ = JAVA.set(java);
     Ok(())
 }
 
-/// Runs `f` with this thread's JNI env, attaching it for good. A local
-/// frame keeps references from piling up on the engine thread.
-pub(crate) fn with_env<R: Default>(f: impl FnOnce(&mut JNIEnv<'_>) -> jni::errors::Result<R>) -> R {
-    let java = java();
-    let mut env = match java.vm.attach_current_thread_permanently() {
-        Ok(env) => env,
-        Err(err) => {
-            log::error!("cannot attach to the JVM: {err}");
-            return R::default();
-        }
-    };
-    match env.with_local_frame(32, |env| f(env)) {
+/// Runs `f` with this thread's JNI env, attaching it for good. The
+/// attachment's local frame keeps references from piling up on the engine
+/// thread.
+pub(crate) fn with_env<R: Default>(f: impl FnOnce(&mut Env<'_>) -> jni::errors::Result<R>) -> R {
+    match java().vm.attach_current_thread(f) {
         Ok(value) => value,
         Err(err) => {
-            if env.exception_check().unwrap_or(false) {
-                let _ = env.exception_describe();
-                let _ = env.exception_clear();
-            }
             log::error!("JNI call failed: {err}");
             R::default()
         }
@@ -127,18 +160,10 @@ pub(crate) fn with_env<R: Default>(f: impl FnOnce(&mut JNIEnv<'_>) -> jni::error
 
 /// [`with_env`] that returns the failure instead of a default.
 pub(crate) fn try_with_env<R>(
-    f: impl FnOnce(&mut JNIEnv<'_>) -> jni::errors::Result<R>,
+    f: impl FnOnce(&mut Env<'_>) -> jni::errors::Result<R>,
 ) -> Result<R, String> {
-    let java = java();
-    let mut env = java
+    java()
         .vm
-        .attach_current_thread_permanently()
-        .map_err(|error| error.to_string())?;
-    env.with_local_frame(32, |env| f(env)).map_err(|error| {
-        if env.exception_check().unwrap_or(false) {
-            let _ = env.exception_describe();
-            let _ = env.exception_clear();
-        }
-        error.to_string()
-    })
+        .attach_current_thread(f)
+        .map_err(|error| error.to_string())
 }

@@ -19,7 +19,7 @@ serde.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
-jni = "0.21"
+jni = "0.22.4"
 log.workspace = true
 nlayer-engine.workspace = true
 tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }

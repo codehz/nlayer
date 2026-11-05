@@ -12,6 +12,9 @@
 //! encoded. Box shadows and gradient backgrounds are. Navigation containers
 //! (Stack, Screen, Modal, HeaderItem) and their configurations are encoded.
 
+#[cfg(target_os = "android")]
+use std::sync::Arc;
+
 use nlayer_core::geometry::{DefiniteLength, Points, REM_SIZE};
 use nlayer_core::style::{BorderStyle, Color, PositionAxis, TextAlign, TextStyle, ViewStyle};
 use nlayer_core::text::AttributedText;
@@ -52,7 +55,7 @@ const SELECTABLE: i32 = 27;
 const TRACK_STATES: i32 = 28;
 /// A `StaticLayout` measured on the engine thread and drawn on the UI thread.
 #[cfg(target_os = "android")]
-pub(crate) struct AndroidLayout(pub(crate) jni::objects::GlobalRef);
+pub(crate) struct AndroidLayout(pub(crate) Arc<jni::refs::Global<jni::objects::JObject<'static>>>);
 
 /// One entry of the object table. Strings become Java `String`s. A text
 /// layout becomes the `StaticLayout` the UI thread draws; only the Android
@@ -63,7 +66,7 @@ pub enum Object {
     Str(String),
     /// A `StaticLayout` measured on the engine thread.
     #[cfg(target_os = "android")]
-    Layout(jni::objects::GlobalRef),
+    Layout(Arc<jni::refs::Global<jni::objects::JObject<'static>>>),
 }
 
 /// An encoded batch.
@@ -183,7 +186,7 @@ pub fn encode(batch: MountBatch) -> Encoded {
                 #[cfg(target_os = "android")]
                 if let Some(measured) = layout.downcast::<AndroidLayout>() {
                     let index = e.objects.len() as i32;
-                    e.objects.push(Object::Layout(measured.0.clone()));
+                    e.objects.push(Object::Layout(Arc::clone(&measured.0)));
                     write_text(&mut e, id, index, content, &text);
                 }
                 #[cfg(not(target_os = "android"))]

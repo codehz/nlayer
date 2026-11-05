@@ -14,7 +14,12 @@ use std::sync::{
     atomic::{AtomicU32, Ordering},
 };
 
-use jni::{objects::JValue, sys::jvalue};
+use jni::{
+    JValue,
+    objects::{JFloatArray, JObject},
+    refs::Global,
+    sys::jvalue,
+};
 use nlayer_core::geometry::{Point, Points, Size, px};
 use nlayer_core::style::{Color, EllipsizeMode, TextAlign, VerticalAlign};
 use nlayer_core::text::{
@@ -37,7 +42,7 @@ fn argb(color: Color) -> i32 {
 
 /// A `TextLayouts.Prepared` object.
 #[derive(Default)]
-pub(crate) struct Prepared(Option<jni::objects::GlobalRef>);
+pub(crate) struct Prepared(Option<Global<JObject<'static>>>);
 
 /// The display density (pixels per dp).
 #[derive(Clone)]
@@ -132,12 +137,12 @@ impl TextEngine for AndroidTextEngine {
         Prepared(with_env(|env| {
             let cached = java();
             let string = env.new_string(&text.text)?;
-            let int_array = env.new_int_array(ints.len() as i32)?;
-            env.set_int_array_region(&int_array, 0, &ints)?;
-            let float_array = env.new_float_array(floats.len() as i32)?;
-            env.set_float_array_region(&float_array, 0, &floats)?;
-            let attachment_array = env.new_float_array(attachments.len() as i32)?;
-            env.set_float_array_region(&attachment_array, 0, &attachments)?;
+            let int_array = jni::objects::JIntArray::new(env, ints.len())?;
+            int_array.set_region(env, 0, &ints)?;
+            let float_array = JFloatArray::new(env, floats.len())?;
+            float_array.set_region(env, 0, &floats)?;
+            let attachment_array = JFloatArray::new(env, attachments.len())?;
+            attachment_array.set_region(env, 0, &attachments)?;
             let args = [
                 JValue::Object(&string).as_jni(),
                 JValue::Object(&int_array).as_jni(),
@@ -152,7 +157,7 @@ impl TextEngine for AndroidTextEngine {
             // checked in `java::init`.
             let prepared = unsafe {
                 env.call_static_method_unchecked(
-                    <&jni::objects::JClass<'_>>::from(cached.text.as_obj()),
+                    &cached.text,
                     cached.text_prepare,
                     jni::signature::ReturnType::Object,
                     &args,
@@ -176,7 +181,7 @@ impl TextEngine for AndroidTextEngine {
             // SAFETY: matches the signature checked in `java::init`.
             unsafe {
                 env.call_static_method_unchecked(
-                    <&jni::objects::JClass<'_>>::from(cached.text.as_obj()),
+                    &cached.text,
                     cached.text_measure,
                     jni::signature::ReturnType::Primitive(jni::signature::Primitive::Long),
                     &args,
@@ -201,7 +206,7 @@ impl TextEngine for AndroidTextEngine {
                 // SAFETY: matches the signature checked in `java::init`.
                 let layout = unsafe {
                     env.call_static_method_unchecked(
-                        <&jni::objects::JClass<'_>>::from(cached.text.as_obj()),
+                        &cached.text,
                         cached.text_layout,
                         jni::signature::ReturnType::Object,
                         &args,
@@ -212,7 +217,7 @@ impl TextEngine for AndroidTextEngine {
             })
         });
         match layout {
-            Some(layout) => TextLayout(Arc::new(AndroidLayout(layout))),
+            Some(layout) => TextLayout(Arc::new(AndroidLayout(Arc::new(layout)))),
             None => TextLayout(Arc::new(())),
         }
     }
@@ -230,17 +235,17 @@ impl TextEngine for AndroidTextEngine {
             // SAFETY: matches the signature checked in `java::init`.
             let array = unsafe {
                 env.call_static_method_unchecked(
-                    <&jni::objects::JClass<'_>>::from(cached.text.as_obj()),
+                    &cached.text,
                     cached.text_lines,
                     jni::signature::ReturnType::Array,
                     &args,
                 )
             }?
             .l()?;
-            let array = jni::objects::JFloatArray::from(array);
-            let len = env.get_array_length(&array)? as usize;
+            let array = unsafe { JFloatArray::from_raw(env, array.as_raw()) };
+            let len = array.len(env)?;
             let mut out = vec![0f32; len];
-            env.get_float_array_region(&array, 0, &mut out)?;
+            array.get_region(env, 0, &mut out)?;
             Ok(out)
         });
         floats
@@ -274,17 +279,17 @@ impl TextEngine for AndroidTextEngine {
             // SAFETY: matches the signature checked in `java::init`.
             let array = unsafe {
                 env.call_static_method_unchecked(
-                    <&jni::objects::JClass<'_>>::from(cached.text.as_obj()),
+                    &cached.text,
                     cached.text_attachments,
                     jni::signature::ReturnType::Array,
                     &args,
                 )
             }?
             .l()?;
-            let array = jni::objects::JFloatArray::from(array);
-            let len = env.get_array_length(&array)? as usize;
+            let array = unsafe { JFloatArray::from_raw(env, array.as_raw()) };
+            let len = array.len(env)?;
             let mut out = vec![0f32; len];
-            env.get_float_array_region(&array, 0, &mut out)?;
+            array.get_region(env, 0, &mut out)?;
             Ok(out)
         });
         floats
@@ -311,7 +316,7 @@ impl TextEngine for AndroidTextEngine {
             // SAFETY: matches the signature checked in `java::init`.
             unsafe {
                 env.call_static_method_unchecked(
-                    <&jni::objects::JClass<'_>>::from(cached.text.as_obj()),
+                    &cached.text,
                     cached.text_hit_test,
                     jni::signature::ReturnType::Primitive(jni::signature::Primitive::Long),
                     &args,

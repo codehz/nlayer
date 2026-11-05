@@ -54,9 +54,11 @@ use jni::{JavaVM, sys::jint};
 /// The VM calls this once, with a live `JavaVM`.
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
-pub unsafe extern "system" fn JNI_OnLoad(vm: JavaVM, _: *mut c_void) -> jint {
+pub unsafe extern "system" fn JNI_OnLoad(vm: *mut jni::sys::JavaVM, _: *mut c_void) -> jint {
     let _ = log::set_logger(&LOGGER);
     log::set_max_level(log::LevelFilter::Info);
+    // SAFETY: the VM passes its live `JavaVM` pointer.
+    let vm = unsafe { JavaVM::from_raw(vm) };
     if let Err(err) = java::init(vm) {
         log::error!("nlayer: JNI setup failed: {err}");
     }

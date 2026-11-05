@@ -11,8 +11,10 @@ use std::sync::{
 };
 
 use jni::{
-    JNIEnv,
-    objects::{JByteArray, JClass, JObject, JString, JValue},
+    EnvUnowned, JValue,
+    errors::LogErrorAndDefault,
+    objects::{JByteArray, JClass, JFloatArray, JObject, JObjectArray, JString},
+    refs::Global,
     sys::{jboolean, jfloat, jint, jlong},
 };
 use nlayer_core::geometry::{Edges, Point, Points, Size, px};
@@ -24,7 +26,7 @@ use crate::java::{java, with_env};
 use crate::text::{AndroidTextEngine, Density};
 
 pub(crate) struct Host {
-    pub(crate) view: jni::objects::GlobalRef,
+    pub(crate) view: Arc<Global<JObject<'static>>>,
     pub(crate) engine: Mutex<Option<Engine>>,
     pub(crate) control: Mutex<Option<EngineControl>>,
     /// `app.js` the engine is running, after a start succeeded.
@@ -46,7 +48,7 @@ struct Launch {
 }
 
 struct Sink {
-    view: jni::objects::GlobalRef,
+    view: Arc<Global<JObject<'static>>>,
     commits: Arc<AtomicU64>,
 }
 
@@ -56,19 +58,16 @@ impl MountSink for Sink {
         let encoded = encode::encode(batch);
         with_env(|env| {
             let bytes = env.byte_array_from_slice(&encoded.bytes)?;
-            let objects = env.new_object_array(
-                encoded.objects.len() as i32,
-                "java/lang/Object",
-                JObject::null(),
-            )?;
+            let objects =
+                JObjectArray::<JObject>::new(env, encoded.objects.len(), &JObject::null())?;
             for (index, object) in encoded.objects.iter().enumerate() {
                 match object {
                     Object::Str(text) => {
                         let text = env.new_string(text)?;
-                        env.set_object_array_element(&objects, index as i32, text)?;
+                        objects.set_element(env, index, &text)?;
                     }
                     Object::Layout(layout) => {
-                        env.set_object_array_element(&objects, index as i32, layout.as_obj())?;
+                        objects.set_element(env, index, layout.as_obj())?;
                     }
                 }
             }
@@ -132,7 +131,7 @@ impl MountSink for Sink {
     }
 }
 
-fn report(view: &jni::objects::GlobalRef, message: &str) {
+fn report(view: &Arc<Global<JObject<'static>>>, message: &str) {
     with_env(|env| {
         let message = env.new_string(message)?;
         // SAFETY: matches the signature checked in `java::init`.
@@ -151,7 +150,7 @@ fn report(view: &jni::objects::GlobalRef, message: &str) {
 /// Shows the development overlay over the app, or removes it when `message`
 /// is `None`. Not part of the app tree: the view adds it as its own child,
 /// outside the mounted views. Posts to the UI thread like [`report`].
-pub(crate) fn overlay_view(view: &jni::objects::GlobalRef, message: Option<&str>) {
+pub(crate) fn overlay_view(view: &Arc<Global<JObject<'static>>>, message: Option<&str>) {
     with_env(|env| {
         let message = match message {
             Some(message) => env.new_string(message)?.into(),
@@ -182,30 +181,27 @@ unsafe fn host<'a>(handle: jlong) -> &'a Arc<Host> {
 /// Called from Java with a live `HostView`.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_create(
-    env: JNIEnv<'_>,
+    mut env: EnvUnowned<'_>,
     _class: JClass<'_>,
     view: JObject<'_>,
     density: jfloat,
 ) -> jlong {
-    let view = match env.new_global_ref(view) {
-        Ok(view) => view,
-        Err(err) => {
-            log::error!("nlayer: cannot retain the surface: {err}");
-            return 0;
-        }
-    };
-    let host = Arc::new(Host {
-        view,
-        engine: Mutex::new(None),
-        control: Mutex::new(None),
-        boot_script: Mutex::new(String::new()),
-        commits: Arc::new(AtomicU64::new(0)),
-        launch: Mutex::new(None),
-        density: Density::new(density),
-        size: Mutex::new(Size::new(px(0.0), px(0.0))),
-        insets: Mutex::new(None),
-    });
-    Box::into_raw(Box::new(host)) as jlong
+    env.with_env(|env| -> jni::errors::Result<jlong> {
+        let view = Arc::new(env.new_global_ref(view)?);
+        let host = Arc::new(Host {
+            view,
+            engine: Mutex::new(None),
+            control: Mutex::new(None),
+            boot_script: Mutex::new(String::new()),
+            commits: Arc::new(AtomicU64::new(0)),
+            launch: Mutex::new(None),
+            density: Density::new(density),
+            size: Mutex::new(Size::new(px(0.0), px(0.0))),
+            insets: Mutex::new(None),
+        });
+        Ok(Box::into_raw(Box::new(host)) as jlong)
+    })
+    .resolve::<LogErrorAndDefault>()
 }
 
 /// # Safety
@@ -214,7 +210,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_create(
 /// or 0.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_destroy(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
 ) {
@@ -231,7 +227,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_destroy(
 /// cover: a test pin loads its script from the socket instead.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_load(
-    mut env: JNIEnv<'_>,
+    mut env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     code: JByteArray<'_>,
@@ -244,41 +240,42 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_load(
         return;
     }
     let host = unsafe { host(handle) };
-    let bytes = match env.convert_byte_array(code) {
-        Ok(bytes) => bytes,
-        Err(err) => {
-            if quiet == 0 {
-                report(&host.view, &format!("cannot read the bundle: {err}"));
-            } else {
-                log::error!("nlayer: cannot read the bundle: {err}");
+    env.with_env(|env| -> jni::errors::Result<()> {
+        let bytes = match env.convert_byte_array(&code) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                if !quiet {
+                    report(&host.view, &format!("cannot read the bundle: {err}"));
+                } else {
+                    log::error!("nlayer: cannot read the bundle: {err}");
+                }
+                return Ok(());
             }
-            return;
-        }
-    };
-    let bundle = String::from_utf8_lossy(&bytes).into_owned();
-    let dir = env
-        .get_string(&data_dir)
-        .map(|dir| String::from(dir))
-        .unwrap_or_default();
-    *host.launch.lock().unwrap_or_else(|err| err.into_inner()) = Some(Launch {
-        data_dir: dir.clone(),
-        dark: dark != 0,
-    });
-    match start_engine(host, &bundle, &dir, dark != 0) {
-        Ok(()) => {
-            *host
-                .boot_script
-                .lock()
-                .unwrap_or_else(|err| err.into_inner()) = bundle;
-        }
-        Err(err) => {
-            if quiet == 0 {
-                report(&host.view, &err);
-            } else {
-                log::error!("nlayer: {err}");
+        };
+        let bundle = String::from_utf8_lossy(&bytes).into_owned();
+        let dir = data_dir.try_to_string(env).unwrap_or_default();
+        *host.launch.lock().unwrap_or_else(|err| err.into_inner()) = Some(Launch {
+            data_dir: dir.clone(),
+            dark: dark,
+        });
+        match start_engine(host, &bundle, &dir, dark) {
+            Ok(()) => {
+                *host
+                    .boot_script
+                    .lock()
+                    .unwrap_or_else(|err| err.into_inner()) = bundle;
+            }
+            Err(err) => {
+                if !quiet {
+                    report(&host.view, &err);
+                } else {
+                    log::error!("nlayer: {err}");
+                }
             }
         }
-    }
+        Ok(())
+    })
+    .resolve::<LogErrorAndDefault>();
 }
 
 /// Starts the engine on `code` if it is not running. A test session calls
@@ -320,7 +317,7 @@ fn start_engine(host: &Host, bundle: &str, data_dir: &str, dark: bool) -> Result
     crate::animation::reset();
     let density = host.density.clone();
     let sink = Arc::new(Sink {
-        view: host.view.clone(),
+        view: Arc::clone(&host.view),
         commits: Arc::clone(&host.commits),
     });
     let mut config = EngineConfig::new(bundle, viewport)
@@ -355,7 +352,7 @@ fn start_engine(host: &Host, bundle: &str, data_dir: &str, dark: bool) -> Result
 /// `adb reverse`).
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_dev(
-    mut env: JNIEnv<'_>,
+    mut env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     address: JString<'_>,
@@ -365,11 +362,16 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_dev(
     if handle == 0 || port <= 0 || port > u16::MAX as jint {
         return;
     }
-    let host = unsafe { host(handle) }.clone();
-    let Ok(address) = env.get_string(&address) else {
+    let host = Arc::clone(unsafe { host(handle) });
+    let address = env
+        .with_env(|env| -> jni::errors::Result<String> {
+            Ok(address.try_to_string(env).unwrap_or_default())
+        })
+        .resolve::<LogErrorAndDefault>();
+    if address.is_empty() {
         return;
-    };
-    crate::dev::start(host, address.into(), port as u16, test != 0);
+    }
+    crate::dev::start(host, address, port as u16, test);
 }
 
 /// # Safety
@@ -377,14 +379,14 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_dev(
 /// `handle` is live.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_animating(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
 ) -> jboolean {
     if handle == 0 {
-        return 0;
+        return false;
     }
-    crate::animation::animating() as jboolean
+    crate::animation::animating()
 }
 
 /// # Safety
@@ -392,13 +394,13 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_animating(
 /// `handle` is live.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_tick<'local>(
-    env: JNIEnv<'local>,
+    mut env: EnvUnowned<'local>,
     _class: JClass<'local>,
     handle: jlong,
     nanos: jlong,
-) -> jni::sys::jbyteArray {
+) -> JByteArray<'local> {
     if handle == 0 {
-        return std::ptr::null_mut();
+        return JByteArray::null();
     }
     let batch = crate::animation::frame(nanos as f64 / 1_000_000_000.0);
     let finished = crate::animation::take_finished();
@@ -412,10 +414,10 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_tick<'local>(
         control.animations_finished(finished);
     }
     let encoded = encode::encode(batch);
-    match env.byte_array_from_slice(&encoded.bytes) {
-        Ok(array) => array.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
+    env.with_env(|env| -> jni::errors::Result<JByteArray<'local>> {
+        env.byte_array_from_slice(&encoded.bytes)
+    })
+    .resolve::<LogErrorAndDefault>()
 }
 
 /// # Safety
@@ -423,7 +425,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_tick<'local>(
 /// `handle` is live.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_resize(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     width: jfloat,
@@ -450,7 +452,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_resize(
 /// `handle` is live.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_colorScheme(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     dark: jboolean,
@@ -465,7 +467,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_colorScheme(
         .unwrap_or_else(|err| err.into_inner())
         .as_ref()
     {
-        control.set_color_scheme(nlayer_core::ColorScheme::from_dark(dark != 0));
+        control.set_color_scheme(nlayer_core::ColorScheme::from_dark(dark));
     }
 }
 
@@ -474,7 +476,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_colorScheme(
 /// `handle` is live.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_back(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
 ) {
@@ -497,7 +499,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_back(
 /// `handle` is live. Insets are points.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_insets(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     top: jfloat,
@@ -612,7 +614,7 @@ fn recycle_view(host: &Host, next: &nlayer_engine::protocol::Recycle) -> Result<
 /// `adb reverse`). The host connects `ws://address:port/ws`.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_serve(
-    mut env: JNIEnv<'_>,
+    mut env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     address: JString<'_>,
@@ -621,11 +623,12 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_serve(
     if handle == 0 || port == 0 {
         return;
     }
-    let host = unsafe { host(handle) }.clone();
+    let host = Arc::clone(unsafe { host(handle) });
     let address: String = env
-        .get_string(&address)
-        .map(|value| value.into())
-        .unwrap_or_default();
+        .with_env(|env| -> jni::errors::Result<String> {
+            Ok(address.try_to_string(env).unwrap_or_default())
+        })
+        .resolve::<LogErrorAndDefault>();
     if address.is_empty() {
         return;
     }
@@ -637,7 +640,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_serve(
 /// `handle` is live.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_press(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     id: jint,
@@ -652,7 +655,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_press(
 /// `handle` is live.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_states(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     id: jint,
@@ -677,7 +680,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_states(
 /// `handle` is live.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_longPress(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     id: jint,
@@ -691,7 +694,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_longPress(
 /// points: content offset, content size, then the view's visible size.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_scroll(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     id: jint,
@@ -743,7 +746,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_scroll(
 /// `handle` is live. `text` is the field's whole new value.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_input(
-    mut env: JNIEnv<'_>,
+    mut env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     id: jint,
@@ -754,9 +757,10 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_input(
     }
     let host = unsafe { host(handle) };
     let text: String = env
-        .get_string(&text)
-        .map(|value| value.into())
-        .unwrap_or_default();
+        .with_env(|env| -> jni::errors::Result<String> {
+            Ok(text.try_to_string(env).unwrap_or_default())
+        })
+        .resolve::<LogErrorAndDefault>();
     if let Some(control) = host
         .control
         .lock()
@@ -772,7 +776,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_input(
 /// `handle` is live.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_selection(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     id: jint,
@@ -798,7 +802,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_selection(
 /// `handle` is live. `text` is a Java string.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_composition(
-    mut env: JNIEnv<'_>,
+    mut env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     id: jint,
@@ -809,9 +813,10 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_composition(
         return;
     }
     let text: String = env
-        .get_string(&text)
-        .map(|value| value.into())
-        .unwrap_or_default();
+        .with_env(|env| -> jni::errors::Result<String> {
+            Ok(text.try_to_string(env).unwrap_or_default())
+        })
+        .resolve::<LogErrorAndDefault>();
     let host = unsafe { host(handle) };
     if let Some(control) = host
         .control
@@ -819,7 +824,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_composition(
         .unwrap_or_else(|err| err.into_inner())
         .as_ref()
     {
-        control.composition_changed(id as NodeId, composing != 0, text);
+        control.composition_changed(id as NodeId, composing, text);
     }
 }
 
@@ -828,7 +833,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_composition(
 /// `handle` is live.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_frame(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
 ) {
@@ -865,7 +870,7 @@ fn dispatch(handle: jlong, id: jint, event: EventKind, payload: EventPayload) {
 /// `handle` is live.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_screenHeader(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     id: jint,
@@ -890,7 +895,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_screenHeader(
 /// `handle` is live.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_rootInsets(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     id: jint,
@@ -917,7 +922,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_rootInsets(
 /// `handle` is live. Sizes and insets are points.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_rootSize(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     id: jint,
@@ -962,7 +967,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_rootSize(
 /// `handle` is live.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_modalShow(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     id: jint,
@@ -978,7 +983,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_modalShow(
 /// `handle` is live. Gesture values are in points and points/second.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_panStart(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     id: jint,
@@ -992,7 +997,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_panStart(
 /// `handle` is live.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_panMove(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     _handle: jlong,
     id: jint,
@@ -1007,7 +1012,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_panMove(
 /// `handle` is live.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_panEnd(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     id: jint,
@@ -1034,7 +1039,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_panEnd(
 /// `handle` is live.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_pinchStart(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     id: jint,
@@ -1048,7 +1053,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_pinchStart(
 /// `handle` is live.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_pinchMove(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     _handle: jlong,
     id: jint,
@@ -1062,7 +1067,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_pinchMove(
 /// `handle` is live.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_pinchEnd(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     id: jint,
@@ -1087,7 +1092,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_pinchEnd(
 /// `handle` is live.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_rotationStart(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     id: jint,
@@ -1101,7 +1106,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_rotationStart(
 /// `handle` is live.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_rotationMove(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     _handle: jlong,
     id: jint,
@@ -1115,7 +1120,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_rotationMove(
 /// `handle` is live.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_rotationEnd(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     id: jint,
@@ -1140,12 +1145,12 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_rotationEnd(
 /// `handle` is live. Returns true if the view has pan gesture bindings.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_hasPan(
-    _env: JNIEnv<'_>,
+    _env: EnvUnowned<'_>,
     _class: JClass<'_>,
     _handle: jlong,
     id: jint,
 ) -> jboolean {
-    crate::animation::has_pan(id as NodeId) as jboolean
+    crate::animation::has_pan(id as NodeId)
 }
 
 /// # Safety
@@ -1155,7 +1160,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_hasPan(
 /// Returns -1.0 if no snapping, otherwise the snap target in pixels.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_nlayer_android_Native_snapTarget(
-    mut env: JNIEnv<'_>,
+    mut env: EnvUnowned<'_>,
     _class: JClass<'_>,
     handle: jlong,
     _id: jint,
@@ -1166,7 +1171,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_snapTarget(
     content_px: jfloat,
     paging: jboolean,
     snap_interval_pt: jfloat,
-    snap_offsets_pt: jni::sys::jfloatArray,
+    snap_offsets_pt: JFloatArray<'_>,
     snap_alignment: jint,
     disable_interval_momentum: jboolean,
     deceleration: jfloat,
@@ -1185,22 +1190,17 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_snapTarget(
     let content = Points(content_px / density);
 
     // Extract snap_offsets array
-    let snap_offsets = if snap_offsets_pt.is_null() {
-        Vec::new()
-    } else {
-        let arr = unsafe { jni::objects::JFloatArray::from_raw(snap_offsets_pt) };
-        // SAFETY: `snap_offsets_pt` is a non-null `float[]` from this JNI
-        // call. The elements are copied out before the guard drops, and
-        // `NoCopyBack` does not write them back.
-        match unsafe { env.get_array_elements(&arr, jni::objects::ReleaseMode::NoCopyBack) } {
-            Ok(elements) => {
-                let slice =
-                    unsafe { std::slice::from_raw_parts(elements.as_ptr(), elements.len()) };
-                slice.iter().map(|&v| Points(v)).collect()
+    let snap_offsets = env
+        .with_env(|env| -> jni::errors::Result<Vec<Points>> {
+            if snap_offsets_pt.is_null() {
+                return Ok(Vec::new());
             }
-            Err(_) => Vec::new(),
-        }
-    };
+            let len = snap_offsets_pt.len(env)?;
+            let mut values = vec![0.0f32; len];
+            snap_offsets_pt.get_region(env, 0, &mut values)?;
+            Ok(values.into_iter().map(Points).collect())
+        })
+        .resolve::<LogErrorAndDefault>();
 
     let snap_alignment = match snap_alignment {
         0 => nlayer_core::snap::SnapAlignment::Start,
@@ -1210,7 +1210,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_snapTarget(
     };
 
     let behavior = nlayer_core::snap::SnapBehavior {
-        paging: paging != 0,
+        paging: paging,
         snap_interval: if snap_interval_pt > 0.0 {
             Points(snap_interval_pt)
         } else {
@@ -1219,7 +1219,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_snapTarget(
         snap_offsets,
         snap_alignment,
         deceleration,
-        one_step: disable_interval_momentum != 0,
+        one_step: disable_interval_momentum,
     };
 
     match nlayer_core::snap::snap_target(&behavior, offset, target, velocity, viewport, content) {
