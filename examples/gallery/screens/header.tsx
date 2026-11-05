@@ -1,32 +1,30 @@
-import { signal } from "@nlayer/runtime";
 import { Scroll, Text, View } from "@nlayer/ui";
+import { headerTransparent } from "../nav";
 
 export function HeaderDemoPage() {
-  const transparent = signal(false);
-
   return (
     <Scroll
       testID="header-demo"
       class="flex-1 bg-white"
-      classList={{ "bg-[#3b82f6]": transparent() }}
+      classList={{ "bg-[#3b82f6]": headerTransparent() }}
     >
-      <View class="p-4" classList={{ "pt-30": transparent() }}>
+      <View class="p-4" classList={{ "pt-30": headerTransparent() }}>
         <Text
           class="mb-3 text-2xl font-bold text-black"
-          classList={{ "text-white": transparent() }}
+          classList={{ "text-white": headerTransparent() }}
         >
           Header Demo
         </Text>
-        <Text class="mb-4 text-[#64748b]" classList={{ "text-sky-50": transparent() }}>
+        <Text class="mb-4 text-[#64748b]" classList={{ "text-sky-50": headerTransparent() }}>
           iOS/Android: native header. Web: app-drawn header slot.
         </Text>
         <Text
           testID="toggle-transparent"
-          onPress={() => transparent.set(!transparent())}
+          onPress={() => headerTransparent.set(!headerTransparent())}
           class="mb-4 rounded-md bg-[#3b82f6] p-3 text-center text-white"
-          classList={{ "bg-[#1e40af]": transparent() }}
+          classList={{ "bg-[#1e40af]": headerTransparent() }}
         >
-          {transparent() ? "Transparent ON" : "Toggle Transparent"}
+          {headerTransparent() ? "Transparent ON" : "Toggle Transparent"}
         </Text>
       </View>
     </Scroll>

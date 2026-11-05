@@ -17,3 +17,5 @@ export const nav = createNavStack<Route>([{ name: "home" }]);
 export const detailInterceptBack = signal(false);
 export const detailBackIntercepted = signal(false);
 export const dismissedCount = signal(0);
+/** Header demo: the web bar and the native `headerTransparent` flag. */
+export const headerTransparent = signal(false);

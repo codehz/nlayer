@@ -1,6 +1,13 @@
 import { mount } from "@nlayer/runtime";
 import { NavPage, NavStack, Text, View } from "@nlayer/ui";
-import { detailBackIntercepted, detailInterceptBack, dismissedCount, nav, type Route } from "./nav";
+import {
+  detailBackIntercepted,
+  detailInterceptBack,
+  dismissedCount,
+  headerTransparent,
+  nav,
+  type Route,
+} from "./nav";
 import { ClassesPage } from "./screens/classes";
 import { DetailPage } from "./screens/detail";
 import { DialogDemoPage } from "./screens/dialog";
@@ -13,13 +20,55 @@ import { ReadingPage } from "./screens/reading";
 import { ViewportParentPage } from "./screens/viewport";
 
 /** Web draws this (`header`). iOS and Android keep the system bar. */
-function PageHeader(props: { title: string }) {
+function PageHeader(props: {
+  title: string;
+  /** Bottom of the stack: no back control. */
+  root?: boolean;
+  left?: unknown;
+  right?: unknown;
+  background?: string;
+  color?: string;
+  tint?: string;
+  transparent?: boolean;
+}) {
+  const back = !props.left && !props.root;
+  const hairline = !props.transparent && props.background == null;
   return (
-    <View class="h-11 flex-row items-center gap-3 border-b border-b-slate-200 bg-white px-3">
-      <Text onPress={() => nav.pop()} class="font-semibold text-[#3b82f6]">
-        ← Back
-      </Text>
-      <Text class="text-[15px] font-semibold text-[#0f172a]">{props.title}</Text>
+    <View
+      testID="drawn-header"
+      style={{
+        paddingTop: "env(safe-area-inset-top)",
+        backgroundColor: props.transparent ? "transparent" : (props.background ?? "#fff"),
+      }}
+    >
+      <View
+        class="h-11 flex-row items-center gap-2 px-3"
+        style={{
+          borderBottomWidth: hairline ? 1 : 0,
+          borderBottomColor: "#e2e8f0",
+        }}
+      >
+        {props.left}
+        {back ? (
+          <Text
+            testID="drawn-header-back"
+            onPress={() => nav.pop()}
+            class="font-semibold"
+            style={{ color: props.tint ?? "#3b82f6" }}
+          >
+            ← Back
+          </Text>
+        ) : null}
+        <View class="min-w-0 flex-1 flex-row items-center">
+          <Text
+            class="flex-1 text-[15px] font-semibold"
+            style={{ numberOfLines: 1, color: props.color ?? "#0f172a" }}
+          >
+            {props.title}
+          </Text>
+        </View>
+        {props.right}
+      </View>
     </View>
   );
 }
@@ -41,30 +90,12 @@ function page(route: Route) {
       content: <HeaderDemoPage />,
       title: "Header",
       headerStyle: { backgroundColor: "#10b981", color: "#fff", tintColor: "#fff" },
-      // iOS and Android put these in the system header; web draws
-      // `header` at the top of the page instead.
       headerLeft: (
         <Text onPress={() => nav.pop()} class="font-semibold text-white">
           Back
         </Text>
       ),
       headerRight: <Text class="text-white">Right</Text>,
-      header: (
-        <View
-          testID="drawn-header"
-          class="h-11 flex-row items-center justify-between bg-[#10b981] px-3"
-        >
-          <Text
-            testID="drawn-header-back"
-            onPress={() => nav.pop()}
-            class="font-semibold text-white"
-          >
-            ← Back
-          </Text>
-          <Text class="font-bold text-white">Header</Text>
-          <Text class="text-white">Right</Text>
-        </View>
-      ),
     };
   }
   if (route.name === "viewport-parent") {
@@ -79,16 +110,26 @@ function page(route: Route) {
 function App() {
   return (
     <NavStack state={nav} class="flex-1">
-      {(route) => {
+      {(route, index) => {
         const screen = page(route);
-        const header =
-          screen.header ??
-          (route.name !== "home" && screen.title ? <PageHeader title={screen.title} /> : undefined);
+        const transparent = route.name === "header" && headerTransparent();
+        const header = (
+          <PageHeader
+            title={screen.title ?? ""}
+            root={index() === 0}
+            left={screen.headerLeft}
+            right={screen.headerRight}
+            background={transparent ? undefined : screen.headerStyle?.backgroundColor}
+            color={screen.headerStyle?.color}
+            tint={screen.headerStyle?.tintColor}
+            transparent={transparent}
+          />
+        );
         return (
           <NavPage
             title={screen.title}
             headerStyle={screen.headerStyle}
-            headerTransparent={false}
+            headerTransparent={transparent}
             header={header}
             headerLeft={screen.headerLeft}
             headerRight={screen.headerRight}

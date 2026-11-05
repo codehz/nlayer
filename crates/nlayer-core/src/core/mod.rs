@@ -4913,9 +4913,13 @@ impl<M: TextEngine> Core<M> {
 impl<M: TextEngine> Core<M> {
     /// The insets `env()` uses for `key`: its screen's or modal's, once
     /// reported, else the surface safe area. A native header covers the
-    /// top until the screen reports (nsh `insets_of`).
+    /// top until the screen reports (nsh `insets_of`). A drawn `header`
+    /// slot (no native header) still reads the surface's top inset; the
+    /// screen reports that edge as zero because the slot already covers it.
+    /// Left, right and bottom stay the screen's.
     fn insets_of(&self, key: Key) -> Edges<Points> {
         let safe = self.safe_area;
+        let drawn_header = self.in_drawn_header(key);
         let mut k = key;
         loop {
             let node = &self.nodes[k as usize];
@@ -4923,7 +4927,11 @@ impl<M: TextEngine> Core<M> {
                 && let Some(root) = node.root.as_ref()
             {
                 if root.insets_set {
-                    return root.insets;
+                    let mut insets = root.insets;
+                    if drawn_header {
+                        insets.top = safe.top;
+                    }
+                    return insets;
                 }
                 if node.kind == Kind::Screen && self.header_covers_top(&root.screen) {
                     return Edges {
@@ -4937,6 +4945,31 @@ impl<M: TextEngine> Core<M> {
                 return safe;
             }
             k = node.parent;
+        }
+    }
+
+    /// `key` is the app-drawn `header` slot, or inside it. Only when this
+    /// platform has no native header: left / right / title slots are not
+    /// that bar, and a native header places its items itself.
+    fn in_drawn_header(&self, mut key: Key) -> bool {
+        if self.native_header() {
+            return false;
+        }
+        loop {
+            let node = &self.nodes[key as usize];
+            if node.kind == Kind::HeaderItem {
+                return node
+                    .root
+                    .as_ref()
+                    .is_some_and(|root| root.slot == crate::ops::HeaderSlot::Header);
+            }
+            if matches!(node.kind, Kind::Screen | Kind::Modal)
+                || node.parent == NO_KEY
+                || key == self.root
+            {
+                return false;
+            }
+            key = node.parent;
         }
     }
 
@@ -7137,6 +7170,136 @@ mod tests {
                 .iter()
                 .all(|item| { !matches!(item, MountItem::Frame { id: 3 | 12, .. }) })
         );
+    }
+
+    #[test]
+    fn drawn_header_keeps_the_surface_top_inset() {
+        let mut c = core();
+        c.set_header_heights(Points::ZERO, Points::ZERO);
+        c.set_safe_area(Edges {
+            top: px(47.0),
+            right: px(8.0),
+            bottom: px(34.0),
+            left: px(12.0),
+        });
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Stack,
+        })
+        .unwrap();
+        apply_style(&mut c, 2, sized(200.0, 400.0));
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 4,
+            tag: Tag::HeaderItem,
+        })
+        .unwrap();
+        c.apply(Op::SetProp {
+            id: 4,
+            prop: Prop::HeaderSlot(crate::ops::HeaderSlot::Header),
+        })
+        .unwrap();
+        let inset = || {
+            let mut style = Style::default();
+            style
+                .set("paddingTop", StyleValue::Str("env(safe-area-inset-top)"))
+                .unwrap();
+            style
+                .set("marginLeft", StyleValue::Str("env(safe-area-inset-left)"))
+                .unwrap();
+            style
+        };
+        c.apply(Op::Create {
+            id: 5,
+            tag: Tag::View,
+        })
+        .unwrap();
+        apply_style(&mut c, 5, inset());
+        c.apply(Op::Create {
+            id: 6,
+            tag: Tag::View,
+        })
+        .unwrap();
+        apply_style(&mut c, 6, sized(10.0, 10.0));
+        c.apply(Op::Insert {
+            parent: 5,
+            child: 6,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 4,
+            child: 5,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 3,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 7,
+            tag: Tag::View,
+        })
+        .unwrap();
+        apply_style(&mut c, 7, inset());
+        c.apply(Op::Create {
+            id: 8,
+            tag: Tag::View,
+        })
+        .unwrap();
+        apply_style(&mut c, 8, sized(10.0, 10.0));
+        c.apply(Op::Insert {
+            parent: 7,
+            child: 8,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 3,
+            child: 7,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        // Web reports the top as 0 once the app header covers it, and a
+        // different left from the surface.
+        c.set_root_insets(
+            3,
+            Edges {
+                top: Points::ZERO,
+                right: px(8.0),
+                bottom: px(34.0),
+                left: px(5.0),
+            },
+        );
+        let batch = c.commit().unwrap();
+        // Header slot: surface top (47) plus the 10pt child. Left is the
+        // screen's 5, not the surface's 12.
+        assert_eq!(frame(&batch, 6).origin.y, px(47.0));
+        assert_eq!(frame(&batch, 5).size.height, px(57.0));
+        assert_eq!(frame(&batch, 5).origin.x, px(5.0));
+        // Content under the slot: top is already covered.
+        assert_eq!(frame(&batch, 8).origin.y, px(0.0));
+        assert_eq!(frame(&batch, 7).size.height, px(10.0));
+        assert_eq!(frame(&batch, 7).origin.x, px(5.0));
     }
 
     #[test]
