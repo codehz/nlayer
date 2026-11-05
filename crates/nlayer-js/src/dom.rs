@@ -2446,7 +2446,7 @@ fn tag_name(tag: Tag) -> &'static str {
         Tag::Stack => "stack",
         Tag::Screen => "screen",
         Tag::Modal => "modal",
-        Tag::HeaderItem => "headerItem",
+        Tag::HeaderItem => "headeritem",
     }
 }
 

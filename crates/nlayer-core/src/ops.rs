@@ -52,7 +52,7 @@ pub enum Tag {
     /// The root view of a modal (`<modal>`). Inserting it presents the
     /// modal, removing it dismisses it.
     Modal,
-    /// A view shown in a screen's header (`<headerItem>`): its slot is
+    /// A view shown in a screen's header (`<headeritem>`): its slot is
     /// in the screen's config.
     HeaderItem,
 }
@@ -71,7 +71,7 @@ impl Tag {
             "stack" => Some(Tag::Stack),
             "screen" => Some(Tag::Screen),
             "modal" => Some(Tag::Modal),
-            "headerItem" => Some(Tag::HeaderItem),
+            "headeritem" => Some(Tag::HeaderItem),
             _ => None,
         }
     }

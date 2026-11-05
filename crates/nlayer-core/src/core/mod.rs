@@ -6545,6 +6545,12 @@ mod tests {
     }
 
     #[test]
+    fn header_item_tag_is_lowercase() {
+        assert_eq!(Tag::from_name("headeritem"), Some(Tag::HeaderItem));
+        assert_eq!(Tag::from_name("headerItem"), None);
+    }
+
+    #[test]
     fn an_empty_input_is_one_line_tall() {
         let mut c = core();
         c.apply(Op::Create {
