@@ -16,8 +16,8 @@ rustc-hash.workspace = true
 thiserror.workspace = true
 rquickjs.workspace = true
 url.workspace = true
-base64 = "0.22"
-getrandom = "0.3"
+base64 = "0.23"
+getrandom = "0.4"
 
 
 # Shipped bindings cover the desktop hosts and wasm, not iOS or Android.
@@ -26,5 +26,5 @@ getrandom = "0.3"
 rquickjs = { workspace = true, features = ["bindgen"] }
 [dev-dependencies]
 rquickjs.workspace = true
-base64 = "0.22"
-getrandom = "0.3"
+base64 = "0.23"
+getrandom = "0.4"

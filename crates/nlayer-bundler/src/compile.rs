@@ -178,15 +178,21 @@ impl HandwrittenRt {
 
 impl<'a> Visit<'a> for HandwrittenRt {
     fn visit_import_declaration(&mut self, it: &ImportDeclaration<'a>) {
-        self.note(it.source.value.as_str(), it.source.span);
+        if let Some(source) = it.source.value.as_str() {
+            self.note(source, it.source.span);
+        }
     }
 
     fn visit_export_all_declaration(&mut self, it: &ExportAllDeclaration<'a>) {
-        self.note(it.source.value.as_str(), it.source.span);
+        if let Some(source) = it.source.value.as_str() {
+            self.note(source, it.source.span);
+        }
     }
 
     fn visit_export_from_declaration(&mut self, it: &ExportFromDeclaration<'a>) {
-        self.note(it.source.value.as_str(), it.source.span);
+        if let Some(source) = it.source.value.as_str() {
+            self.note(source, it.source.span);
+        }
     }
 
     fn visit_import_expression(&mut self, it: &ImportExpression<'a>) {
@@ -217,10 +223,10 @@ impl<'a> Visit<'a> for HandwrittenRt {
 /// wrapped in parentheses.
 fn static_specifier<'a>(expr: &'a Expression<'a>) -> Option<(&'a str, Span)> {
     match expr {
-        Expression::StringLiteral(lit) => Some((lit.value.as_str(), lit.span)),
+        Expression::StringLiteral(lit) => Some((lit.value.as_str()?, lit.span)),
         Expression::TemplateLiteral(lit) if lit.expressions.is_empty() => {
-            let cooked = lit.quasis.first()?.value.cooked.as_ref()?;
-            Some((cooked.as_str(), lit.span))
+            let cooked = lit.quasis.first()?.value.cooked?;
+            Some((cooked.as_str()?, lit.span))
         }
         Expression::ParenthesizedExpression(lit) => static_specifier(&lit.expression),
         _ => None,
@@ -229,10 +235,10 @@ fn static_specifier<'a>(expr: &'a Expression<'a>) -> Option<(&'a str, Span)> {
 
 fn static_argument<'a>(arg: &'a Argument<'a>) -> Option<(&'a str, Span)> {
     match arg {
-        Argument::StringLiteral(lit) => Some((lit.value.as_str(), lit.span)),
+        Argument::StringLiteral(lit) => Some((lit.value.as_str()?, lit.span)),
         Argument::TemplateLiteral(lit) if lit.expressions.is_empty() => {
-            let cooked = lit.quasis.first()?.value.cooked.as_ref()?;
-            Some((cooked.as_str(), lit.span))
+            let cooked = lit.quasis.first()?.value.cooked?;
+            Some((cooked.as_str()?, lit.span))
         }
         Argument::ParenthesizedExpression(lit) => static_specifier(&lit.expression),
         _ => None,
@@ -269,7 +275,9 @@ fn check_named_imports(
         let Statement::ImportDeclaration(import) = statement else {
             continue;
         };
-        let module = import.source.value.as_str();
+        let Some(module) = import.source.value.as_str() else {
+            continue;
+        };
         let (true, Some(exports), Some(specifiers)) = (
             !import.import_kind.is_type(),
             modules.exports.get(module),
@@ -354,7 +362,9 @@ fn elide_unused_imports(
         let Statement::ImportDeclaration(import) = statement else {
             return true;
         };
-        let source = import.source.value.as_str();
+        let Some(source) = import.source.value.as_str() else {
+            return true;
+        };
         if !modules.contains(source) && (source == "@nlayer" || source.starts_with("@nlayer/")) {
             return true;
         }

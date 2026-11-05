@@ -76,7 +76,11 @@ impl Checker<'_> {
     /// sides of conditionals, the right of `&&` / `||`, the parts of templates.
     fn expression(&mut self, e: &Expression<'_>) {
         match e {
-            Expression::StringLiteral(s) => self.classes(&s.value, s.span.start + 1),
+            Expression::StringLiteral(s) => {
+                if let Some(classes) = s.value.as_str() {
+                    self.classes(classes, s.span.start + 1);
+                }
+            }
             Expression::TemplateLiteral(t) => {
                 let last = t.quasis.len().saturating_sub(1);
                 for (i, q) in t.quasis.iter().enumerate() {
@@ -117,7 +121,9 @@ impl<'a> Visit<'a> for Checker<'_> {
         };
         match (name.name.as_str(), &attr.value) {
             ("class", Some(JSXAttributeValue::StringLiteral(s))) => {
-                self.classes(&s.value, s.span.start + 1);
+                if let Some(classes) = s.value.as_str() {
+                    self.classes(classes, s.span.start + 1);
+                }
             }
             ("class", Some(JSXAttributeValue::ExpressionContainer(c))) => {
                 if let Some(e) = c.expression.as_expression() {
@@ -130,7 +136,9 @@ impl<'a> Visit<'a> for Checker<'_> {
                         if let ObjectPropertyKind::ObjectProperty(p) = p {
                             match &p.key {
                                 PropertyKey::StringLiteral(s) => {
-                                    self.classes(&s.value, s.span.start + 1);
+                                    if let Some(classes) = s.value.as_str() {
+                                        self.classes(classes, s.span.start + 1);
+                                    }
                                 }
                                 PropertyKey::StaticIdentifier(i) => {
                                     self.classes(&i.name, i.span.start);

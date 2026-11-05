@@ -372,7 +372,7 @@ fn send_frame(
         if let Some(message) = pending.take() {
             match socket.send(message) {
                 Ok(()) => {}
-                Err(tungstenite::Error::WriteBufferFull(message)) => pending = Some(message),
+                Err(tungstenite::Error::WriteBufferFull(message)) => pending = Some(*message),
                 Err(tungstenite::Error::Io(error)) if error.kind() == ErrorKind::WouldBlock => {}
                 Err(error) => return Err(explain(error)),
             }

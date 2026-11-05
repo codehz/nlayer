@@ -46,6 +46,7 @@ use oxc::{
     parser::Parser,
     semantic::Scoping,
     span::{GetSpan, SourceType, Span},
+    str::JSStr,
     syntax::scope::{ScopeFlags, ScopeId},
 };
 
@@ -91,7 +92,10 @@ fn export_name(n: &ModuleExportName<'_>) -> String {
     match n {
         ModuleExportName::IdentifierName(n) => n.name.to_string(),
         ModuleExportName::IdentifierReference(n) => n.name.to_string(),
-        ModuleExportName::StringLiteral(n) => n.value.to_string(),
+        ModuleExportName::StringLiteral(n) => match n.value.as_str() {
+            Some(name) => name.to_owned(),
+            None => n.value.display().to_string(),
+        },
     }
 }
 
@@ -102,7 +106,9 @@ fn imported_primitives(program: &Program<'_>) -> HashMap<String, Compiled> {
         let Statement::ImportDeclaration(i) = statement else {
             continue;
         };
-        let module = i.source.value.as_str();
+        let Some(module) = i.source.value.as_str() else {
+            continue;
+        };
         for spec in i.specifiers.iter().flatten() {
             let ImportDeclarationSpecifier::ImportSpecifier(s) = spec else {
                 continue;
@@ -215,6 +221,29 @@ fn distance(a: &str, b: &str) -> usize {
 /// A JS string literal.
 fn quote(s: &str) -> String {
     serde_json::to_string(s).expect("a string")
+}
+
+/// A JS string literal for an AST value, which can hold lone surrogates
+/// (`"\uD800"`): these are emitted as escapes, so the runtime sees the same
+/// code units.
+fn quote_js(s: JSStr<'_>) -> String {
+    let Some(text) = s.as_str() else {
+        let mut out = String::with_capacity(s.len() + 2);
+        out.push('"');
+        for r in char::decode_utf16(s.encode_utf16()) {
+            match r {
+                Ok(c) => {
+                    let mut buf = [0; 4];
+                    let q = quote(c.encode_utf8(&mut buf));
+                    out.push_str(&q[1..q.len() - 1]);
+                }
+                Err(e) => out.push_str(&format!("\\u{:04x}", e.unpaired_surrogate())),
+            }
+        }
+        out.push('"');
+        return out;
+    };
+    quote(text)
 }
 
 /// An object key: bare when it is an identifier, quoted otherwise.
@@ -694,7 +723,7 @@ impl<'a> Compiler<'a, '_> {
                     match a.value {
                         None => body.push_str(&self.prop(&v, &name, "true")),
                         Some(JSXAttributeValue::StringLiteral(s)) => {
-                            body.push_str(&self.prop(&v, &name, &quote(&s.value)));
+                            body.push_str(&self.prop(&v, &name, &quote_js(s.value)));
                         }
                         Some(JSXAttributeValue::ExpressionContainer(c)) => {
                             if let Some(e) = self.expression(c.unbox().expression) {
@@ -740,12 +769,12 @@ impl<'a> Compiler<'a, '_> {
                     None => continue,
                 },
                 JSXChild::ExpressionContainer(c) => match &c.expression {
-                    JSXExpression::StringLiteral(s) => (s.value.to_string(), s.span),
+                    JSXExpression::StringLiteral(s) => (s.value.display().to_string(), s.span),
                     JSXExpression::NumericLiteral(n) => (n.raw_str().to_string(), n.span),
                     JSXExpression::TemplateLiteral(t) if t.expressions.is_empty() => (
                         t.quasis
                             .iter()
-                            .filter_map(|q| q.value.cooked.as_deref())
+                            .filter_map(|q| q.value.cooked.and_then(JSStr::as_str))
                             .collect(),
                         t.span,
                     ),
@@ -949,7 +978,7 @@ impl<'a> Compiler<'a, '_> {
                     match a.value {
                         None => props.push(format!("{k}: true")),
                         Some(JSXAttributeValue::StringLiteral(s)) => {
-                            props.push(format!("{k}: {}", quote(&s.value)));
+                            props.push(format!("{k}: {}", quote_js(s.value)));
                         }
                         Some(JSXAttributeValue::ExpressionContainer(c)) => {
                             if let Some(e) = self.expression(c.unbox().expression) {
@@ -1046,7 +1075,7 @@ impl<'a> Compiler<'a, '_> {
                     }
                     let value = match a.value {
                         None => "true".to_owned(),
-                        Some(JSXAttributeValue::StringLiteral(s)) => quote(&s.value),
+                        Some(JSXAttributeValue::StringLiteral(s)) => quote_js(s.value),
                         Some(JSXAttributeValue::ExpressionContainer(c)) => {
                             match self.expression(c.unbox().expression) {
                                 Some(e) => g.hole(e),

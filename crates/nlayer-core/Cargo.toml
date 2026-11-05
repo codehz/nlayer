@@ -20,4 +20,4 @@ url.workspace = true
 log.workspace = true
 
 [dev-dependencies]
-syn = { version = "2", features = ["full", "visit"] }
+syn = { version = "3", features = ["full", "visit"] }

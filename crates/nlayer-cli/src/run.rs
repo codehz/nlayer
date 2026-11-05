@@ -1052,7 +1052,7 @@ fn send_message(ws: &mut Client, message: tungstenite::Message) -> Result<(), ()
         if let Some(message) = pending.take() {
             match ws.send(message) {
                 Ok(()) => return Ok(()),
-                Err(tungstenite::Error::WriteBufferFull(message)) => pending = Some(message),
+                Err(tungstenite::Error::WriteBufferFull(message)) => pending = Some(*message),
                 Err(tungstenite::Error::Io(error))
                     if error.kind() == std::io::ErrorKind::WouldBlock => {}
                 Err(error) => {

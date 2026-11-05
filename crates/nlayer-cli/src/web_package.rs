@@ -45,7 +45,8 @@ pub fn package_web(entry: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
             .extension()
             .and_then(|s| s.to_str())
             .ok_or("asset has no extension")?;
-        let name = format!("assets/{digest:x}.{ext}");
+        let hash: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+        let name = format!("assets/{hash}.{ext}");
         fs::create_dir_all(out.join("assets"))?;
         fs::write(out.join(&name), data)?;
         assets.insert(path.to_string_lossy().replace('\\', "/"), name);
