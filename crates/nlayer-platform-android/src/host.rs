@@ -331,6 +331,11 @@ fn start_engine(host: &Host, bundle: &str, data_dir: &str, dark: bool) -> Result
     if !data_dir.is_empty() {
         config = config.with_data_dir(data_dir);
     }
+    // The first frame already lays out with the current insets: a recycled
+    // test app asks for another safe area before its bundle starts.
+    if let Some((edges, keyboard)) = *host.insets.lock().unwrap_or_else(|err| err.into_inner()) {
+        config = config.with_insets(edges, keyboard);
+    }
     match Engine::start(config, move || AndroidTextEngine { density }, sink) {
         Ok(engine) => {
             *host.control.lock().unwrap_or_else(|err| err.into_inner()) = Some(engine.control());

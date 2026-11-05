@@ -54,6 +54,14 @@ function must<T>(value: T | null | undefined): T {
   return value;
 }
 
+/** Advances until `testID` leaves the tree: a leaving screen stays mounted for its exit motion. */
+function settleGone(app: App, testID: string): void {
+  for (let i = 0; i < 8; i++) {
+    if (!flat(app.tree(), []).some((node) => node.testID === testID)) return;
+    app.advance(100);
+  }
+}
+
 test("column, row, and grid place their children", () => {
   const app = open("./App.tsx", {
     width: 390,
@@ -132,11 +140,9 @@ test("safe-area env insets pad the view", () => {
   const nodes = flat(app.tree(), []);
   const inset = holder(nodes, "Inset").children[0];
   expect(inset.frame.x).toBe(10);
-  // A native header covers the top inset, so content under it does not add
-  // that inset again. The web page draws its header in the layout and
-  // leaves the window's top inset in `env()`. Left is the window's either way.
-  const nativeHeader = globalThis.__nlayerHeadless === "1" || globalThis.__nlayerOs !== "web";
-  const top = nativeHeader ? 0 : 22;
+  // The header covers the top inset on every host (web draws it too), so
+  // content under it does not add that inset again. Left is the window's.
+  const top = 0;
   expect(inset.frame.y).toBe(top);
   const safe = must(nodes.find((node) => node.testID === "safe"));
   const title = must(safe.children[0]);
@@ -305,6 +311,7 @@ test("back() returns from detail to home", () => {
 
   app.back();
   app.waitFor("open-detail");
+  settleGone(app, "detail-title");
   const tree = app.tree();
   const detailTitle = flat(tree, []).find((n) => n.testID === "detail-title");
   expect(detailTitle).toBe(undefined);
@@ -412,6 +419,8 @@ test("a pan reports its translation", () => {
   reveal(app, (n) => n.testID === "open-gesture");
   app.press("open-gesture");
   app.waitFor("gesture-card");
+  // The screen slides in; wait for it to stop so the drag lands on the card.
+  app.advance(400);
 
   // Drag gesture triggers onPanEnd with translation
   app.drag("gesture-card", 80, 0);

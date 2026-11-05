@@ -23,7 +23,15 @@ final class Tree {
       root.put("height", pin != null ? pin.height : host.getHeight() / d);
       if (host.bootError != null) root.put("error", host.bootError);
       JSONArray nodes = new JSONArray();
-      for (int i = 0; i < m.views.size(); i++) nodes.put(node(m, m.views.keyAt(i), d));
+      for (int i = 0; i < m.views.size(); i++) {
+        int id = m.views.keyAt(i);
+        View view = m.views.valueAt(i);
+        // A popped screen waits for its exit motion in `views` after leaving
+        // the hierarchy. It is not on the window, so a selector must not
+        // match it (or its detached subtree).
+        if (id != 1 && !view.isAttachedToWindow()) continue;
+        nodes.put(node(m, id, d));
+      }
       root.put("nodes", nodes);
       JSONArray opened = new JSONArray();
       for (String url : m.openedUrls) opened.put(url);
