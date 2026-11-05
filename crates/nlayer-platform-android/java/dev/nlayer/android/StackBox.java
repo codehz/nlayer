@@ -392,12 +392,29 @@ final class StackBox extends FrameLayout {
       Native.screenHeader(handle, id, height);
     }
 
+    /**
+     * Top inset of the screen's content, in points. An opaque bar already pushes the content down,
+     * so only the status bar past that bar remains. A transparent bar does not, and still counts:
+     * iOS's safe area includes a transparent navigation bar.
+     */
+    static float contentTopInset(
+        boolean shown, boolean transparent, int safeTopPx, int toolbarHeightPx, float density) {
+      if (!(density > 0f)) return 0f;
+      if (shown && transparent) return toolbarHeightPx / density;
+      int covered = shown ? toolbarHeightPx : 0;
+      return Math.max(0, safeTopPx - covered) / density;
+    }
+
     /** Reports insets to native. */
     void reportInsets() {
       if (!isAttachedToWindow()) return;
-      int safeTopPx = mounter.host.safeTop;
-      int headerHeightPx = (shown && !transparent) ? toolbar.getLayoutParams().height : 0;
-      float top = Math.max(0, safeTopPx - headerHeightPx) / mounter.density;
+      float top =
+          contentTopInset(
+              shown,
+              transparent,
+              mounter.host.safeTop,
+              toolbar.getLayoutParams().height,
+              mounter.density);
       float right = mounter.host.safeRight / mounter.density;
       float bottom = mounter.host.safeBottom / mounter.density;
       float left = mounter.host.safeLeft / mounter.density;

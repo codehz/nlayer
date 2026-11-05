@@ -712,12 +712,13 @@ test("header transparent toggle does not stack or drop the top inset", () => {
   if (Math.abs(opaque.title - (opaque.content + 16)) > 1) {
     problems.push(`opaque title ${opaque.title} is not 16pt below ${opaque.content}`);
   }
-  // First toggle: content moves up to the page top. pt-30, not another inset.
+  // Transparent: the scroll moves to the page top. The top inset includes
+  // the bar, so the title stays where the opaque page put it.
   if (!(toggled.content < opaque.content - 20)) {
     problems.push(`toggled content ${toggled.content} did not move up from ${opaque.content}`);
   }
-  if (Math.abs(toggled.title - (toggled.content + 120)) > 1) {
-    problems.push(`toggled title ${toggled.title} is not 120pt below ${toggled.content}`);
+  if (Math.abs(toggled.title - opaque.title) > 1) {
+    problems.push(`toggled title ${toggled.title} left the opaque place ${opaque.title}`);
   }
   // Pop and push keeps the flag. The new screen matches the toggled one.
   if (

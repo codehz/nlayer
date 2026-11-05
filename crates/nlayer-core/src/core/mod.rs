@@ -772,8 +772,10 @@ impl<M: TextEngine> Core<M> {
     }
 
     /// The platform reported the insets of screen or modal `id` (`onInsets`):
-    /// what `env(safe-area-inset-*)` reads inside it. The top is what the
-    /// header does not already cover.
+    /// what `env(safe-area-inset-*)` reads inside it. For an opaque header
+    /// the top is what the header does not already cover. For a transparent
+    /// header the top includes the bar: the content starts underneath it,
+    /// and iOS's safe area counts that bar.
     pub fn set_root_insets(&mut self, id: NodeId, insets: Edges<Points>) {
         let Ok(key) = self.key(id) else { return };
         let changed = {
@@ -4915,11 +4917,15 @@ impl<M: TextEngine> Core<M> {
 
 impl<M: TextEngine> Core<M> {
     /// The insets `env()` uses for `key`: its screen's or modal's, once
-    /// reported, else the surface safe area. A native header covers the
-    /// top until the screen reports (nsh `insets_of`). A drawn `header`
-    /// slot (no native header) still reads the surface's top inset; the
-    /// screen reports that edge as zero because the slot already covers it.
-    /// Left, right and bottom stay the screen's.
+    /// reported, else an estimate. A native header covers the top until
+    /// the screen reports (nsh `insets_of`), unless it is transparent:
+    /// the bar still counts, the way iOS's safe area includes a
+    /// transparent navigation bar, estimated as the bar plus the status
+    /// inset. A drawn `header` slot (no native header) still reads the
+    /// surface's top inset; the screen reports that edge as zero when
+    /// the bar is opaque (the slot already covers it) and as the bar's
+    /// height when the bar is transparent. Left, right and bottom stay
+    /// the screen's.
     fn insets_of(&self, key: Key) -> Edges<Points> {
         let safe = self.safe_area;
         let drawn_header = self.in_drawn_header(key);
@@ -4936,11 +4942,17 @@ impl<M: TextEngine> Core<M> {
                     }
                     return insets;
                 }
-                if node.kind == Kind::Screen && self.header_covers_top(&root.screen) {
-                    return Edges {
-                        top: Points::ZERO,
-                        ..safe
+                if node.kind == Kind::Screen && self.native_header() && root.screen.header_visible {
+                    let top = if root.screen.header_transparent {
+                        // The bar plus the surface's top inset: what iOS
+                        // reports for a screen under the status bar. Not
+                        // the stack's frame; that is not known yet, and
+                        // reading it would move this inset on a later layout.
+                        Points(self.header_heights.0.0 + safe.top.0)
+                    } else {
+                        Points::ZERO
                     };
+                    return Edges { top, ..safe };
                 }
                 return safe;
             }
@@ -4974,12 +4986,6 @@ impl<M: TextEngine> Core<M> {
             }
             key = node.parent;
         }
-    }
-
-    /// A native header is drawn over the top of the screen, so content
-    /// below it does not also take the surface's top inset.
-    fn header_covers_top(&self, screen: &crate::ScreenConfig) -> bool {
-        self.native_header() && screen.header_visible && !screen.header_transparent
     }
 
     fn env_insets(&self, key: Key, env: &EnvEdges) -> [Edges<Points>; 2] {
@@ -7103,7 +7109,8 @@ mod tests {
         })
         .unwrap();
 
-        // A transparent header does not cover the top.
+        // A transparent native bar still counts: 44pt bar + 20pt status
+        // inset, plus the 8pt padding, around a 10pt child.
         c.apply(Op::Create {
             id: 10,
             tag: Tag::Screen,
@@ -7153,7 +7160,7 @@ mod tests {
         assert_eq!(pad(&batch, 2, 3), (px(28.0), px(72.0)));
         // Header covers the top (8 + 10 + 34). The bottom is still the surface's.
         assert_eq!(pad(&batch, 8, 9), (px(8.0), px(52.0)));
-        assert_eq!(pad(&batch, 11, 12), (px(28.0), px(72.0)));
+        assert_eq!(pad(&batch, 11, 12), (px(72.0), px(116.0)));
 
         c.set_root_insets(
             6,
@@ -7166,13 +7173,24 @@ mod tests {
         let batch = c.commit().unwrap();
         // 3 + 8 top, 9 bottom. The surface and the transparent screen are
         // not in this batch: their insets did not change.
-        assert_eq!(pad(&batch, 8, 9), (px(11.0), px(30.0)));
         assert!(
             batch
                 .items
                 .iter()
                 .all(|item| { !matches!(item, MountItem::Frame { id: 3 | 12, .. }) })
         );
+
+        c.set_root_insets(
+            10,
+            Edges {
+                top: px(3.0),
+                bottom: px(9.0),
+                ..Edges::default()
+            },
+        );
+        let batch = c.commit().unwrap();
+        // A report replaces the estimate. It is not added on top of the bar.
+        assert_eq!(pad(&batch, 11, 12), (px(11.0), px(30.0)));
     }
 
     #[test]
@@ -7303,6 +7321,29 @@ mod tests {
         assert_eq!(frame(&batch, 8).origin.y, px(0.0));
         assert_eq!(frame(&batch, 7).size.height, px(10.0));
         assert_eq!(frame(&batch, 7).origin.x, px(5.0));
+
+        // Transparent: the platform reports the bar's height as the top
+        // inset. Content reads it. The header slot still reads the surface.
+        c.apply(Op::SetProp {
+            id: 3,
+            prop: Prop::Screen(crate::ops::ScreenProp::HeaderTransparent(true)),
+        })
+        .unwrap();
+        c.set_root_insets(
+            3,
+            Edges {
+                top: px(91.0),
+                right: px(8.0),
+                bottom: px(34.0),
+                left: px(5.0),
+            },
+        );
+        c.commit().unwrap();
+        let placed = |id: NodeId| c.nodes.iter().find(|(_, n)| n.id == id).unwrap().1.frame;
+        // The slot did not move, so this commit may not mount its frame.
+        assert_eq!(placed(6).origin.y, px(47.0));
+        assert_eq!(placed(8).origin.y, px(91.0));
+        assert_eq!(placed(7).size.height, px(101.0));
     }
 
     #[test]

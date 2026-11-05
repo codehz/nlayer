@@ -1329,6 +1329,18 @@ public final class JavaTests extends Instrumentation {
       check(
           screen2.toolbar.getLayoutParams().height > 0,
           "a transparent header still draws above the content");
+      equal(
+          120f,
+          StackBox.ScreenBox.contentTopInset(true, true, 48, 120, 1f),
+          "a transparent bar counts in the top inset");
+      equal(
+          0f,
+          StackBox.ScreenBox.contentTopInset(true, false, 48, 120, 1f),
+          "an opaque bar already covers the status inset");
+      equal(
+          48f,
+          StackBox.ScreenBox.contentTopInset(false, false, 48, 120, 1f),
+          "no bar: the status inset remains");
 
       // Test preventBack=true, gesture=false
       Batch b3 = batch();

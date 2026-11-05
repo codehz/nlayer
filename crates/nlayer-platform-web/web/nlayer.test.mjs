@@ -141,6 +141,38 @@ test("Screen without a header reports the window safe area", () => {
   assert.deepEqual(last.slice(1), [390, 800, 22, 8, 14, 10]);
 });
 
+test("A transparent header counts its height in the top inset", () => {
+  const { player } = createTestEnv();
+  const calls = [];
+  player.host.setRootSize = (...args) => calls.push(args);
+  player.safeArea = { top: 22, right: 8, bottom: 14, left: 10 };
+
+  player.apply([
+    ["c", 2, "stack"],
+    ["c", 3, "screen"],
+    ["c", 4, "headeritem"],
+    ["i", 1, 2, null],
+    ["i", 2, 3, null],
+    ["i", 3, 4, null],
+    ["f", 2, 0, 0, 390, 800],
+    [
+      "scr",
+      3,
+      {
+        headerHeight: 66,
+        headerVisible: true,
+        headerTransparent: true,
+        headerView: 4,
+        animation: "default",
+      },
+    ],
+  ]);
+
+  const last = calls.filter((call) => call[0] === 3).at(-1);
+  assert.ok(last, "screen reports its size");
+  assert.deepEqual(last.slice(1), [390, 800, 66, 8, 14, 10]);
+});
+
 test("Player applies modal config", () => {
   const { player } = createTestEnv();
 

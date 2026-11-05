@@ -8,7 +8,7 @@ export function HeaderDemoPage() {
       class="flex-1 bg-white"
       classList={{ "bg-[#3b82f6]": headerTransparent() }}
     >
-      <View class="p-4" classList={{ "pt-30": headerTransparent() }}>
+      <View class="p-4 pt-[calc(env(safe-area-inset-top)+16px)]">
         <Text
           class="mb-3 text-2xl font-bold text-black"
           classList={{ "text-white": headerTransparent() }}

@@ -1873,11 +1873,18 @@ export class Player {
     if (header.parentNode !== screen) screen.append(header);
   }
 
-  /** The insets of screen `screen`'s content: the window's safe area, but
-   * the top's when its `header` covers it. */
+  /** The insets of screen `screen`'s content. An opaque `header` already
+   * pushes the content down, so the top inset is covered. A transparent
+   * header floats over the content and still counts, the way iOS's safe
+   * area includes a transparent navigation bar. The header slot itself
+   * keeps reading the surface's top inset. */
   screenInsets(screen) {
     const safe = this.readInsets();
-    return screen._screenConfig?.headerView != null ? [0, safe[1], safe[2], safe[3]] : safe;
+    const config = screen._screenConfig;
+    if (config?.headerView == null) return safe;
+    if (!config.headerTransparent) return [0, safe[1], safe[2], safe[3]];
+    const covered = Number(config.headerHeight) || 0;
+    return [covered, safe[1], safe[2], safe[3]];
   }
 
   reportScreenFromFrame(screen) {
