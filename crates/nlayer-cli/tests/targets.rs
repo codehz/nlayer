@@ -114,6 +114,15 @@ fn the_emulator_takes_a_line_break_in_a_multiline_input() {
 }
 
 #[test]
+fn the_emulator_keeps_a_row_for_a_wrapped_line() {
+    let _guard = lock();
+    let dir = app_fixture("wrap");
+    let report = run(&dir.join("App.test.tsx"), Some(TestTarget::Android));
+    let _ = fs::remove_dir_all(&dir);
+    assert!(report.ok(), "android: {report}");
+}
+
+#[test]
 fn the_browser_renders_and_scrolls_a_long_list() {
     let _guard = lock();
     let dir = app_fixture("list");
