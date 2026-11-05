@@ -11,7 +11,11 @@
    off, inside an area too. The highlight is `--nl-selection` when the
    text sets `selectionColor`, the browser's otherwise. A selectable
    view's texts inherit the property, each with its own value. */
-.nl-root {
+/* `user-select` does not inherit into a top-layer `<dialog>`. Without this,
+   a press on its text starts a selection and that click is dropped. */
+.nl-root,
+.nl-modal,
+.nl-modal * {
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
