@@ -458,6 +458,45 @@ export class Player {
     return reduce ? "fade" : "slide";
   }
 
+  /** Off-screen or transparent, before the enter transition and at the end of the exit. */
+  hideModal(el, motion) {
+    if (motion === "slide") {
+      const height = el._frame?.[3] || this.rootSize()[1] || 0;
+      el.style.transform = `translateY(${height}px)`;
+      el.style.opacity = "";
+    } else if (motion === "fade") {
+      el.style.opacity = "0";
+      el.style.transform = "";
+    }
+  }
+
+  /**
+   * First paint is the hidden pose (`transition: none`), then the class
+   * transition runs to the resting pose. Config in this batch is already
+   * applied: reconcile runs after `mc`.
+   */
+  presentModal(el) {
+    if (el._presented || el._leaving || el._entering) return;
+    el._presented = true;
+    const motion = this.modalMotion(el);
+    if (motion === "none") return;
+    el.style.transition = "none";
+    this.hideModal(el, motion);
+    el._entering = true;
+    const raf =
+      this.window.requestAnimationFrame?.bind(this.window) ??
+      ((fn) => this.window.setTimeout(fn, 16));
+    raf(() =>
+      raf(() => {
+        if (!el._entering || el._leaving) return;
+        el._entering = false;
+        el.style.transition = "";
+        el.style.transform = "";
+        el.style.opacity = "";
+      }),
+    );
+  }
+
   /**
    * The modal element is gone from the app. Keep it on screen and play
    * `animation`, then drop it and the content removed with it.
@@ -465,14 +504,12 @@ export class Player {
   dismissModal(el) {
     if (el._leaving) return;
     el._leaving = true;
+    el._entering = false;
+    el._presented = false;
+    el.style.transition = "";
     el.style.pointerEvents = "none";
     const motion = this.modalMotion(el);
-    if (motion === "slide") {
-      const height = el._frame?.[3] || this.rootSize()[1] || 0;
-      el.style.transform = `translateY(${height}px)`;
-    } else if (motion === "fade") {
-      el.style.opacity = "0";
-    }
+    this.hideModal(el, motion);
     const delay = motion === "none" ? 0 : motion === "fade" ? 250 : 350;
     el._leaveTimer = this.window.setTimeout(() => {
       el._leaveTimer = 0;
@@ -532,6 +569,7 @@ export class Player {
         // A modal covers the window wherever the app rendered it.
         if (el.parentNode !== this.root) this.root.append(el);
         this.placeModal(el);
+        this.presentModal(el);
       }
     }
   }
@@ -1668,8 +1706,11 @@ export class Player {
     const el = this.view(id);
     if (!el) return;
     el._modalConfig = config;
+    if (el._entering) {
+      el.style.transition = "none";
+      this.hideModal(el, this.modalMotion(el));
+    }
     this.placeModal(el);
-    this.syncHistorySoon();
   }
 
   syncHistorySoon() {

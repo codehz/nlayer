@@ -499,6 +499,24 @@ test("a fade modal exits by opacity and none waits only a turn", () => {
   leave.fn();
   assert.equal(none.modal.isConnected, false);
 });
+test("a fade modal enters from transparent", () => {
+  const { player } = createTestEnv();
+  const frames = [];
+  player.window.requestAnimationFrame = (fn) => {
+    frames.push(fn);
+    return frames.length;
+  };
+  const { modal } = mountModal(player, "fade");
+  assert.equal(modal.style.opacity, "0");
+  assert.equal(modal.style.transition, "none");
+  assert.equal(frames.length, 1);
+  frames[0]();
+  assert.equal(frames.length, 2);
+  frames[1]();
+  assert.equal(modal.style.opacity, "");
+  assert.equal(modal.style.transition, "");
+  assert.equal(modal._entering, false);
+});
 
 test("inserting a modal again cancels an exit that has not finished", () => {
   const { player } = createTestEnv();
@@ -509,7 +527,8 @@ test("inserting a modal again cancels an exit that has not finished", () => {
   assert.equal(modal.style.transform, "translateY(400px)");
   player.apply([["i", 1, 20, null]]);
   assert.equal(modal._leaving, false);
-  assert.equal(modal.style.transform, "");
+  assert.equal(modal.style.transform, "translateY(400px)");
+  assert.equal(modal.style.transition, "none");
   assert.equal(modal.style.pointerEvents, "");
   assert.equal(modal.isConnected, true);
 });

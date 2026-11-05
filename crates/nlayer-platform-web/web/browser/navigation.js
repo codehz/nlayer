@@ -273,11 +273,12 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
         if (slide) {
           const offset = animation.createAnimatedValue(Math.max(1, safeArea().height || 600));
           rt.bindProp(popup, "style", () => [props.style, { translate: [0, offset] }]);
+          // timing starts at once and returns a promise. There is no composite `.start()`.
           animation.Animated.timing(offset, {
             toValue: 0,
             duration: 320,
             easing: [0.2, 0.8, 0.2, 1],
-          }).start();
+          });
         } else {
           rt.bindProp(popup, "style", () => props.style);
         }

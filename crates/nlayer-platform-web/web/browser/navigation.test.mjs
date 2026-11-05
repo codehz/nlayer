@@ -279,3 +279,62 @@ test("NavPage provides insets context", () => {
   assert.ok(insetsCallback, "Should register insets callback");
   insetsCallback({ top: 50, right: 0, bottom: 30, left: 0 });
 });
+
+test("Dialog slide starts a timing animation", () => {
+  const reactive = {
+    signal: (val) => {
+      const sig = () => val;
+      sig.set = (v) => {
+        val = v;
+      };
+      sig.update = (fn) => {
+        val = fn(val);
+      };
+      return sig;
+    },
+    computed: (fn) => fn,
+    untracked: (fn) => (typeof fn === "function" ? fn() : fn),
+    batch: (fn) => fn(),
+    context: (def) => {
+      const read = () => def;
+      read.Provider = (props) => props?.children;
+      return read;
+    },
+  };
+  const rt = {
+    element: (tag) => ({ _tag: tag, _listeners: {} }),
+    prop: () => {},
+    bindProp: () => {},
+    spread: () => {},
+    insert: () => {},
+    cond: (when, then) => () => (when() ? then() : null),
+  };
+  const started = [];
+  const animation = {
+    createAnimatedValue: (value) => ({ value }),
+    Animated: {
+      timing(value, config) {
+        started.push({ value, config });
+        return { finished: true };
+      },
+    },
+  };
+  const nav = createNavigation(
+    reactive,
+    { rt, listen: () => {} },
+    animation,
+    () => ({ height: 480 }),
+    () => false,
+  );
+  const dialog = nav.Dialog({
+    open: true,
+    animation: "slide",
+    backdropStyle: { backgroundColor: "#00000066" },
+    children: "content",
+  });
+  assert.ok(dialog());
+  assert.equal(started.length, 1);
+  assert.equal(started[0].config.toValue, 0);
+  assert.equal(started[0].config.duration, 320);
+  assert.equal(started[0].value.value, 480);
+});
