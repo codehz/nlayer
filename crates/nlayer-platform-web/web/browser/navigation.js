@@ -22,12 +22,15 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
   const stackContext = reactive.context(null);
   const colorScheme = dom.colorScheme ?? (() => "light");
   const requestBack = dom.requestBack ?? (() => {});
+  // Descriptors, not values: a getter stays a getter (`merge` does the
+  // same). Copying `headerTransparent` once froze the screen prop, so the
+  // bar restyled on the first toggle while the content inset did not.
   const except = (props, keys) => {
     const out = {};
-    for (const key in props) {
-      if (!keys.includes(key) && Object.prototype.hasOwnProperty.call(props, key)) {
-        out[key] = props[key];
-      }
+    for (const key of Object.keys(props)) {
+      if (keys.includes(key)) continue;
+      const desc = Object.getOwnPropertyDescriptor(props, key);
+      if (desc) Object.defineProperty(out, key, desc);
     }
     return out;
   };

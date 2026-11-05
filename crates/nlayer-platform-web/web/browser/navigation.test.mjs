@@ -459,3 +459,62 @@ test("NavPage mounts the default header and can hide or replace it", () => {
   );
   assert.throws(() => nav.setNavHeader("nope"), /setNavHeader/);
 });
+
+test("NavPage spread keeps a headerTransparent getter live", () => {
+  const reactive = {
+    signal(val) {
+      const sig = () => val;
+      sig.set = (next) => {
+        val = next;
+      };
+      return sig;
+    },
+    computed(fn) {
+      return () => fn();
+    },
+    untracked: (fn) => (typeof fn === "function" ? fn() : fn),
+    batch: (fn) => fn(),
+    context(def) {
+      let value = def;
+      const read = () => value;
+      read.Provider = (props) => {
+        const previous = value;
+        value = props?.value;
+        const rendered = props?.children;
+        value = previous;
+        return rendered;
+      };
+      return read;
+    },
+  };
+  let spreadProps = null;
+  const rt = {
+    element: (tag) => ({ _tag: tag, props: {}, kids: [] }),
+    prop() {},
+    bindProp() {},
+    spread(_node, props) {
+      spreadProps = props;
+    },
+    insert() {},
+  };
+  const nav = createNavigation(
+    reactive,
+    { rt, listen: () => {}, colorScheme: () => "light" },
+    { createAnimatedValue: () => ({}), Animated: { timing: () => ({}) } },
+    () => ({ top: 47, right: 0, bottom: 34, left: 0 }),
+    () => false,
+  );
+  let transparent = false;
+  nav.NavPage({
+    title: "Header",
+    get headerTransparent() {
+      return transparent;
+    },
+    children: "body",
+  });
+  assert.equal(spreadProps.headerTransparent, false);
+  transparent = true;
+  assert.equal(spreadProps.headerTransparent, true);
+  assert.equal(Object.keys(spreadProps).includes("children"), false);
+  assert.equal(spreadProps.title, "Header");
+});
