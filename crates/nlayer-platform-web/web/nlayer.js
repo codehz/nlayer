@@ -239,7 +239,7 @@ export class Player {
   }
 
   op_c([, id, kind]) {
-    const el = this.doc.createElement("div");
+    const el = this.doc.createElement(kind === "modal" ? "dialog" : "div");
     el._id = id;
     el._kind = kind;
     el._events = new Set();
@@ -281,6 +281,12 @@ export class Player {
     }
     if (kind === "modal") {
       el.addEventListener("nlayer:insets", (e) => this.host.insets?.(id, e.detail));
+      // Escape closes a modal dialog before the page sees it. Keep it open
+      // here: the engine decides `closeOnEscape` and the app unmounts it.
+      el.addEventListener("cancel", (event) => {
+        event.preventDefault();
+        this.host.back?.();
+      });
     }
     el.addEventListener("click", (event) => {
       for (let node = el; node; node = node.parentNode) {
@@ -478,6 +484,7 @@ export class Player {
   presentModal(el) {
     if (el._presented || el._leaving || el._entering) return;
     el._presented = true;
+    this.openModal(el);
     const motion = this.modalMotion(el);
     if (motion === "none") return;
     el.style.transition = "none";
@@ -497,9 +504,36 @@ export class Player {
     );
   }
 
+  /** Top layer. `showModal` throws if it is already open. */
+  openModal(el) {
+    if (el.open) return;
+    if (typeof el.showModal === "function") {
+      try {
+        el.showModal();
+        return;
+      } catch {
+        // Not in a document, or the environment has no modal dialogs.
+      }
+    }
+    el.open = true;
+  }
+
+  /** Leave the top layer. Safe if it was never opened. */
+  closeModal(el) {
+    if (typeof el.close === "function") {
+      try {
+        el.close();
+        return;
+      } catch {
+        // fall through
+      }
+    }
+    el.open = false;
+  }
+
   /**
-   * The modal element is gone from the app. Keep it on screen and play
-   * `animation`, then drop it and the content removed with it.
+   * The modal element is gone from the app. Keep it on the top layer and
+   * play `animation`, then close and drop it and the content removed with it.
    */
   dismissModal(el) {
     if (el._leaving) return;
@@ -514,6 +548,7 @@ export class Player {
     el._leaveTimer = this.window.setTimeout(() => {
       el._leaveTimer = 0;
       if (!el._leaving) return;
+      this.closeModal(el);
       el.remove();
       this.dropLeftWith(el);
     }, delay);
@@ -530,6 +565,7 @@ export class Player {
     el.style.pointerEvents = "";
     el.style.transform = "";
     el.style.opacity = "";
+    this.openModal(el);
   }
 
   /** Views removed inside `el` while it left now leave it. */

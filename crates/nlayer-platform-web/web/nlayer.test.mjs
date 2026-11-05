@@ -33,6 +33,7 @@ test("Player creates modal DOM elements", () => {
 
   const el = player.view(2);
   assert.ok(el, "Should create modal element");
+  assert.equal(el.tagName, "DIALOG");
   assert.equal(el._kind, "modal");
   assert.ok(el.className.includes("nl-modal"));
 });
@@ -291,6 +292,33 @@ test("Player modal no longer registers show/dismiss/requestclose callbacks", () 
     }),
   );
   assert.equal(requestCloseCalled, false, "Should not call requestClose via DOM event");
+});
+
+test("Player presents a modal with showModal and routes Escape to back", () => {
+  const { player, host, window } = createTestEnv();
+  let backs = 0;
+  host.back = () => {
+    backs += 1;
+  };
+  let shown = 0;
+  window.HTMLDialogElement.prototype.showModal = function showModal() {
+    shown += 1;
+    this.open = true;
+  };
+
+  player.apply([
+    ["c", 2, "modal"],
+    ["i", 1, 2, null],
+  ]);
+
+  const el = player.view(2);
+  assert.equal(shown, 1, "Should open the native dialog");
+  assert.equal(el.open, true);
+
+  const cancel = new window.Event("cancel", { cancelable: true });
+  el.dispatchEvent(cancel);
+  assert.equal(cancel.defaultPrevented, true, "Should keep the dialog open");
+  assert.equal(backs, 1, "Escape should be a back");
 });
 
 test("Player insets callback receives detail", () => {

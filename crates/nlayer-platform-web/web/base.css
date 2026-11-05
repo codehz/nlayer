@@ -173,11 +173,25 @@ textarea.nl-field {
 .nl-headeritem {
   z-index: 1;
 }
-/* Modal sits above all. The exit motion is this transition: the element
-   leaves the app at once and the player keeps it until the transition ends. */
-.nl-modal {
+/* Modal is a native <dialog> on the top layer. The exit motion is this
+   transition: the element leaves the app at once and the player keeps it
+   open until the transition ends, then calls close(). Doubled class beats
+   the user-agent `dialog:modal` box (border, padding, max size, canvas).
+   The app draws its own backdrop; the native one stays clear. */
+.nl-modal.nl-modal {
   z-index: 10;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  max-width: none;
+  max-height: none;
+  overflow: visible;
   transition:
     transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1),
     opacity 0.25s ease;
+}
+.nl-modal::backdrop {
+  background: none;
 }
