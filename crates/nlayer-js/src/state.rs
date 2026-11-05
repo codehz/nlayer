@@ -36,6 +36,9 @@ pub(crate) struct State {
     pub(crate) lists: crate::list::Lists,
     /// The signal `reduceMotion()` reads internally (owned; not exported).
     pub(crate) reduce_motion: std::cell::Cell<qjs::JSValue>,
+    /// Surface height in points. A dialog's slide starts this far down.
+    /// [`crate::Host::set_window_height`] writes it; `0` until then.
+    pub(crate) window_height: std::cell::Cell<f32>,
     /// Hot module replacement (`nlayer:hot`; empty outside a dev bundle).
     pub(crate) hot: crate::hot::Hot,
 }
@@ -120,6 +123,7 @@ pub(crate) fn install(cx: &Ctx<'_>) {
             storage: None,
             lists: crate::list::Lists::default(),
             reduce_motion: std::cell::Cell::new(qjs::JS_UNDEFINED),
+            window_height: std::cell::Cell::new(0.0),
             hot: crate::hot::Hot::default(),
         }));
         qjs::JS_SetContextOpaque(raw, state as *mut c_void);

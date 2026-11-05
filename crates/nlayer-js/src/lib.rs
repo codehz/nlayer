@@ -219,6 +219,20 @@ impl Host {
         });
     }
 
+    /// The surface height in points. A dialog with a backdrop slides its
+    /// popup up from this far below the window. Set it before the app
+    /// runs, and again when the surface is resized.
+    pub fn set_window_height(&self, height: f32) {
+        self.cx.with(|cx| {
+            // SAFETY: the state `install` made for this context.
+            unsafe {
+                (*state::state(cx.as_raw().as_ptr()))
+                    .window_height
+                    .set(height)
+            }
+        });
+    }
+
     /// Delivers the platform's back button (Android) or history back (a
     /// page that pushed an entry): whether a `BackHandler` listener
     /// handled it. Listeners run newest first.

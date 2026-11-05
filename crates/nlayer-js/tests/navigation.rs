@@ -1,6 +1,10 @@
 //! Tests for navigation: `createNavStack`, route mutations, and callback semantics.
 
-use nlayer_core::{EventKind, HeaderSlot, Op, Prop, ScreenProp, Tag};
+use nlayer_core::{
+    EventKind, HeaderSlot, ModalAnimation, ModalProp, Op, Prop, ScreenProp, Tag,
+    animation::{AnimationOp, AnimationProp, Driver, Easing},
+    transform::TransformKind,
+};
 use nlayer_js::{EventPayload, Host};
 
 fn create_id(ops: &[Op], tag: Tag) -> Option<u32> {
@@ -536,6 +540,147 @@ fn dialog_skips_hit_target_when_backdrop_press_is_disabled() {
     assert_eq!(
         views, 1,
         "no backdrop and closeOnBackdropPress false: popup only, views={views}"
+    );
+}
+
+/// A backdrop's slide fades the layer and moves the popup up from the
+/// bottom of the window. The platform would otherwise slide the backdrop too.
+#[test]
+fn dialog_slide_moves_the_popup_up_from_the_window() {
+    let host = Host::new().unwrap();
+    host.set_window_height(844.0);
+    host.eval_source(
+        r##"
+        import { Dialog } from "@nlayer/ui";
+        import { mount } from "@nlayer/runtime";
+        globalThis.dispose = mount(() => Dialog({
+          open: true,
+          animation: "slide",
+          backdropStyle: { backgroundColor: "#00000066" },
+          style: { padding: 12 },
+          children: "content"
+        }));
+        "##,
+    )
+    .unwrap();
+    let mut ops = Vec::new();
+    host.take_ops(&mut ops);
+    let modal = create_id(&ops, Tag::Modal).expect("modal");
+    assert!(
+        ops.iter().any(|op| matches!(
+            op,
+            Op::SetProp {
+                id,
+                prop: Prop::Modal(ModalProp::Animation(ModalAnimation::Fade))
+            } if *id == modal
+        )),
+        "the layer fades so the backdrop stays"
+    );
+    let node = ops
+        .iter()
+        .find_map(|op| match op {
+            Op::Animation(AnimationOp::CreateValue { node, value }) if *value == 844.0 => {
+                Some(*node)
+            }
+            _ => None,
+        })
+        .expect("the slide starts at the window's bottom edge");
+    assert!(
+        ops.iter().any(|op| matches!(
+            op,
+            Op::Animation(AnimationOp::Start {
+                node: n,
+                driver: Driver::Timing {
+                    to,
+                    duration_ms,
+                    easing: Easing::Bezier(x1, y1, x2, y2),
+                    delay_ms,
+                },
+                ..
+            }) if *n == node
+                && *to == 0.0
+                && *duration_ms == 320.0
+                && *delay_ms == 0.0
+                && *x1 == 0.2
+                && *y1 == 0.8
+                && *x2 == 0.2
+                && *y2 == 1.0
+        )),
+        "the offset runs to 0"
+    );
+    assert!(
+        ops.iter().any(|op| match op {
+            Op::SetStyle { style, .. } => {
+                let translated = style
+                    .view
+                    .transform
+                    .ops()
+                    .iter()
+                    .any(|step| step.kind == TransformKind::TranslateY);
+                let bound = style
+                    .animated
+                    .iter()
+                    .any(|(prop, id)| matches!(prop, AnimationProp::Transform(_)) && *id == node);
+                translated && bound
+            }
+            _ => false,
+        }),
+        "the popup's translateY is the sliding offset"
+    );
+}
+
+/// No backdrop, a fade, the app's own translate, or reduced motion: the
+/// popup is not given a slide of its own.
+#[test]
+fn dialog_slide_is_not_a_popup_translate_unless_a_backdrop_slides() {
+    for source in [
+        r#"Dialog({ open: true, animation: "slide", children: "content" })"#,
+        r#"Dialog({ open: true, animation: "fade", backdropStyle: { opacity: 0.5 }, children: "content" })"#,
+        r#"Dialog({ open: true, animation: "slide", backdropStyle: { opacity: 0.5 }, style: { translate: [0, 8] }, children: "content" })"#,
+    ] {
+        let host = Host::new().unwrap();
+        host.set_window_height(844.0);
+        host.eval_source(&format!(
+            r#"
+            import {{ Dialog }} from "@nlayer/ui";
+            import {{ mount }} from "@nlayer/runtime";
+            globalThis.dispose = mount(() => {source});
+            "#
+        ))
+        .unwrap();
+        let mut ops = Vec::new();
+        host.take_ops(&mut ops);
+        assert!(
+            !ops.iter().any(|op| matches!(
+                op,
+                Op::Animation(AnimationOp::CreateValue { value, .. }) if *value == 844.0
+            )),
+            "no popup slide for `{source}`"
+        );
+    }
+
+    let host = Host::new().unwrap();
+    host.set_window_height(844.0);
+    host.set_reduce_motion(true);
+    host.eval_source(
+        r#"
+        import { Dialog } from "@nlayer/ui";
+        import { mount } from "@nlayer/runtime";
+        globalThis.dispose = mount(() => Dialog({
+          open: true,
+          animation: "slide",
+          backdropStyle: { opacity: 0.5 },
+          children: "content"
+        }));
+        "#,
+    )
+    .unwrap();
+    let mut ops = Vec::new();
+    host.take_ops(&mut ops);
+    assert!(
+        !ops.iter()
+            .any(|op| matches!(op, Op::Animation(AnimationOp::CreateValue { .. }))),
+        "reduced motion does not slide the popup"
     );
 }
 

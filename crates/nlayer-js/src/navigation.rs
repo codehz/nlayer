@@ -1409,9 +1409,10 @@ unsafe extern "C" fn modal_render(
             return e;
         }
 
-        // Handle animation with reduceMotion check
+        // A backdrop slides its popup and fades the layer. Without one the
+        // platform slides the whole layer, backdrop included.
         let has_backdrop_result = has_backdrop(cx, props);
-        let animation_value = compute_animation(cx, props, has_backdrop_result);
+        let (animation_value, slide) = compute_animation(cx, props, has_backdrop_result);
         if let Err(e) = dom::set_prop_value(cx, node, "animation", animation_value) {
             free(cx, animation_value);
             free(cx, node);
@@ -1494,7 +1495,7 @@ unsafe extern "C" fn modal_render(
             parts.push(backdrop_memo);
         }
 
-        let popup = create_popup(cx, props, insets_signal);
+        let popup = create_popup(cx, props, insets_signal, slide);
         if qjs::JS_IsException(popup) {
             for part in parts {
                 free(cx, part);
@@ -1547,7 +1548,7 @@ fn flag_enabled(cx: *mut JsContext, props: JsValue, name: &CStr) -> bool {
     }
 }
 
-fn compute_animation(cx: *mut JsContext, props: JsValue, has_backdrop: bool) -> JsValue {
+fn compute_animation(cx: *mut JsContext, props: JsValue, has_backdrop: bool) -> (JsValue, bool) {
     unsafe {
         let animation_prop = qjs::JS_GetPropertyStr(cx, props, c"animation".as_ptr());
         let style_prop = qjs::JS_GetPropertyStr(cx, props, c"style".as_ptr());
@@ -1562,6 +1563,8 @@ fn compute_animation(cx: *mut JsContext, props: JsValue, has_backdrop: bool) -> 
         };
         free(cx, style_prop);
 
+        // It slides its popup: a backdrop, slide (the default), no less
+        // motion, and no `translate` of its own (the slide's would replace it).
         let should_slide = has_backdrop
             && (qjs::JS_IsUndefined(animation_prop)
                 || qjs::JS_IsNull(animation_prop)
@@ -1577,14 +1580,19 @@ fn compute_animation(cx: *mut JsContext, props: JsValue, has_backdrop: bool) -> 
         if should_slide {
             let result = new_string(cx, "fade");
             free(cx, animation_prop);
-            result
+            (result, true)
         } else {
-            animation_prop
+            (animation_prop, false)
         }
     }
 }
 
-fn create_popup(cx: *mut JsContext, props: JsValue, insets_signal: JsValue) -> JsValue {
+fn create_popup(
+    cx: *mut JsContext,
+    props: JsValue,
+    insets_signal: JsValue,
+    slide: bool,
+) -> JsValue {
     unsafe {
         let popup = dom::create_element(cx, Tag::View);
         if qjs::JS_IsException(popup) {
@@ -1600,14 +1608,37 @@ fn create_popup(cx: *mut JsContext, props: JsValue, insets_signal: JsValue) -> J
         }
         free(cx, class_reader);
 
-        // Bind style from props.style
-        let style_reader = dom::prop_reader(cx, props, "style");
-        if let Err(e) = dom::bind_prop_with(cx, popup, "style", style_reader) {
+        // A slide moves the popup up from the bottom of the window. The
+        // modal layer fades, so the backdrop stays put.
+        if slide {
+            let offset = create_animated_value(cx, window_height(cx));
+            if qjs::JS_IsException(offset) {
+                free(cx, popup);
+                return offset;
+            }
+            let style_reader = {
+                let mut fdata = [props, offset];
+                native(cx, slid_style, 0, &mut fdata)
+            };
+            let bound = dom::bind_prop_with(cx, popup, "style", style_reader);
             free(cx, style_reader);
-            free(cx, popup);
-            return e;
+            if bound.is_ok() {
+                run_slide(cx, offset);
+            }
+            free(cx, offset);
+            if let Err(e) = bound {
+                free(cx, popup);
+                return e;
+            }
+        } else {
+            let style_reader = dom::prop_reader(cx, props, "style");
+            if let Err(e) = dom::bind_prop_with(cx, popup, "style", style_reader) {
+                free(cx, style_reader);
+                free(cx, popup);
+                return e;
+            }
+            free(cx, style_reader);
         }
-        free(cx, style_reader);
 
         // Wrap children with insets context
         let children = qjs::JS_GetPropertyStr(cx, props, c"children".as_ptr());
@@ -1650,6 +1681,74 @@ fn create_popup(cx: *mut JsContext, props: JsValue, insets_signal: JsValue) -> J
 
         popup
     }
+}
+
+/// The popup's style while it slides: the dialog's `style`, then a
+/// `translate` down by the offset, which runs to 0.
+unsafe extern "C" fn slid_style(
+    cx: *mut JsContext,
+    _this: JsValue,
+    _argc: c_int,
+    _argv: *mut JsValue,
+    _magic: c_int,
+    data: *mut JsValue,
+) -> JsValue {
+    // SAFETY: two data values (the props, the offset), borrowed; new
+    // values owned by the arrays and objects that take them.
+    unsafe {
+        let (props, offset) = (*data, *data.add(1));
+        let mut axes = [qjs::JS_NewFloat64(0.0), qjs::JS_DupValue(cx, offset)];
+        let translate = qjs::JS_NewArrayFrom(cx, 2, axes.as_mut_ptr());
+        let motion = qjs::JS_NewObject(cx);
+        qjs::JS_SetPropertyStr(cx, motion, c"translate".as_ptr(), translate);
+        let mut both = [qjs::JS_GetPropertyStr(cx, props, c"style".as_ptr()), motion];
+        qjs::JS_NewArrayFrom(cx, 2, both.as_mut_ptr())
+    }
+}
+
+/// A new animated value at `value` (owned). The prelude allocates its node.
+fn create_animated_value(cx: *mut JsContext, value: f64) -> JsValue {
+    unsafe {
+        let global = qjs::JS_GetGlobalObject(cx);
+        let animated = qjs::JS_GetPropertyStr(cx, global, c"__nlayerAnimated".as_ptr());
+        free(cx, global);
+        let ctor = qjs::JS_GetPropertyStr(cx, animated, c"createAnimatedValue".as_ptr());
+        free(cx, animated);
+        let mut args = [qjs::JS_NewFloat64(value)];
+        let offset = qjs::JS_Call(cx, ctor, UNDEFINED, 1, args.as_mut_ptr());
+        free(cx, ctor);
+        free(cx, args[0]);
+        offset
+    }
+}
+
+/// Runs `offset` to 0 over 320ms, the dialog slide's curve.
+fn run_slide(cx: *mut JsContext, offset: JsValue) {
+    unsafe {
+        let timing = qjs::JS_GetPropertyStr(cx, offset, c"timing".as_ptr());
+        let options = qjs::JS_NewObject(cx);
+        qjs::JS_SetPropertyStr(cx, options, c"toValue".as_ptr(), qjs::JS_NewFloat64(0.0));
+        qjs::JS_SetPropertyStr(cx, options, c"duration".as_ptr(), qjs::JS_NewFloat64(320.0));
+        let mut points = [0.2, 0.8, 0.2, 1.0].map(qjs::JS_NewFloat64);
+        let easing = qjs::JS_NewArrayFrom(cx, 4, points.as_mut_ptr());
+        qjs::JS_SetPropertyStr(cx, options, c"easing".as_ptr(), easing);
+        let mut args = [options];
+        let result = qjs::JS_Call(cx, timing, offset, 1, args.as_mut_ptr());
+        if qjs::JS_IsException(result) {
+            let error = qjs::JS_GetException(cx);
+            free(cx, error);
+        } else {
+            free(cx, result);
+        }
+        free(cx, timing);
+        free(cx, options);
+    }
+}
+
+/// The surface height in points, at least 1 (a dialog slide's travel).
+fn window_height(cx: *mut JsContext) -> f64 {
+    let height = unsafe { (*crate::state::state(cx)).window_height.get() };
+    f64::from(height).max(1.0)
 }
 
 unsafe extern "C" fn on_request_close(

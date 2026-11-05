@@ -747,6 +747,7 @@ impl<M: TextEngine> Session<M> {
             host.set_os(config.os);
             host.set_color_scheme(config.color_scheme);
             host.set_storage(Store::new(app_storage(&config)));
+            host.set_window_height(config.viewport.height.0);
             host.eval_source(&config.bundle)
                 .map_err(|error| EngineError::new(error.message))?;
             host
@@ -881,7 +882,11 @@ impl<M: TextEngine> Session<M> {
                 self.host
                     .dispatch_event(id, EventKind::Change, &EventPayload::Text(text));
             }
-            Message::Resize(size) => self.core.set_viewport(size),
+            Message::Resize(size) => {
+                self.core.set_viewport(size);
+                #[cfg(feature = "js")]
+                self.host.set_window_height(size.height.0);
+            }
             Message::SafeArea(insets) => self.core.set_safe_area(insets),
             Message::ScrollPosition(id, offset) => self.core.update_scroll_position(id, offset),
             Message::KeyboardInset(height) => self.core.set_keyboard_inset(height),
