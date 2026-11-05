@@ -636,6 +636,8 @@ function DialogDemoPage() {
           animation={dialogAnimation()}
           closeOnBackdropPress={closeOnBackdrop()}
           closeOnEscape={closeOnEscape()}
+          backdropStyle={{ backgroundColor: "#00000066" }}
+          class="flex-1 items-center justify-center"
           onRequestClose={(e) => {
             lastCloseReason.set(e.reason);
           }}
@@ -645,7 +647,7 @@ function DialogDemoPage() {
             }
           }}
         >
-          <View class="min-w-70 rounded-xl bg-white pt-[calc(env(safe-area-inset-top)+24px)] pr-[calc(env(safe-area-inset-right)+24px)] pb-[calc(env(safe-area-inset-bottom)+24px)] pl-[calc(env(safe-area-inset-left)+24px)]">
+          <View class="min-w-70 rounded-xl bg-white p-6">
             <Text class="mb-3 text-lg font-bold">Dialog Title</Text>
             <Text class="mb-4 text-[#64748b]">
               Press back() to close with reason "cancel", or press Close button
