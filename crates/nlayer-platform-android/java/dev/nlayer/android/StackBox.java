@@ -379,12 +379,13 @@ final class StackBox extends FrameLayout {
     /** Reports header height to native. */
     void reportHeader() {
       if (!isAttachedToWindow()) return;
-      float height = 0;
-      if (shown && !transparent) {
-        int safeTopPx = mounter.host.safeTop;
-        int barPx = Math.round(56 * mounter.density);
-        height = (safeTopPx + barPx) / mounter.density;
-      }
+      // A hidden or transparent bar does not push content. Reporting 0 would
+      // replace the last real height, and the next opaque frame would start
+      // at the top until this call reports again.
+      if (!shown || transparent) return;
+      int safeTopPx = mounter.host.safeTop;
+      int barPx = Math.round(56 * mounter.density);
+      float height = (safeTopPx + barPx) / mounter.density;
       if (height == lastHeaderHeight) return;
       long handle = mounter.host.handle();
       if (handle == 0) return;

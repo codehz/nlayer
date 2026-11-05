@@ -300,9 +300,14 @@ struct RootState {
     /// The platform has reported [`Self::insets`] (a screen's `onInsets`,
     /// or a modal's size report).
     insets_set: bool,
+    /// `headerTransparent` at that report. A toggle lays out before the
+    /// platform reports the new cover, and the old top inset must not be
+    /// used for the new one.
+    insets_transparent: bool,
     /// Height of the header the platform measured above the content
     /// (screens; until then, estimated from the bar's height and the safe
-    /// area).
+    /// area). `Some(0)` is not a measurement: a transparent or hidden bar
+    /// reports no height.
     header: Option<f32>,
     /// The size and header height the root was last laid out with.
     laid_out: Option<(Size<Points>, f32)>,
@@ -755,7 +760,9 @@ impl<M: TextEngine> Core<M> {
             let Some(root) = self.nodes[key as usize].root.as_mut() else {
                 return;
             };
-            let insets_changed = !root.insets_set || root.insets != insets;
+            let transparent = root.screen.header_transparent;
+            let insets_changed =
+                !root.insets_set || root.insets != insets || root.insets_transparent != transparent;
             let size_changed = root.reported != Some(size);
             if !insets_changed && !size_changed {
                 return;
@@ -763,6 +770,7 @@ impl<M: TextEngine> Core<M> {
             root.reported = Some(size);
             root.insets = insets;
             root.insets_set = true;
+            root.insets_transparent = transparent;
             insets_changed
         };
         self.needs_layout = true;
@@ -782,11 +790,13 @@ impl<M: TextEngine> Core<M> {
             let Some(root) = self.nodes[key as usize].root.as_mut() else {
                 return;
             };
-            if root.insets_set && root.insets == insets {
+            let transparent = root.screen.header_transparent;
+            if root.insets_set && root.insets == insets && root.insets_transparent == transparent {
                 return;
             }
             root.insets = insets;
             root.insets_set = true;
+            root.insets_transparent = transparent;
             true
         };
         if changed {
@@ -4099,6 +4109,14 @@ impl<M: TextEngine> Core<M> {
             k = n.parent;
         }
     }
+    /// Where an opaque native header puts the content. A positive
+    /// measurement wins; `Some(0)` is a transparent or hidden bar saying it
+    /// does not know, not a bar of height zero.
+    fn covering_header(&self, parent: Key, root: &RootState) -> f32 {
+        root.header
+            .filter(|h| *h > 0.0)
+            .unwrap_or_else(|| self.header_heights.0.0 + self.top_overlap(parent))
+    }
 
     /// The platform draws a header of its own above screens (iOS, Android);
     /// without one ([`NO_NATIVE_HEADER`]) a screen's `header` slot is placed
@@ -4164,7 +4182,7 @@ impl<M: TextEngine> Core<M> {
                     return;
                 };
                 let c = &root.screen;
-                let measured = root.header.filter(|_| !c.header_transparent);
+                let measured = root.header.filter(|h| *h > 0.0 && !c.header_transparent);
                 let header = if !native_header {
                     drawn_header
                 } else if !c.header_visible {
@@ -4939,6 +4957,22 @@ impl<M: TextEngine> Core<M> {
                     let mut insets = root.insets;
                     if drawn_header {
                         insets.top = safe.top;
+                        return insets;
+                    }
+                    // The report still describes the other cover. Use the
+                    // bar this commit is leaving or entering, so content
+                    // that pads by `env(safe-area-inset-top)` does not jump
+                    // while the platform's next report is in flight.
+                    if node.kind == Kind::Screen
+                        && self.native_header()
+                        && root.screen.header_visible
+                        && root.screen.header_transparent != root.insets_transparent
+                    {
+                        insets.top = if root.screen.header_transparent {
+                            Points(self.covering_header(node.parent, root))
+                        } else {
+                            Points::ZERO
+                        };
                     }
                     return insets;
                 }
@@ -8825,6 +8859,129 @@ mod tests {
 
         let child_frame = c.nodes.iter().find(|(_, n)| n.id == 4).unwrap().1.frame;
         assert_eq!(child_frame.origin.y.0, 0.0);
+    }
+    #[test]
+    fn transparent_toggle_keeps_inset_padded_content_put() {
+        let mut c = Core::new(FakeEngine, size_pt(400.0, 800.0));
+        c.set_header_heights(Points(56.0), Points(56.0));
+        c.set_safe_area(Edges {
+            top: px(24.0),
+            ..Edges::default()
+        });
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Stack,
+        })
+        .unwrap();
+        apply_style(&mut c, 2, sized(400.0, 800.0));
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 3,
+            tag: Tag::Screen,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Create {
+            id: 4,
+            tag: Tag::View,
+        })
+        .unwrap();
+        let mut pad = Style::default();
+        pad.set(
+            "paddingTop",
+            StyleValue::Str("calc(env(safe-area-inset-top) + 16px)"),
+        )
+        .unwrap();
+        apply_style(&mut c, 4, pad);
+        c.apply(Op::Create {
+            id: 5,
+            tag: Tag::View,
+        })
+        .unwrap();
+        apply_style(&mut c, 5, sized(10.0, 10.0));
+        c.apply(Op::Insert {
+            parent: 4,
+            child: 5,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 3,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+        // Opaque: the bar covers the top, and the platform measured it.
+        c.set_screen_header(3, Some(Points(80.0)));
+        c.set_root_insets(
+            3,
+            Edges {
+                top: px(0.0),
+                ..Edges::default()
+            },
+        );
+        c.commit();
+        let place = |c: &Core<FakeEngine>| {
+            let y = |id: NodeId| {
+                c.nodes
+                    .iter()
+                    .find(|(_, n)| n.id == id)
+                    .unwrap()
+                    .1
+                    .frame
+                    .origin
+                    .y
+                    .0
+            };
+            y(4) + y(5)
+        };
+        assert_eq!(place(&c), 96.0, "opaque: the bar plus 16pt of padding");
+
+        c.apply(Op::SetProp {
+            id: 3,
+            prop: Prop::Screen(crate::ops::ScreenProp::HeaderTransparent(true)),
+        })
+        .unwrap();
+        c.commit();
+        assert_eq!(
+            place(&c),
+            96.0,
+            "the inset takes the bar's place before the platform reports"
+        );
+
+        // A transparent bar used to report height 0, which wiped the measurement.
+        c.set_screen_header(3, Some(Points(0.0)));
+        c.set_root_insets(
+            3,
+            Edges {
+                top: px(80.0),
+                ..Edges::default()
+            },
+        );
+        c.commit();
+        assert_eq!(place(&c), 96.0);
+
+        c.apply(Op::SetProp {
+            id: 3,
+            prop: Prop::Screen(crate::ops::ScreenProp::HeaderTransparent(false)),
+        })
+        .unwrap();
+        c.commit();
+        assert_eq!(
+            place(&c),
+            96.0,
+            "a zero measurement must not drop the content"
+        );
     }
 
     #[test]
