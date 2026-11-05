@@ -438,6 +438,9 @@ struct Node {
     tracked: u16,
     /// Styled with the margin its parent's `space-*` gives it.
     spaced: bool,
+    /// Minimum height written so a rounded text box holds its wrapped line,
+    /// and the `min-height` it replaced. Cleared when the line fits again.
+    line_floor: Option<(f32, taffy::LengthPercentageAuto)>,
 }
 impl Node {
     fn new(id: NodeId, kind: Kind) -> Self {
@@ -499,6 +502,7 @@ impl Node {
             states: 0,
             tracked: 0,
             spaced: false,
+            line_floor: None,
         }
     }
 }
@@ -1409,23 +1413,130 @@ impl<M: TextEngine> Core<M> {
     /// Lays the changed trees out and emits their frames.
     fn layout_round(&mut self) {
         if mem::take(&mut self.needs_layout) {
-            let relaid = self.relayout_boundaries();
-            if self.layout_main() {
-                let root = self.root;
-                let children = mem::take(&mut self.nodes[root as usize].children);
-                for &child in &children {
-                    if !self.nodes[child as usize].kind.is_layout_root() {
-                        self.emit_frames(child);
-                    }
-                }
-                self.nodes[root as usize].children = children;
-            }
-            self.layout_roots();
-            for key in relaid {
-                self.emit_frames(key);
+            self.layout_once();
+            // Rounding can make a text's box narrower than the width it was
+            // measured at. One more pass gives that line a row, then stops.
+            if self.grow_clipped_text() {
+                self.layout_once();
             }
         }
         self.layout_cells();
+    }
+
+    /// Lays out what is dirty and emits the frames that moved.
+    fn layout_once(&mut self) {
+        let relaid = self.relayout_boundaries();
+        if self.layout_main() {
+            let root = self.root;
+            let children = mem::take(&mut self.nodes[root as usize].children);
+            for &child in &children {
+                if !self.nodes[child as usize].kind.is_layout_root() {
+                    self.emit_frames(child);
+                }
+            }
+            self.nodes[root as usize].children = children;
+        }
+        self.layout_roots();
+        for key in relaid {
+            self.emit_frames(key);
+        }
+    }
+
+    /// Texts whose drawn box is narrower than the width they were measured
+    /// at, and whose line at that box is taller than the frame. Gives each
+    /// a minimum height and marks it dirty. A fixed height is left alone.
+    fn grow_clipped_text(&mut self) -> bool {
+        let texts: Vec<Key> = self
+            .nodes
+            .iter()
+            .filter_map(|(index, node)| {
+                (node.kind == Kind::Text && node.created && node.layout.is_some())
+                    .then_some(index as Key)
+            })
+            .collect();
+        let mut grew = false;
+        for key in texts {
+            if self.displays_none(key) {
+                continue;
+            }
+            let Some(layout_id) = self.nodes[key as usize].layout else {
+                continue;
+            };
+            let content = content_box(&self.rounded_layout(layout_id));
+            let measured = {
+                let Some(LeafContext::Text(cx)) = self.layout.get_node_context_mut(layout_id)
+                else {
+                    continue;
+                };
+                cx.cache
+            };
+            let Some((measured_at, measured_size)) = measured else {
+                continue;
+            };
+            // Flex measures the line once at the border box (one line) and
+            // again at the content box (wrapped). The used height stays the
+            // first, and the cache only keeps the second width, so a matching
+            // width is not proof the frame holds the line.
+            let width_matches =
+                measured_at.is_some_and(|width| content.size.width.0 + 0.05 >= width);
+            if width_matches
+                && measured_size.height.0 <= content.size.height.0 + 0.5
+                && self.nodes[key as usize].line_floor.is_none()
+            {
+                continue;
+            }
+            if !self.layout.style(layout_id).size.height.is_auto() {
+                continue;
+            }
+            let height = if width_matches {
+                measured_size.height
+            } else {
+                let engine = &self.text_engine;
+                let cache = &mut self.measure_cache;
+                let Some(LeafContext::Text(cx)) = self.layout.get_node_context_mut(layout_id)
+                else {
+                    continue;
+                };
+                measure_text(engine, cache, cx, Some(content.size.width.0)).height
+            };
+            let unrounded = *self.layout.unrounded_layout(layout_id);
+            let pad = unrounded.padding.top
+                + unrounded.padding.bottom
+                + unrounded.border.top
+                + unrounded.border.bottom;
+            let needed = height.0 + pad;
+            let floor = self.nodes[key as usize].line_floor;
+            let mut style = self.layout.style(layout_id).clone();
+            let (applied, restored) = match floor {
+                Some((applied, previous))
+                    if style.min_size.height.expand()
+                        == taffy::LengthPercentageAuto::length(applied).expand() =>
+                {
+                    (Some(applied), previous)
+                }
+                _ => (None, style.min_size.height),
+            };
+            if needed > unrounded.size.height + 0.5 {
+                let min = match restored.expand() {
+                    taffy::ExpandedLengthPercentageAuto::Length(len) => len.max(needed),
+                    _ => needed,
+                };
+                style.min_size.height = taffy::LengthPercentageAuto::length(min);
+                self.layout.set_style(layout_id, style);
+                self.layout.mark_dirty(layout_id);
+                self.nodes[key as usize].line_floor = Some((min, restored));
+                grew = true;
+            } else if applied.is_some_and(|applied| needed + 0.5 < applied) {
+                style.min_size.height = restored;
+                self.layout.set_style(layout_id, style);
+                self.layout.mark_dirty(layout_id);
+                self.nodes[key as usize].line_floor = None;
+                grew = true;
+            } else if floor.is_some() && applied.is_none() {
+                self.nodes[key as usize].line_floor = None;
+            }
+        }
+        grew
     }
 
     fn key(&self, id: NodeId) -> Result<Key, ApplyError> {
@@ -6014,6 +6125,76 @@ mod tests {
         let batch = c.commit().unwrap();
         assert_eq!(mounted_text(&batch, 2).text, "abc");
         assert_eq!(batch.items.len(), 1);
+    }
+
+    /// One line at the width taffy offers, two once that box rounds down.
+    struct EdgeEngine;
+
+    impl TextEngine for EdgeEngine {
+        type Prepared = bool;
+
+        fn prepare(&self, text: &AttributedText) -> bool {
+            text.text.chars().count() > 10
+        }
+
+        fn measure(&self, long: &bool, max_width: Option<Points>) -> Size<Points> {
+            let natural = if *long { 104.3 } else { 16.0 };
+            match max_width.map(|m| m.0) {
+                Some(max) if natural > max && max > 0.0 => size_pt(max, 32.0),
+                _ => size_pt(natural, 16.0),
+            }
+        }
+
+        fn layout(&self, _: &bool, _: Size<Points>) -> TextLayout {
+            TextLayout(Arc::new(()))
+        }
+    }
+
+    #[test]
+    fn text_near_the_box_edge_keeps_a_line_for_the_wrap() {
+        // 104.3 of text in a 104.4 box. Rounding takes the box to 104, and
+        // the line that fit the offered width needs a second row. Shorter
+        // text gives that row back.
+        let mut c = Core::new(EdgeEngine, size(px(104.4), px(80.0)));
+        c.apply(Op::Create {
+            id: 2,
+            tag: Tag::Text,
+        })
+        .unwrap();
+        c.apply(Op::CreateText {
+            id: 3,
+            text: "xxxxxxxxxxxxx".into(),
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        assert!(
+            frame(&batch, 2).size.height.0 >= 32.0,
+            "the second line needs a row, have {}",
+            frame(&batch, 2).size.height.0
+        );
+        c.apply(Op::SetText {
+            id: 3,
+            text: "hi".into(),
+        })
+        .unwrap();
+        let batch = c.commit().unwrap();
+        assert!(
+            frame(&batch, 2).size.height.0 < 24.0,
+            "a short line drops the extra row, have {}",
+            frame(&batch, 2).size.height.0
+        );
     }
 
     #[test]

@@ -975,3 +975,20 @@ test("effects paint shadows and gradients without moving layout", () => {
   expect(warnings.includes("unsupported classes: ring-")).toBe(false);
   expect(warnings.includes("unsupported classes: bg-linear")).toBe(false);
 });
+
+test("a long nav link keeps its wrapped second line", () => {
+  // The emulator is 1080px at 420dpi (2.625), 411dp wide. Header Demo is the
+  // line that sits on that edge: iOS wraps it, Android used to keep a
+  // one-line frame and clip the second line.
+  const app = open("./App.tsx", {
+    width: 411,
+    height: 900,
+    safeArea: { top: 24, right: 0, bottom: 0, left: 0 },
+  });
+  reveal(app, (node) => node.testID === "open-header");
+  const header = must(flat(app.tree(), []).find((node) => node.testID === "open-header"));
+  const dialog = must(flat(app.tree(), []).find((node) => node.testID === "open-dialog"));
+  expect(header.text).toBe("→ Header Demo (title, headerStyle, headerTransparent)");
+  expect(dialog.text).toBe("→ Dialog Demo");
+  expect(header.frame.height > dialog.frame.height + 8).toBe(true);
+});
