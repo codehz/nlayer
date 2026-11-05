@@ -33,11 +33,12 @@ function PageHeader(props: {
   tint?: string;
   transparent?: boolean;
 }) {
-  const tint = props.transparent ? "#fff" : (props.tint ?? "#3b82f6");
-  const color = props.transparent ? "#fff" : (props.color ?? "#0f172a");
-  const hairline = !props.transparent && props.background == null;
   const leading = props.slots ? (
-    <Text onPress={() => nav.pop()} class="font-semibold" style={{ color: tint }}>
+    <Text
+      onPress={() => nav.pop()}
+      class="font-semibold"
+      style={{ color: props.transparent ? "#fff" : (props.tint ?? "#3b82f6") }}
+    >
       Back
     </Text>
   ) : props.root ? null : (
@@ -45,13 +46,16 @@ function PageHeader(props: {
       testID="drawn-header-back"
       onPress={() => nav.pop()}
       class="font-semibold"
-      style={{ color: tint }}
+      style={{ color: props.transparent ? "#fff" : (props.tint ?? "#3b82f6") }}
     >
       ← Back
     </Text>
   );
   const trailing = props.slots ? (
-    <Text class="font-semibold" style={{ color: tint }}>
+    <Text
+      class="font-semibold"
+      style={{ color: props.transparent ? "#fff" : (props.tint ?? "#3b82f6") }}
+    >
       Right
     </Text>
   ) : null;
@@ -66,19 +70,18 @@ function PageHeader(props: {
       <View
         class="h-11 flex-row items-center gap-2 px-3"
         style={{
-          borderBottomWidth: hairline ? 1 : 0,
+          borderBottomWidth: !props.transparent && props.background == null ? 1 : 0,
           borderBottomColor: "#e2e8f0",
         }}
       >
-        {props.slots ? (
-          <View class="w-20 flex-row items-center px-3">{leading}</View>
-        ) : (
-          leading
-        )}
+        {props.slots ? <View class="w-20 flex-row items-center px-3">{leading}</View> : leading}
         <Text
           class="min-w-0 flex-1 text-[15px] font-semibold"
           classList={{ "text-center": props.slots }}
-          style={{ numberOfLines: 1, color }}
+          style={{
+            numberOfLines: 1,
+            color: props.transparent ? "#fff" : (props.color ?? "#0f172a"),
+          }}
         >
           {props.title}
         </Text>
@@ -129,23 +132,27 @@ function App() {
     <NavStack state={nav} class="flex-1">
       {(route, index) => {
         const screen = page(route);
-        const transparent = route.name === "header" && headerTransparent();
+        // Read in the JSX prop, not a const: the stack renders a route once,
+        // and only a getter keeps `headerTransparent` live after that.
+        const headerDemo = route.name === "header";
         const header = (
           <PageHeader
             title={screen.title ?? ""}
             root={index() === 0}
-            slots={route.name === "header"}
-            background={transparent ? undefined : screen.headerStyle?.backgroundColor}
+            slots={headerDemo}
+            background={
+              headerDemo && headerTransparent() ? undefined : screen.headerStyle?.backgroundColor
+            }
             color={screen.headerStyle?.color}
             tint={screen.headerStyle?.tintColor}
-            transparent={transparent}
+            transparent={headerDemo && headerTransparent()}
           />
         );
         return (
           <NavPage
             title={screen.title}
             headerStyle={screen.headerStyle}
-            headerTransparent={transparent}
+            headerTransparent={headerDemo && headerTransparent()}
             header={header}
             headerLeft={screen.headerLeft}
             headerRight={screen.headerRight}

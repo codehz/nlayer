@@ -666,6 +666,82 @@ test("header demo shows title and header props", () => {
   app.waitFor("page"); // Wait for home page scroll view
 });
 
+function place(app: App, pred: (node: Node) => boolean, what: string): number {
+  const hit = locate(app.tree(), pred, 0, 0);
+  if (!hit) throw new Error(what);
+  return hit.y;
+}
+
+/** Content top of the header demo, and the "Header Demo" title under it. */
+function headerPlace(app: App): { content: number; title: number } {
+  return {
+    content: place(app, (node) => node.testID === "header-demo", "header-demo"),
+    title: place(app, (node) => node.text === "Header Demo", "Header Demo"),
+  };
+}
+
+test("header transparent toggle does not stack or drop the top inset", () => {
+  const app = open("./App.tsx", {
+    width: 390,
+    height: 844,
+    safeArea: { top: 47, right: 0, bottom: 34, left: 0 },
+  });
+  const openHeader = () => {
+    reveal(app, (node) => node.testID === "open-header");
+    app.press("open-header");
+    app.waitFor("header-demo");
+  };
+  openHeader();
+
+  const opaque = headerPlace(app);
+  app.press("toggle-transparent");
+  const toggled = headerPlace(app);
+  app.back();
+  app.waitFor("page");
+  openHeader();
+  const reopened = headerPlace(app);
+  app.press("toggle-transparent");
+  const restored = headerPlace(app);
+
+  const problems: string[] = [];
+  // Opaque: content below the bar, title 16pt under it (p-4).
+  if (!(opaque.content > 40))
+    problems.push(`opaque content ${opaque.content} is not below the bar`);
+  if (Math.abs(opaque.title - (opaque.content + 16)) > 1) {
+    problems.push(`opaque title ${opaque.title} is not 16pt below ${opaque.content}`);
+  }
+  // First toggle: content moves up to the page top. pt-30, not another inset.
+  if (!(toggled.content < opaque.content - 20)) {
+    problems.push(`toggled content ${toggled.content} did not move up from ${opaque.content}`);
+  }
+  if (Math.abs(toggled.title - (toggled.content + 120)) > 1) {
+    problems.push(`toggled title ${toggled.title} is not 120pt below ${toggled.content}`);
+  }
+  // Pop and push keeps the flag. The new screen matches the toggled one.
+  if (
+    Math.abs(reopened.content - toggled.content) > 1 ||
+    Math.abs(reopened.title - toggled.title) > 1
+  ) {
+    problems.push(
+      `reopened ${reopened.content}/${reopened.title} != toggled ${toggled.content}/${toggled.title}`,
+    );
+  }
+  // Toggling off restores the first opaque place, instead of leaving content under the bar.
+  if (
+    Math.abs(restored.content - opaque.content) > 1 ||
+    Math.abs(restored.title - opaque.title) > 1
+  ) {
+    problems.push(
+      `restored ${restored.content}/${restored.title} != opaque ${opaque.content}/${opaque.title}`,
+    );
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `opaque ${opaque.content}/${opaque.title}; toggled ${toggled.content}/${toggled.title}; reopened ${reopened.content}/${reopened.title}; restored ${restored.content}/${restored.title}; ${problems.join("; ")}`,
+    );
+  }
+});
+
 test("reading screen shows its selectable texts", () => {
   const app = open("./App.tsx");
   reveal(app, (n) => n.testID === "open-reading");
