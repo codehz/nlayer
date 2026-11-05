@@ -4,6 +4,9 @@
 node_modules/
 dist/
 
+# an app's storage, written beside the app when a fixture runs in place
+crates/nlayer-cli/tests/fixtures/*/data/
+
 # npm packages: the binary and the web runtime are built in CI
 npm/cli/nlayer.wasm
 npm/cli-*/bin/
