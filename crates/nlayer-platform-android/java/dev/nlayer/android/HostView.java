@@ -5,6 +5,7 @@ import android.graphics.Color;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Message;
 import android.util.AttributeSet;
 import android.view.Choreographer;
 import android.view.Gravity;
@@ -78,12 +79,22 @@ public final class HostView extends FrameLayout {
   private final Choreographer.FrameCallback animationFrame =
       new Choreographer.FrameCallback() {
         public void doFrame(long frameTimeNanos) {
-          framePosted = false;
-          inFrame = true;
-          byte[] bytes = Native.tick(handle, frameTimeNanos);
-          if (bytes != null && bytes.length > 0) mounter.apply(bytes, NO_OBJECTS);
-          inFrame = false;
-          animationChanged();
+          main.removeCallbacks(animationTick);
+          tickAnimation(frameTimeNanos);
+        }
+      };
+
+  /**
+   * A traversal posts a sync barrier and then waits for vsync. An emulator often never sends that
+   * vsync while the looper is idle, which leaves both the barrier and a normal delayed message
+   * stuck. An asynchronous message still runs.
+   */
+  private final Runnable animationTick =
+      new Runnable() {
+        public void run() {
+          if (!framePosted || inFrame || handle == 0) return;
+          Choreographer.getInstance().removeFrameCallback(animationFrame);
+          tickAnimation(System.nanoTime());
         }
       };
 
@@ -103,6 +114,18 @@ public final class HostView extends FrameLayout {
     if (!Native.animating(handle)) return;
     framePosted = true;
     Choreographer.getInstance().postFrameCallback(animationFrame);
+    Message message = Message.obtain(main, animationTick);
+    if (Build.VERSION.SDK_INT >= 22) message.setAsynchronous(true);
+    main.sendMessageDelayed(message, 32);
+  }
+
+  private void tickAnimation(long nanos) {
+    framePosted = false;
+    inFrame = true;
+    byte[] bytes = Native.tick(handle, nanos);
+    if (bytes != null && bytes.length > 0) mounter.apply(bytes, NO_OBJECTS);
+    inFrame = false;
+    animationChanged();
   }
 
   /**
@@ -506,17 +529,26 @@ public final class HostView extends FrameLayout {
     T run();
   }
 
+  /**
+   * Runs on the UI thread. A traversal posts a sync barrier and then waits for vsync, and an
+   * emulator often never sends that vsync, which leaves a normal post stuck. An asynchronous
+   * message still runs, so a test can read the tree while a frame is pending.
+   */
   private <T> T onMain(final Main<T> work) {
     if (Looper.myLooper() == Looper.getMainLooper()) return work.run();
     final Object[] box = new Object[1];
     final CountDownLatch latch = new CountDownLatch(1);
-    main.post(
-        new Runnable() {
-          public void run() {
-            box[0] = work.run();
-            latch.countDown();
-          }
-        });
+    Message message =
+        Message.obtain(
+            main,
+            new Runnable() {
+              public void run() {
+                box[0] = work.run();
+                latch.countDown();
+              }
+            });
+    if (Build.VERSION.SDK_INT >= 22) message.setAsynchronous(true);
+    main.sendMessage(message);
     try {
       latch.await(5, TimeUnit.SECONDS);
     } catch (InterruptedException e) {

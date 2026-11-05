@@ -7,7 +7,6 @@
 
 use std::{
     sync::Arc,
-    thread,
     time::{Duration, Instant},
 };
 
@@ -271,7 +270,12 @@ impl HostedApp for AndroidApp {
 
     fn wait_for(&mut self, selector: &str) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_secs(5);
+        // A draw can hold the UI thread for this whole budget. The clock is
+        // real time, so the promise has settled by the time the thread is
+        // free. Take one more look before failing.
+        let mut trailed = false;
         loop {
+            self.advance(50.0)?;
             let value = self.call("query", selector, "", 0.0)?;
             match value.get("state").and_then(Value::as_str) {
                 Some("ready") => return Ok(()),
@@ -285,10 +289,13 @@ impl HostedApp for AndroidApp {
                 }
                 _ => return Err(format!("the device returned {value}")),
             }
-            if Instant::now() >= deadline {
+            if Instant::now() < deadline {
+                continue;
+            }
+            if trailed {
                 return Err(format!("`{selector}` matches nothing"));
             }
-            thread::sleep(Duration::from_millis(30));
+            trailed = true;
         }
     }
 
