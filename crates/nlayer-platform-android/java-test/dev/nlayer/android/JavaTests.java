@@ -1426,6 +1426,13 @@ public final class JavaTests extends Instrumentation {
       check(content.getParent() == modal.root, "content parent is the modal root");
       check(modal.root.getParent() != null, "modal root is attached to its window");
 
+      // The modal's content fills the dialog window from its top, so the
+      // app's backdrop covers the status bar as it does on iOS.
+      ViewGroup frame = (ViewGroup) modal.root.getParent();
+      ViewGroup window = (ViewGroup) frame.getParent();
+      equal(0, frame.getTop(), "modal content starts at the window's top");
+      equal(window.getHeight(), frame.getHeight(), "modal content fills the window");
+
       // Now remove the modal
       Batch b2 = batch();
       b2.word(2).word(modalId); // REMOVE modal

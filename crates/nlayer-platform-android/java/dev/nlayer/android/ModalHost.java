@@ -19,8 +19,9 @@ import android.widget.FrameLayout;
 
 /**
  * A modal dialog: content presented in its own window over the app. The core lays the content out
- * at the size this window reports. The content starts below the status bar; the top inset the core
- * sees is what remains after that (a cutout taller than the status bar).
+ * at the size this window reports. The window is edge to edge, as on iOS: the content covers the
+ * status bar too, so the app's backdrop does, and the top inset the core sees is the status bar
+ * (plus a taller cutout) for `env()` to pad by.
  */
 final class ModalHost {
   final Mounter mounter;
@@ -224,12 +225,12 @@ final class ModalHost {
     this.closeOnSwipe = closeOnSwipe;
   }
 
-  /** Edge-to-edge container. Content is laid out below the status bar. */
+  /** Edge-to-edge container. The content fills the window, under the status bar. */
   @SuppressLint("ViewConstructor")
   private final class Container extends FrameLayout {
     private int[] reported = {0, 0, 0, 0, 0, 0};
 
-    /** Holds {@code root}. Its top is the status bar, so core y=0 is already clear of it. */
+    /** Holds {@code root} across the whole window; core y=0 is the window's top. */
     final FrameLayout content;
 
     Container(Context context) {
@@ -249,25 +250,14 @@ final class ModalHost {
     protected void onMeasure(int widthSpec, int heightSpec) {
       int w = MeasureSpec.getSize(widthSpec), h = MeasureSpec.getSize(heightSpec);
       setMeasuredDimension(w, h);
-      int ch = Math.max(0, h - statusBar());
       content.measure(
           MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY),
-          MeasureSpec.makeMeasureSpec(ch, MeasureSpec.EXACTLY));
-    }
-
-    /** The status bar's height: content starts below it. */
-    @SuppressWarnings("deprecation") // getSystemWindowInsetTop is the API 28–29 branch.
-    private int statusBar() {
-      WindowInsets insets = getRootWindowInsets();
-      if (insets == null) return 0;
-      if (Build.VERSION.SDK_INT >= 30) return insets.getInsets(WindowInsets.Type.statusBars()).top;
-      return insets.getSystemWindowInsetTop();
+          MeasureSpec.makeMeasureSpec(h, MeasureSpec.EXACTLY));
     }
 
     @Override
     protected void onLayout(boolean changed, int l, int t, int r, int b) {
-      int below = statusBar();
-      content.layout(0, below, r - l, b - t);
+      content.layout(0, 0, r - l, b - t);
       report();
     }
 
@@ -315,9 +305,7 @@ final class ModalHost {
           left = insets.getSystemWindowInsetLeft();
         }
       }
-      int below = statusBar();
-      top = Math.max(0, top - below);
-      int[] now = {getWidth(), Math.max(0, getHeight() - below), top, right, bottom, left};
+      int[] now = {getWidth(), getHeight(), top, right, bottom, left};
       if (now[0] == 0 || now[1] == 0 || java.util.Arrays.equals(now, reported)) return;
       reported = now;
       float d = mounter.density;

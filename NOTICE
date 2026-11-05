@@ -347,7 +347,9 @@ Copied files:
 - `crates/nlayer-platform-android/java/dev/nlayer/android/ModalHost.java` from
   `crates/nsh-platform-android/java/com/longbridge/nsh/ModalHost.java` (dialog
   window, edge-to-edge insets, slide/fade presentation, back handling; v3 keeps
-  the engine-owned back/close path and drops status-bar/touch-tracker plumbing)
+  the engine-owned back/close path and drops status-bar/touch-tracker plumbing;
+  the content covers the whole window also under the status bar, as on iOS,
+  whereas nsh starts it below the bar unless `statusBarTranslucent`)
 - Gesture event kinds (PanStart/PanEnd/PinchStart/PinchEnd/RotationStart/RotationEnd)
   and prop variants (Pan/Pinch/Rotation) from
   `crates/nsh-core/src/ops.rs` (PanValues line 1940-1945, PinchValue line 2188-2189,
