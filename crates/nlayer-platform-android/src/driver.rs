@@ -13,16 +13,14 @@ use std::sync::{Mutex, atomic::Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use jni::JValue;
-use jni::objects::JString;
-use jni::sys::{jboolean, jint};
+use jni::sys::jint;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use nlayer_engine::protocol::{Step, StepOp, StepResult};
 
 use crate::host::Host;
-use crate::java::{java, with_env};
+use crate::java::with_env;
 use crate::scene;
 use crate::snapshot::scene_of;
 
@@ -162,14 +160,7 @@ fn hover(host: &Host, selector: String) -> Result<Value, String> {
     let scene = scene_of(&snapshot(host)?)?;
     let (x, y) = scene.point_for(&selector)?;
     let _ = with_env(|env| {
-        unsafe {
-            env.call_method_unchecked(
-                host.view.as_obj(),
-                java().view_hover,
-                jni::signature::ReturnType::Primitive(jni::signature::Primitive::Void),
-                &[JValue::Float(x).as_jni(), JValue::Float(y).as_jni()],
-            )?;
-        }
+        host.view.hover(env, x, y)?;
         Ok(())
     });
     thread::sleep(SETTLE);
@@ -290,14 +281,7 @@ fn drop_touch(host: &Host) -> Result<Value, String> {
 fn back(host: &Host) -> Result<Value, String> {
     let before = host.commits.load(Ordering::SeqCst);
     let _ = with_env(|env| {
-        unsafe {
-            env.call_method_unchecked(
-                host.view.as_obj(),
-                java().view_back,
-                jni::signature::ReturnType::Primitive(jni::signature::Primitive::Boolean),
-                &[],
-            )?;
-        }
+        host.view.back(env)?;
         Ok(())
     });
     settle(host, before);
@@ -306,14 +290,7 @@ fn back(host: &Host) -> Result<Value, String> {
 
 fn move_to(host: &Host, x: f32, y: f32) {
     let _ = with_env(|env| {
-        unsafe {
-            env.call_method_unchecked(
-                host.view.as_obj(),
-                java().view_move,
-                jni::signature::ReturnType::Primitive(jni::signature::Primitive::Void),
-                &[JValue::Float(x).as_jni(), JValue::Float(y).as_jni()],
-            )?;
-        }
+        host.view.move_view(env, x, y)?;
         Ok(())
     });
 }
@@ -341,19 +318,10 @@ fn settle(host: &Host, before: u64) {
 
 pub(crate) fn snapshot(host: &Host) -> Result<String, String> {
     let text = with_env(|env| {
-        let value = unsafe {
-            env.call_method_unchecked(
-                host.view.as_obj(),
-                java().view_snapshot,
-                jni::signature::ReturnType::Object,
-                &[],
-            )?
-        };
-        let object = value.l()?;
-        if object.is_null() {
+        let string = host.view.snapshot(env)?;
+        if string.is_null() {
             return Ok(String::new());
         }
-        let string = unsafe { JString::from_raw(env, object.as_raw()) };
         string.try_to_string(env)
     });
     if text.is_empty() {
@@ -365,18 +333,7 @@ pub(crate) fn snapshot(host: &Host) -> Result<String, String> {
 
 fn tap(host: &Host, x: f32, y: f32, up: bool) {
     let _ = with_env(|env| {
-        unsafe {
-            env.call_method_unchecked(
-                host.view.as_obj(),
-                java().view_tap,
-                jni::signature::ReturnType::Primitive(jni::signature::Primitive::Void),
-                &[
-                    JValue::Float(x).as_jni(),
-                    JValue::Float(y).as_jni(),
-                    JValue::Bool(jboolean::from(up)).as_jni(),
-                ],
-            )?;
-        }
+        host.view.tap(env, x, y, up)?;
         Ok(())
     });
 }
@@ -384,32 +341,14 @@ fn tap(host: &Host, x: f32, y: f32, up: bool) {
 fn type_char(host: &Host, id: jint, text: &str) {
     let _ = with_env(|env| {
         let text = env.new_string(text)?;
-        unsafe {
-            env.call_method_unchecked(
-                host.view.as_obj(),
-                java().view_type_char,
-                jni::signature::ReturnType::Primitive(jni::signature::Primitive::Void),
-                &[JValue::Int(id).as_jni(), JValue::Object(&text).as_jni()],
-            )?;
-        }
+        host.view.type_char(env, id, &text)?;
         Ok(())
     });
 }
 
 fn scroll_to(host: &Host, id: jint, x: f32, y: f32) {
     let _ = with_env(|env| {
-        unsafe {
-            env.call_method_unchecked(
-                host.view.as_obj(),
-                java().view_scroll_to,
-                jni::signature::ReturnType::Primitive(jni::signature::Primitive::Void),
-                &[
-                    JValue::Int(id).as_jni(),
-                    JValue::Float(x).as_jni(),
-                    JValue::Float(y).as_jni(),
-                ],
-            )?;
-        }
+        host.view.scroll_to(env, id, x, y)?;
         Ok(())
     });
 }

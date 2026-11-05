@@ -79,7 +79,7 @@ impl SelectionTexts for Texts<'_, '_> {
             .call_method(
                 self.this,
                 jni_str!("offsetAt"),
-                jni_sig!("(IFF)I"),
+                jni_sig!((index: jint, x: jfloat, y: jfloat) -> jint),
                 &[
                     JValue::Int(i as jint),
                     JValue::Float(p.x.0),

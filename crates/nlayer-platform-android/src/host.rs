@@ -11,7 +11,7 @@ use std::sync::{
 };
 
 use jni::{
-    EnvUnowned, JValue,
+    EnvUnowned,
     errors::LogErrorAndDefault,
     objects::{JByteArray, JClass, JFloatArray, JObject, JObjectArray, JString},
     refs::Global,
@@ -22,11 +22,11 @@ use nlayer_core::{EventKind, NodeId};
 use nlayer_engine::{Engine, EngineConfig, EngineControl, EventPayload, MountSink, Os};
 
 use crate::encode::{self, Object};
-use crate::java::{java, with_env};
+use crate::java::{HostView, with_env};
 use crate::text::{AndroidTextEngine, Density};
 
 pub(crate) struct Host {
-    pub(crate) view: Arc<Global<JObject<'static>>>,
+    pub(crate) view: Arc<Global<HostView<'static>>>,
     pub(crate) engine: Mutex<Option<Engine>>,
     pub(crate) control: Mutex<Option<EngineControl>>,
     /// `app.js` the engine is running, after a start succeeded.
@@ -48,7 +48,7 @@ struct Launch {
 }
 
 struct Sink {
-    view: Arc<Global<JObject<'static>>>,
+    view: Arc<Global<HostView<'static>>>,
     commits: Arc<AtomicU64>,
 }
 
@@ -71,18 +71,7 @@ impl MountSink for Sink {
                     }
                 }
             }
-            // SAFETY: matches the signature checked in `java::init`.
-            unsafe {
-                env.call_method_unchecked(
-                    self.view.as_obj(),
-                    java().view_submit,
-                    jni::signature::ReturnType::Primitive(jni::signature::Primitive::Void),
-                    &[
-                        JValue::Object(&bytes).as_jni(),
-                        JValue::Object(&objects).as_jni(),
-                    ],
-                )
-            }?;
+            self.view.submit(env, &bytes, &objects)?;
             Ok(())
         });
         // After `submit` returns, the batch is on the UI thread's queue: a
@@ -102,47 +91,23 @@ impl MountSink for Sink {
 
     fn back_unhandled(&self) {
         with_env(|env| {
-            // SAFETY: matches the signature checked in `java::init`.
-            unsafe {
-                env.call_method_unchecked(
-                    self.view.as_obj(),
-                    java().view_back_unhandled,
-                    jni::signature::ReturnType::Primitive(jni::signature::Primitive::Void),
-                    &[],
-                )
-            }?;
+            self.view.back_unhandled(env)?;
             Ok(())
         });
     }
 
     fn request_frame(&self) -> bool {
         with_env(|env| {
-            // SAFETY: matches the signature checked in `java::init`.
-            unsafe {
-                env.call_method_unchecked(
-                    self.view.as_obj(),
-                    java().view_request_frame,
-                    jni::signature::ReturnType::Primitive(jni::signature::Primitive::Void),
-                    &[],
-                )
-            }?;
+            self.view.request_frame(env)?;
             Ok(true)
         })
     }
 }
 
-fn report(view: &Arc<Global<JObject<'static>>>, message: &str) {
+fn report(view: &Arc<Global<HostView<'static>>>, message: &str) {
     with_env(|env| {
         let message = env.new_string(message)?;
-        // SAFETY: matches the signature checked in `java::init`.
-        unsafe {
-            env.call_method_unchecked(
-                view.as_obj(),
-                java().view_report_error,
-                jni::signature::ReturnType::Primitive(jni::signature::Primitive::Void),
-                &[JValue::Object(&message).as_jni()],
-            )
-        }?;
+        view.report_error(env, &message)?;
         Ok(())
     });
 }
@@ -150,21 +115,13 @@ fn report(view: &Arc<Global<JObject<'static>>>, message: &str) {
 /// Shows the development overlay over the app, or removes it when `message`
 /// is `None`. Not part of the app tree: the view adds it as its own child,
 /// outside the mounted views. Posts to the UI thread like [`report`].
-pub(crate) fn overlay_view(view: &Arc<Global<JObject<'static>>>, message: Option<&str>) {
+pub(crate) fn overlay_view(view: &Arc<Global<HostView<'static>>>, message: Option<&str>) {
     with_env(|env| {
         let message = match message {
-            Some(message) => env.new_string(message)?.into(),
-            None => JObject::null(),
+            Some(message) => env.new_string(message)?,
+            None => JString::null(),
         };
-        // SAFETY: matches the signature checked in `java::init`.
-        unsafe {
-            env.call_method_unchecked(
-                view.as_obj(),
-                java().view_overlay,
-                jni::signature::ReturnType::Primitive(jni::signature::Primitive::Void),
-                &[JValue::Object(&message).as_jni()],
-            )
-        }?;
+        view.overlay(env, &message)?;
         Ok(())
     });
 }
@@ -187,6 +144,7 @@ pub unsafe extern "system" fn Java_dev_nlayer_android_Native_create(
     density: jfloat,
 ) -> jlong {
     env.with_env(|env| -> jni::errors::Result<jlong> {
+        let view = HostView::cast_local(env, view)?;
         let view = Arc::new(env.new_global_ref(view)?);
         let host = Arc::new(Host {
             view,
@@ -583,27 +541,20 @@ pub(crate) fn recycle(host: &Host, next: nlayer_engine::protocol::Recycle) -> Re
 fn recycle_view(host: &Host, next: &nlayer_engine::protocol::Recycle) -> Result<(), String> {
     crate::java::try_with_env(|env| {
         let scheme = match &next.color_scheme {
-            Some(scheme) => env.new_string(scheme)?.into(),
-            None => JObject::null(),
+            Some(scheme) => env.new_string(scheme)?,
+            None => JString::null(),
         };
-        // SAFETY: matches the signature checked in `java::init`.
-        unsafe {
-            env.call_method_unchecked(
-                host.view.as_obj(),
-                java().view_recycle,
-                jni::signature::ReturnType::Primitive(jni::signature::Primitive::Void),
-                &[
-                    JValue::Float(next.width).as_jni(),
-                    JValue::Float(next.height).as_jni(),
-                    JValue::Float(next.keyboard).as_jni(),
-                    JValue::Float(next.safe_area.top).as_jni(),
-                    JValue::Float(next.safe_area.right).as_jni(),
-                    JValue::Float(next.safe_area.bottom).as_jni(),
-                    JValue::Float(next.safe_area.left).as_jni(),
-                    JValue::Object(&scheme).as_jni(),
-                ],
-            )
-        }?;
+        host.view.recycle(
+            env,
+            next.width,
+            next.height,
+            next.keyboard,
+            next.safe_area.top,
+            next.safe_area.right,
+            next.safe_area.bottom,
+            next.safe_area.left,
+            &scheme,
+        )?;
         Ok(())
     })
 }
