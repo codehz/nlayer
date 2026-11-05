@@ -38,15 +38,22 @@ function locate(
   return null;
 }
 
-function reveal(app: App, pred: (node: Node) => boolean): void {
+function reveal(app: App, pred: (node: Node) => boolean, pageID = "page"): void {
   const root = app.tree();
   const hit = locate(root, pred, 0, 0);
-  const page = locate(root, (node) => node.testID === "page", 0, 0);
+  const page = locate(root, (node) => node.testID === pageID, 0, 0);
   if (!hit || !page) throw new Error("not on the page");
   const center = hit.y + hit.node.frame.height / 2;
   const mid = page.y + page.node.frame.height / 2;
   const distance = center - mid;
-  if (distance > 1 || distance < -1) app.scroll("page", distance);
+  if (distance > 1 || distance < -1) app.scroll(pageID, distance);
+}
+
+/** Opens a screen from the index and waits for its page. */
+function openScreen(app: App, testID: string, pageID: string): void {
+  reveal(app, (node) => node.testID === testID);
+  app.press(testID);
+  app.waitFor(pageID);
 }
 
 function must<T>(value: T | null | undefined): T {
@@ -68,6 +75,7 @@ test("column, row, and grid place their children", () => {
     height: 844,
     safeArea: { top: 22, right: 0, bottom: 0, left: 10 },
   });
+  openScreen(app, "open-view", "view-page");
   const nodes = flat(app.tree(), []);
   const one = holder(nodes, "One");
   const two = holder(nodes, "Two");
@@ -96,6 +104,7 @@ test("column, row, and grid place their children", () => {
 
 test("a press updates the label", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
+  openScreen(app, "open-view", "view-page");
   expect(app.texts()).toContain("Press");
   app.press("Press");
   expect(app.texts()).toContain("Pressed");
@@ -103,6 +112,7 @@ test("a press updates the label", () => {
 
 test("pointer styles are paint and a press still lands", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
+  openScreen(app, "open-pointer", "pointer-page");
   const nodes = flat(app.tree(), []);
   const fade = holder(nodes, "Fade");
   const hover = holder(nodes, "Hover");
@@ -116,16 +126,17 @@ test("pointer styles are paint and a press still lands", () => {
   expect(app.texts()).toContain("activeStyle={{ backgroundColor }}");
   expect(app.texts()).toContain("hoverStyle={{ backgroundColor }}");
   expect(app.texts()).toContain("focusStyle={{ backgroundColor }}");
-  reveal(app, (node) => node.children.some((child) => child.text === "Fade"));
+  reveal(app, (node) => node.children.some((child) => child.text === "Fade"), "pointer-page");
   app.press("Fade");
   expect(app.texts()).toContain("Faded");
-  reveal(app, (node) => node.children.some((child) => child.text === "Light"));
+  reveal(app, (node) => node.children.some((child) => child.text === "Light"), "pointer-page");
   app.press("Light");
   expect(app.texts()).toContain("Lit");
 });
 
 test("a static transform is mounted", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
+  openScreen(app, "open-view", "view-page");
   const shifted = holder(flat(app.tree(), []), "Shifted");
   expect(shifted.transform).toEqual([{ translateX: 12 }, { rotate: 15 }, { scale: 1.25 }]);
 });
@@ -138,13 +149,10 @@ test("safe-area env insets pad the view", () => {
     keyboard: 40,
   });
   const nodes = flat(app.tree(), []);
-  const inset = holder(nodes, "Inset").children[0];
-  expect(inset.frame.x).toBe(10);
+  const safe = must(nodes.find((node) => node.testID === "safe"));
   // The header covers the top inset on every host (web draws it too), so
   // content under it does not add that inset again. Left is the window's.
   const top = 0;
-  expect(inset.frame.y).toBe(top);
-  const safe = must(nodes.find((node) => node.testID === "safe"));
   const title = must(safe.children[0]);
   expect(title.frame.x).toBe(26);
   expect(title.frame.y).toBe(16 + top);
@@ -153,10 +161,16 @@ test("safe-area env insets pad the view", () => {
   expect(section.frame.x + section.frame.width).toBe(safe.frame.width - 24);
   const last = must(safe.children[safe.children.length - 1]);
   expect(safe.frame.height - (last.frame.y + last.frame.height)).toBe(72);
+
+  openScreen(app, "open-view", "view-page");
+  const inset = holder(flat(app.tree(), []), "Inset").children[0];
+  expect(inset.frame.x).toBe(10);
+  expect(inset.frame.y).toBe(top);
 });
 
 test("nested text is one block with distinct spans", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
+  openScreen(app, "open-text", "text-page");
   const block = must(flat(app.tree(), []).find((node) => node.text === "Plain bold italic color"));
   expect(block.kind).toBe("text");
   const spans = must(block.spans);
@@ -169,6 +183,7 @@ test("nested text is one block with distinct spans", () => {
 
 test("images mount a bundled asset and a remote URL", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
+  openScreen(app, "open-image", "image-page");
   const nodes = flat(app.tree(), []);
   const bundled = must(
     nodes.find(
@@ -187,6 +202,7 @@ test("images mount a bundled asset and a remote URL", () => {
 
 test("scroll views overflow on each axis", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
+  openScreen(app, "open-scroll", "scroll-page");
   const nodes = flat(app.tree(), []);
   const down = must(
     nodes.find(
@@ -208,7 +224,7 @@ test("scroll views overflow on each axis", () => {
   expect(across.frame.width).toBe(160);
   expect(must(across.content).width > across.frame.width).toBe(true);
   expect(must(across.content).height).toBe(48);
-  reveal(app, (node) => node.testID === "across");
+  reveal(app, (node) => node.testID === "across", "scroll-page");
   app.scroll("across", 40);
   const moved = must(flat(app.tree(), []).find((node) => node.testID === "across"));
   expect(moved.offset).toEqual({ x: 40, y: 0 });
@@ -216,6 +232,7 @@ test("scroll views overflow on each axis", () => {
 
 test("scroll callbacks report the offset, content, and viewport", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
+  openScreen(app, "open-scroll", "scroll-page");
   const names = [
     "onScroll",
     "onScrollEnd",
@@ -227,7 +244,7 @@ test("scroll callbacks report the offset, content, and viewport", () => {
   for (const name of names) {
     expect(app.texts()).toContain(`${name} none`);
   }
-  reveal(app, (node) => node.testID === "events");
+  reveal(app, (node) => node.testID === "events", "scroll-page");
   app.scroll("events", 40);
   const events = must(flat(app.tree(), []).find((node) => node.testID === "events"));
   const offset = must(events.offset);
@@ -244,6 +261,7 @@ test("scroll callbacks report the offset, content, and viewport", () => {
 
 test("inputs take text, keyboards, a password, and a disabled value", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
+  openScreen(app, "open-input", "input-page");
   const nodes = flat(app.tree(), []);
   const input = (placeholder: string) =>
     nodes.find((node) => node.kind === "input" && node.placeholder === placeholder)!;
@@ -255,23 +273,25 @@ test("inputs take text, keyboards, a password, and a disabled value", () => {
   expect(input("Locked").disabled).toBe(true);
   expect(input("Locked").value).toBe("locked");
   expect(app.texts()).toContain("Locked: locked");
-  reveal(app, (node) => node.kind === "input" && node.placeholder === "Name");
+  reveal(app, (node) => node.kind === "input" && node.placeholder === "Name", "input-page");
   app.type("Name", "ada");
   expect(app.texts()).toContain("Name: ada");
   expect(app.inputs()).toContain("ada");
-  reveal(app, (node) => node.kind === "input" && node.placeholder === "Locked");
+  reveal(app, (node) => node.kind === "input" && node.placeholder === "Locked", "input-page");
   expect(() => app.type("locked", "nope")).toThrow("disabled");
   expect(app.texts()).toContain("Locked: locked");
 });
 
 test("fetch renders the JSON", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
-  reveal(app, (node) => node.text === "Loading quote" || node.text === "Gallery: 5");
+  openScreen(app, "open-fetch", "fetch-page");
+  reveal(app, (node) => node.text === "Loading quote" || node.text === "Gallery: 5", "fetch-page");
   app.waitFor("Gallery: 5");
 });
 
 test("platform.os is the surface", () => {
   const app = open("./App.tsx", { width: 390, height: 844 });
+  openScreen(app, "open-platform", "platform-page");
   const os = globalThis.__nlayerOs ?? "web";
   expect(["web", "ios", "android"]).toContain(os);
   const shown = app

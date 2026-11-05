@@ -3,6 +3,17 @@ import { createNavStack } from "@nlayer/ui";
 
 export type Route =
   | { name: "home" }
+  | { name: "view" }
+  | { name: "pointer" }
+  | { name: "text" }
+  | { name: "image" }
+  | { name: "scroll" }
+  | { name: "input" }
+  | { name: "fetch" }
+  | { name: "platform" }
+  | { name: "storage" }
+  | { name: "animation" }
+  | { name: "virtual-list" }
   | { name: "detail"; id: number }
   | { name: "dialog" }
   | { name: "gesture" }
@@ -19,3 +30,8 @@ export const detailBackIntercepted = signal(false);
 export const dismissedCount = signal(0);
 /** Header demo: the web bar and the native `headerTransparent` flag. */
 export const headerTransparent = signal(false);
+
+/** Counts a screen the user popped. Every screen hands this to its `NavPage`. */
+export function dismiss(): void {
+  dismissedCount.set(dismissedCount() + 1);
+}

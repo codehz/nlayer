@@ -1,89 +1,59 @@
 import { mount } from "@nlayer/runtime";
-import { NavPage, NavStack, Text, View } from "@nlayer/ui";
-import {
-  detailBackIntercepted,
-  detailInterceptBack,
-  dismissedCount,
-  headerTransparent,
-  nav,
-  type Route,
-} from "./nav";
+import { NavStack } from "@nlayer/ui";
+import { nav, type Route } from "./nav";
+import { AnimationPage } from "./screens/animation";
 import { ClassesPage } from "./screens/classes";
 import { DetailPage } from "./screens/detail";
 import { DialogDemoPage } from "./screens/dialog";
 import { EffectsPage } from "./screens/effects";
+import { FetchPage } from "./screens/fetch";
 import { GestureCardPage } from "./screens/gesture";
 import { HeaderDemoPage } from "./screens/header";
 import { HomePage } from "./screens/home";
+import { ImagePage } from "./screens/image";
+import { InputPage } from "./screens/input";
 import { ListDemoPage } from "./screens/list";
+import { PointerPage } from "./screens/pointer";
+import { PlatformPage } from "./screens/platform";
 import { ReadingPage } from "./screens/reading";
+import { ScrollPage } from "./screens/scroll";
+import { StoragePage } from "./screens/storage";
+import { TextPage } from "./screens/text";
+import { ViewPage } from "./screens/layout";
 import { ViewportParentPage } from "./screens/viewport";
+import { VirtualListPage } from "./screens/virtual-list";
 
-function page(route: Route) {
-  if (route.name === "home") return { content: <HomePage />, title: "Gallery" };
-  if (route.name === "detail") {
-    return {
-      content: <DetailPage />,
-      title: "Detail",
-      headerStyle: { backgroundColor: "#3b82f6", color: "#fff", tintColor: "#fff" },
-    };
-  }
-  if (route.name === "dialog") return { content: <DialogDemoPage />, title: "Dialog" };
-  if (route.name === "gesture") return { content: <GestureCardPage />, title: "Gestures" };
-  if (route.name === "list") return { content: <ListDemoPage />, title: "Virtual List" };
-  if (route.name === "header") {
-    return {
-      content: <HeaderDemoPage />,
-      title: "Header",
-      headerStyle: { backgroundColor: "#10b981", color: "#fff", tintColor: "#fff" },
-      headerLeft: (
-        <Text onPress={() => nav.pop()} class="font-semibold text-white">
-          Back
-        </Text>
-      ),
-      headerRight: <Text class="text-white">Right</Text>,
-    };
-  }
-  if (route.name === "viewport-parent") {
-    return { content: <ViewportParentPage />, title: "Viewport Parent" };
-  }
-  if (route.name === "reading") return { content: <ReadingPage />, title: "Reading" };
-  if (route.name === "classes") return { content: <ClassesPage />, title: "Classes" };
-  if (route.name === "effects") return { content: <EffectsPage />, title: "Effects" };
-  return { content: <Text>Unknown route</Text> };
-}
+/** Each screen owns its `<NavPage>`; the stack only picks the component. */
+const screens: Record<Route["name"], () => unknown> = {
+  home: HomePage,
+  view: ViewPage,
+  pointer: PointerPage,
+  text: TextPage,
+  image: ImagePage,
+  scroll: ScrollPage,
+  input: InputPage,
+  fetch: FetchPage,
+  platform: PlatformPage,
+  storage: StoragePage,
+  animation: AnimationPage,
+  "virtual-list": VirtualListPage,
+  detail: DetailPage,
+  dialog: DialogDemoPage,
+  gesture: GestureCardPage,
+  list: ListDemoPage,
+  header: HeaderDemoPage,
+  "viewport-parent": ViewportParentPage,
+  reading: ReadingPage,
+  classes: ClassesPage,
+  effects: EffectsPage,
+};
 
 function App() {
   return (
     <NavStack state={nav} class="flex-1">
       {(route) => {
-        const screen = page(route);
-        // Read in the JSX prop, not a const: the stack renders a route once,
-        // and only a getter keeps `headerTransparent` live after that.
-        const headerDemo = route.name === "header";
-        return (
-          <NavPage
-            title={screen.title}
-            headerStyle={screen.headerStyle}
-            headerTransparent={headerDemo && headerTransparent()}
-            headerLeft={screen.headerLeft}
-            headerRight={screen.headerRight}
-            onDismiss={() => dismissedCount.set(dismissedCount() + 1)}
-            popOnBack={route.name !== "detail" || !detailInterceptBack()}
-            onBackPress={
-              route.name === "detail"
-                ? () => {
-                    if (detailInterceptBack()) {
-                      detailBackIntercepted.set(true);
-                      setTimeout(() => detailBackIntercepted.set(false), 1000);
-                    }
-                  }
-                : undefined
-            }
-          >
-            {screen.content}
-          </NavPage>
-        );
+        const Screen = screens[route.name];
+        return <Screen />;
       }}
     </NavStack>
   );
