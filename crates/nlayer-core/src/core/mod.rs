@@ -953,9 +953,8 @@ impl<M: TextEngine> Core<M> {
         // Update list offset if this scroll view has a list (for scroll+list nodes)
         if let Some(list) = self.nodes[key as usize].list.as_mut() {
             let new_offset = if horizontal { offset.x.0 } else { offset.y.0 };
-            if list.offset != new_offset {
-                list.offset = new_offset;
-                // Mark dirty so sticky headers recompute and window items update
+            list.note_platform_offset(new_offset);
+            if list.dirty {
                 self.mark(key, dirty::LIST);
             }
         }
@@ -1022,11 +1021,11 @@ impl<M: TextEngine> Core<M> {
             let parent_offset = if horizontal { offset.x.0 } else { offset.y.0 };
             let new_offset = parent_offset - cumulative_pos;
 
-            if let Some(list) = self.nodes[key as usize].list.as_mut()
-                && list.offset != new_offset
-            {
-                list.offset = new_offset;
-                self.mark(key, dirty::LIST);
+            if let Some(list) = self.nodes[key as usize].list.as_mut() {
+                list.note_platform_offset(new_offset);
+                if list.dirty {
+                    self.mark(key, dirty::LIST);
+                }
             }
         }
 
@@ -4462,12 +4461,15 @@ impl<M: TextEngine> Core<M> {
                 // Inverted lists start at the end and keep that distance as
                 // content or the viewport changes. Item 0 stays in view.
                 anchor += list.anchor_end();
-                if let Some(target) = list.follow_pin() {
+                if let Some(target) = list.follow_pin(anchor) {
                     scrolls.push((target, true));
                 }
             }
 
             // Scroll commands for the list, now that sizes are known.
+            // A command replaces a pin retarget from this same frame:
+            // both would be `ScrollTo`s, and the earlier one would win
+            // on the platform after the batch.
             let id = self.nodes[key as usize].id;
             let mut commands = Vec::new();
             for command in &self.commands {
@@ -4476,21 +4478,24 @@ impl<M: TextEngine> Core<M> {
                 }
             }
             self.commands.retain(|c| c.0 != id);
+            if !commands.is_empty() {
+                scrolls.clear();
+            }
             for command in commands {
                 match command {
                     Command::ScrollToIndex { index, animated } => {
                         let target = list::PinTarget::Index(index);
                         let list = self.nodes[key as usize].list.as_mut().expect("list");
                         let offset = list.target_offset(target);
-                        // The top of a normal list does not move as rows
-                        // measure. An inverted list's item 0 is at the end,
-                        // and that end does move.
-                        if index == 0 && !list.inverted {
-                            list.pin(None, 0.0);
-                        } else {
-                            list.pin(Some(target), offset);
+                        // The window jumps only when the platform moves
+                        // now. An animation stays on the reported offset:
+                        // jumping the cells to the destination while the
+                        // scroll view is still showing the old rect blanks
+                        // a long list (nsh does the same).
+                        list.pin(Some(target), offset, animated);
+                        if !animated {
+                            list.jump(offset);
                         }
-                        list.jump(offset);
                         scrolls.push((offset, animated));
                     }
                     Command::ScrollToEnd { animated } => {
@@ -4500,8 +4505,10 @@ impl<M: TextEngine> Core<M> {
                         let target = list::PinTarget::End;
                         let list = self.nodes[key as usize].list.as_mut().expect("list");
                         let offset = list.target_offset(target);
-                        list.pin(Some(target), offset);
-                        list.jump(offset);
+                        list.pin(Some(target), offset, animated);
+                        if !animated {
+                            list.jump(offset);
+                        }
                         scrolls.push((offset, animated));
                     }
                     _ => {}
@@ -4530,9 +4537,18 @@ impl<M: TextEngine> Core<M> {
             } else {
                 let max_offset = (content_len - viewport).max(0.0);
                 if self.nodes[key as usize].list.as_ref().expect("list").offset > max_offset {
+                    let animating = self.nodes[key as usize]
+                        .list
+                        .as_ref()
+                        .expect("list")
+                        .pin_animating();
                     let list = self.nodes[key as usize].list.as_mut().expect("list");
                     list.jump(max_offset);
-                    scrolls.push((max_offset, false));
+                    // An in-flight `scrollTo` already names its end. Another
+                    // jump here cancels that animation and stops short.
+                    if !animating {
+                        scrolls.push((max_offset, false));
+                    }
                 }
             }
 

@@ -116,11 +116,13 @@ pub(super) enum PinTarget {
 }
 
 /// A scroll command's target, until the viewport's rows are measured or the
-/// user scrolls away.
+/// user scrolls away. `animating`: the platform is still moving toward it,
+/// so the window stays on the reported offset instead of jumping ahead.
 #[derive(Debug, Clone, Copy)]
 struct Pin {
     target: PinTarget,
     at: f32,
+    animating: bool,
 }
 
 #[derive(Debug)]
@@ -275,6 +277,7 @@ impl ListState {
         if let Some(pin) = self.pin
             && self.pending.is_empty()
             && (at - pin.at).abs() > PIN_SLACK
+            && !pin.animating
         {
             self.pin = None;
         }
@@ -1043,19 +1046,53 @@ impl ListState {
         self.dirty = true;
     }
 
-    pub(super) fn pin(&mut self, target: Option<PinTarget>, offset: f32) {
-        self.pin = target.map(|target| Pin { target, at: offset });
+    pub(super) fn pin(&mut self, target: Option<PinTarget>, offset: f32, animated: bool) {
+        self.pin = target.map(|target| Pin {
+            target,
+            at: offset,
+            animating: animated,
+        });
+    }
+
+    pub(super) fn pin_animating(&self) -> bool {
+        self.pin.is_some_and(|pin| pin.animating)
+    }
+
+    /// The platform's offset. An animated command keeps its pin until a
+    /// report lands on the target; a later move is the user leaving it.
+    pub(super) fn note_platform_offset(&mut self, offset: f32) {
+        if let Some(pin) = self.pin {
+            if (offset - pin.at).abs() <= PIN_SLACK {
+                self.pin.as_mut().expect("pin").animating = false;
+            } else if !pin.animating {
+                self.pin = None;
+            }
+        }
+        self.moved_to(offset);
     }
 
     /// After measurements: where a pinned list goes for its target, which
-    /// moved as estimated sizes became real ones. Returns a new target when
-    /// the list must move again.
-    pub(super) fn follow_pin(&mut self) -> Option<f32> {
+    /// moved as estimated sizes became real ones. `anchored` is the scroll
+    /// already added to the offset this frame (content above the viewport).
+    /// An animation in flight is retargeted without moving the window: the
+    /// window follows the platform, or the cells leave the visible rect and
+    /// the list flashes empty. Returns a new absolute target when the
+    /// platform must scroll again.
+    pub(super) fn follow_pin(&mut self, anchored: f32) -> Option<f32> {
         let mut pin = self.pin?;
         if self.viewport <= 0.0 {
             return None;
         }
         let target = self.target_offset(pin.target);
+        if pin.animating {
+            pin.at += anchored;
+            let moved = (target - pin.at).abs() > PIN_SLACK;
+            if moved {
+                pin.at = target;
+            }
+            self.pin = Some(pin);
+            return moved.then_some(target);
+        }
         if (target - pin.at).abs() > PIN_SLACK {
             pin.at = target;
             self.pin = Some(pin);
@@ -1242,18 +1279,36 @@ mod tests {
     #[test]
     fn scroll_to_index_pins_until_measured() {
         let mut l = list(1000, 50.0, 200.0);
-        l.pin(Some(PinTarget::Index(500)), 25000.0);
+        l.pin(Some(PinTarget::Index(500)), 25000.0, false);
         l.jump(25000.0);
         let mut binds = Vec::new();
         l.update_window(&mut binds);
         assert_eq!(binds[0].1, 496);
         // The first visible row grows: the target moves by 50.
-        let pinned = l.pin;
         l.measured(498, 100.0);
-        assert_eq!(l.follow_pin(), Some(25050.0));
+        assert_eq!(l.follow_pin(0.0), Some(25050.0));
         assert_eq!(l.offset, 25050.0);
         assert!(l.pin.is_some());
-        assert_ne!(pinned.map(|p| p.at), None);
+    }
+
+    #[test]
+    fn an_animated_pin_follows_the_platform_and_retargets_in_place() {
+        let mut l = list(1000, 50.0, 200.0);
+        l.offset = 5000.0;
+        l.pin(Some(PinTarget::Index(0)), 0.0, true);
+        // Content above the viewport grew. The window stays where the
+        // platform is; the command is sent again at the real target.
+        assert_eq!(l.follow_pin(40.0), Some(0.0));
+        assert_eq!(l.offset, 5000.0);
+        assert!(l.pin_animating());
+        // A report from the animation does not drop the pin or jump.
+        l.note_platform_offset(4000.0);
+        assert!(l.pin_animating());
+        assert_eq!(l.offset, 4000.0);
+        l.note_platform_offset(0.0);
+        assert!(!l.pin_animating());
+        l.note_platform_offset(80.0);
+        assert!(l.pin.is_none());
     }
 
     #[test]

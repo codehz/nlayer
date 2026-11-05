@@ -816,6 +816,21 @@ fn scroll_metrics(scroll: &UIScrollView, content: Option<(f32, f32)>) -> EventPa
     }
 }
 
+/// `contentOffset` UIKit will actually keep. A target past the content is
+/// clamped, and so is one above the inset: an unclamped animated `scrollTo`
+/// ends wherever the animation was interrupted (nsh `command`).
+fn clamped_scroll_offset(scroll: &UIScrollView, x: f32, y: f32) -> CGPoint {
+    let inset = scroll.adjustedContentInset();
+    let size = scroll.contentSize();
+    let bounds = scroll.bounds().size;
+    let max_x = (size.width + inset.right - bounds.width).max(-inset.left);
+    let max_y = (size.height + inset.bottom - bounds.height).max(-inset.top);
+    CGPoint::new(
+        (x as CGFloat).clamp(-inset.left, max_x),
+        (y as CGFloat).clamp(-inset.top, max_y),
+    )
+}
+
 /// Whether anything under `root` reaches past `limit` points from its left
 /// edge, in `root`'s space. A scroll view inside scrolls on its own, so what
 /// it holds does not count. Stops at the first view that reaches.
@@ -1255,7 +1270,7 @@ impl Mounter {
             let Some(Native::Scroll(scroll)) = self.native(id) else {
                 continue;
             };
-            scroll.setContentOffset_animated(CGPoint::new(x.0 as CGFloat, y.0 as CGFloat), true);
+            scroll.setContentOffset_animated(clamped_scroll_offset(scroll, x.0, y.0), true);
         }
         self.settle_content_sizes();
         self.finish_navigation();
@@ -1666,7 +1681,7 @@ impl Mounter {
                         return;
                     };
                     scroll.setContentOffset_animated(
-                        CGPoint::new(x.0 as CGFloat, y.0 as CGFloat),
+                        clamped_scroll_offset(scroll, x.0, y.0),
                         animated,
                     );
                 }
