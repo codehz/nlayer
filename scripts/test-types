@@ -28,6 +28,10 @@ runtime=$(pack_one runtime)
 ui=$(pack_one ui)
 test=$(pack_one test)
 
+# `@nlayer/ui` packs `@nlayer/runtime` as a version, not a file
+# dependency. The override keeps the install on the packed tarball instead
+# of asking the registry for that version (which also would typecheck
+# whatever is published, not what was just packed).
 cat >"$app/package.json" <<EOF
 {
   "name": "nlayer-types-fixture",
@@ -40,6 +44,9 @@ cat >"$app/package.json" <<EOF
   },
   "devDependencies": {
     "@nlayer/test": "file:$test"
+  },
+  "overrides": {
+    "@nlayer/runtime": "file:$runtime"
   }
 }
 EOF
@@ -82,4 +89,7 @@ void pairs;
 void headerNames;
 EOF
 
-(cd "$app" && bun install && bunx tsc --noEmit)
+# The repo's own TypeScript from the root install: same compiler as the
+# gallery check above, and no `bunx` download from the registry.
+(cd "$app" && bun install)
+bunx tsc --noEmit -p "$app"
