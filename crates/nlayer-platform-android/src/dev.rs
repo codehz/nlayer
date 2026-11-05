@@ -212,6 +212,15 @@ fn test_session(host: &Arc<Host>, address: &str, port: u16) -> Result<(), String
                     .map_err(|error| format!("invalid patch: {error}"))?;
                 let _ = read_script(&mut socket, patch.source_map)?;
             }
+            Some("recycle") => {
+                let recycle: protocol::Recycle = serde_json::from_value(value)
+                    .map_err(|error| format!("invalid recycle: {error}"))?;
+                let id = recycle.id;
+                crate::host::recycle(host, recycle)?;
+                let text = serde_json::to_string(&protocol::StepResult::ok(id))
+                    .map_err(|error| error.to_string())?;
+                send(&mut socket, tungstenite::Message::text(text))?;
+            }
             Some("build_failed") => {
                 let failed: protocol::BuildFailed = serde_json::from_value(value)
                     .map_err(|error| format!("invalid build_failed: {error}"))?;

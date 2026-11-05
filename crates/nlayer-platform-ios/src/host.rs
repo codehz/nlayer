@@ -23,7 +23,7 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::ptr::NonNull;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 struct RootIvars {
@@ -240,16 +240,20 @@ impl RootView {
 }
 
 struct Queue {
-    batches: Mutex<Vec<nlayer_core::MountBatch>>,
+    batches: Mutex<Vec<(u64, nlayer_core::MountBatch)>>,
     /// A drain is already queued on the main thread.
     scheduled: AtomicBool,
+    /// [`recycle`] bumps this. A batch queued by the engine being dropped
+    /// carries the old value and is not applied.
+    epoch: AtomicU64,
 }
 
 impl MountSink for Queue {
     fn submit(&self, batch: nlayer_core::MountBatch) {
+        let epoch = self.epoch.load(Ordering::Acquire);
         let schedule = {
             let mut batches = self.batches.lock().expect("mount queue");
-            batches.push(batch);
+            batches.push((epoch, batch));
             !self.scheduled.swap(true, Ordering::AcqRel)
         };
         if !schedule {
@@ -257,6 +261,7 @@ impl MountSink for Queue {
         }
         DispatchQueue::main().exec_async(|| {
             let Some(queue) = queue() else { return };
+            let current = queue.epoch.load(Ordering::Acquire);
             let batches = {
                 let mut batches = queue.batches.lock().expect("mount queue");
                 queue.scheduled.store(false, Ordering::Release);
@@ -264,8 +269,10 @@ impl MountSink for Queue {
             };
             let Some(mounter) = mounter() else { return };
             let mut mounter = mounter.borrow_mut();
-            for batch in batches {
-                mounter.apply(batch);
+            for (epoch, batch) in batches {
+                if epoch == current {
+                    mounter.apply(batch);
+                }
             }
             raise_overlay();
         });
@@ -301,6 +308,7 @@ thread_local! {
     static ERROR_TEXT: RefCell<Option<String>> = const { RefCell::new(None) };
     static ENGINE: RefCell<Option<Engine>> = const { RefCell::new(None) };
     static ROOT: RefCell<Option<Weak<RootView>>> = const { RefCell::new(None) };
+    static HOLDER: RefCell<Option<Weak<UIView>>> = const { RefCell::new(None) };
     static PREPARED: RefCell<Option<Prepared>> = const { RefCell::new(None) };
 }
 
@@ -448,6 +456,7 @@ pub(crate) fn start(
         holder.setClipsToBounds(true);
         holder.addSubview(&root);
         container.addSubview(&holder);
+        HOLDER.with(|slot| *slot.borrow_mut() = Some(Weak::new(&holder)));
     } else {
         container.addSubview(&root);
     }
@@ -464,6 +473,7 @@ pub(crate) fn start(
         *slot.borrow_mut() = Some(Arc::new(Queue {
             batches: Mutex::new(Vec::new()),
             scheduled: AtomicBool::new(false),
+            epoch: AtomicU64::new(0),
         }));
     });
     let scheme = pin
@@ -571,6 +581,119 @@ pub(crate) fn boot_engine(bundle: &str) -> Option<nlayer_engine::EngineControl> 
 /// [`boot_engine`] without the dev overlay. A test session uses this.
 pub(crate) fn boot_engine_quiet(bundle: &str) -> Option<nlayer_engine::EngineControl> {
     boot_engine_showing(bundle, false)
+}
+
+/// Drops the engine and the native tree, and applies `next` before the
+/// following bundle starts a new QuickJS runtime. Main thread. The window
+/// stays.
+pub(crate) fn recycle(next: nlayer_engine::protocol::Recycle) {
+    let pin = PREPARED.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let prepared = slot.as_mut()?;
+        let mut pin = prepared.pin.clone().unwrap_or_else(|| crate::pin::Pin {
+            width: next.width,
+            height: next.height,
+            keyboard: Some(next.keyboard),
+            safe_area: crate::pin::Area::default(),
+            color_scheme: next.color_scheme.clone(),
+            host: String::new(),
+            port: 0,
+            test: true,
+        });
+        pin.width = next.width;
+        pin.height = next.height;
+        pin.keyboard = Some(next.keyboard);
+        pin.safe_area = crate::pin::Area {
+            top: next.safe_area.top,
+            right: next.safe_area.right,
+            bottom: next.safe_area.bottom,
+            left: next.safe_area.left,
+        };
+        if let Some(scheme) = next.color_scheme.clone() {
+            prepared.scheme = nlayer_core::ColorScheme::from_dark(scheme == "dark");
+            pin.color_scheme = Some(scheme);
+        }
+        prepared.pin = Some(pin.clone());
+        Some(pin)
+    });
+    let Some(pin) = pin else {
+        return;
+    };
+    if let Some(mounter) = mounter() {
+        mounter.borrow_mut().set_pin(pin.clone());
+    }
+    place_pinned_root(&pin);
+    // Join the engine before bumping the epoch, so a batch it submits on
+    // the way out still carries the old one.
+    ENGINE.with(|slot| {
+        slot.borrow_mut().take();
+    });
+    if let Some(dir) = nlayer_engine::data_dir() {
+        nlayer_engine::clear_storage(&dir.join("nlayer"));
+    }
+    if let Some(queue) = queue() {
+        queue.epoch.fetch_add(1, Ordering::AcqRel);
+    }
+    if let Some(mounter) = mounter() {
+        mounter.borrow_mut().clear_app();
+    }
+}
+
+/// Sizes the pinned root, and the scale holder when the viewport is larger
+/// than the window. A later `open` can change both.
+fn place_pinned_root(pin: &crate::pin::Pin) {
+    let Some(root) = ROOT.with(|slot| slot.borrow().as_ref().and_then(|weak| weak.load())) else {
+        return;
+    };
+    let mtm = MainThreadMarker::new().expect("recycle runs on the main thread");
+    root.setFrame(CGRect::new(
+        CGPoint::ZERO,
+        CGSize::new(pin.width as CGFloat, pin.height as CGFloat),
+    ));
+    root.setAutoresizingMask(UIViewAutoresizing::empty());
+    let holder = HOLDER.with(|slot| slot.borrow().as_ref().and_then(|weak| weak.load()));
+    let container = holder
+        .as_ref()
+        .and_then(|holder| holder.superview())
+        .or_else(|| root.superview());
+    let Some(container) = container else {
+        return;
+    };
+    let size = container.bounds().size;
+    let scale = (size.width as f32 / pin.width.max(1.0))
+        .min(size.height as f32 / pin.height.max(1.0))
+        .min(1.0);
+    if scale < 1.0 {
+        let holder = if let Some(holder) = holder {
+            holder
+        } else {
+            let created = UIView::new(mtm);
+            root.removeFromSuperview();
+            created.addSubview(&root);
+            container.addSubview(&created);
+            HOLDER.with(|slot| *slot.borrow_mut() = Some(Weak::new(&created)));
+            created
+        };
+        holder.setBounds(CGRect::new(
+            CGPoint::ZERO,
+            CGSize::new(pin.width as CGFloat, pin.height as CGFloat),
+        ));
+        holder.setCenter(CGPoint::new(size.width / 2.0, size.height / 2.0));
+        holder.setTransform(CGAffineTransform {
+            a: scale as CGFloat,
+            b: 0.0,
+            c: 0.0,
+            d: scale as CGFloat,
+            tx: 0.0,
+            ty: 0.0,
+        });
+        holder.setClipsToBounds(true);
+    } else if let Some(holder) = holder {
+        root.removeFromSuperview();
+        container.addSubview(&root);
+        holder.removeFromSuperview();
+        HOLDER.with(|slot| *slot.borrow_mut() = None);
+    }
 }
 
 fn boot_engine_showing(bundle: &str, overlay: bool) -> Option<nlayer_engine::EngineControl> {

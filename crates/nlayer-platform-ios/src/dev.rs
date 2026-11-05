@@ -16,7 +16,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use nlayer_engine::protocol::{self, BuildFailed, Bundle, Hello, PROTOCOL_VERSION, Patch, Step};
+use nlayer_engine::protocol::{
+    self, BuildFailed, Bundle, Hello, PROTOCOL_VERSION, Patch, Recycle, Step, StepResult,
+};
 use nlayer_engine::{EngineControl, HotUpdate};
 use tungstenite::{Message, WebSocket};
 
@@ -387,7 +389,7 @@ fn test_session(
                 if !matches!(pending, TestPending::None) {
                     return Err("test server: a script frame was missing".to_owned());
                 }
-                on_test_text(&text, &mut pending, &mut socket)?;
+                on_test_text(&text, &mut pending, &mut socket, &mut live)?;
             }
             Ok(Message::Binary(bytes)) => on_test_binary(&bytes, &mut pending, &mut live)?,
             Ok(Message::Ping(payload)) => send(&mut socket, Message::Pong(payload))?,
@@ -425,6 +427,7 @@ fn on_test_text<S: Read + Write>(
     text: &str,
     pending: &mut TestPending,
     socket: &mut WebSocket<S>,
+    live: &mut TestLive,
 ) -> Result<(), String> {
     let value: serde_json::Value =
         serde_json::from_str(text).map_err(|error| format!("test server: {error}"))?;
@@ -463,6 +466,21 @@ fn on_test_text<S: Read + Write>(
                 source_map: patch.source_map,
             };
             Ok(())
+        }
+        "recycle" => {
+            let recycle: Recycle =
+                serde_json::from_value(value).map_err(|error| format!("test server: {error}"))?;
+            let id = recycle.id;
+            if on_main(move || crate::host::recycle(recycle)).is_none() {
+                return Err("test server: the host is gone".to_owned());
+            }
+            // The engine is gone. The next bundle must boot, not
+            // `replace_bundle` into the VM this frame dropped.
+            live.control = None;
+            live.boot_script.clear();
+            let text =
+                serde_json::to_string(&StepResult::ok(id)).map_err(|error| error.to_string())?;
+            send(socket, Message::text(text))
         }
         "build_failed" => {
             let failed: BuildFailed =

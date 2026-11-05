@@ -38,6 +38,7 @@ pub(crate) struct Java {
     pub(crate) view_hover: JMethodID,
     pub(crate) view_back_unhandled: JMethodID,
     pub(crate) view_request_frame: JMethodID,
+    pub(crate) view_recycle: JMethodID,
 }
 
 static JAVA: OnceLock<Java> = OnceLock::new();
@@ -92,6 +93,7 @@ pub(crate) fn init(vm: JavaVM) -> jni::errors::Result<()> {
         view_hover: env.get_method_id(view_class, "hover", "(FF)V")?,
         view_back_unhandled: env.get_method_id(view_class, "backUnhandled", "()V")?,
         view_request_frame: env.get_method_id(view_class, "requestFrame", "()V")?,
+        view_recycle: env.get_method_id(view_class, "recycle", "(FFFFFFFLjava/lang/String;)V")?,
         text,
         vm,
     };
@@ -121,4 +123,22 @@ pub(crate) fn with_env<R: Default>(f: impl FnOnce(&mut JNIEnv<'_>) -> jni::error
             R::default()
         }
     }
+}
+
+/// [`with_env`] that returns the failure instead of a default.
+pub(crate) fn try_with_env<R>(
+    f: impl FnOnce(&mut JNIEnv<'_>) -> jni::errors::Result<R>,
+) -> Result<R, String> {
+    let java = java();
+    let mut env = java
+        .vm
+        .attach_current_thread_permanently()
+        .map_err(|error| error.to_string())?;
+    env.with_local_frame(32, |env| f(env)).map_err(|error| {
+        if env.exception_check().unwrap_or(false) {
+            let _ = env.exception_describe();
+            let _ = env.exception_clear();
+        }
+        error.to_string()
+    })
 }

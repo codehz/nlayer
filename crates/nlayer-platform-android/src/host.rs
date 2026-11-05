@@ -533,6 +533,84 @@ fn apply_insets(host: &Host) {
     control.set_keyboard_inset(keyboard);
 }
 
+/// Drops the engine and the native tree, and stores `next` for the bundle
+/// that starts the next QuickJS runtime. The activity stays.
+pub(crate) fn recycle(host: &Host, next: nlayer_engine::protocol::Recycle) -> Result<(), String> {
+    // Join the engine thread before the UI thread clears views, so its last
+    // batch is already queued and runs before that clear.
+    drop(
+        host.engine
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .take(),
+    );
+    if let Some(dir) = host
+        .launch
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .as_ref()
+        .map(|launch| launch.data_dir.clone())
+        .filter(|dir| !dir.is_empty())
+    {
+        nlayer_engine::clear_storage(std::path::Path::new(&dir));
+    }
+    *host.control.lock().unwrap_or_else(|err| err.into_inner()) = None;
+    *host
+        .boot_script
+        .lock()
+        .unwrap_or_else(|err| err.into_inner()) = String::new();
+    *host.size.lock().unwrap_or_else(|err| err.into_inner()) =
+        Size::new(px(next.width), px(next.height));
+    *host.insets.lock().unwrap_or_else(|err| err.into_inner()) = Some((
+        Edges {
+            top: Points(next.safe_area.top),
+            right: Points(next.safe_area.right),
+            bottom: Points(next.safe_area.bottom),
+            left: Points(next.safe_area.left),
+        },
+        Points(next.keyboard),
+    ));
+    if let Some(scheme) = next.color_scheme.as_deref()
+        && let Some(launch) = host
+            .launch
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .as_mut()
+    {
+        launch.dark = scheme == "dark";
+    }
+    crate::animation::reset();
+    recycle_view(host, &next)
+}
+
+fn recycle_view(host: &Host, next: &nlayer_engine::protocol::Recycle) -> Result<(), String> {
+    crate::java::try_with_env(|env| {
+        let scheme = match &next.color_scheme {
+            Some(scheme) => env.new_string(scheme)?.into(),
+            None => JObject::null(),
+        };
+        // SAFETY: matches the signature checked in `java::init`.
+        unsafe {
+            env.call_method_unchecked(
+                host.view.as_obj(),
+                java().view_recycle,
+                jni::signature::ReturnType::Primitive(jni::signature::Primitive::Void),
+                &[
+                    JValue::Float(next.width).as_jni(),
+                    JValue::Float(next.height).as_jni(),
+                    JValue::Float(next.keyboard).as_jni(),
+                    JValue::Float(next.safe_area.top).as_jni(),
+                    JValue::Float(next.safe_area.right).as_jni(),
+                    JValue::Float(next.safe_area.bottom).as_jni(),
+                    JValue::Float(next.safe_area.left).as_jni(),
+                    JValue::Object(&scheme).as_jni(),
+                ],
+            )
+        }?;
+        Ok(())
+    })
+}
+
 /// # Safety
 ///
 /// `handle` is live. `address` is the dev server (`127.0.0.1` after

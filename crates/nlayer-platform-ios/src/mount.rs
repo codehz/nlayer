@@ -1123,6 +1123,66 @@ impl Mounter {
         self.pin.as_ref().map(|pin| (pin.width, pin.height))
     }
 
+    /// Drops every view except the root. The next engine's ids start over,
+    /// so a slot left behind would be that id's new view.
+    pub(crate) fn clear_app(&mut self) {
+        if let Some(id) = self.focused {
+            self.end_focus(id);
+        }
+        let ids: Vec<NodeId> = self
+            .slots
+            .iter()
+            .enumerate()
+            .filter_map(|(index, slot)| {
+                let id = index as NodeId;
+                (slot.is_some() && id != ROOT_ID).then_some(id)
+            })
+            .collect();
+        for id in &ids {
+            if let Some(slot) = self.slot_mut(*id)
+                && let Native::Modal(modal) = &mut slot.native
+            {
+                modal.discard();
+            }
+        }
+        for id in ids.into_iter().rev() {
+            self.apply_item(MountItem::Delete { id });
+        }
+        if let Some(root) = self.view(ROOT_ID) {
+            let subs = root.subviews();
+            let children: Vec<Retained<UIView>> = (0..subs.count())
+                .map(|index| subs.objectAtIndex(index))
+                .collect();
+            for child in children {
+                child.removeFromSuperview();
+            }
+        }
+        self.control = None;
+        self.focused = None;
+        let _ = self.scrolls.borrow_mut().take();
+        self.content_sizes.clear();
+        self.narrowed.clear();
+        self.frames_applied = false;
+        self.animator = crate::animation::Animator::default();
+        self.frame_pending = false;
+        if let Some(link) = self.relay.ivars().link.borrow().as_ref() {
+            link.setPaused(true);
+        }
+        self.hosts.clear();
+        self.dirty_stacks.clear();
+        self.dirty_headers.clear();
+        self.dirty_modals.clear();
+        self.deferred_stacks.clear();
+        self.pending_pan.clear();
+        self.pending_pinch.clear();
+        self.pending_rotation.clear();
+        self.pending_bindings.clear();
+        self.areas.clear();
+        self.opened_urls.clear();
+        self.relay.ivars().content.borrow_mut().clear();
+        abandon_loads();
+    }
+
     /// Tells the engine the surface size and safe area, when either changed.
     pub(crate) fn publish(&mut self, size: CGSize, insets: objc2_ui_kit::UIEdgeInsets) {
         let (size, insets) = if let Some(pin) = &self.pin {
@@ -4813,8 +4873,6 @@ fn inflight() -> &'static Mutex<HashMap<Arc<str>, Vec<Waiter>>> {
     INFLIGHT.get_or_init(|| Mutex::new(Default::default()))
 }
 
-/// Starts a decode of `uri`, or joins one already running. A cached bitmap
-/// is returned so the caller can paint it now.
 fn begin_load(
     id: NodeId,
     generation: u64,
@@ -4822,6 +4880,7 @@ fn begin_load(
     assets: &std::path::Path,
     scale: f32,
 ) -> Option<crate::image::Decoded> {
+    let epoch = crate::image::epoch();
     if let Some(decoded) = crate::image::cached(&uri) {
         return Some(decoded);
     }
@@ -4853,8 +4912,13 @@ fn begin_load(
     .exec_async(move || {
         let loaded = crate::image::load(&assets, &key).map_err(|error| format!("{key}: {error}"));
         DispatchQueue::main().exec_async(move || {
+            // A recycle bumped the epoch: this bitmap belongs to the app
+            // that was dropped, and the waiters may now be the next app's.
+            if crate::image::epoch() != epoch {
+                return;
+            }
             if let Ok(decoded) = &loaded {
-                crate::image::store(Arc::clone(&key), decoded);
+                crate::image::store(Arc::clone(&key), decoded, epoch);
             }
             let waiters = inflight()
                 .lock()
@@ -4871,6 +4935,13 @@ fn begin_load(
         });
     });
     None
+}
+
+/// Forgets decodes the dropped app started. Their callbacks see a new
+/// [`crate::image::epoch`] and do not paint.
+fn abandon_loads() {
+    inflight().lock().expect("image loads").clear();
+    crate::image::clear();
 }
 
 thread_local! {

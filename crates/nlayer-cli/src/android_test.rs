@@ -1,11 +1,12 @@
 //! `nlayer test --target android`.
 //!
-//! The test file still runs in QuickJS. `open` writes the app into the
-//! device's private files and starts a test session. `adb reverse` lets the
-//! app connect, including the loopback file server its `fetch` uses. Press,
-//! type and scroll go through the view system.
+//! The test file still runs in QuickJS. The first `open` writes the app into
+//! the device and launches it. Later opens send [`Recycle`] and a new bundle
+//! on the same socket: the process stays, and the host starts a new engine.
+//! A dead socket relaunches once.
 
 use std::{
+    sync::Arc,
     thread,
     time::{Duration, Instant},
 };
@@ -15,10 +16,16 @@ use nlayer_testing::{AppHost, HostInsets, HostOpen, HostedApp, NodeId};
 use serde_json::{Value, json};
 
 use crate::android::{self, PACKAGE};
+use crate::session::{RecyclePin, SharedSession};
 
 /// The emulator or device one `nlayer test --target android` run drives.
 pub(crate) struct AndroidHost {
     boot: Option<Boot>,
+    /// The socket the running host is on. `None` until the first launch,
+    /// and after that launch's socket dies.
+    shared: Option<Arc<SharedSession>>,
+    /// `adb reverse` bindings for the live process.
+    forward: Option<Forward>,
 }
 
 struct Boot {
@@ -26,9 +33,18 @@ struct Boot {
     serial: String,
 }
 
+struct Forward {
+    port: u16,
+    files: u16,
+}
+
 impl AndroidHost {
     pub(crate) fn new() -> Self {
-        Self { boot: None }
+        Self {
+            boot: None,
+            shared: None,
+            forward: None,
+        }
     }
 
     fn boot(&mut self) -> Result<&Boot, String> {
@@ -42,6 +58,24 @@ impl AndroidHost {
             self.boot = Some(Boot { sdk, serial });
         }
         Ok(self.boot.as_ref().expect("booted"))
+    }
+}
+
+impl Drop for AndroidHost {
+    fn drop(&mut self) {
+        self.shared.take();
+        let Some(boot) = &self.boot else {
+            return;
+        };
+        let _ = std::process::Command::new(boot.sdk.adb())
+            .args(["-s", &boot.serial, "shell", "am", "force-stop", PACKAGE])
+            .status();
+        if let Some(forward) = self.forward.take() {
+            let _ = remove_reverse(&boot.sdk, &boot.serial, forward.port);
+            if forward.files != forward.port {
+                let _ = remove_reverse(&boot.sdk, &boot.serial, forward.files);
+            }
+        }
     }
 }
 
@@ -63,68 +97,102 @@ impl AppHost for AndroidHost {
         })
         .map_err(|error| error.colored)?;
         bundled.code = nlayer_testing::with_fixture_origin(&bundled.code, &app_dir);
-        let boot = self.boot()?;
-        let sdk = &boot.sdk;
-        let serial = boot.serial.clone();
-        android::publish(sdk, &serial, &app_dir, &bundled).map_err(|error| error.to_string())?;
-        // The socket's development bundle is the only script. An ESM
-        // `app.js` would mount a second tree beside it.
-        android::push_bytes(sdk, &serial, "files/app.js", b"")
-            .map_err(|error| error.to_string())?;
+        {
+            let boot = self.boot()?;
+            let serial = boot.serial.clone();
+            android::publish(&boot.sdk, &serial, &app_dir, &bundled)
+                .map_err(|error| error.to_string())?;
+            // The socket's development bundle is the only script. An ESM
+            // `app.js` would mount a second tree beside it.
+            android::push_bytes(&boot.sdk, &serial, "files/app.js", b"")
+                .map_err(|error| error.to_string())?;
+        }
+        let pin = recycle_pin(&request);
+        let files = nlayer_testing::fixture_file_port(&app_dir);
+        if let Some(shared) = self.shared.clone()
+            && shared.alive()
+        {
+            if self
+                .forward
+                .as_ref()
+                .is_some_and(|forward| forward.files != files)
+            {
+                {
+                    let boot = self.boot()?;
+                    bind_reverse(&boot.sdk, &boot.serial, files)?;
+                }
+                if let Some(forward) = self.forward.as_mut() {
+                    forward.files = files;
+                }
+            }
+            let generation = shared.invalidate();
+            match shared
+                .recycle(&pin)
+                .and_then(|_| shared.push_entry(&entry, true))
+            {
+                Ok(()) => {
+                    return Ok(Box::new(AndroidApp {
+                        shared,
+                        generation,
+                        open: true,
+                        pin,
+                    }));
+                }
+                Err(_) => shared.kill(),
+            }
+        }
+        self.shared = None;
         let session = crate::TestSession::start(&entry, true)?;
         let port = session.port();
-        let pin = json!({
-            "width": request.width,
-            "height": request.height,
-            "keyboard": request.keyboard.unwrap_or(0.0),
+        let pin_file = json!({
+            "width": pin.width,
+            "height": pin.height,
+            "keyboard": pin.keyboard,
             "safeArea": area(request.safe_area),
             "host": "127.0.0.1",
             "port": port,
             "test": true,
-            "colorScheme": request.color_scheme.map(|scheme| scheme.name()),
+            "colorScheme": pin.color_scheme,
         });
-        android::push_bytes(
-            sdk,
-            &serial,
-            "files/nlayer-test.json",
-            pin.to_string().as_bytes(),
-        )
-        .map_err(|error| error.to_string())?;
-        let files = nlayer_testing::fixture_file_port(&app_dir);
-        let files_forwarded = format!("tcp:{files}");
-        let forwarded = format!("tcp:{port}");
-        // A run that died before `close` may still hold these ports on the
-        // device: replace the bindings instead of failing on them.
-        let _ = android::adb(sdk, &serial, &["reverse", "--remove", &files_forwarded]);
-        android::adb(
-            sdk,
-            &serial,
-            &["reverse", &files_forwarded, &files_forwarded],
-        )
-        .map_err(|error| error.to_string())?;
-        let _ = android::adb(sdk, &serial, &["reverse", "--remove", &forwarded]);
-        android::adb(sdk, &serial, &["reverse", &forwarded, &forwarded])
+        let previous = self.forward.take();
+        {
+            let boot = self.boot()?;
+            let sdk = &boot.sdk;
+            let serial = boot.serial.clone();
+            android::push_bytes(
+                sdk,
+                &serial,
+                "files/nlayer-test.json",
+                pin_file.to_string().as_bytes(),
+            )
             .map_err(|error| error.to_string())?;
-        android::relaunch(sdk, &serial).map_err(|error| error.to_string())?;
+            if let Some(forward) = previous {
+                let _ = remove_reverse(sdk, &serial, forward.port);
+                if forward.files != forward.port {
+                    let _ = remove_reverse(sdk, &serial, forward.files);
+                }
+            }
+            bind_reverse(sdk, &serial, files)?;
+            bind_reverse(sdk, &serial, port)?;
+            android::relaunch(sdk, &serial).map_err(|error| error.to_string())?;
+        }
+        self.forward = Some(Forward { port, files });
+        let shared = SharedSession::new(session);
+        self.shared = Some(Arc::clone(&shared));
         Ok(Box::new(AndroidApp {
-            session: Some(session),
-            sdk_root: sdk.adb(),
-            serial,
-            port,
-            files,
+            shared,
+            generation: 1,
             open: true,
+            pin,
         }))
     }
 }
 
 struct AndroidApp {
-    session: Option<crate::TestSession>,
-    /// `adb` binary. Kept so close can drop the reverse without the SDK struct.
-    sdk_root: std::path::PathBuf,
-    serial: String,
-    port: u16,
-    files: u16,
+    shared: Arc<SharedSession>,
+    generation: u64,
     open: bool,
+    pin: RecyclePin,
 }
 
 impl AndroidApp {
@@ -149,17 +217,17 @@ impl AndroidApp {
         y: f32,
         ms: f64,
     ) -> Result<Value, String> {
-        if !self.open {
+        if !self.open || !self.shared.current(self.generation) {
             return Err("the app is closed".into());
         }
         let op = crate::session::step_op(op)?;
-        let session = self
-            .session
-            .as_mut()
-            .ok_or_else(|| "the app is closed".to_owned())?;
-        match session.step(op, selector, text, distance, x, y, ms) {
-            Err(error) if error == "the app stopped" => Err("the Android app stopped".into()),
+        match self.shared.step(op, selector, text, distance, x, y, ms) {
+            Err(error) if error == "the app stopped" => {
+                self.shared.kill();
+                Err("the Android app stopped".into())
+            }
             Err(error) if error == "the app did not connect" => {
+                self.shared.kill();
                 Err("the device did not connect".into())
             }
             other => other,
@@ -308,18 +376,12 @@ impl HostedApp for AndroidApp {
             return;
         }
         self.open = false;
-        self.session.take();
-        let _ = std::process::Command::new(&self.sdk_root)
-            .args(["-s", &self.serial, "shell", "am", "force-stop", PACKAGE])
-            .status();
-        let forwarded = format!("tcp:{}", self.port);
-        let files = format!("tcp:{}", self.files);
-        let _ = std::process::Command::new(&self.sdk_root)
-            .args(["-s", &self.serial, "reverse", "--remove", &forwarded])
-            .status();
-        let _ = std::process::Command::new(&self.sdk_root)
-            .args(["-s", &self.serial, "reverse", "--remove", &files])
-            .status();
+        if !self.shared.current(self.generation) {
+            return;
+        }
+        if self.shared.recycle(&self.pin).is_err() {
+            self.shared.kill();
+        }
     }
 }
 
@@ -355,4 +417,38 @@ fn strings(value: Value) -> Result<Vec<String>, String> {
                 .ok_or_else(|| "the device returned a non-string".to_owned())
         })
         .collect()
+}
+
+fn recycle_pin(request: &HostOpen) -> RecyclePin {
+    let insets = request.safe_area.unwrap_or(HostInsets {
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 0.0,
+    });
+    RecyclePin {
+        width: request.width,
+        height: request.height,
+        keyboard: request.keyboard.unwrap_or(0.0),
+        top: insets.top,
+        right: insets.right,
+        bottom: insets.bottom,
+        left: insets.left,
+        color_scheme: request.color_scheme.map(|scheme| scheme.name().to_owned()),
+    }
+}
+
+fn bind_reverse(sdk: &android::Sdk, serial: &str, port: u16) -> Result<(), String> {
+    let spec = format!("tcp:{port}");
+    let _ = android::adb(sdk, serial, &["reverse", "--remove", &spec]);
+    android::adb(sdk, serial, &["reverse", &spec, &spec])
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+fn remove_reverse(sdk: &android::Sdk, serial: &str, port: u16) -> Result<(), String> {
+    let spec = format!("tcp:{port}");
+    android::adb(sdk, serial, &["reverse", "--remove", &spec])
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }

@@ -1,10 +1,11 @@
 //! `nlayer test --target ios`.
 //!
-//! The test file still runs in QuickJS. `open` writes the app into the
-//! simulator host and starts a test session. The app connects on that
-//! socket. Press, type and scroll go through UIKit.
-
+//! The test file still runs in QuickJS. The first `open` writes the app into
+//! the simulator and launches the host. Later opens send [`Recycle`] and a
+//! new bundle on the same socket: the process stays, and the host starts a
+//! new engine. A dead socket relaunches once.
 use std::{
+    sync::Arc,
     thread,
     time::{Duration, Instant},
 };
@@ -14,19 +15,34 @@ use nlayer_testing::{AppHost, HostInsets, HostOpen, HostedApp, NodeId};
 use serde_json::{Value, json};
 
 use crate::ios::{self, BUNDLE_ID};
+use crate::session::{RecyclePin, SharedSession};
 
 /// The simulator host one `nlayer test --target ios` run drives.
 pub(crate) struct IosHost {
     boot: Option<Boot>,
+    /// The socket the running host is on. `None` until the first launch,
+    /// and after that launch's socket dies.
+    shared: Option<Arc<SharedSession>>,
 }
 
 struct Boot {
     udid: String,
 }
 
+impl Drop for IosHost {
+    fn drop(&mut self) {
+        self.shared.take();
+        if let Some(boot) = &self.boot {
+            let _ = ios::simctl(&["terminate", &boot.udid, BUNDLE_ID]);
+        }
+    }
+}
 impl IosHost {
     pub(crate) fn new() -> Self {
-        Self { boot: None }
+        Self {
+            boot: None,
+            shared: None,
+        }
     }
 
     fn boot(&mut self) -> Result<&Boot, String> {
@@ -68,35 +84,62 @@ impl AppHost for IosHost {
         let docs = ios::data_container(&udid)
             .map_err(|error| error.to_string())?
             .join("Documents");
-        // The test socket pushes the development bundle once. `app.js` stays
-        // empty so the host does not mount an ESM tree and then a second one.
+        // The test socket pushes the development bundle once, then again
+        // after each recycle. `app.js` stays empty so the host does not
+        // mount an ESM tree and then a second one.
         ios::publish(&docs, &app_dir, b"", &bundled.assets).map_err(|error| error.to_string())?;
+        let pin = recycle_pin(&request);
+        if let Some(shared) = self.shared.clone()
+            && shared.alive()
+        {
+            let generation = shared.invalidate();
+            match shared
+                .recycle(&pin)
+                .and_then(|_| shared.push_entry(&entry, true))
+            {
+                Ok(()) => {
+                    return Ok(Box::new(IosApp {
+                        shared,
+                        generation,
+                        open: true,
+                        pin,
+                    }));
+                }
+                Err(_) => shared.kill(),
+            }
+        }
+        self.shared = None;
         let session = crate::TestSession::start(&entry, true)?;
-        let pin = json!({
-            "width": request.width,
-            "height": request.height,
-            "keyboard": request.keyboard.unwrap_or(0.0),
+        let port = session.port();
+        let pin_file = json!({
+            "width": pin.width,
+            "height": pin.height,
+            "keyboard": pin.keyboard,
             "safeArea": area(request.safe_area),
             "host": "127.0.0.1",
-            "port": session.port(),
+            "port": port,
             "test": true,
-            "colorScheme": request.color_scheme.map(|scheme| scheme.name()),
+            "colorScheme": pin.color_scheme,
         });
-        std::fs::write(docs.join("nlayer-test.json"), pin.to_string())
+        std::fs::write(docs.join("nlayer-test.json"), pin_file.to_string())
             .map_err(|error| error.to_string())?;
         ios::relaunch(&udid).map_err(|error| error.to_string())?;
+        let shared = SharedSession::new(session);
+        self.shared = Some(Arc::clone(&shared));
         Ok(Box::new(IosApp {
-            session: Some(session),
-            udid,
+            shared,
+            generation: 1,
             open: true,
+            pin,
         }))
     }
 }
 
 struct IosApp {
-    session: Option<crate::TestSession>,
-    udid: String,
+    shared: Arc<SharedSession>,
+    generation: u64,
     open: bool,
+    pin: RecyclePin,
 }
 
 impl IosApp {
@@ -121,17 +164,17 @@ impl IosApp {
         y: f32,
         ms: f64,
     ) -> Result<Value, String> {
-        if !self.open {
+        if !self.open || !self.shared.current(self.generation) {
             return Err("the app is closed".into());
         }
         let op = crate::session::step_op(op)?;
-        let session = self
-            .session
-            .as_mut()
-            .ok_or_else(|| "the app is closed".to_owned())?;
-        match session.step(op, selector, text, distance, x, y, ms) {
-            Err(error) if error == "the app stopped" => Err("the simulator app stopped".into()),
+        match self.shared.step(op, selector, text, distance, x, y, ms) {
+            Err(error) if error == "the app stopped" => {
+                self.shared.kill();
+                Err("the simulator app stopped".into())
+            }
             Err(error) if error == "the app did not connect" => {
+                self.shared.kill();
                 Err("the simulator did not connect".into())
             }
             other => other,
@@ -280,8 +323,12 @@ impl HostedApp for IosApp {
             return;
         }
         self.open = false;
-        self.session.take();
-        let _ = ios::simctl(&["terminate", &self.udid, BUNDLE_ID]);
+        if !self.shared.current(self.generation) {
+            return;
+        }
+        if self.shared.recycle(&self.pin).is_err() {
+            self.shared.kill();
+        }
     }
 }
 
@@ -317,4 +364,23 @@ fn strings(value: Value) -> Result<Vec<String>, String> {
                 .ok_or_else(|| "the simulator returned a non-string".to_owned())
         })
         .collect()
+}
+
+fn recycle_pin(request: &HostOpen) -> RecyclePin {
+    let insets = request.safe_area.unwrap_or(HostInsets {
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 0.0,
+    });
+    RecyclePin {
+        width: request.width,
+        height: request.height,
+        keyboard: request.keyboard.unwrap_or(0.0),
+        top: insets.top,
+        right: insets.right,
+        bottom: insets.bottom,
+        left: insets.left,
+        color_scheme: request.color_scheme.map(|scheme| scheme.name().to_owned()),
+    }
 }

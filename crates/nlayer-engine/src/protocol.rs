@@ -9,7 +9,9 @@
 //!
 //! [`Hello::test`] marks a test session: the host must not show the dev
 //! overlay and must not apply patches. [`Step`] is one existing test step;
-//! the host answers with [`StepResult`].
+//! the host answers with [`StepResult`]. [`Recycle`] drops the running
+//! engine and the native tree, then answers with [`StepResult`] too; the
+//! next [`Bundle`] starts a new QuickJS runtime in the same process.
 
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +35,7 @@ frame_tag!(HelloTag, "hello");
 frame_tag!(PatchTag, "patch");
 frame_tag!(BundleTag, "bundle");
 frame_tag!(BuildFailedTag, "build_failed");
+frame_tag!(RecycleTag, "recycle");
 frame_tag!(StepTag, "step");
 frame_tag!(StepResultTag, "step_result");
 
@@ -112,6 +115,70 @@ impl Bundle {
             tag: BundleTag::Tag,
             version,
             source_map,
+        }
+    }
+}
+
+/// Safe area on a [`Recycle`], in points.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct RecycleInsets {
+    /// Distance from the top of the screen, in points.
+    #[serde(default)]
+    pub top: f32,
+    /// Distance from the right of the screen, in points.
+    #[serde(default)]
+    pub right: f32,
+    /// Distance from the bottom of the screen, in points.
+    #[serde(default)]
+    pub bottom: f32,
+    /// Distance from the left of the screen, in points.
+    #[serde(default)]
+    pub left: f32,
+}
+
+/// Drop the engine and the native tree, then wait for the next [`Bundle`].
+///
+/// Answered with [`StepResult`] of [`Self::id`]. The process and the test
+/// socket stay. A bundle that arrives afterwards is a new QuickJS runtime,
+/// not a reload of the one this frame dropped.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Recycle {
+    #[serde(rename = "type")]
+    tag: RecycleTag,
+    /// Correlates with the [`StepResult`] that says the tree is gone.
+    pub id: u64,
+    /// Viewport width, in points.
+    pub width: f32,
+    /// Viewport height, in points.
+    pub height: f32,
+    /// Pinned `env(keyboard-inset-height)`. `0` is a pinned zero, not "follow
+    /// the software keyboard": a test pin always replaces it.
+    #[serde(default)]
+    pub keyboard: f32,
+    /// Pinned safe area.
+    #[serde(default, rename = "safeArea")]
+    pub safe_area: RecycleInsets,
+    /// `light` or `dark`. Absent keeps the scheme the process already has.
+    #[serde(
+        default,
+        rename = "colorScheme",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub color_scheme: Option<String>,
+}
+
+impl Recycle {
+    /// A recycle of viewport `width`×`height`. Insets and the scheme are
+    /// filled in by the caller.
+    pub fn new(id: u64, width: f32, height: f32) -> Self {
+        Self {
+            tag: RecycleTag::Tag,
+            id,
+            width,
+            height,
+            keyboard: 0.0,
+            safe_area: RecycleInsets::default(),
+            color_scheme: None,
         }
     }
 }
@@ -338,6 +405,19 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<BuildFailed>(&failed_json).unwrap(),
             failed
+        );
+        let mut recycle = Recycle::new(4, 390.0, 844.0);
+        recycle.keyboard = 120.0;
+        recycle.safe_area.top = 47.0;
+        recycle.color_scheme = Some("dark".to_owned());
+        let recycle_json = serde_json::to_string(&recycle).unwrap();
+        assert_eq!(
+            recycle_json,
+            r#"{"type":"recycle","id":4,"width":390.0,"height":844.0,"keyboard":120.0,"safeArea":{"top":47.0,"right":0.0,"bottom":0.0,"left":0.0},"colorScheme":"dark"}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<Recycle>(&recycle_json).unwrap(),
+            recycle
         );
 
         let mut step = Step::new(7, StepOp::LongPress);

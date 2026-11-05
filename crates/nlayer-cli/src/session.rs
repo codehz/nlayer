@@ -1,9 +1,11 @@
-//! One `nlayer test --target` session.
+//! One `nlayer test --target` socket.
 //!
 //! `start` bundles the entry once and listens on `127.0.0.1:0`. The first
 //! client on [`WS_PATH`] is sent [`Hello`] (`test`), then [`Bundle`] version
-//! 1 and its script. [`TestSession::step`] sends a [`Step`] and waits for
-//! the matching [`StepResult`].
+//! 1 and its script. Later opens on iOS and Android send [`Recycle`] and
+//! another [`Bundle`] on that same socket; the process stays up. [`TestSession::step`]
+//! sends a [`Step`] and waits for the matching [`StepResult`]. [`Recycle`] is
+//! answered the same way.
 //!
 //! The wait is `nsh-dev`'s `DevServer::step`: an id, the host's result, or
 //! 30 seconds. A closed socket is "the app stopped". A test session does
@@ -18,8 +20,8 @@ use std::{
     net::{TcpListener, TcpStream},
     path::Path,
     sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
         mpsc::{Receiver, RecvTimeoutError, Sender},
     },
@@ -28,7 +30,7 @@ use std::{
 };
 
 use nlayer_bundler::bundle_hot;
-use nlayer_engine::protocol::{self, StepOp, StepResult, WS_PATH};
+use nlayer_engine::protocol::{self, Recycle, RecycleInsets, StepOp, StepResult, WS_PATH};
 use serde_json::Value;
 use tungstenite::{Message, WebSocket};
 
@@ -52,6 +54,8 @@ pub(crate) struct TestSession {
     socket: Option<Socket>,
     thread: Option<JoinHandle<()>>,
     next_id: u64,
+    /// [`Bundle`] version already sent. The connect frame is 1.
+    bundle_version: u64,
 }
 
 impl TestSession {
@@ -83,6 +87,7 @@ impl TestSession {
             socket: None,
             thread: Some(thread),
             next_id: 1,
+            bundle_version: 1,
         })
     }
 
@@ -134,6 +139,68 @@ impl TestSession {
             }
         }
         self.socket.as_mut().ok_or_else(|| STOPPED.to_owned())
+    }
+
+    /// Drops the host's engine and native tree. The socket stays open.
+    /// The next [`Self::push_entry`] starts a new QuickJS runtime.
+    pub(crate) fn recycle(&mut self, pin: &RecyclePin) -> Result<(), String> {
+        let deadline = Instant::now() + STEP_TIMEOUT;
+        let id = self.next_id;
+        self.next_id = self.next_id.wrapping_add(1);
+        let mut frame = Recycle::new(id, pin.width, pin.height);
+        frame.keyboard = pin.keyboard;
+        frame.safe_area = RecycleInsets {
+            top: pin.top,
+            right: pin.right,
+            bottom: pin.bottom,
+            left: pin.left,
+        };
+        frame.color_scheme = pin.color_scheme.clone();
+        let socket = self.connected(deadline)?;
+        send_json(socket, &frame, deadline, None)?;
+        read_result(socket, id, deadline)?;
+        Ok(())
+    }
+
+    /// Sends a full bundle for `entry` on the socket that is already open.
+    /// The host must have recycled, or this reloads the running VM.
+    pub(crate) fn push_entry(&mut self, entry: &Path, fixture_origin: bool) -> Result<(), String> {
+        let bundled = bundle_hot(entry, true).map_err(|error| error.colored)?;
+        let (script, source_map) = bundled.script();
+        let script = if fixture_origin {
+            nlayer_testing::with_fixture_origin(&script, entry.parent().unwrap_or(entry))
+        } else {
+            script
+        };
+        self.push_bundle(&script, source_map.as_deref())
+    }
+
+    fn push_bundle(&mut self, script: &str, source_map: Option<&str>) -> Result<(), String> {
+        let deadline = Instant::now() + STEP_TIMEOUT;
+        self.bundle_version = self.bundle_version.wrapping_add(1);
+        let version = self.bundle_version;
+        let socket = self.connected(deadline)?;
+        send_json(
+            socket,
+            &protocol::Bundle::new(version, source_map.is_some()),
+            deadline,
+            None,
+        )?;
+        send_frame(
+            socket,
+            Message::binary(script.as_bytes().to_vec()),
+            deadline,
+            None,
+        )?;
+        if let Some(map) = source_map {
+            send_frame(
+                socket,
+                Message::binary(map.as_bytes().to_vec()),
+                deadline,
+                None,
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -390,4 +457,89 @@ fn close_socket(mut socket: Socket) -> Result<(), ()> {
         .set_write_timeout(Some(Duration::from_secs(1)));
     socket.close(None).map_err(|_| ())?;
     socket.flush().map_err(|_| ())
+}
+
+/// Viewport and insets a [`Recycle`] carries. `keyboard` is a pinned height,
+/// including zero.
+#[derive(Debug, Clone)]
+pub(crate) struct RecyclePin {
+    pub(crate) width: f32,
+    pub(crate) height: f32,
+    pub(crate) keyboard: f32,
+    pub(crate) top: f32,
+    pub(crate) right: f32,
+    pub(crate) bottom: f32,
+    pub(crate) left: f32,
+    pub(crate) color_scheme: Option<String>,
+}
+
+/// The one test socket an iOS or Android run keeps open across `open`s.
+///
+/// `generation` starts at 1. A later `open` bumps it, so a handle from the
+/// previous app fails [`Self::current`] and does not recycle the new engine.
+pub(crate) struct SharedSession {
+    inner: Mutex<TestSession>,
+    generation: AtomicU64,
+    alive: AtomicBool,
+}
+
+impl SharedSession {
+    pub(crate) fn new(session: TestSession) -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(session),
+            generation: AtomicU64::new(1),
+            alive: AtomicBool::new(true),
+        })
+    }
+
+    /// This handle still owns the running app.
+    pub(crate) fn current(&self, generation: u64) -> bool {
+        self.alive.load(Ordering::Relaxed) && self.generation.load(Ordering::Relaxed) == generation
+    }
+
+    pub(crate) fn alive(&self) -> bool {
+        self.alive.load(Ordering::Relaxed)
+    }
+
+    /// The socket died or a recycle failed. The next `open` relaunches.
+    pub(crate) fn kill(&self) {
+        self.alive.store(false, Ordering::Relaxed);
+    }
+
+    /// Marks every earlier handle stale and returns the generation the new
+    /// app should hold.
+    pub(crate) fn invalidate(&self) -> u64 {
+        self.generation.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    pub(crate) fn recycle(&self, pin: &RecyclePin) -> Result<(), String> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .recycle(pin)
+    }
+
+    pub(crate) fn push_entry(&self, entry: &Path, fixture_origin: bool) -> Result<(), String> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push_entry(entry, fixture_origin)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn step(
+        &self,
+        op: StepOp,
+        selector: &str,
+        text: &str,
+        distance: f32,
+        x: f32,
+        y: f32,
+        ms: f64,
+    ) -> Result<Value, String> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .step(op, selector, text, distance, x, y, ms)
+    }
 }

@@ -97,6 +97,8 @@ struct Cache {
     /// Oldest at the front. A hit moves the entry to the back.
     entries: Vec<(std::sync::Arc<str>, Decoded)>,
     bytes: usize,
+    /// [`clear`] bumps this. A decode that started earlier does not store.
+    epoch: u64,
 }
 
 #[cfg(target_os = "ios")]
@@ -106,6 +108,7 @@ fn cache() -> &'static std::sync::Mutex<Cache> {
         std::sync::Mutex::new(Cache {
             entries: Vec::new(),
             bytes: 0,
+            epoch: 0,
         })
     })
 }
@@ -115,6 +118,23 @@ fn cost(decoded: &Decoded) -> usize {
     (decoded.width as usize)
         .saturating_mul(decoded.height as usize)
         .saturating_mul(4)
+}
+
+/// The cache generation. A decode captures it and stores only if it still
+/// matches, so a recycle cannot keep the previous app's bitmap.
+#[cfg(target_os = "ios")]
+pub(crate) fn epoch() -> u64 {
+    cache().lock().expect("image cache").epoch
+}
+
+/// Drops every decoded bitmap. In-flight decodes of the old generation
+/// miss [`store`].
+#[cfg(target_os = "ios")]
+pub(crate) fn clear() {
+    let mut cache = cache().lock().expect("image cache");
+    cache.entries.clear();
+    cache.bytes = 0;
+    cache.epoch = cache.epoch.wrapping_add(1);
 }
 
 /// A bitmap already decoded for `uri`, if one is still cached.
@@ -131,10 +151,14 @@ pub(crate) fn cached(uri: &str) -> Option<Decoded> {
     Some(decoded)
 }
 
-/// Keeps `decoded` for later views of `uri`.
+/// Keeps `decoded` for later views of `uri`, unless [`clear`] has run since
+/// `epoch` was read.
 #[cfg(target_os = "ios")]
-pub(crate) fn store(uri: std::sync::Arc<str>, decoded: &Decoded) {
+pub(crate) fn store(uri: std::sync::Arc<str>, decoded: &Decoded, epoch: u64) {
     let mut cache = cache().lock().expect("image cache");
+    if cache.epoch != epoch {
+        return;
+    }
     if let Some(index) = cache
         .entries
         .iter()

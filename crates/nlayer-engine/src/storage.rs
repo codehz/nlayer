@@ -62,6 +62,16 @@ impl FileStorage {
     }
 }
 
+/// Deletes the file [`FileStorage`] would reopen in `dir`.
+///
+/// The storage for that directory must already have been dropped. Its
+/// writer joins on drop and would put the old entries back afterwards.
+pub fn clear(dir: &Path) {
+    let path = dir.join("storage.json");
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("json.tmp"));
+}
+
 /// The system's directory for apps' data: Application Support on Apple
 /// platforms, `%APPDATA%` on Windows, `$XDG_DATA_HOME` (`~/.local/share`)
 /// elsewhere. `None` on Android, whose files directory only the platform

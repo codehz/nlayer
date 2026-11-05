@@ -40,6 +40,20 @@ final class Pin {
     this.test = test;
   }
 
+  /** Same socket, a later `open`'s viewport and scheme. */
+  Pin resized(
+      float width,
+      float height,
+      float keyboard,
+      float top,
+      float right,
+      float bottom,
+      float left,
+      String colorScheme) {
+    return new Pin(
+        width, height, keyboard, top, right, bottom, left, host, port, colorScheme, test);
+  }
+
   static Pin read(File file) {
     if (file == null || !file.isFile()) return null;
     try {

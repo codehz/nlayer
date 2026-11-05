@@ -213,6 +213,56 @@ public final class HostView extends FrameLayout {
         });
   }
 
+  /**
+   * Drops the mounted tree and applies the next test's viewport. Called from the test socket, which
+   * waits until the UI thread has finished.
+   */
+  public void recycle(
+      final float width,
+      final float height,
+      final float keyboardHeight,
+      final float top,
+      final float right,
+      final float bottom,
+      final float left,
+      final String scheme) {
+    Runnable work =
+        new Runnable() {
+          public void run() {
+            mounter.reset();
+            if (pin != null) {
+              pin = pin.resized(width, height, keyboardHeight, top, right, bottom, left, scheme);
+            }
+            safeTop = Math.round(top * density);
+            safeRight = Math.round(right * density);
+            safeBottom = Math.round(bottom * density);
+            safeLeft = Math.round(left * density);
+            activityKeyboard = Math.round(keyboardHeight * density);
+            keyboard = activityKeyboard;
+            if (scheme != null) dark = scheme.equals("dark");
+            dismissKeyboard();
+            devOverlay = null;
+          }
+        };
+    if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+      work.run();
+      return;
+    }
+    final CountDownLatch done = new CountDownLatch(1);
+    main.post(
+        new Runnable() {
+          public void run() {
+            work.run();
+            done.countDown();
+          }
+        });
+    try {
+      done.await(5, TimeUnit.SECONDS);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
+  }
+
   public void load(String code, String assetsDir) {
     this.code = code;
     this.assetsDir = assetsDir;

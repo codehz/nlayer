@@ -150,6 +150,14 @@ final class ModalHost {
     decor.setSystemUiVisibility(flags);
   }
 
+  /** Drops the dialog now. A recycled test app does not play the exit. */
+  void discard() {
+    if (container != null) container.animate().cancel();
+    animation = 2;
+    closing = false;
+    dismiss();
+  }
+
   void dismiss() {
     if (dialog == null || closing) return;
     closing = true;

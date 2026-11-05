@@ -1026,6 +1026,13 @@ impl ModalHost {
         self.config = config;
     }
 
+    /// Dismisses without the exit animation. A recycled test app cannot
+    /// wait for the transition, and the next app must not find the dialog.
+    pub(crate) fn discard(&mut self) {
+        self.config.animation = nlayer_core::ModalAnimation::None;
+        self.dismiss(|| {});
+    }
+
     /// Dismisses the modal; `done` runs when it is gone.
     pub(crate) fn dismiss(&mut self, done: impl Fn() + 'static) {
         if !self.presented {

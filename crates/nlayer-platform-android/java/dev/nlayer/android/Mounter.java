@@ -137,6 +137,63 @@ final class Mounter {
     views.put(1, h);
   }
 
+  /** Drops every view except the root. The next engine's ids start over. */
+  void reset() {
+    if (selectedText != null) {
+      selectedText.clearSelection();
+      selectedText = null;
+    }
+    if (selectedArea != null) {
+      selectedArea.clear();
+      selectedArea = null;
+    }
+    for (int i = selectableViews.size() - 1; i >= 0; i--) selectableViews.valueAt(i).clear();
+    selectableViews.clear();
+    for (int i = modals.size() - 1; i >= 0; i--) modals.valueAt(i).discard();
+    for (int i = closingModals.size() - 1; i >= 0; i--) closingModals.get(i).discard();
+    closingModals.clear();
+    host.removeAllViews();
+    View root = views.get(1);
+    views.clear();
+    if (root != null) views.put(1, root);
+    events.clear();
+    panBindings.clear();
+    pinchBindings.clear();
+    rotationBindings.clear();
+    testIds.clear();
+    accessibility.clear();
+    bases.clear();
+    active.clear();
+    hover.clear();
+    focus.clear();
+    activeColor.clear();
+    hoverColor.clear();
+    focusColor.clear();
+    longDelays.clear();
+    longDown.clear();
+    longFired.clear();
+    for (int i = longRuns.size() - 1; i >= 0; i--) {
+      Runnable run = longRuns.valueAt(i);
+      if (run != null) host.removeCallbacks(run);
+    }
+    longRuns.clear();
+    screenOptions.clear();
+    modalOptions.clear();
+    headerSizes.clear();
+    modals.clear();
+    trackedStates.clear();
+    currentStates.clear();
+    observedPress.clear();
+    openedUrls.clear();
+    dirtyStacks.clear();
+    dirtyScreens.clear();
+    dirtyModals.clear();
+    hosts.clear();
+    stacks.clear();
+    headerItems.clear();
+    modalShowOrder = 0;
+  }
+
   void apply(byte[] bytes, Object[] objects) {
     ByteBuffer b = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
     while (b.hasRemaining()) {
