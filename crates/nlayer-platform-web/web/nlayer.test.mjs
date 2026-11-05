@@ -412,6 +412,120 @@ test("op_r removes DOM node and updates stack", () => {
   assert.equal(player.backDepth(), 0, "Back depth should drop to 0");
 });
 
+function stubAnimate(window) {
+  const started = [];
+  window.Element.prototype.animate = function animate(keyframes, options) {
+    const record = { el: this, keyframes, options, onfinish: null };
+    started.push(record);
+    return record;
+  };
+  return started;
+}
+
+function stackOf(player, animation = "default") {
+  player.apply([
+    ["c", 10, "stack"],
+    ["c", 11, "screen"],
+    ["c", 12, "screen"],
+    ["i", 1, 10, null],
+    ["i", 10, 11, null],
+    ["f", 10, 0, 0, 390, 800],
+    ["scr", 11, { animation }],
+    ["scr", 12, { animation }],
+  ]);
+}
+
+test("push slides the new screen in and parallaxes the one under it", () => {
+  const { player, window } = createTestEnv();
+  const started = stubAnimate(window);
+  stackOf(player);
+  player.apply([["i", 10, 12, null]]);
+  const top = player.view(12);
+  const under = player.view(11);
+  assert.equal(top.classList.contains("nl-top"), true);
+  assert.equal(under.classList.contains("nl-shown"), true);
+  assert.equal(under.style.transform, "translateX(-30%)");
+  assert.deepEqual(started[0].keyframes, [
+    { transform: "translateX(100%)" },
+    { transform: "translateX(0%)" },
+  ]);
+  assert.equal(started[0].options.duration, 300);
+  assert.deepEqual(started[1].keyframes, [
+    { transform: "translateX(0%)" },
+    { transform: "translateX(-30%)" },
+  ]);
+});
+
+test("pop keeps the leaving screen until the slide ends", () => {
+  const { player, window } = createTestEnv();
+  const started = stubAnimate(window);
+  stackOf(player);
+  player.apply([["i", 10, 12, null]]);
+  started.length = 0;
+  const leaving = player.view(12);
+  player.apply([["r", 12]]);
+  assert.equal(leaving.parentNode, player.view(10), "pixels stay until the slide ends");
+  assert.equal(player.backDepth(), 0, "history drops when the route pops");
+  assert.equal(leaving.style.pointerEvents, "none");
+  assert.equal(started[0].options.fill, "forwards");
+  assert.equal(started[0].options.duration, 300);
+  started[0].onfinish();
+  assert.equal(leaving.parentNode, null);
+  assert.equal(player.view(11).classList.contains("nl-top"), true);
+});
+
+test("fade and reduced motion do not slide", () => {
+  const { player, window } = createTestEnv();
+  const started = stubAnimate(window);
+  stackOf(player, "fade");
+  player.apply([["i", 10, 12, null]]);
+  assert.deepEqual(started[0].keyframes, [{ opacity: 0 }, { opacity: 1 }]);
+  assert.equal(started[0].options.duration, 200);
+  assert.equal(started.length, 1);
+
+  started.length = 0;
+  window.matchMedia = (query) => ({ matches: query.includes("reduce") });
+  player.apply([
+    ["c", 13, "screen"],
+    ["scr", 13, { animation: "default" }],
+    ["i", 10, 13, null],
+  ]);
+  assert.deepEqual(started.at(-1).keyframes, [{ opacity: 0 }, { opacity: 1 }]);
+});
+
+test("animation none removes the screen at once", () => {
+  const { player, window } = createTestEnv();
+  const started = stubAnimate(window);
+  stackOf(player, "none");
+  player.apply([["i", 10, 12, null]]);
+  assert.equal(started.length, 0);
+  player.apply([["r", 12]]);
+  assert.equal(player.view(12).parentNode, null);
+  assert.equal(started.length, 0);
+});
+
+test("popToRoot animates only the old top", () => {
+  const { player, window } = createTestEnv();
+  const started = stubAnimate(window);
+  stackOf(player);
+  player.apply([
+    ["c", 13, "screen"],
+    ["scr", 13, { animation: "default" }],
+    ["i", 10, 12, null],
+    ["i", 10, 13, null],
+  ]);
+  started.length = 0;
+  player.apply([
+    ["r", 13],
+    ["r", 12],
+  ]);
+  assert.equal(player.view(12).parentNode, null);
+  assert.equal(player.view(13).parentNode, player.view(10));
+  assert.equal(started.length, 2);
+  started[0].onfinish();
+  assert.equal(player.view(13).parentNode, null);
+});
+
 test("a modal covers the window wherever the app rendered it", () => {
   const { player, root } = createTestEnv();
   player.host.setRootSize = () => {};

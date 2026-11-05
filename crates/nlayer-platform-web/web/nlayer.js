@@ -38,6 +38,16 @@ const FOCUSED = 4;
 /** Pull-to-refresh thresholds (points). */
 const REFRESH_PULL = 64;
 const REFRESH_SPACE = 56;
+/** Screen motion, copied from nsh's web mounter. A push or pop slides for
+ * SLIDE_MS while the screen under it moves by PARALLAX of the width; a fade
+ * takes FADE_MS. Both ease out cubically. The screen under the top stays
+ * visible until HIDE_UNDER_MS. */
+const SLIDE_MS = 300;
+const FADE_MS = 200;
+const PARALLAX = 0.3;
+const HIDE_UNDER_MS = 400;
+const EASE_OUT_CUBIC = "cubic-bezier(0.333, 1, 0.667, 1)";
+
 /** The sheet of generated classes, or of the views' own rules. */
 function classSheet(doc, id) {
   if (!CLASSES.sheets[id]) {
@@ -394,6 +404,9 @@ export class Player {
     // Back before a deferred removal (or a modal exit) finished.
     child._removing = false;
     child._leftWith = null;
+    child._removedFrom = null;
+    child._popping = false;
+    if (child._kind === "screen") child.style.visibility = "";
     if (child._kind === "modal" && child._leaving) this.cancelModalExit(child);
     host.insertBefore(child, anchor);
     this.raiseBorder(parent);
@@ -408,7 +421,7 @@ export class Player {
     const parent = this.ownerView(el.parentNode);
     this.detachHeader(el);
     if (el._kind === "modal") this.dismissModal(el);
-    else this.queueRemoval(el);
+    else if (!this.holdScreen(el, parent)) this.queueRemoval(el);
     if (parent) this.trackChange(parent, el);
   }
 
@@ -422,8 +435,15 @@ export class Player {
     this.animation?.unbind(id);
     this.views.delete(id);
     if (el._kind === "modal") this.dismissModal(el);
-    else this.queueRemoval(el);
+    else if (!this.holdScreen(el, parent)) this.queueRemoval(el);
     if (parent) this.trackChange(parent, el);
+  }
+
+  /** A screen stays mounted until its stack has animated it out. */
+  holdScreen(el, parent) {
+    if (el._kind !== "screen" || parent?._kind !== "stack" || el._removedFrom) return false;
+    el._removedFrom = parent;
+    return true;
   }
 
   /** Leave `el` in the tree until the batch ends. */
@@ -434,9 +454,9 @@ export class Player {
   }
 
   /**
-   * Views removed with a modal stay in it (`_leftWith`) until the exit
-   * motion ends. Everything else leaves now. The app already unmounted;
-   * the pixels are what remain.
+   * Views removed with a modal, or with a screen still on screen, stay in it
+   * (`_leftWith`) until that exit ends. Everything else leaves now. The app
+   * already unmounted; the pixels are what remain.
    */
   finishRemovals() {
     const removals = this.removals;
@@ -445,9 +465,18 @@ export class Player {
       if (!el._removing) continue;
       el._removing = false;
       let up = el.parentNode;
-      while (up && up !== this.root && !up._leaving) up = up.parentNode;
+      while (up && up !== this.root && !(up._leaving || up._popping || up._removedFrom))
+        up = up.parentNode;
       if (up && up !== this.root) el._leftWith = up;
       else el.remove();
+    }
+  }
+
+  reducedMotion() {
+    try {
+      return !!this.window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    } catch {
+      return false;
     }
   }
 
@@ -456,13 +485,7 @@ export class Player {
     const name = el._modalConfig?.animation ?? "slide";
     const animation = name === "fade" || name === "none" || name === "slide" ? name : "slide";
     if (animation !== "slide") return animation;
-    let reduce = false;
-    try {
-      reduce = !!this.window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-    } catch {
-      reduce = false;
-    }
-    return reduce ? "fade" : "slide";
+    return this.reducedMotion() ? "fade" : animation;
   }
 
   /** Off-screen or transparent, before the enter transition and at the end of the exit. */
@@ -590,15 +613,41 @@ export class Player {
   }
 
   reconcileStacks() {
-    for (const stack of this.changedStacks) {
+    const stacks = this.changedStacks;
+    this.changedStacks = new Set();
+    for (const stack of stacks) {
       if (!this.views.has(stack._id)) continue;
-      const screens = this.hosted(stack).filter((c) => c._kind === "screen");
-      screens.forEach((screen, i) => {
-        const isTop = i === screens.length - 1;
-        screen.classList.toggle("nl-top", isTop);
-      });
+      const screens = this.stackScreens(stack);
+      const top = screens[screens.length - 1] ?? null;
+      const old = stack._top ?? null;
+      const shown = stack._shown ?? [];
+      stack._top = top;
+      stack._shown = screens;
+      const removed = old?._removedFrom === stack;
+      const wide = stack._frame?.[2] > 0;
+      const pushing = wide && old && top && old !== top && !shown.includes(top);
+      const popping = wide && !pushing && removed && old && top && old !== top && !old._popping;
+      let leaving = null;
+      let holdUnder = false;
+      if (pushing && this.screenMotion(top) && typeof top.animate === "function") {
+        holdUnder = true;
+        this.moveScreens(removed ? null : old, top, true);
+      } else if (popping && this.screenMotion(old) && typeof old.animate === "function") {
+        leaving = old;
+        old._popping = true;
+        holdUnder = true;
+        this.moveScreens(old, top, false, () => {
+          if (old._removedFrom === stack) this.releaseScreen(old);
+          else old._popping = false;
+        });
+      }
+      this.paintStack(stack, screens, leaving, holdUnder);
+      for (const screen of this.hosted(stack)) {
+        if (screen._kind === "screen" && screen._removedFrom === stack && screen !== leaving) {
+          this.releaseScreen(screen);
+        }
+      }
     }
-    this.changedStacks.clear();
     if (this.changedModals) {
       this.changedModals = false;
       for (const el of this.views.values()) {
@@ -609,6 +658,83 @@ export class Player {
         this.presentModal(el);
       }
     }
+  }
+
+  /** Screens still in the stack, not one already leaving. */
+  stackScreens(stack) {
+    return this.hosted(stack).filter(
+      (screen) => screen._kind === "screen" && !screen._popping && !screen._removedFrom,
+    );
+  }
+
+  /** `{ duration, fade }` for `screen`, or null when it appears at once.
+   * Less motion plays a fade instead of a slide. */
+  screenMotion(screen) {
+    const animation = screen?._screenConfig?.animation ?? "default";
+    if (animation === "none") return null;
+    if (animation === "fade" || this.reducedMotion()) return { duration: FADE_MS, fade: true };
+    return { duration: SLIDE_MS, fade: false };
+  }
+
+  /** Animates the top screen from `old` to `top` (pushed when `pushing`). */
+  moveScreens(old, top, pushing, done) {
+    const motion = this.screenMotion(pushing ? top : old);
+    const options = { duration: motion.duration, easing: EASE_OUT_CUBIC };
+    const shift = (from, to) => [
+      { transform: `translateX(${from}%)` },
+      { transform: `translateX(${to}%)` },
+    ];
+    const parallax = -PARALLAX * 100;
+    let anim;
+    if (pushing) {
+      anim = top.animate(motion.fade ? [{ opacity: 0 }, { opacity: 1 }] : shift(100, 0), options);
+      if (!motion.fade && old) {
+        old.animate(shift(0, parallax), options);
+        old.style.transform = `translateX(${parallax}%)`;
+      }
+    } else {
+      anim = old.animate(motion.fade ? [{ opacity: 1 }, { opacity: 0 }] : shift(0, 100), {
+        ...options,
+        fill: "forwards",
+      });
+      old.style.pointerEvents = "none";
+      if (!motion.fade && top) top.animate(shift(parallax, 0), options);
+    }
+    if (done) anim.onfinish = done;
+  }
+
+  /** The top screen is visible. During a transition the one under it is too. */
+  paintStack(stack, screens, leaving, holdUnder) {
+    this.window.clearTimeout(stack._hideTimer);
+    const top = screens[screens.length - 1] ?? null;
+    const under = holdUnder ? screens[screens.length - 2] : null;
+    for (const screen of this.hosted(stack)) {
+      if (screen._kind !== "screen") continue;
+      const isTop = screen === top;
+      screen.classList.toggle("nl-top", isTop);
+      screen.classList.toggle("nl-shown", screen === leaving || screen === under);
+      if (isTop) screen.style.transform = "";
+    }
+    if (!holdUnder) return;
+    stack._hideTimer = this.window.setTimeout(() => {
+      const live = this.stackScreens(stack);
+      const current = live[live.length - 1] ?? null;
+      for (const screen of this.hosted(stack)) {
+        if (screen._kind !== "screen" || screen._popping || screen === current) continue;
+        screen.classList.remove("nl-shown");
+      }
+    }, HIDE_UNDER_MS);
+  }
+
+  /** Drops a screen whose exit has finished, and views removed with it. */
+  releaseScreen(screen) {
+    screen._removedFrom = null;
+    screen._popping = false;
+    screen.style.pointerEvents = "";
+    screen.style.visibility = "";
+    screen.classList.remove("nl-top", "nl-shown");
+    screen.remove();
+    this.dropLeftWith(screen);
   }
 
   /**
@@ -1878,8 +2004,7 @@ export class Player {
     }
     for (const el of this.views.values()) {
       if (el._kind === "stack" && el.isConnected) {
-        const screens = this.hosted(el).filter((c) => c._kind === "screen");
-        depth += Math.max(0, screens.length - 1);
+        depth += Math.max(0, this.stackScreens(el).length - 1);
       }
     }
     return depth;
