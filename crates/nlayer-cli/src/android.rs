@@ -511,6 +511,7 @@ pub(crate) fn dex_host(sdk: &Sdk, workspace: &Path) -> Result<PathBuf, RunError>
         .arg("8")
         .arg("-target")
         .arg("8")
+        .arg("-Xlint:-options")
         .arg("-classpath")
         .arg(sdk.android_jar()?)
         .arg("-d")
@@ -812,7 +813,7 @@ fn java_test_apk(sdk: &Sdk, workspace: &Path) -> Result<PathBuf, RunError> {
     let sources = java_sources(&sources_dir)?;
     let mut javac = Command::new("javac");
     javac
-        .args(["-source", "8", "-target", "8"])
+        .args(["-source", "8", "-target", "8", "-Xlint:-options"])
         .arg("-classpath")
         .arg(&classpath)
         .arg("-d")

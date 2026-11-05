@@ -78,13 +78,24 @@ final class A11y extends View.AccessibilityDelegate {
       if (state.length() > 0) state.append(", ");
       state.append(info.valueText);
     } else if (!Float.isNaN(info.now) && !Float.isNaN(info.min) && !Float.isNaN(info.max)) {
-      node.setRangeInfo(
-          AccessibilityNodeInfo.RangeInfo.obtain(
-              AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_FLOAT, info.min, info.max, info.now));
+      if (Build.VERSION.SDK_INT >= 30) {
+        node.setRangeInfo(
+            new AccessibilityNodeInfo.RangeInfo(
+                AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_FLOAT, info.min, info.max, info.now));
+      } else {
+        setLegacyRangeInfo(node, info);
+      }
     }
     if (state.length() > 0 && Build.VERSION.SDK_INT >= 30) {
       node.setStateDescription(state);
     }
+  }
+
+  @SuppressWarnings("deprecation") // API 28–29: obtain; its constructor is API 30.
+  private static void setLegacyRangeInfo(AccessibilityNodeInfo node, Info info) {
+    node.setRangeInfo(
+        AccessibilityNodeInfo.RangeInfo.obtain(
+            AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_FLOAT, info.min, info.max, info.now));
   }
 
   private static String className(String role) {

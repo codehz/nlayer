@@ -617,6 +617,7 @@ final class TextBox extends ViewGroup {
               }
 
               @Override
+              @SuppressWarnings("deprecation") // computeBounds(RectF) is @FlaggedApi, not in 35.
               public void onGetContentRect(
                   android.view.ActionMode m, View view, android.graphics.Rect out) {
                 if (layout == null || selStart < 0) {

@@ -604,6 +604,7 @@ final class SelectableView implements SelectionHandle.Owner {
               }
 
               @Override
+              @SuppressWarnings("deprecation") // computeBounds(RectF) is @FlaggedApi, not in 35.
               public void onGetContentRect(
                   android.view.ActionMode m, View v, android.graphics.Rect out) {
                 // The highlighted parts, in the area's coordinates.

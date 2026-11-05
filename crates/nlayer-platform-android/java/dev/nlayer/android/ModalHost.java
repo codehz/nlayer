@@ -12,6 +12,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.view.animation.DecelerateInterpolator;
 import android.widget.FrameLayout;
@@ -53,6 +54,8 @@ final class ModalHost {
     return dialog != null && !closing;
   }
 
+  /** The bar colors stay for API 28–34; API 35 ignores them (edge-to-edge). */
+  @SuppressWarnings("deprecation")
   void show() {
     if (dialog != null && !closing) return;
     closing = false;
@@ -66,7 +69,8 @@ final class ModalHost {
       window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
       window.setBackgroundDrawable(new ColorDrawable(0));
       window.setWindowAnimations(0);
-      window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+      if (Build.VERSION.SDK_INT < 30)
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
       window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
       window.setStatusBarColor(0);
       window.setNavigationBarColor(0);
@@ -132,21 +136,26 @@ final class ModalHost {
   }
 
   /** Match the activity's status and navigation bar icon appearance. */
-  @SuppressWarnings("deprecation")
+  @SuppressWarnings("deprecation") // The legacy flags are the API 28–29 branch.
   private void matchSystemBars(Window window) {
     if (window == null) return;
+    boolean dark = mounter.host.dark;
+    if (Build.VERSION.SDK_INT >= 30) {
+      WindowInsetsController controller = window.getInsetsController();
+      if (controller == null) return;
+      int light =
+          WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+              | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+      controller.setSystemBarsAppearance(dark ? 0 : light, light);
+      return;
+    }
     View decor = window.getDecorView();
     int flags = decor.getSystemUiVisibility();
-    boolean dark = mounter.host.dark;
     // Light icons on dark scheme, dark icons on light scheme
-    if (Build.VERSION.SDK_INT >= 23) {
-      if (dark) flags &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
-      else flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
-    }
-    if (Build.VERSION.SDK_INT >= 26) {
-      if (dark) flags &= ~View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
-      else flags |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
-    }
+    if (dark) flags &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+    else flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+    if (dark) flags &= ~View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+    else flags |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
     decor.setSystemUiVisibility(flags);
   }
 
@@ -247,6 +256,7 @@ final class ModalHost {
     }
 
     /** The status bar's height: content starts below it. */
+    @SuppressWarnings("deprecation") // getSystemWindowInsetTop is the API 28–29 branch.
     private int statusBar() {
       WindowInsets insets = getRootWindowInsets();
       if (insets == null) return 0;
@@ -286,6 +296,7 @@ final class ModalHost {
       }
     }
 
+    @SuppressWarnings("deprecation") // The legacy inset getters are the API 28–29 branch.
     private void report() {
       WindowInsets insets = getRootWindowInsets();
       int top = 0, right = 0, bottom = 0, left = 0;

@@ -629,6 +629,7 @@ final class Decor extends Drawable {
   public void setColorFilter(android.graphics.ColorFilter f) {}
 
   @Override
+  @SuppressWarnings("deprecation") // Abstract on Drawable; not used for drawing anymore.
   public int getOpacity() {
     return PixelFormat.TRANSLUCENT;
   }
