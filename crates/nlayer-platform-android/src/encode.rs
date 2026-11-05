@@ -1085,100 +1085,102 @@ mod tests {
         };
         use nlayer_core::geometry::{deg, percentage};
 
-        let mut style = ViewStyle::default();
-        style.effects = Some(Arc::new(Effects {
-            box_shadows: vec![
-                BoxShadow {
-                    offset_x: px(1.0),
-                    offset_y: px(-2.0),
-                    blur: px(3.0),
-                    spread: px(-4.0),
-                    color: Color::rgba(1, 2, 3, 4),
-                    inset: false,
-                },
-                BoxShadow {
-                    offset_y: px(1.0),
-                    color: Color::rgba(9, 8, 7, 255),
-                    inset: true,
-                    ..BoxShadow::default()
-                },
-            ],
-            background_images: vec![
-                Gradient {
-                    kind: GradientKind::Linear { angle: deg(180.0) },
-                    repeating: true,
-                    stops: vec![
-                        ColorStop {
-                            color: Color::rgba(255, 0, 0, 255),
-                            position: None,
-                        },
-                        ColorStop {
-                            color: Color::rgba(0, 0, 255, 128),
-                            position: Some(percentage(0.5).into()),
-                        },
-                        ColorStop {
-                            color: Color::rgba(0, 255, 0, 255),
-                            position: Some(px(12.0).into()),
-                        },
-                    ],
-                },
-                Gradient {
-                    kind: GradientKind::LinearCorner {
-                        right: true,
-                        bottom: false,
+        let style = ViewStyle {
+            effects: Some(Arc::new(Effects {
+                box_shadows: vec![
+                    BoxShadow {
+                        offset_x: px(1.0),
+                        offset_y: px(-2.0),
+                        blur: px(3.0),
+                        spread: px(-4.0),
+                        color: Color::rgba(1, 2, 3, 4),
+                        inset: false,
                     },
-                    repeating: false,
-                    stops: vec![
-                        ColorStop {
-                            color: Color::rgba(1, 1, 1, 255),
-                            position: Some(percentage(0.0).into()),
-                        },
-                        ColorStop {
-                            color: Color::rgba(2, 2, 2, 255),
-                            position: Some(percentage(1.0).into()),
-                        },
-                    ],
-                },
-                Gradient {
-                    kind: GradientKind::Radial {
-                        circle: true,
-                        size: GradientSize::ClosestSide,
-                        x: percentage(0.25),
-                        y: percentage(0.75),
+                    BoxShadow {
+                        offset_y: px(1.0),
+                        color: Color::rgba(9, 8, 7, 255),
+                        inset: true,
+                        ..BoxShadow::default()
                     },
-                    repeating: false,
-                    stops: vec![
-                        ColorStop {
-                            color: Color::rgba(3, 3, 3, 255),
-                            position: None,
-                        },
-                        ColorStop {
-                            color: Color::rgba(4, 4, 4, 255),
-                            position: None,
-                        },
-                    ],
-                },
-                Gradient {
-                    kind: GradientKind::Conic {
-                        from: deg(90.0),
-                        x: percentage(0.1),
-                        y: percentage(0.2),
+                ],
+                background_images: vec![
+                    Gradient {
+                        kind: GradientKind::Linear { angle: deg(180.0) },
+                        repeating: true,
+                        stops: vec![
+                            ColorStop {
+                                color: Color::rgba(255, 0, 0, 255),
+                                position: None,
+                            },
+                            ColorStop {
+                                color: Color::rgba(0, 0, 255, 128),
+                                position: Some(percentage(0.5).into()),
+                            },
+                            ColorStop {
+                                color: Color::rgba(0, 255, 0, 255),
+                                position: Some(px(12.0).into()),
+                            },
+                        ],
                     },
-                    repeating: false,
-                    stops: vec![
-                        ColorStop {
-                            color: Color::rgba(5, 5, 5, 255),
-                            position: Some(percentage(0.0).into()),
+                    Gradient {
+                        kind: GradientKind::LinearCorner {
+                            right: true,
+                            bottom: false,
                         },
-                        ColorStop {
-                            color: Color::rgba(6, 6, 6, 255),
-                            position: Some(percentage(1.0).into()),
+                        repeating: false,
+                        stops: vec![
+                            ColorStop {
+                                color: Color::rgba(1, 1, 1, 255),
+                                position: Some(percentage(0.0).into()),
+                            },
+                            ColorStop {
+                                color: Color::rgba(2, 2, 2, 255),
+                                position: Some(percentage(1.0).into()),
+                            },
+                        ],
+                    },
+                    Gradient {
+                        kind: GradientKind::Radial {
+                            circle: true,
+                            size: GradientSize::ClosestSide,
+                            x: percentage(0.25),
+                            y: percentage(0.75),
                         },
-                    ],
-                },
-            ],
-            ..Effects::default()
-        }));
+                        repeating: false,
+                        stops: vec![
+                            ColorStop {
+                                color: Color::rgba(3, 3, 3, 255),
+                                position: None,
+                            },
+                            ColorStop {
+                                color: Color::rgba(4, 4, 4, 255),
+                                position: None,
+                            },
+                        ],
+                    },
+                    Gradient {
+                        kind: GradientKind::Conic {
+                            from: deg(90.0),
+                            x: percentage(0.1),
+                            y: percentage(0.2),
+                        },
+                        repeating: false,
+                        stops: vec![
+                            ColorStop {
+                                color: Color::rgba(5, 5, 5, 255),
+                                position: Some(percentage(0.0).into()),
+                            },
+                            ColorStop {
+                                color: Color::rgba(6, 6, 6, 255),
+                                position: Some(percentage(1.0).into()),
+                            },
+                        ],
+                    },
+                ],
+                ..Effects::default()
+            })),
+            ..Default::default()
+        };
         let encoded = super::encode(MountBatch {
             items: vec![MountItem::ViewStyle {
                 id: 7,

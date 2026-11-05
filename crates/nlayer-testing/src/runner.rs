@@ -1875,34 +1875,40 @@ test("shows the count", () => {
             stops: vec![at(0xeeeeeeff, 0.25), at(0xffffffff, 0.75)],
             repeating: false,
         };
-        let mut style = ViewStyle::default();
-        style.opacity = 0.4;
-        style.background_color = Color(0xaabbccdd);
-        style.effects = Some(Arc::new(Effects {
-            box_shadows: vec![
-                shadow(0.0, 2.0, 4.0, 0.0, 0x11223380, false),
-                shadow(1.0, 0.0, 0.0, -1.0, 0xff0000ff, true),
-            ],
-            background_images: vec![length.clone(), corner, radial, conic],
-            filters: vec![Filter::Blur(px(4.0))],
-            ..Effects::default()
-        }));
-        let mut hover = ViewStyle::default();
-        hover.effects = Some(Arc::new(Effects {
-            box_shadows: vec![shadow(0.0, 8.0, 16.0, 2.0, 0x00ff00ff, false)],
-            ..Effects::default()
-        }));
-        let mut active = ViewStyle::default();
-        active.effects = Some(Arc::new(Effects {
-            background_images: vec![Gradient {
-                kind: GradientKind::Linear {
-                    angle: nlayer_core::geometry::deg(180.0),
-                },
-                stops: vec![at(0x010101ff, 0.0), at(0x020202ff, 1.0)],
-                repeating: false,
-            }],
-            ..Effects::default()
-        }));
+        let style = ViewStyle {
+            opacity: 0.4,
+            background_color: Color(0xaabbccdd),
+            effects: Some(Arc::new(Effects {
+                box_shadows: vec![
+                    shadow(0.0, 2.0, 4.0, 0.0, 0x11223380, false),
+                    shadow(1.0, 0.0, 0.0, -1.0, 0xff0000ff, true),
+                ],
+                background_images: vec![length.clone(), corner, radial, conic],
+                filters: vec![Filter::Blur(px(4.0))],
+                ..Effects::default()
+            })),
+            ..Default::default()
+        };
+        let hover = ViewStyle {
+            effects: Some(Arc::new(Effects {
+                box_shadows: vec![shadow(0.0, 8.0, 16.0, 2.0, 0x00ff00ff, false)],
+                ..Effects::default()
+            })),
+            ..Default::default()
+        };
+        let active = ViewStyle {
+            effects: Some(Arc::new(Effects {
+                background_images: vec![Gradient {
+                    kind: GradientKind::Linear {
+                        angle: nlayer_core::geometry::deg(180.0),
+                    },
+                    stops: vec![at(0x010101ff, 0.0), at(0x020202ff, 1.0)],
+                    repeating: false,
+                }],
+                ..Effects::default()
+            })),
+            ..Default::default()
+        };
 
         let styled = 2;
         let bare = 3;
@@ -1964,13 +1970,12 @@ test("shows the count", () => {
                 },
                 MountItem::ViewStyle {
                     id: empty,
-                    style: Box::new({
-                        let mut style = ViewStyle::default();
-                        style.effects = Some(Arc::new(Effects {
+                    style: Box::new(ViewStyle {
+                        effects: Some(Arc::new(Effects {
                             background_images: vec![length],
                             ..Effects::default()
-                        }));
-                        style
+                        })),
+                        ..Default::default()
                     }),
                 },
             ],

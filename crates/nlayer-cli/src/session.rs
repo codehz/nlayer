@@ -276,6 +276,8 @@ fn handshake(stream: TcpStream) -> Result<Socket, String> {
     tungstenite::accept_hdr(stream, require_ws).map_err(|error| error.to_string())
 }
 
+// `accept_hdr` fixes this error type: an HTTP response, not ours to shrink.
+#[allow(clippy::result_large_err)]
 fn require_ws(
     request: &tungstenite::handshake::server::Request,
     response: tungstenite::handshake::server::Response,

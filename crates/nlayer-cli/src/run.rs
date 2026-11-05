@@ -927,10 +927,11 @@ fn open_sub(shared: &Shared) -> (u64, Receiver<Arc<DevEvent>>, Option<Arc<DevEve
             code: Arc::clone(&live.code),
             source_map: live.source_map.clone(),
         }))
-    } else if let Some(message) = inner.error.clone() {
-        Some(Arc::new(DevEvent::BuildFailed { message }))
     } else {
-        None
+        inner
+            .error
+            .clone()
+            .map(|message| Arc::new(DevEvent::BuildFailed { message }))
     };
     (id, rx, snap)
 }

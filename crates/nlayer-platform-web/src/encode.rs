@@ -1120,11 +1120,11 @@ fn view_css(s: &ViewStyle, scroll: bool) -> (String, Option<String>, Option<Stri
     if s.overflow_hidden && !split {
         css.push_str("overflow:clip;");
     }
-    if let Some(effects) = &s.effects {
-        if !effects.background_images.is_empty() {
-            let images: Vec<String> = effects.background_images.iter().map(gradient).collect();
-            let _ = write!(css, "background-image:{};", images.join(","));
-        }
+    if let Some(effects) = &s.effects
+        && !effects.background_images.is_empty()
+    {
+        let images: Vec<String> = effects.background_images.iter().map(gradient).collect();
+        let _ = write!(css, "background-image:{};", images.join(","));
     }
     if let Some(shadows) = s
         .effects

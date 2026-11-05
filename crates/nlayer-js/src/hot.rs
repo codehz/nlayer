@@ -263,7 +263,7 @@ pub(crate) fn abandon(cx: *mut JsContext) {
     }
     drop(undos);
     undo_renders(cx, renders);
-    let old = with(cx, |h| std::mem::take(h));
+    let old = with(cx, std::mem::take);
     drop(old);
     hot(cx).reload.set(false);
 }
@@ -673,9 +673,7 @@ fn stops(h: &Inner, id: &str) -> bool {
 }
 
 fn push_importers(h: &Inner, id: &str, queue: &mut Vec<String>) -> Option<()> {
-    let Some(from) = h.importers.get(id).filter(|f| !f.is_empty()) else {
-        return None;
-    };
+    let from = h.importers.get(id).filter(|f| !f.is_empty())?;
     for importer in from {
         if h.fixed.contains(importer) {
             continue;
