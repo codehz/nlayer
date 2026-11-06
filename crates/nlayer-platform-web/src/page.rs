@@ -18,7 +18,7 @@ use std::{
 };
 
 use nlayer_core::{
-    EventKind, NO_NATIVE_HEADER, NodeId,
+    EventKind, NodeId,
     geometry::{Edges, Point, Points, Size},
 };
 use nlayer_engine::{EngineConfig, EngineError, EventPayload, LocalEngine, MountSink, Wake};
@@ -72,9 +72,10 @@ impl PageSession {
         let wake_page = Arc::clone(&page);
         let wake: Wake = Arc::new(move || wake_page.request_pump());
         let engine = LocalEngine::start(
-            EngineConfig::new(bundle, viewport)
-                .with_os(nlayer_engine::Os::Web)
-                .with_header_heights(NO_NATIVE_HEADER),
+            // The player draws the bar (v11): the page reports the insets it
+            // covers, as the native hosts do, so the core lays the content out
+            // as on iOS and Android.
+            EngineConfig::new(bundle, viewport).with_os(nlayer_engine::Os::Web),
             WebTextEngine::default(),
             sink,
             wake,

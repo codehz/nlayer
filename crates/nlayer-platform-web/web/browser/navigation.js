@@ -3,7 +3,8 @@
 // Licensed under the Apache License, Version 2.0.
 //
 // Web navigation: reactive route stack, screen and modal DOM mounting,
-// the default header bar, modal presentation and history integration.
+// the bar's items, modal presentation and history integration. The bar
+// itself is the host's (the player draws it from the screen config).
 // Adapted from nsh's browser navigation facade to nlayer's simpler
 // environment model.
 
@@ -14,17 +15,9 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
   const rt = dom.rt;
   const pages = new WeakSet();
   const popped = new WeakMap();
-  let headerComponent = null;
-  function currentHeader() {
-    headerComponent ??= signal(null);
-    return headerComponent();
-  }
   const stackContext = reactive.context(null);
-  const colorScheme = dom.colorScheme ?? (() => "light");
-  const requestBack = dom.requestBack ?? (() => {});
   // Descriptors, not values: a getter stays a getter (`merge` does the
-  // same). Copying `headerTransparent` once froze the screen prop, so the
-  // bar restyled on the first toggle while the content inset did not.
+  // same), so a screen prop follows the signal it was computed from.
   const except = (props, keys) => {
     const out = {};
     for (const key of Object.keys(props)) {
@@ -109,147 +102,69 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
     });
   };
 
-  function setNavHeader(component) {
-    if (component != null && typeof component !== "function") {
-      throw new TypeError("setNavHeader: a component function, or null");
-    }
-    headerComponent ??= signal(null);
-    headerComponent.set(component ?? null);
-  }
-
-  const LIGHT_BAR = {
-    bg: "#ffffff",
-    title: "#000000",
-    tint: "#007AFF",
-    line: "rgba(60,60,67,0.29)",
-  };
-  const DARK_BAR = {
-    bg: "#000000",
-    title: "#ffffff",
-    tint: "#0A84FF",
-    line: "rgba(84,84,88,0.6)",
-  };
-
-  function absent(value) {
-    return value == null || value === false;
-  }
-
-  // 24 viewport, stroke 2, round caps. Same path as the Android bar.
-  const CHEVRON_LEFT = "M15 18 9 12 15 6";
-
-  function chevronSrc(color) {
-    const svg =
-      `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none">` +
-      `<path d="${CHEVRON_LEFT}" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-    return `data:image/svg+xml,${encodeURIComponent(svg)}`;
-  }
-
-  function backControl(tint, onBack) {
-    // Hit target: content row, from the bar edge through 44px past the 16px inset.
-    // The column already insets 16px; the negative margin gives that gutter back.
-    const hit = rt.element("view");
-    rt.prop(hit, "style", {
-      width: 60,
-      height: 44,
-      marginStart: -16,
-      paddingStart: 16,
-      paddingEnd: 20,
-      justifyContent: "center",
-    });
-    rt.prop(hit, "accessibilityLabel", "Back");
-    rt.prop(hit, "onPress", () => onBack?.());
-    const node = rt.element("image");
-    rt.prop(node, "style", { width: 24, height: 24 });
-    rt.prop(node, "src", chevronSrc(tint));
-    rt.insert(hit, node);
-    return hit;
-  }
-
-  function titleView(title, color) {
-    if (title != null && typeof title === "object") {
-      const node = rt.element("view");
-      rt.prop(node, "style", {
-        position: "absolute",
-        alignSelf: "center",
-        top: 0,
-        bottom: 0,
-        justifyContent: "center",
-      });
-      rt.insert(node, title);
-      return node;
-    }
-    const node = rt.element("text");
-    rt.prop(node, "style", {
-      position: "absolute",
-      left: 16,
-      right: 16,
-      top: 0,
-      bottom: 0,
-      textAlign: "center",
-      textAlignVertical: "center",
-      fontSize: 17,
-      fontWeight: "600",
-      numberOfLines: 1,
-      color,
-      pointerEvents: "none",
-    });
-    rt.insert(node, title == null ? "" : String(title));
+  /** A bar item: a button (a plain object with `title` / `image`) or the
+   * app's own view (`title`, `image`, `onPress`, `enabled`, `tintColor` on
+   * a button; anything else is a node). */
+  function headerItem(slot, group, index) {
+    const node = rt.element("headeritem");
+    rt.prop(node, "headerSlot", slot);
+    rt.prop(node, "headerGroup", group);
+    rt.prop(node, "headerIndex", index);
     return node;
   }
 
-  function side(end, content) {
-    const node = rt.element("view");
-    rt.prop(node, "style", {
-      position: "absolute",
-      top: 0,
-      bottom: 0,
-      width: "50%",
-      overflow: "hidden",
-      flexDirection: "row",
-      alignItems: "center",
-      ...(end
-        ? { end: 0, paddingEnd: 16, justifyContent: "flex-end" }
-        : { start: 0, paddingStart: 16 }),
-    });
-    if (content != null) rt.insert(node, content);
-    return node;
+  function barButton(node, item) {
+    const title = item.title;
+    const image = item.image;
+    const hasTitle = title != null && title !== "";
+    const hasImage = image != null && image !== "";
+    rt.prop(node, "barButton", true);
+    if (hasTitle) rt.prop(node, "barTitle", title);
+    if (hasImage) rt.prop(node, "barImage", image);
+    if (item.onPress != null) rt.prop(node, "onPress", () => item.onPress?.());
+    if (item.enabled === false) rt.prop(node, "barEnabled", false);
+    if (item.tintColor != null) rt.prop(node, "barTint", item.tintColor);
   }
 
-  function NavHeader(props) {
-    const scheme = colorScheme() === "dark" ? DARK_BAR : LIGHT_BAR;
-    const transparent = !!props.headerTransparent;
-    const headerStyle = props.headerStyle ?? {};
-    const background = transparent ? "transparent" : (headerStyle.backgroundColor ?? scheme.bg);
-    const titleColor = headerStyle.color ?? scheme.title;
-    const tint = headerStyle.tintColor ?? scheme.tint;
-    const hairline = !transparent && headerStyle.backgroundColor == null;
-    const customLeading = !absent(props.headerLeft);
-    const showBack = !!props.canGoBack && props.headerBackVisible !== false && !customLeading;
-    const leading = customLeading
-      ? props.headerLeft
-      : showBack
-        ? backControl(tint, props.onBack)
-        : null;
-    const title = absent(props.headerTitle) ? (props.title ?? "") : props.headerTitle;
-    const trailing = absent(props.headerRight) ? null : props.headerRight;
-
-    const root = rt.element("view");
-    rt.prop(root, "style", {
-      paddingTop: "env(safe-area-inset-top)",
-      backgroundColor: background,
-    });
-    const row = rt.element("view");
-    rt.prop(row, "style", {
-      position: "relative",
-      height: 44,
-      overflow: "hidden",
-      borderBottomWidth: hairline ? 0.5 : 0,
-      borderBottomColor: scheme.line,
-    });
-    // Sides first so the title paints above them.
-    rt.insert(row, [side(false, leading), side(true, trailing), titleView(title, titleColor)]);
-    rt.insert(root, row);
-    return root;
+  /** The bar's items: one header item per group member, with its group and
+   * index (index 0 nearest the screen edge). Empty groups are dropped. */
+  function headerItems(props) {
+    const items = [];
+    for (const [key, slot] of [
+      ["leadingItemGroups", "leading"],
+      ["trailingItemGroups", "trailing"],
+    ]) {
+      const groups = props[key];
+      if (!Array.isArray(groups)) continue;
+      let group = 0;
+      for (const members of groups) {
+        if (!Array.isArray(members)) continue;
+        const made = [];
+        for (const member of members) {
+          const button =
+            member != null &&
+            typeof member === "object" &&
+            ("title" in member || "image" in member);
+          const node = headerItem(slot, group, made.length);
+          if (button) {
+            barButton(node, member);
+          } else {
+            rt.insert(node, member);
+          }
+          made.push(node);
+        }
+        if (!made.length) continue;
+        items.push(...made);
+        group += 1;
+      }
+    }
+    const titleView = props.titleView;
+    if (titleView != null) {
+      const node = headerItem("title", 0, 0);
+      rt.insert(node, titleView);
+      items.push(node);
+    }
+    return items;
   }
 
   function NavPage(props) {
@@ -257,12 +172,12 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
     pages.add(node);
     // popOnBack must be reactive too (separate from spread): the gallery
     // computes it from detailInterceptBack signal. `header` is not a prop
-    // anymore: spreading it warns. The slot props are the header's children.
+    // anymore: spreading it warns. The bar's items are separate nodes.
     const restProps = except(props, [
       "children",
-      "headerLeft",
-      "headerRight",
-      "headerTitle",
+      "titleView",
+      "leadingItemGroups",
+      "trailingItemGroups",
       "onDismiss",
       "onBackPress",
       "onInsets",
@@ -285,32 +200,8 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
     if ("onBackPress" in props) {
       rt.bindProp(node, "onBackPress", () => props.onBackPress ?? null);
     }
-    const header = computed(() => {
-      if (props.headerVisible === false) return null;
-      const Component = currentHeader() ?? NavHeader;
-      const stack = stackContext();
-      const canGoBack = !!(stack && stack.index() > 0);
-      // A scheme change rebuilds the bar. The build itself is untracked.
-      colorScheme();
-      const model = {
-        title: props.title,
-        headerLeft: props.headerLeft,
-        headerRight: props.headerRight,
-        headerTitle: props.headerTitle,
-        headerBackVisible: props.headerBackVisible,
-        headerStyle: props.headerStyle,
-        headerTransparent: props.headerTransparent,
-        canGoBack,
-        onBack: requestBack,
-      };
-      return untracked(() => {
-        const item = rt.element("headeritem");
-        rt.prop(item, "headerSlot", "header");
-        rt.insert(item, Component(model));
-        return item;
-      });
-    });
-    rt.insert(node, [header, withInsets(insets, () => props.children)]);
+    const items = headerItems(props);
+    rt.insert(node, [...items, withInsets(insets, () => props.children)]);
     return node;
   }
 
@@ -470,7 +361,5 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
     NavPage,
     Dialog,
     insetsContext,
-    NavHeader,
-    setNavHeader,
   };
 }

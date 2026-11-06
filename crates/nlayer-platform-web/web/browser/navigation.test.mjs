@@ -339,37 +339,21 @@ test("Dialog slide starts a timing animation", () => {
   assert.equal(started[0].value.value, 480);
 });
 
-test("NavPage mounts the default header and can hide or replace it", () => {
+test("NavPage emits the bar's items for the host to draw", () => {
   const reactive = {
     signal(val) {
-      const subs = new Set();
-      const sig = () => {
-        subs.add(sig);
-        return val;
-      };
+      const sig = () => val;
       sig.set = (next) => {
         val = next;
-        for (const sub of subs) sub();
       };
       return sig;
     },
-    computed(fn) {
-      const read = () => fn();
-      return read;
-    },
+    computed: (fn) => () => fn(),
     untracked: (fn) => (typeof fn === "function" ? fn() : fn),
     batch: (fn) => fn(),
     context(def) {
-      let value = def;
-      const read = () => value;
-      read.Provider = (props) => {
-        read.provided = props?.value;
-        const previous = value;
-        value = props?.value;
-        const rendered = props?.children;
-        value = previous;
-        return rendered;
-      };
+      const read = () => def;
+      read.Provider = (props) => props?.children;
       return read;
     },
   };
@@ -383,129 +367,79 @@ test("NavPage mounts the default header and can hide or replace it", () => {
     prop(el, name, value) {
       el.props[name] = value;
     },
-    bindProp() {},
-    spread() {},
+    bindProp(el, name, value) {
+      el.props[name] = value;
+    },
+    spread(el, props) {
+      el.spread = props;
+    },
     insert(parent, kids) {
       const list = Array.isArray(kids) ? kids : [kids];
       for (const kid of list) parent.kids.push(typeof kid === "function" ? kid() : kid);
     },
   };
-  let backs = 0;
-  let scheme = "light";
+  let presses = 0;
   const nav = createNavigation(
     reactive,
-    {
-      rt,
-      listen: () => {},
-      requestBack: () => {
-        backs += 1;
-      },
-      colorScheme: () => scheme,
-    },
+    { rt, listen: () => {} },
     { createAnimatedValue: () => ({}), Animated: { timing: () => ({}) } },
     () => ({ top: 47, right: 1, bottom: 20, left: 2 }),
     () => false,
   );
 
-  const page = nav.NavPage({ title: "Hello", children: "content" });
-  for (const kid of page.kids) if (typeof kid === "function") kid();
-  const slot = tree.find((el) => el.props.headerSlot === "header");
-  assert.ok(slot, "default header slot");
-  const texts = tree.filter((el) => el._tag === "text").map((el) => el.kids.join(""));
-  assert.ok(texts.includes("Hello"));
+  const custom = rt.element("view");
+  const titleView = rt.element("view");
+  const page = nav.NavPage({
+    title: "Hello",
+    subtitle: "12 unread",
+    largeTitleDisplayMode: "always",
+    backButtonTitle: "Inbox",
+    backButtonDisplayMode: "minimal",
+    hidesBackButton: true,
+    leftItemsSupplementBackButton: true,
+    leadingItemGroups: [[{ title: "Edit", onPress: () => presses++ }], [custom]],
+    trailingItemGroups: [[{ image: "asset:/plus.png", enabled: false }]],
+    standardAppearance: { backgroundColor: "#fff" },
+    titleView,
+    children: "body",
+  });
+
+  const items = page.kids.filter((kid) => kid?._tag === "headeritem");
+  const leading = items.filter((item) => item.props.headerSlot === "leading");
+  assert.equal(leading.length, 2);
+  assert.equal(leading[0].props.headerGroup, 0);
+  assert.equal(leading[0].props.headerIndex, 0);
+  assert.equal(leading[0].props.barButton, true);
+  assert.equal(leading[0].props.barTitle, "Edit");
+  leading[0].props.onPress();
+  assert.equal(presses, 1);
+  assert.equal(leading[1].props.headerGroup, 1);
+  assert.equal(leading[1].kids[0], custom, "a custom view is the item's child");
+  const trailing = items.filter((item) => item.props.headerSlot === "trailing");
+  assert.equal(trailing.length, 1);
+  assert.equal(trailing[0].props.barImage, "asset:/plus.png");
+  assert.equal(trailing[0].props.barEnabled, false);
+  const title = items.find((item) => item.props.headerSlot === "title");
+  assert.equal(title.kids[0], titleView);
   assert.equal(
-    tree.some((el) => el.props.accessibilityLabel === "Back"),
+    tree.some((item) => item.props.headerSlot === "header"),
     false,
-    "root page has no back control",
+    "the app's tree holds no header slot",
   );
-  assert.equal(nav.insetsContext.provided().top, 0, "a visible header covers the top inset");
-
-  tree.length = 0;
-  const pushed = nav.NavHeader({
-    title: "Detail",
-    canGoBack: true,
-    onBack: nav.setNavHeader && (() => backs++),
-  });
-  const pushedTexts = [];
-  const walk = (node) => {
-    if (!node || typeof node !== "object") return;
-    if (node._tag === "text") pushedTexts.push(node.kids.join(""));
-    for (const kid of node.kids ?? []) walk(kid);
-  };
-  walk(pushed);
-  assert.ok(pushedTexts.includes("Detail"));
-  assert.equal(pushedTexts.includes("←"), false);
-  const back = tree.find((el) => el.props.accessibilityLabel === "Back");
-  back.props.onPress();
-  assert.equal(backs, 1);
-  assert.equal(pushed.props.style.backgroundColor, "#ffffff");
-  const row = pushed.kids[0];
-  assert.equal(row.props.style.height, 44);
-  assert.equal(row.props.style.borderBottomWidth, 0.5);
-  assert.equal(row.props.style.borderBottomColor, "rgba(60,60,67,0.29)");
-  const titleNode = tree.find((el) => el._tag === "text" && el.kids.join("") === "Detail");
-  assert.equal(titleNode.props.style.color, "#000000");
-  assert.equal(back._tag, "view");
-  assert.equal(back.props.style.width, 60);
-  assert.equal(back.props.style.height, 44);
-  assert.equal(back.props.style.marginStart, -16);
-  const backGlyph = back.kids[0];
-  assert.equal(backGlyph._tag, "image");
-  assert.equal(backGlyph.props.style.width, 24);
-  assert.equal(backGlyph.props.style.height, 24);
-  assert.match(decodeURIComponent(backGlyph.props.src), /M15 18 9 12 15 6/);
-  assert.match(decodeURIComponent(backGlyph.props.src), /stroke="#007AFF"/);
-
-  tree.length = 0;
-  const clear = nav.NavHeader({
-    title: "Clear",
-    canGoBack: true,
-    headerTransparent: true,
-  });
-  assert.equal(clear.props.style.backgroundColor, "transparent");
-  assert.equal(clear.kids[0].props.style.borderBottomWidth, 0);
-  const clearTitle = tree.find((el) => el._tag === "text" && el.kids.join("") === "Clear");
-  const clearBack = tree.find((el) => el.props.accessibilityLabel === "Back");
-  assert.notEqual(clearTitle.props.style.color, "#ffffff");
-  assert.match(decodeURIComponent(clearBack.kids[0].props.src), /stroke="#007AFF"/);
-  assert.equal(clearTitle.props.style.color, "#000000");
-
-  scheme = "dark";
-  tree.length = 0;
-  const dark = nav.NavHeader({ title: "Night", canGoBack: true });
-  assert.equal(dark.props.style.backgroundColor, "#000000");
-  const darkTitle = tree.find((el) => el._tag === "text" && el.kids.join("") === "Night");
-  const darkBack = tree.find((el) => el.props.accessibilityLabel === "Back");
-  assert.equal(darkTitle.props.style.color, "#ffffff");
-  assert.match(decodeURIComponent(darkBack.kids[0].props.src), /stroke="#0A84FF"/);
-
-  tree.length = 0;
-  nav.setNavHeader(() => {
-    const el = rt.element("view");
-    el.props.marker = "custom";
-    return el;
-  });
-  const custom = nav.NavPage({ title: "Custom", children: "body" });
-  for (const kid of custom.kids) if (typeof kid === "function") kid();
-  assert.ok(tree.some((el) => el.props.marker === "custom"));
-
-  tree.length = 0;
-  nav.setNavHeader(null);
-  const hidden = nav.NavPage({ title: "Hidden", headerVisible: false, children: "body" });
-  for (const kid of hidden.kids) if (typeof kid === "function") kid();
-  assert.equal(
-    tree.some((el) => el.props.headerSlot === "header"),
-    false,
-  );
-  assert.equal(
-    nav.insetsContext.provided().top,
-    47,
-    "no header: the content inset is the safe area",
-  );
-  assert.throws(() => nav.setNavHeader("nope"), /setNavHeader/);
+  // The options reach the core as screen props; the item groups do not.
+  assert.equal(page.spread.title, "Hello");
+  assert.equal(page.spread.subtitle, "12 unread");
+  assert.equal(page.spread.largeTitleDisplayMode, "always");
+  assert.equal(page.spread.backButtonTitle, "Inbox");
+  assert.equal(page.spread.backButtonDisplayMode, "minimal");
+  assert.equal(page.spread.hidesBackButton, true);
+  assert.equal(page.spread.leftItemsSupplementBackButton, true);
+  assert.equal(page.spread.leadingItemGroups, undefined);
+  assert.equal(page.spread.titleView, undefined);
+  assert.equal(page.spread.children, undefined);
 });
 
-test("NavPage spread keeps a headerTransparent getter live", () => {
+test("NavPage spread keeps a live getter a getter", () => {
   const reactive = {
     signal(val) {
       const sig = () => val;
@@ -549,17 +483,17 @@ test("NavPage spread keeps a headerTransparent getter live", () => {
     () => ({ top: 47, right: 0, bottom: 34, left: 0 }),
     () => false,
   );
-  let transparent = false;
+  let opaque = false;
   nav.NavPage({
     title: "Header",
-    get headerTransparent() {
-      return transparent;
+    get standardAppearance() {
+      return opaque ? { backgroundColor: "#fff" } : undefined;
     },
     children: "body",
   });
-  assert.equal(spreadProps.headerTransparent, false);
-  transparent = true;
-  assert.equal(spreadProps.headerTransparent, true);
+  assert.equal(spreadProps.standardAppearance, undefined);
+  opaque = true;
+  assert.equal(spreadProps.standardAppearance.backgroundColor, "#fff");
   assert.equal(Object.keys(spreadProps).includes("children"), false);
   assert.equal(spreadProps.title, "Header");
 });

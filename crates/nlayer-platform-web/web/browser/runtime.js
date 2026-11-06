@@ -336,9 +336,12 @@ export function createFacade(wasm, requestPump, options = {}) {
     applyRootScheme();
   }
   function applyRootScheme() {
+    const scheme = colorScheme?.();
     const doc = globalThis.document;
-    if (!colorScheme || !doc?.documentElement) return;
-    doc.documentElement.style.colorScheme = colorScheme();
+    if (!scheme || !doc?.documentElement) return;
+    doc.documentElement.style.colorScheme = scheme;
+    // The player draws the bars: it follows the same scheme.
+    options.onColorScheme?.(scheme);
   }
   const onScheme = (event) => {
     if (pinnedScheme || !colorScheme) return;
@@ -553,8 +556,6 @@ export function createFacade(wasm, requestPump, options = {}) {
     createNavStack: navigation.createNavStack,
     NavStack: navigation.NavStack,
     NavPage: navigation.NavPage,
-    NavHeader: navigation.NavHeader,
-    setNavHeader: navigation.setNavHeader,
     Dialog: navigation.Dialog,
     platform: {
       os: "web",
@@ -631,6 +632,10 @@ export function createFacade(wasm, requestPump, options = {}) {
     ui,
     rt,
     installBoundary,
+    colorScheme: () => {
+      installColorScheme();
+      return colorScheme();
+    },
     animation,
     event,
     dispatchBack,

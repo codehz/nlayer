@@ -549,10 +549,15 @@ export async function startPage(root, options = {}) {
     colorScheme: options.colorScheme,
     dev: options.dev === true,
     report: options.report,
+    // The player draws the bars, so it follows the page's scheme.
+    onColorScheme: (scheme) => player.setColorScheme(scheme),
   });
   player.setAnimation(facade.animation);
   enter(() => {
     wasm.nlayer_browser_initialize();
+    // After the browser host: the scheme signal is an op of its graph.
+    facade.colorScheme();
+    player.setColorScheme(facade.colorScheme());
     facade.installBoundary();
     wasm.nlayer_browser_start(width, height);
     wasm.nlayer_insets(top, right, bottom, left, keyboard);

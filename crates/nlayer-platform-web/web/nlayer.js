@@ -143,6 +143,7 @@ export class Player {
     this.root = root;
     this.host = host;
     this.animation = null;
+    this.scheme = options.colorScheme ?? null;
     this.assetBase = options.assetBase ?? "";
     this.assetMap = options.assetMap ?? {};
     this.doc = root.ownerDocument ?? globalThis.document;
@@ -393,12 +394,10 @@ export class Player {
     const parent = this.view(parentId);
     const child = this.view(childId);
     if (!parent || !child) return;
-    // A header item is not a normal child. `placeHeader` puts the `header`
-    // slot on the screen; left / right / title stay detached (the system
-    // header's, which the web does not draw).
+    // A header item is not a normal child: the bar draws it.
     if (child._kind === "headeritem") {
       child._headerParent = parent;
-      if (parent._kind === "screen") this.placeHeader(parent);
+      if (parent._kind === "screen") this.paintBar(parent);
       return;
     }
     const host = this.contentHost(parent);
@@ -427,7 +426,7 @@ export class Player {
     // The DOM parent may be the content layer. Removal uses that node;
     // stack tracking wants the view.
     const parent = this.ownerView(el.parentNode);
-    this.detachHeader(el);
+    this.detachBarItem(el);
     if (el._kind === "modal") this.dismissModal(el);
     else if (!this.holdScreen(el, parent)) this.queueRemoval(el);
     if (parent) this.trackChange(parent, el);
@@ -437,7 +436,7 @@ export class Player {
     const el = this.view(id);
     if (!el) return;
     const parent = this.ownerView(el.parentNode);
-    this.detachHeader(el);
+    this.detachBarItem(el);
     if (this.focused === el) this.focused = null;
     for (const held of this.pressHeld.values()) held.delete(el);
     this.animation?.unbind(id);
@@ -786,6 +785,8 @@ export class Player {
     const el = this.view(id);
     if (!el) return;
     el._frame = [x, y, w, h];
+    // A header item is not a child of the app's tree: the bar places it.
+    if (el._kind === "headeritem") return;
     const s = el.style;
     s.left = `${x}px`;
     s.top = `${y}px`;
@@ -1902,43 +1903,266 @@ export class Player {
     if (!el) return;
     el._screenConfig = config;
     el._reported = null;
-    this.placeHeader(el);
+    this.paintBar(el);
     this.reportScreenFromFrame(el);
     this.syncHistorySoon();
   }
 
-  /** Drops `el` if it is the screen's placed header. */
-  detachHeader(el) {
+  /** `el` (a header item) leaves its screen: the bar drops it. */
+  detachBarItem(el) {
     const screen = el?._headerParent;
-    if (screen?._header === el) {
-      screen._header = null;
-      screen._reported = null;
+    if (!screen) return;
+    el._headerParent = null;
+    if (el.parentNode && screen._bar?.contains(el)) el.remove();
+    screen._reported = null;
+    this.paintBar(screen);
+  }
+
+  /** The system scheme the bar's defaults follow. */
+  dark() {
+    if (this.scheme === "dark" || this.scheme === "light") return this.scheme === "dark";
+    const pinned = this.doc?.documentElement?.style?.colorScheme;
+    if (pinned === "dark" || pinned === "light") return pinned === "dark";
+    return this.doc?.defaultView?.matchMedia?.("(prefers-color-scheme: dark)")?.matches === true;
+  }
+
+  /** The page's scheme changed: the bars that follow it paint again. */
+  setColorScheme(scheme) {
+    if (this.scheme === scheme) return;
+    this.scheme = scheme ?? null;
+    for (const el of this.views.values()) {
+      if (el._kind === "screen" && el._screenConfig) this.paintBar(el);
     }
   }
 
-  /** Puts screen `screen`'s `header` (the app's view, which the core places
-   * at its top) in it, above its content. The web draws no system header. */
-  placeHeader(screen) {
-    const id = screen._screenConfig?.headerView;
-    const header = id != null ? this.view(id) : null;
-    if (screen._header && screen._header !== header) screen._header.remove();
-    screen._header = header ?? null;
-    if (!header) return;
-    if (header.parentNode !== screen) screen.append(header);
+  /** The bar's colors: only `standardAppearance` overrides them. */
+  barSurface(config, dark) {
+    return {
+      opaque: config.headerTransparent === false,
+      background: config.backgroundColor ?? "transparent",
+      title: config.titleColor ?? (dark ? "#ffffff" : "#000000"),
+      large: config.largeTitleColor ?? config.titleColor ?? (dark ? "#ffffff" : "#000000"),
+      tint: config.tintColor ?? (dark ? "#0A84FF" : "#007AFF"),
+      shadow: config.shadow === undefined ? null : config.shadow,
+    };
   }
 
-  /** The insets of screen `screen`'s content. An opaque `header` already
-   * pushes the content down, so the top inset is covered. A transparent
-   * header floats over the content and still counts, the way iOS's safe
-   * area includes a transparent navigation bar. The header slot itself
-   * keeps reading the surface's top inset. */
+  /** Builds the screen's bar from `scr`: the host draws the self-drawn bar
+   * (the same rules as Android), so the app's tree holds no header. */
+  paintBar(screen) {
+    const config = screen._screenConfig;
+    if (screen._bar) {
+      screen._bar.remove();
+      screen._bar = null;
+    }
+    if (!config || config.headerVisible === false) return;
+    const dark = this.dark();
+    const surface = this.barSurface(config, dark);
+    const bar = this.doc.createElement("div");
+    bar.className = `nl-bar${dark ? " nl-dark" : ""}`;
+    bar.style.paddingTop = "env(safe-area-inset-top)";
+    if (surface.opaque) bar.style.backgroundColor = surface.background;
+
+    const titleView = config.titleView != null ? this.view(config.titleView) : null;
+    const large = config.largeTitle === "always" && !titleView;
+    const subtitle = config.subtitle != null && config.subtitle !== "" && !titleView;
+    const row = this.doc.createElement("div");
+    row.className = "nl-bar-row";
+    row.style.height = `${large ? 44 : subtitle ? 56 : 44}px`;
+    if (surface.opaque) row.style.backgroundColor = surface.background;
+
+    const back = this.barBack(screen, config, surface);
+    const leading = this.barSide(config, surface, false, back);
+    const trailing = this.barSide(config, surface, true, null);
+    row.append(leading, trailing);
+
+    if (titleView) {
+      this.placeHeaderItem(titleView);
+      const box = this.doc.createElement("div");
+      box.className = "nl-bar-title-box";
+      box.append(titleView);
+      row.append(box);
+    } else if (!large && config.title != null && config.title !== "") {
+      const title = this.doc.createElement("div");
+      title.className = "nl-bar-title";
+      title.textContent = config.title;
+      title.style.color = surface.title;
+      title.style.left = `${this.barSideWidth(leading) + 16}px`;
+      title.style.right = `${this.barSideWidth(trailing) + 16}px`;
+      title.style.lineHeight = row.style.height;
+      row.append(title);
+    }
+    bar.append(row);
+
+    if (large && config.title != null && config.title !== "") {
+      const block = this.doc.createElement("div");
+      block.className = "nl-bar-large";
+      block.style.height = `${subtitle ? 68 : 52}px`;
+      const heading = this.doc.createElement("div");
+      heading.className = "nl-bar-large-title";
+      heading.textContent = config.title;
+      heading.style.color = surface.large;
+      block.append(heading);
+      if (subtitle) {
+        const sub = this.doc.createElement("div");
+        sub.className = "nl-bar-large-subtitle";
+        sub.textContent = config.subtitle;
+        sub.style.color = surface.large;
+        block.append(sub);
+      }
+      bar.append(block);
+    }
+
+    if (surface.shadow && surface.shadow !== "none") {
+      bar.style.borderBottom = `0.5px solid ${surface.shadow}`;
+    }
+    screen._bar = bar;
+    screen.append(bar);
+  }
+
+  /** A side's width, for the title to yield to it (0 before layout). */
+  barSideWidth(side) {
+    return side?.childElementCount ? side.offsetWidth || 0 : 0;
+  }
+
+  /**
+   * A bar side: the back control, then the groups from the screen edge
+   * inward. `end` reverses both, so index 0 stays nearest the edge.
+   */
+  barSide(config, surface, end, back) {
+    const side = this.doc.createElement("div");
+    side.className = `nl-bar-side ${end ? "nl-bar-end" : "nl-bar-start"}`;
+    if (end) side.style.flexDirection = "row-reverse";
+    if (back) side.append(back);
+    for (const group of (end ? config.trailing : config.leading) ?? []) {
+      if (group.length) side.append(this.barGroup(group, surface, end));
+    }
+    return side;
+  }
+
+  /** One floating control: a 44pt circle for a lone icon button, else a
+   * capsule. Its fill and pressed fill are the rules in `base.css`. */
+  barGroup(items, surface, end) {
+    const lone =
+      items.length === 1 &&
+      items[0].button === true &&
+      items[0].image != null &&
+      (items[0].title == null || items[0].title === "");
+    const group = this.doc.createElement("div");
+    group.className = `nl-bar-group${lone ? " nl-bar-circle" : ""}`;
+    group.style.flexDirection = end ? "row-reverse" : "row";
+    for (const item of items) {
+      const node = this.barItem(item, surface);
+      if (node) group.append(node);
+    }
+    return group;
+  }
+
+  /** A group's item: a button drawn here, or the app's own view. */
+  barItem(item, surface) {
+    const node = this.view(item.id);
+    if (!node) return null;
+    if (item.button !== true) {
+      this.placeHeaderItem(node);
+      return node;
+    }
+    node.textContent = "";
+    node.className = `nl-headeritem${item.enabled === false ? " nl-bar-disabled" : ""}`;
+    node.style.cssText =
+      "position:relative;left:auto;top:auto;width:auto;height:auto;flex:0 0 auto;" +
+      "display:flex;align-items:center;justify-content:center;gap:6px;";
+    const tint = item.tint ?? surface.tint;
+    if (item.image != null) {
+      const image = this.doc.createElement("img");
+      image.draggable = false;
+      const src = this.asset(item.image);
+      if (src) image.src = src;
+      image.style.width = "24px";
+      image.style.height = "24px";
+      node.append(image);
+    }
+    if (item.title != null && item.title !== "") {
+      const label = this.doc.createElement("div");
+      label.className = "nl-bar-label";
+      label.textContent = item.title;
+      label.style.color = tint;
+      node.append(label);
+    }
+    return node;
+  }
+
+  /** The back control of a covered screen: UIKit's ownership (`backButtonTitle`
+   * and `backButtonDisplayMode` come from the page underneath). */
+  barBack(screen, config, surface) {
+    if (config.backVisible === false) return null;
+    const leading = config.leading ?? [];
+    if (leading.length && config.supplement !== true) return null;
+    const stack = this.ownerView(screen.parentNode);
+    if (!stack || stack._kind !== "stack") return null;
+    const screens = this.stackScreens(stack);
+    const index = screens.indexOf(screen);
+    if (index <= 0) return null;
+    const under = screens[index - 1]._screenConfig ?? {};
+    const mode = under.backMode ?? "default";
+    const text =
+      mode === "minimal"
+        ? ""
+        : mode === "generic"
+          ? "Back"
+          : (under.backTitle ?? under.title ?? "");
+    const group = this.doc.createElement("div");
+    group.className = `nl-bar-group${text ? "" : " nl-bar-circle"}`;
+    group.setAttribute("aria-label", text || "Back");
+    group.addEventListener("click", () => this.host.back?.());
+    group.append(this.chevron(surface.tint));
+    if (text) {
+      const label = this.doc.createElement("div");
+      label.className = "nl-bar-label";
+      label.textContent = text;
+      label.style.color = surface.tint;
+      group.append(label);
+    }
+    return group;
+  }
+
+  /** The v10 chevron: 24 viewport, stroke 2, round caps. */
+  chevron(color) {
+    const image = this.doc.createElement("img");
+    image.draggable = false;
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none">' +
+      '<path d="M15 18 9 12 15 6" stroke="' +
+      color +
+      '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    image.src = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+    image.style.width = "24px";
+    image.style.height = "24px";
+    return image;
+  }
+
+  /** A header item (`titleView`, a custom group view) takes the size the
+   * core measured for it, not the position it would have in the tree. */
+  placeHeaderItem(node) {
+    node.style.position = "relative";
+    node.style.left = "auto";
+    node.style.top = "auto";
+    const frame = node._frame;
+    if (!frame) return;
+    node.style.width = `${frame[2]}px`;
+    node.style.height = `${frame[3]}px`;
+  }
+
+  /** The insets of screen `screen`'s content. An opaque bar already pushes
+   * the content down, so the top inset is covered. A transparent bar floats
+   * over the content and still counts, the way iOS's safe area includes a
+   * transparent navigation bar. A hidden bar leaves the safe area. */
   screenInsets(screen) {
     const safe = this.readInsets();
     const config = screen._screenConfig;
-    if (config?.headerView == null) return safe;
+    if (!config || config.headerVisible === false) return safe;
     if (!config.headerTransparent) return [0, safe[1], safe[2], safe[3]];
-    const covered = Number(config.headerHeight) || 0;
-    return [covered, safe[1], safe[2], safe[3]];
+    const covered = Number(config.barHeight) || 0;
+    return [safe[0] + covered, safe[1], safe[2], safe[3]];
   }
 
   reportScreenFromFrame(screen) {

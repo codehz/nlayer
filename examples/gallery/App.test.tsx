@@ -683,19 +683,17 @@ test("header demo shows title and header props", () => {
   expect(texts).toContain("Header Demo");
   expect(texts).toContain("Back");
   expect(texts).toContain("Right");
-  // Headless records the system header as `screen.title`. Web draws that
-  // title in the default bar, so it is a text node.
+  // Headless records the system header as `screen.title`. Every host draws
+  // the title itself (the system bar on iOS, the drawn bar on Android, the
+  // player on web), so the mounted tree has no text for it.
   const nodes = flat(app.tree(), []) as Array<
     Node & { screen?: { title?: string | null; headerVisible?: boolean } }
   >;
   const screen = nodes.find((node) => node.screen?.title === "Header");
   if (screen) {
     expect(screen.screen?.headerVisible).toBe(true);
-  } else if (globalThis.__nlayerOs === "web") {
-    expect(texts).toContain("Header");
   }
-  // iOS and Android draw the title in the system bar, so the mounted tree
-  // has no text for it. `Back`, `Right` and the content above cover the rest.
+  // `Back` and `Right` are the app's own views inside the item groups.
   app.back();
   app.waitFor("page"); // Wait for home page scroll view
 });

@@ -84,7 +84,7 @@ test("Player applies screen config", () => {
   assert.equal(el._screenConfig.animation, "default");
 });
 
-test("Screen places only the header slot and covers the top inset", () => {
+test("An opaque bar covers the top inset and floats its groups in it", () => {
   const { player } = createTestEnv();
   const calls = [];
   player.host.setRootSize = (...args) => calls.push(args);
@@ -94,35 +94,49 @@ test("Screen places only the header slot and covers the top inset", () => {
     ["c", 2, "stack"],
     ["c", 3, "screen"],
     ["c", 4, "headeritem"],
-    ["c", 5, "headeritem"],
     ["i", 1, 2, null],
     ["i", 2, 3, null],
     ["i", 3, 4, null],
-    ["i", 3, 5, null],
     ["f", 2, 0, 0, 390, 800],
     [
       "scr",
       3,
       {
-        headerHeight: 44,
+        headerHeight: 0,
+        barHeight: 44,
         headerVisible: true,
-        headerView: 4,
-        left: 5,
+        headerTransparent: false,
+        backgroundColor: "#3b82f6",
+        title: "Inbox",
+        backVisible: true,
+        backMode: "default",
+        supplement: false,
+        leading: [[{ id: 4, button: true, title: "Edit", enabled: true }]],
+        trailing: [],
         animation: "default",
       },
     ],
   ]);
 
   const screen = player.view(3);
-  assert.equal(player.view(4).parentNode, screen);
-  assert.equal(player.view(5).parentNode, null);
+  const bar = screen._bar;
+  assert.ok(bar, "the player draws the bar");
+  assert.equal(bar.style.paddingTop, "env(safe-area-inset-top)");
+  assert.notEqual(bar.style.backgroundColor, "");
+  // The group member is a header item the bar places, not a tree child.
+  const group = player.view(4).parentNode;
+  assert.equal(group.parentNode.parentNode.parentNode, bar);
+  assert.ok(group.classList.contains("nl-bar-group"));
+  const title = bar.querySelector(".nl-bar-title");
+  assert.equal(title.textContent, "Inbox");
   const reported = calls.filter((call) => call[0] === 3);
   const last = reported.at(-1);
   assert.ok(last, "screen reports its size");
+  // An opaque bar pushes the content down: the top inset is covered.
   assert.deepEqual(last.slice(1), [390, 800, 0, 8, 14, 10]);
 });
 
-test("Screen without a header reports the window safe area", () => {
+test("A transparent bar floats over the content and still counts in the top inset", () => {
   const { player } = createTestEnv();
   const calls = [];
   player.host.setRootSize = (...args) => calls.push(args);
@@ -133,44 +147,118 @@ test("Screen without a header reports the window safe area", () => {
     ["c", 3, "screen"],
     ["i", 1, 2, null],
     ["i", 2, 3, null],
-    ["f", 3, 0, 0, 390, 800],
-  ]);
-
-  const last = calls.filter((call) => call[0] === 3).at(-1);
-  assert.ok(last);
-  assert.deepEqual(last.slice(1), [390, 800, 22, 8, 14, 10]);
-});
-
-test("A transparent header counts its height in the top inset", () => {
-  const { player } = createTestEnv();
-  const calls = [];
-  player.host.setRootSize = (...args) => calls.push(args);
-  player.safeArea = { top: 22, right: 8, bottom: 14, left: 10 };
-
-  player.apply([
-    ["c", 2, "stack"],
-    ["c", 3, "screen"],
-    ["c", 4, "headeritem"],
-    ["i", 1, 2, null],
-    ["i", 2, 3, null],
-    ["i", 3, 4, null],
     ["f", 2, 0, 0, 390, 800],
     [
       "scr",
       3,
       {
-        headerHeight: 66,
+        headerHeight: 0,
+        barHeight: 44,
         headerVisible: true,
         headerTransparent: true,
-        headerView: 4,
+        title: "Inbox",
+        backVisible: true,
+        backMode: "default",
+        leading: [],
+        trailing: [],
         animation: "default",
       },
     ],
   ]);
 
+  const bar = player.view(3)._bar;
+  assert.ok(bar);
+  assert.equal(bar.style.backgroundColor, "");
   const last = calls.filter((call) => call[0] === 3).at(-1);
   assert.ok(last, "screen reports its size");
+  // The safe area plus the floating bar's 44pt.
   assert.deepEqual(last.slice(1), [390, 800, 66, 8, 14, 10]);
+});
+
+test("The bar's back reads the covered page's title and mode", () => {
+  const { player } = createTestEnv();
+  player.safeArea = { top: 0, right: 0, bottom: 0, left: 0 };
+  player.apply([
+    ["c", 2, "stack"],
+    ["c", 3, "screen"],
+    ["c", 4, "screen"],
+    ["i", 1, 2, null],
+    ["i", 2, 3, null],
+    ["i", 2, 4, null],
+    ["f", 2, 0, 0, 390, 800],
+    [
+      "scr",
+      3,
+      {
+        headerVisible: true,
+        headerTransparent: true,
+        barHeight: 44,
+        title: "Inbox",
+        backTitle: "Mail",
+        backMode: "default",
+        backVisible: true,
+        leading: [],
+        trailing: [],
+      },
+    ],
+    [
+      "scr",
+      4,
+      {
+        headerVisible: true,
+        headerTransparent: true,
+        barHeight: 44,
+        title: "Detail",
+        backMode: "default",
+        backVisible: true,
+        leading: [],
+        trailing: [],
+      },
+    ],
+  ]);
+
+  const back = player.view(4)._bar.querySelector(".nl-bar-group");
+  assert.ok(back, "the covered screen has a back control");
+  assert.equal(back.querySelector(".nl-bar-label").textContent, "Mail");
+  assert.equal(back.getAttribute("aria-label"), "Mail");
+  // The root screen has none.
+  assert.equal(player.view(3)._bar.querySelector(".nl-bar-group"), null);
+});
+
+test("A static large title adds its row", () => {
+  const { player } = createTestEnv();
+  player.safeArea = { top: 0, right: 0, bottom: 0, left: 0 };
+  player.apply([
+    ["c", 2, "stack"],
+    ["c", 3, "screen"],
+    ["i", 1, 2, null],
+    ["i", 2, 3, null],
+    ["f", 2, 0, 0, 390, 800],
+    [
+      "scr",
+      3,
+      {
+        headerVisible: true,
+        headerTransparent: true,
+        barHeight: 96,
+        title: "Inbox",
+        subtitle: "12 unread",
+        largeTitle: "always",
+        backVisible: true,
+        leading: [],
+        trailing: [],
+      },
+    ],
+  ]);
+
+  const bar = player.view(3)._bar;
+  assert.equal(bar.querySelector(".nl-bar-row").style.height, "44px");
+  const large = bar.querySelector(".nl-bar-large");
+  assert.ok(large);
+  assert.equal(large.style.height, "68px");
+  assert.equal(large.querySelector(".nl-bar-large-title").textContent, "Inbox");
+  assert.equal(large.querySelector(".nl-bar-large-subtitle").textContent, "12 unread");
+  assert.equal(bar.querySelector(".nl-bar-title"), null);
 });
 
 test("Player applies modal config", () => {

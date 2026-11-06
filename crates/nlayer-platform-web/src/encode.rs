@@ -421,6 +421,8 @@ impl Encoder {
                 out.s.push_str(",{");
                 out.s.push_str("\"headerHeight\":");
                 push_num(&mut out.s, config.header_height.0);
+                out.s.push_str(",\"barHeight\":");
+                push_num(&mut out.s, config.bar_height.0);
                 out.s.push_str(",\"headerVisible\":");
                 out.s.push_str(if config.header_visible {
                     "true"
@@ -443,8 +445,17 @@ impl Encoder {
                     "false"
                 });
                 out.s.push_str(",\"backVisible\":");
-                out.s
-                    .push_str(if config.back_visible { "true" } else { "false" });
+                out.s.push_str(if !config.hides_back_button {
+                    "true"
+                } else {
+                    "false"
+                });
+                out.s.push_str(",\"supplement\":");
+                out.s.push_str(if config.left_items_supplement_back_button {
+                    "true"
+                } else {
+                    "false"
+                });
                 out.s.push_str(",\"animation\":");
                 push_str(
                     &mut out.s,
@@ -454,30 +465,37 @@ impl Encoder {
                         nlayer_core::ScreenAnimation::None => "none",
                     },
                 );
+                out.s.push_str(",\"largeTitle\":");
+                push_str(
+                    &mut out.s,
+                    match config.large_title {
+                        nlayer_core::LargeTitleDisplayMode::Automatic => "automatic",
+                        nlayer_core::LargeTitleDisplayMode::Always => "always",
+                        nlayer_core::LargeTitleDisplayMode::Never => "never",
+                    },
+                );
+                out.s.push_str(",\"backMode\":");
+                push_str(
+                    &mut out.s,
+                    match config.back_button_display_mode {
+                        nlayer_core::BackButtonDisplayMode::Default => "default",
+                        nlayer_core::BackButtonDisplayMode::Generic => "generic",
+                        nlayer_core::BackButtonDisplayMode::Minimal => "minimal",
+                    },
+                );
                 if let Some(title) = &config.title {
                     out.s.push_str(",\"title\":");
                     push_str(&mut out.s, title);
                 }
-                if let Some(color) = config.tint_color {
-                    out.s.push_str(",\"tintColor\":");
-                    push_str(&mut out.s, &css_color(color));
+                if let Some(subtitle) = &config.subtitle {
+                    out.s.push_str(",\"subtitle\":");
+                    push_str(&mut out.s, subtitle);
                 }
-                if let Some(color) = config.background_color {
-                    out.s.push_str(",\"backgroundColor\":");
-                    push_str(&mut out.s, &css_color(color));
+                if let Some(title) = &config.back_button_title {
+                    out.s.push_str(",\"backTitle\":");
+                    push_str(&mut out.s, title);
                 }
-                if let Some(color) = config.title_color {
-                    out.s.push_str(",\"titleColor\":");
-                    push_str(&mut out.s, &css_color(color));
-                }
-                if let Some(node) = config.left {
-                    out.s.push_str(",\"left\":");
-                    push_num(&mut out.s, node);
-                }
-                if let Some(node) = config.right {
-                    out.s.push_str(",\"right\":");
-                    push_num(&mut out.s, node);
-                }
+                push_appearance(&mut out.s, &config.standard);
                 if let Some(node) = config.title_view {
                     out.s.push_str(",\"titleView\":");
                     push_num(&mut out.s, node);
@@ -486,6 +504,10 @@ impl Encoder {
                     out.s.push_str(",\"headerView\":");
                     push_num(&mut out.s, node);
                 }
+                out.s.push_str(",\"leading\":");
+                push_bar_groups(&mut out.s, &config.leading);
+                out.s.push_str(",\"trailing\":");
+                push_bar_groups(&mut out.s, &config.trailing);
                 out.s.push('}');
                 out.end();
             }
@@ -984,6 +1006,87 @@ fn css_color(c: Color) -> String {
     } else {
         format!("rgba({r},{g},{b},{:.3})", a as f32 / 255.0)
     }
+}
+
+/// `standardAppearance` fields, as keys of the screen config: only the ones
+/// the app set (`shadow` is `"none"` or a color).
+fn push_appearance(out: &mut String, appearance: &nlayer_core::BarAppearance) {
+    if let Some(color) = appearance.background_color {
+        out.push_str(",\"backgroundColor\":");
+        push_str(out, &css_color(color));
+    }
+    if let Some(color) = appearance.title_color {
+        out.push_str(",\"titleColor\":");
+        push_str(out, &css_color(color));
+    }
+    if let Some(color) = appearance.large_title_color {
+        out.push_str(",\"largeTitleColor\":");
+        push_str(out, &css_color(color));
+    }
+    if let Some(color) = appearance.tint_color {
+        out.push_str(",\"tintColor\":");
+        push_str(out, &css_color(color));
+    }
+    match appearance.shadow {
+        Some(nlayer_core::BarShadow::None) => out.push_str(",\"shadow\":\"none\""),
+        Some(nlayer_core::BarShadow::Color(color)) => {
+            out.push_str(",\"shadow\":");
+            push_str(out, &css_color(color));
+        }
+        None => {}
+    }
+}
+
+/// Item groups, outer group first: `[[item, …], …]`. An empty group is
+/// dropped by the core, so every group here has an item.
+fn push_bar_groups(out: &mut String, groups: &[Vec<nlayer_core::BarItem>]) {
+    out.push('[');
+    for (g, group) in groups.iter().enumerate() {
+        if g > 0 {
+            out.push(',');
+        }
+        out.push('[');
+        for (i, item) in group.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            out.push('{');
+            match item {
+                nlayer_core::BarItem::Button {
+                    id,
+                    title,
+                    image,
+                    enabled,
+                    tint_color,
+                } => {
+                    out.push_str("\"id\":");
+                    push_num(out, *id);
+                    out.push_str(",\"button\":true");
+                    if let Some(title) = title {
+                        out.push_str(",\"title\":");
+                        push_str(out, title);
+                    }
+                    if let Some(image) = image {
+                        out.push_str(",\"image\":");
+                        push_str(out, &image.uri);
+                    }
+                    if let Some(color) = tint_color {
+                        out.push_str(",\"tint\":");
+                        push_str(out, &css_color(*color));
+                    }
+                    out.push_str(",\"enabled\":");
+                    out.push_str(if *enabled { "true" } else { "false" });
+                }
+                nlayer_core::BarItem::Custom(id) => {
+                    out.push_str("\"id\":");
+                    push_num(out, *id);
+                }
+            }
+            out.push('}');
+        }
+        out.push(']');
+    }
+    out.push(']');
 }
 
 /// Whether clipping moves to a content layer so a visible outer shadow is

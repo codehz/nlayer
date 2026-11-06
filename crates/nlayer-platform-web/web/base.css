@@ -193,6 +193,128 @@ textarea.nl-field {
 .nl-headeritem {
   z-index: 1;
 }
+/* The bar the player draws (v11): a 44pt content row under the status inset
+   and, for a static large title, a second row. No default bottom. The bar
+   itself is click-through, so only its controls catch a press; the groups
+   float over the content as circles (a lone icon) or capsules. */
+.nl-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  z-index: 2;
+  pointer-events: none;
+}
+.nl-bar-row,
+.nl-bar-large {
+  position: relative;
+  width: 100%;
+  flex: 0 0 auto;
+}
+.nl-bar-side {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 1;
+}
+.nl-bar-start {
+  left: 0;
+  padding-left: 16px;
+}
+.nl-bar-end {
+  right: 0;
+  padding-right: 16px;
+}
+.nl-bar-group {
+  height: 44px;
+  border-radius: 22px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  pointer-events: auto;
+  cursor: default;
+  -webkit-tap-highlight-color: transparent;
+  background-color: rgba(255, 255, 255, 0.82);
+}
+.nl-bar-group:active {
+  background-color: #fff;
+}
+.nl-bar.nl-dark .nl-bar-group {
+  background-color: rgba(30, 30, 30, 0.62);
+}
+.nl-bar.nl-dark .nl-bar-group:active {
+  background-color: rgba(30, 30, 30, 0.8);
+}
+.nl-bar-circle {
+  width: 44px;
+  padding: 0;
+  border-radius: 50%;
+}
+.nl-bar-label {
+  font-size: 17px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.nl-bar-disabled {
+  pointer-events: none;
+  opacity: 0.4;
+}
+.nl-bar-title {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  font-size: 17px;
+  font-weight: 600;
+  pointer-events: none;
+}
+.nl-bar-title-box {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  pointer-events: none;
+}
+.nl-bar-large {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 0 16px;
+  pointer-events: none;
+}
+.nl-bar-large-title {
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 41px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nl-bar-large-subtitle {
+  font-size: 12px;
+  line-height: 16px;
+  opacity: 0.6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* Modal is a native <dialog> on the top layer. The exit motion is this
    transition: the element leaves the app at once and the player keeps it
    open until the transition ends, then calls close(). Doubled class beats
