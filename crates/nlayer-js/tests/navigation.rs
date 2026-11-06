@@ -1052,7 +1052,26 @@ fn nav_header_draws_title_and_back_and_set_nav_header_is_ignored() {
         })
         .collect();
     assert!(texts.contains(&"Hello"), "title text, got {texts:?}");
-    assert!(texts.contains(&"←"), "back control, got {texts:?}");
+    assert!(
+        !texts.contains(&"←"),
+        "back is not an arrow glyph, got {texts:?}"
+    );
+    let sources: Vec<_> = ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::SetProp {
+                prop: Prop::Source(Some(source)),
+                ..
+            } => Some(source.uri.as_ref()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        sources
+            .iter()
+            .any(|uri| uri.contains("M15%2018%209%2012%2015%206")),
+        "back image is the inlined chevron, got {sources:?}"
+    );
 }
 
 #[test]

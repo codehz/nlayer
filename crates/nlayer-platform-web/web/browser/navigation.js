@@ -134,12 +134,22 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
     return value == null || value === false;
   }
 
+  // 24 viewport, stroke 2, round caps. Same path as the Android bar.
+  const CHEVRON_LEFT = "M15 18 9 12 15 6";
+
+  function chevronSrc(color) {
+    const svg =
+      `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none">` +
+      `<path d="${CHEVRON_LEFT}" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+  }
+
   function backControl(tint, onBack) {
-    const node = rt.element("text");
-    rt.prop(node, "style", { color: tint, fontSize: 17, fontWeight: "600" });
+    const node = rt.element("image");
+    rt.prop(node, "style", { width: 24, height: 24 });
+    rt.prop(node, "src", chevronSrc(tint));
     rt.prop(node, "accessibilityLabel", "Back");
     rt.prop(node, "onPress", () => onBack?.());
-    rt.insert(node, "←");
     return node;
   }
 

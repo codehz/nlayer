@@ -972,6 +972,70 @@ fn style_of(cx: *mut JsContext, fields: &[(&str, JsValue)]) -> JsValue {
     object
 }
 
+const CHEVRON_LEFT: &str = "M15 18 9 12 15 6";
+
+fn chevron_src(color: &str) -> String {
+    let svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"{CHEVRON_LEFT}\" stroke=\"{color}\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>"
+    );
+    format!("data:image/svg+xml,{}", encode_uri(&svg))
+}
+
+fn encode_uri(value: &str) -> String {
+    let mut out = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// The web back mark: the same 24-viewport chevron the Android bar strokes.
+fn chevron_button(cx: *mut JsContext, tint: &str, on_press: JsValue) -> Result<JsValue, JsValue> {
+    let node = match host_node(cx, Tag::Image) {
+        Ok(node) => node,
+        Err(error) => {
+            free(cx, on_press);
+            return Err(error);
+        }
+    };
+    let style = style_of(
+        cx,
+        &[
+            ("width", qjs::JS_NewFloat64(24.0)),
+            ("height", qjs::JS_NewFloat64(24.0)),
+        ],
+    );
+    if let Err(error) = set_owned(cx, node, "style", style) {
+        free(cx, node);
+        free(cx, on_press);
+        return Err(error);
+    }
+    if let Err(error) = set_owned(cx, node, "src", new_string(cx, &chevron_src(tint))) {
+        free(cx, node);
+        free(cx, on_press);
+        return Err(error);
+    }
+    if let Err(error) = set_owned(cx, node, "accessibilityLabel", new_string(cx, "Back")) {
+        free(cx, node);
+        free(cx, on_press);
+        return Err(error);
+    }
+    if unsafe { qjs::JS_IsFunction(cx, on_press) } {
+        if let Err(error) = set_owned(cx, node, "onPress", on_press) {
+            free(cx, node);
+            return Err(error);
+        }
+    } else {
+        free(cx, on_press);
+    }
+    Ok(node)
+}
+
 fn styled_text(
     cx: *mut JsContext,
     fields: &[(&str, JsValue)],
@@ -1228,17 +1292,7 @@ fn render_nav_header(cx: *mut JsContext, props: JsValue) -> Result<JsValue, JsVa
     let leading = if absent(cx, header_left) {
         free(cx, header_left);
         if show_back {
-            match styled_text(
-                cx,
-                &[
-                    ("color", new_string(cx, &tint)),
-                    ("fontSize", qjs::JS_NewFloat64(17.0)),
-                    ("fontWeight", new_string(cx, "600")),
-                ],
-                Some("Back"),
-                "←",
-                on_back,
-            ) {
+            match chevron_button(cx, &tint, on_back) {
                 Ok(button) => button,
                 Err(error) => {
                     release(cx, &[header_title, title, header_right]);

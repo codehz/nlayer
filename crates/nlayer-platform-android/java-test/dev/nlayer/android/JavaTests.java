@@ -1144,7 +1144,10 @@ public final class JavaTests extends Instrumentation {
           "a custom title view replaces the string");
       equal(View.VISIBLE, screen2.bar.getVisibility(), "bar visible");
       equal(View.VISIBLE, screen2.bar.back.getVisibility(), "pushed screen shows back");
-      equal("\u2190", screen2.bar.back.getText().toString(), "back control is ←");
+      check(
+          screen2.bar.back instanceof StackBox.ScreenBox.Bar.Chevron,
+          "back control is the chevron");
+      equal("M15 18 9 12 15 6", StackBox.ScreenBox.Bar.Chevron.PATH, "chevron path is inlined");
       equal("Back", String.valueOf(screen2.bar.back.getContentDescription()), "back name is Back");
       check(headerItem.getParent() == screen2.bar, "custom title is parented in the bar");
       int[] sizes = host.mounter.headerSizes.get(13);

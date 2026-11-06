@@ -12,6 +12,7 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.Typeface;
 import android.text.TextUtils;
 import android.util.TypedValue;
@@ -193,8 +194,8 @@ final class StackBox extends FrameLayout {
   }
 
   /**
-   * The back button, the bar's ← or a finished back gesture: the top screen hears of it when it
-   * listens, and pops unless it keeps the user (`popOnBack` false).
+   * The back button, the bar's chevron or a finished back gesture: the top screen hears of it when
+   * it listens, and pops unless it keeps the user (`popOnBack` false).
    */
   void back() {
     mounter.host.back();
@@ -436,7 +437,7 @@ final class StackBox extends FrameLayout {
       else bg = dark ? 0xFF000000 : 0xFFFFFFFF;
       bar.setBackgroundColor(bg);
       bar.title.setTextColor(titles);
-      bar.back.setTextColor(buttons);
+      bar.back.setColor(buttons);
       // Hairline only when the bar is shown, opaque, and no background was set.
       bar.hairline = shown && !transparent && !backgroundPresent;
       bar.hairlineColor =
@@ -526,7 +527,7 @@ final class StackBox extends FrameLayout {
       final Column leading;
       final Column trailing;
       final TextView title;
-      final TextView back;
+      final Chevron back;
       int contentRow;
       private boolean hairline;
       private int hairlineColor;
@@ -554,22 +555,89 @@ final class StackBox extends FrameLayout {
         title.setLongClickable(false);
         title.setFocusable(false);
         title.setVisibility(GONE);
-        back = new TextView(context);
-        back.setText("\u2190");
-        back.setContentDescription("Back");
-        back.setMaxLines(1);
-        back.setTextSize(TypedValue.COMPLEX_UNIT_PX, 17f * density);
-        back.setTypeface(Typeface.create(Typeface.DEFAULT, 600, false));
-        back.setGravity(Gravity.CENTER_VERTICAL);
-        back.setPadding(0, 0, 0, 0);
-        back.setMinimumWidth(0);
-        back.setMinimumHeight(0);
+        back = new Chevron(context, density);
         back.setVisibility(GONE);
         addView(leading);
         addView(trailing);
         addView(title);
         leading.addView(
             back, new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT));
+      }
+
+      /**
+       * Back mark: a 24×24 chevron-left, stroked, no tail. The path is the vector, inlined rather
+       * than a drawable resource. RTL mirrors it toward the start edge.
+       */
+      static final class Chevron extends View {
+        /** 24 viewport. {@code M} then implicit line-tos. */
+        static final String PATH = "M15 18 9 12 15 6";
+
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path path = new Path();
+        private final float density;
+
+        Chevron(Context context, float density) {
+          super(context);
+          this.density = density;
+          paint.setStyle(Paint.Style.STROKE);
+          paint.setStrokeCap(Paint.Cap.ROUND);
+          paint.setStrokeJoin(Paint.Join.ROUND);
+          setContentDescription("Back");
+          setClickable(true);
+        }
+
+        void setColor(int color) {
+          paint.setColor(color);
+          invalidate();
+        }
+
+        @Override
+        protected void onMeasure(int ws, int hs) {
+          int size = Math.round(24f * density);
+          setMeasuredDimension(size, size);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+          float unit = getWidth() / 24f;
+          paint.setStrokeWidth(2f * unit);
+          path.rewind();
+          trace(path, PATH, unit);
+          canvas.save();
+          if (getLayoutDirection() == LAYOUT_DIRECTION_RTL) {
+            canvas.scale(-1f, 1f, getWidth() / 2f, getHeight() / 2f);
+          }
+          canvas.drawPath(path, paint);
+          canvas.restore();
+        }
+
+        /**
+         * {@code M x y} then more pairs as line-tos. A letter starts a command; {@code M15} too.
+         */
+        private static void trace(Path path, String data, float unit) {
+          String[] tokens = data.trim().split("\\s+");
+          char command = 0;
+          for (int i = 0; i < tokens.length; i++) {
+            String token = tokens[i];
+            if (token.isEmpty()) continue;
+            if (token.length() == 1 && Character.isLetter(token.charAt(0))) {
+              command = token.charAt(0);
+              continue;
+            }
+            if (Character.isLetter(token.charAt(0))) {
+              command = token.charAt(0);
+              token = token.substring(1);
+            }
+            float x = Float.parseFloat(token) * unit;
+            float y = Float.parseFloat(tokens[++i]) * unit;
+            if (command == 'M' || command == 'm') {
+              path.moveTo(x, y);
+              command = 'L';
+            } else {
+              path.lineTo(x, y);
+            }
+          }
+        }
       }
 
       /** Empty bar chrome swallows presses so they do not fall through to the page. */
@@ -643,7 +711,7 @@ final class StackBox extends FrameLayout {
         }
       }
 
-      /** String title: not a hit target, so ← and header items still receive presses. */
+      /** String title: not a hit target, so the chevron and header items still receive presses. */
       static final class Title extends TextView {
         Title(Context context) {
           super(context);

@@ -413,7 +413,11 @@ test("NavPage mounts the default header and can hide or replace it", () => {
   assert.ok(slot, "default header slot");
   const texts = tree.filter((el) => el._tag === "text").map((el) => el.kids.join(""));
   assert.ok(texts.includes("Hello"));
-  assert.equal(texts.includes("←"), false, "root page has no back control");
+  assert.equal(
+    tree.some((el) => el.props.accessibilityLabel === "Back"),
+    false,
+    "root page has no back control",
+  );
   assert.equal(nav.insetsContext.provided().top, 0, "a visible header covers the top inset");
 
   tree.length = 0;
@@ -429,8 +433,8 @@ test("NavPage mounts the default header and can hide or replace it", () => {
     for (const kid of node.kids ?? []) walk(kid);
   };
   walk(pushed);
-  assert.ok(pushedTexts.includes("←"));
   assert.ok(pushedTexts.includes("Detail"));
+  assert.equal(pushedTexts.includes("←"), false);
   const back = tree.find((el) => el.props.accessibilityLabel === "Back");
   back.props.onPress();
   assert.equal(backs, 1);
@@ -441,7 +445,9 @@ test("NavPage mounts the default header and can hide or replace it", () => {
   assert.equal(row.props.style.borderBottomColor, "rgba(60,60,67,0.29)");
   const titleNode = tree.find((el) => el._tag === "text" && el.kids.join("") === "Detail");
   assert.equal(titleNode.props.style.color, "#000000");
-  assert.equal(back.props.style.color, "#007AFF");
+  assert.equal(back._tag, "image");
+  assert.match(decodeURIComponent(back.props.src), /M15 18 9 12 15 6/);
+  assert.match(decodeURIComponent(back.props.src), /stroke="#007AFF"/);
 
   tree.length = 0;
   const clear = nav.NavHeader({
@@ -454,9 +460,8 @@ test("NavPage mounts the default header and can hide or replace it", () => {
   const clearTitle = tree.find((el) => el._tag === "text" && el.kids.join("") === "Clear");
   const clearBack = tree.find((el) => el.props.accessibilityLabel === "Back");
   assert.notEqual(clearTitle.props.style.color, "#ffffff");
-  assert.notEqual(clearBack.props.style.color, "#ffffff");
+  assert.match(decodeURIComponent(clearBack.props.src), /stroke="#007AFF"/);
   assert.equal(clearTitle.props.style.color, "#000000");
-  assert.equal(clearBack.props.style.color, "#007AFF");
 
   scheme = "dark";
   tree.length = 0;
@@ -465,7 +470,7 @@ test("NavPage mounts the default header and can hide or replace it", () => {
   const darkTitle = tree.find((el) => el._tag === "text" && el.kids.join("") === "Night");
   const darkBack = tree.find((el) => el.props.accessibilityLabel === "Back");
   assert.equal(darkTitle.props.style.color, "#ffffff");
-  assert.equal(darkBack.props.style.color, "#0A84FF");
+  assert.match(decodeURIComponent(darkBack.props.src), /stroke="#0A84FF"/);
 
   tree.length = 0;
   nav.setNavHeader(() => {
