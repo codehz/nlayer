@@ -1665,12 +1665,12 @@ fn selected_range_is_sent_after_the_value() {
 #[test]
 fn broken_runs_break_a_long_unbroken_run() {
     let content = "x".repeat(MEASURED_RUN * 2 + 10);
-    let broken = super::broken_runs(&content);
+    let broken = super::input::broken_runs(&content);
     assert_eq!(broken.matches('\n').count(), 2);
     assert_eq!(broken.chars().filter(|c| *c != '\n').count(), content.len());
     // Runs a browser would break are left alone.
     let text = "word ".repeat(600);
-    assert_eq!(super::broken_runs(&text), text);
+    assert_eq!(super::input::broken_runs(&text), text);
 }
 
 #[test]
