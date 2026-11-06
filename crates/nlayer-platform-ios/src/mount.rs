@@ -761,10 +761,10 @@ impl BoxView {
     }
 }
 
-/// A scroll view. `pointer-events: none` returns a descendant so UIKit
-/// still scrolls from that touch, and returns nil for empty padding so
-/// the gesture falls through. Interaction stays enabled: turning it off
-/// would discard the descendant too.
+// A scroll view. `pointer-events: none` returns a descendant so UIKit
+// still scrolls from that touch, and returns nil for empty padding so
+// the gesture falls through. Interaction stays enabled: turning it off
+// would discard the descendant too.
 define_class!(
     #[unsafe(super(UIScrollView, UIView, UIResponder, NSObject))]
     #[thread_kind = MainThreadOnly]
