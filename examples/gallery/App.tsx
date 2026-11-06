@@ -14,6 +14,7 @@ import { ImagePage } from "./screens/image";
 import { InputPage } from "./screens/input";
 import { ListDemoPage } from "./screens/list";
 import { PointerPage } from "./screens/pointer";
+import { PointerEventsPage } from "./screens/pointer-events";
 import { PlatformPage } from "./screens/platform";
 import { ReadingPage } from "./screens/reading";
 import { ScrollPage } from "./screens/scroll";
@@ -28,6 +29,7 @@ const screens: Record<Route["name"], () => unknown> = {
   home: HomePage,
   view: ViewPage,
   pointer: PointerPage,
+  "pointer-events": PointerEventsPage,
   text: TextPage,
   image: ImagePage,
   scroll: ScrollPage,

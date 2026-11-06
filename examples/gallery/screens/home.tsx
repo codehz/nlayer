@@ -31,6 +31,9 @@ export function HomePage() {
             <Link testID="open-pointer" onPress={() => nav.push({ name: "pointer" })}>
               → Pointer (active, hover, focus)
             </Link>
+            <Link testID="open-pointer-events" onPress={() => nav.push({ name: "pointer-events" })}>
+              → Pointer events (none, box-none, box-only)
+            </Link>
             <Link testID="open-text" onPress={() => nav.push({ name: "text" })}>
               → Text (nested spans)
             </Link>

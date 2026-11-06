@@ -5,7 +5,7 @@ export type Route =
   | { name: "home" }
   | { name: "view" }
   | { name: "pointer" }
-  | { name: "text" }
+  | { name: "pointer-events" }
   | { name: "image" }
   | { name: "scroll" }
   | { name: "input" }

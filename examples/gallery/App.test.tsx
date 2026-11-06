@@ -997,6 +997,23 @@ test("effects paint shadows and gradients without moving layout", () => {
   expect(warnings.includes("unsupported classes: bg-linear")).toBe(false);
 });
 
+test("pointer events screen lists the four values and the class lowering", () => {
+  const app = open("./App.tsx", { width: 390, height: 844 });
+  openScreen(app, "open-pointer-events", "pointer-events-page");
+  const texts = app.texts().join("\n");
+  expect(texts).toContain("盒和按钮都不接，点哪里都是垫层。");
+  expect(texts).toContain("按钮接。点盒的空白落到垫层，盒自己不接。");
+  expect(texts).toContain("只有盒接。点按钮也是盒，按钮不接。");
+  expect(texts).toContain(
+    "none 里有 pointer-events-auto：盒降成 box-none，按钮仍接，空白落到垫层。",
+  );
+  expect(texts).toContain(
+    "style pointerEvents none 盖过按钮上的 pointer-events-auto，整棵都不接。",
+  );
+  expect(texts).toContain("罩层 none");
+  expect(texts).toContain("拖空白不滚动");
+});
+
 test("a long nav link keeps its wrapped second line", () => {
   // The emulator is 1080px at 420dpi (2.625), 411dp wide. Header Demo is the
   // line that sits on that edge: iOS wraps it, Android used to keep a
