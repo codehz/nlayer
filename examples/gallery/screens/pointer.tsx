@@ -44,12 +44,43 @@ function Pointer() {
   );
 }
 
+function Events() {
+  const hit = signal("");
+  return (
+    <Section title="pointer-events">
+      <View class="relative h-28">
+        <View
+          onPress={() => hit.set("behind")}
+          class="absolute inset-0 items-center justify-center rounded-lg bg-slate-200"
+        >
+          <Text>{hit() === "behind" ? "Behind hit" : "Behind"}</Text>
+        </View>
+        <View
+          style={{ pointerEvents: "none" }}
+          class="pointer-events-none absolute top-3 right-3 left-3 h-16 items-center justify-center rounded-lg bg-[#7dd3fc]"
+        >
+          <Text class="text-xs">none</Text>
+          <View
+            style={{ pointerEvents: "auto" }}
+            onPress={() => hit.set("child")}
+            class="pointer-events-auto absolute top-4 right-2 rounded bg-white px-2 py-1"
+          >
+            <Text>{hit() === "child" ? "Child hit" : "Child"}</Text>
+          </View>
+        </View>
+      </View>
+      <Text class="text-xs text-[#64748b]">cover is none; Child is auto</Text>
+    </Section>
+  );
+}
+
 export function PointerPage() {
   return (
     <NavPage title="Pointer" onDismiss={dismiss}>
       <Scroll testID="pointer-page" class="flex-1 bg-slate-50">
         <View class="p-4">
           <Pointer />
+          <Events />
         </View>
       </Scroll>
     </NavPage>
