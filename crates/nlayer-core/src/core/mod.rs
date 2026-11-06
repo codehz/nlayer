@@ -751,4 +751,5 @@ impl<M: TextEngine> Core<M> {
     }
 }
 
+#[cfg(test)]
 mod tests;
