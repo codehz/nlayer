@@ -172,7 +172,7 @@ Copied files:
   `disabled`, `secureTextEntry`, `keyboardType`, the multiline `UITextView`
   area, selection and compositions). Vertical false-width
   narrowing (`crates/nlayer-platform-ios/src/scroll_extent.rs` and
-  `reaches_beyond` in `mount.rs`, from `mount.rs` `settled_content_width`,
+  `reaches_beyond` in `mount/scroll.rs`, from `mount.rs` `settled_content_width`,
   `narrowed_width`, `still_judged`, `reaches_beyond`) keeps a stale content
   width from panning a vertical scroll; zoom is not copied. The software keyboard's
   overlap (`crates/nlayer-platform-ios/src/keyboard.rs`, from
@@ -222,7 +222,7 @@ Copied files:
   are not copied)
 - `ColorScheme` in `crates/nlayer-core/src/platform.rs` from
   `nsh_core::platform` (light and dark; no app appearance override)
-- the accessibility mappings of `crates/nlayer-platform-ios/src/mount.rs`
+- the accessibility mappings of `crates/nlayer-platform-ios/src/mount/a11y.rs`
   (label, hint, value, traits, element and hidden) from
   `nsh-platform-ios/src/native_view.rs`, and the root background and trait
   change report from `nsh-platform-ios/src/app.rs` / `surface.rs`
@@ -262,7 +262,7 @@ Copied files:
   core decides the window.
 - list scroll reporting without an `onScroll` listener, in
   `crates/nlayer-platform-web/web/nlayer.js`,
-  `crates/nlayer-platform-ios/src/mount.rs` and
+  `crates/nlayer-platform-ios/src/mount/relay.rs` and
   `java/dev/nlayer/android/ScrollBox.java`, follows the offset reporting
   of nsh's list hosts (nsh only sends when listening).
 - `BackHandler` follows `nsh-js/src/platform_modules.rs` (newest listener
