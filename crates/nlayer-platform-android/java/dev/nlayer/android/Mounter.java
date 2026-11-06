@@ -403,6 +403,9 @@ final class Mounter {
   }
 
   private void longTouch(int id, android.view.MotionEvent event) {
+    // `none` is not the target. Descendants keep their own listeners.
+    View self = views.get(id);
+    if (self != null && ignoresPointer(self)) return;
     int action = event.getActionMasked();
     if (action == android.view.MotionEvent.ACTION_DOWN) {
       longDown.put(id, true);
@@ -1311,7 +1314,6 @@ final class Mounter {
     else if (v instanceof TextBox) ((TextBox) v).pointerEvents = value;
     else if (v instanceof ImageBox) ((ImageBox) v).pointerEvents = value;
     else if (v instanceof ScrollBox) ((ScrollBox) v).pointerEvents = value;
-    else if (v instanceof InputBox) ((InputBox) v).pointerEvents = value;
   }
 
   private void trackStates(int id, int states) {
@@ -1346,8 +1348,7 @@ final class Mounter {
     if (action == android.view.MotionEvent.ACTION_DOWN) {
       endObservedPress();
       float rawX = e.getRawX(), rawY = e.getRawY();
-      int[] at = new int[2];
-      for (View v = deepest(root, rawX, rawY, at); v != null; ) {
+      for (View v = hitNode(root, rawX, rawY); v != null; ) {
         int id = nodeId(v);
         if (id >= 0) {
           if (ownsPress(v)) break;
@@ -1378,19 +1379,50 @@ final class Mounter {
     observedPress.clear();
   }
 
-  private static View deepest(View v, float rawX, float rawY, int[] at) {
-    if (v instanceof ViewGroup) {
+  /**
+   * The frontmost `auto` node at the screen point, or null. A `none` node is not a target; its
+   * descendants still are, including ones drawn outside it.
+   */
+  static View hitNode(View root, float rawX, float rawY) {
+    if (root == null) return null;
+    return hitNode(root, rawX, rawY, new int[2]);
+  }
+
+  private static View hitNode(View v, float rawX, float rawY, int[] at) {
+    if (v.getVisibility() != View.VISIBLE) return null;
+    boolean inside = contains(v, rawX, rawY, at);
+    // A clipped node does not hit outside its border. Overflow visible still does.
+    if ((!clipsPointer(v) || inside) && v instanceof ViewGroup) {
       ViewGroup group = (ViewGroup) v;
       for (int i = group.getChildCount() - 1; i >= 0; i--) {
-        View child = group.getChildAt(i);
-        if (child.getVisibility() != View.VISIBLE) continue;
-        child.getLocationOnScreen(at);
-        float x = rawX - at[0], y = rawY - at[1];
-        if (x >= 0 && y >= 0 && x < child.getWidth() && y < child.getHeight())
-          return deepest(child, rawX, rawY, at);
+        View hit = hitNode(group.getChildAt(i), rawX, rawY, at);
+        if (hit != null) return hit;
       }
     }
+    if (!inside || !pointerNode(v) || ignoresPointer(v)) return null;
     return v;
+  }
+
+  private static boolean clipsPointer(View v) {
+    if (v instanceof Box) return ((Box) v).clip;
+    if (v instanceof ScrollBox) return true;
+    if (v instanceof InputBox) return ((InputBox) v).clip;
+    return false;
+  }
+
+  /** Nodes that store `pointer-events`. Chrome around them is not a target. */
+  private static boolean pointerNode(View v) {
+    return v instanceof Box
+        || v instanceof TextBox
+        || v instanceof ImageBox
+        || v instanceof ScrollBox
+        || v instanceof InputBox;
+  }
+
+  private static boolean contains(View v, float rawX, float rawY, int[] at) {
+    v.getLocationOnScreen(at);
+    float x = rawX - at[0], y = rawY - at[1];
+    return x >= 0 && y >= 0 && x < v.getWidth() && y < v.getHeight();
   }
 
   private Style merge(Style base, Style over) {
