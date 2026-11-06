@@ -675,7 +675,8 @@ public final class JavaTests extends Instrumentation {
     check(
         (box.edit.getInputType() & android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE) != 0,
         "multiline input type");
-    check(!box.edit.isSingleLine(), "not single line");
+    // `isSingleLine` is hidden on API 28, where a call to it greylists; maxLines is public.
+    check(box.edit.getMaxLines() == Integer.MAX_VALUE, "not single line");
     equal("a\nb", box.edit.getText().toString(), "the text keeps its break");
     equal(1, box.edit.getSelectionStart(), "the selection start");
     equal(3, box.edit.getSelectionEnd(), "a selection clamps its end to the text");
