@@ -1,5 +1,4 @@
 //! Property parsing and apply.
-#![allow(dead_code)]
 #![allow(dead_code)] // the shadow tree is the caller, and it is not extracted yet
 use std::{rc::Rc, sync::Arc};
 
