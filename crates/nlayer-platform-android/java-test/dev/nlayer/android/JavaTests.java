@@ -1149,6 +1149,10 @@ public final class JavaTests extends Instrumentation {
           "back control is the chevron");
       equal("M15 18 9 12 15 6", StackBox.ScreenBox.Bar.Chevron.PATH, "chevron path is inlined");
       equal("Back", String.valueOf(screen2.bar.back.getContentDescription()), "back name is Back");
+      android.graphics.drawable.RippleDrawable ripple =
+          (android.graphics.drawable.RippleDrawable) screen2.bar.back.getBackground();
+      equal(0x33ff0000, ripple.getColor().getDefaultColor(), "ripple is 20% of the button color");
+      check(!ripple.isProjected(), "ripple is clipped to the hit rect");
       check(headerItem.getParent() == screen2.bar, "custom title is parented in the bar");
       int[] sizes = host.mounter.headerSizes.get(13);
       check(

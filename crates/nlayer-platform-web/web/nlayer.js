@@ -1328,18 +1328,64 @@ export class Player {
     const down = this.pointerDown;
     const up = this.pointerUp;
     const cancel = this.pointerCancel;
+    const move = this.pointerMove;
     this.pointerDown = (event) => {
       this.pressDown(event);
+      this.backDown(event);
       down.call(this, event);
     };
     this.pointerUp = (event) => {
       this.pressUp(event);
+      this.backUp(event);
       up.call(this, event);
     };
     this.pointerCancel = (event) => {
       this.pressUp(event);
+      this.backUp(event);
       cancel.call(this, event);
     };
+    this.pointerMove = (event) => {
+      this.backMove(event);
+      move.call(this, event);
+    };
+  }
+
+  /** The system back control: aria-label `Back` and a chevron image. */
+  backHit(node) {
+    for (let el = node; el && el !== this.root; el = el.parentNode) {
+      if (el.getAttribute?.("aria-label") !== "Back") continue;
+      for (const child of el.children) {
+        if (child._img) return { hit: el, glyph: child };
+      }
+    }
+    return null;
+  }
+
+  backDown(event) {
+    if (event.button != null && event.button !== 0) return;
+    const found = this.backHit(event.target);
+    if (!found) return;
+    this.backPress = { id: event.pointerId ?? 0, ...found, left: false };
+    found.glyph.style.opacity = "0.3";
+  }
+
+  backMove(event) {
+    const press = this.backPress;
+    if (!press || press.left || press.id !== (event.pointerId ?? 0)) return;
+    const rect = press.hit.getBoundingClientRect();
+    const x = event.clientX;
+    const y = event.clientY;
+    if (x < rect.left || y < rect.top || x >= rect.right || y >= rect.bottom) {
+      press.left = true;
+      press.glyph.style.opacity = "";
+    }
+  }
+
+  backUp(event) {
+    const press = this.backPress;
+    if (!press || press.id !== (event.pointerId ?? 0)) return;
+    press.glyph.style.opacity = "";
+    this.backPress = null;
   }
 
   pressDown(event) {

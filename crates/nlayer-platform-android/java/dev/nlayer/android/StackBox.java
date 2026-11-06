@@ -9,11 +9,13 @@ import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.annotation.SuppressLint;
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.Typeface;
+import android.graphics.drawable.RippleDrawable;
 import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -584,11 +586,29 @@ final class StackBox extends FrameLayout {
           paint.setStrokeJoin(Paint.Join.ROUND);
           setContentDescription("Back");
           setClickable(true);
+          // No mask: a mask would also paint a flat fill of the hit rect.
+          // Not projected: the circle stays inside this view, which is the 60×44 target.
+          setBackground(new BackRipple(0));
         }
 
         void setColor(int color) {
           paint.setColor(color);
+          int alpha = Math.round(Color.alpha(color) * 0.2f);
+          int ripple = Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color));
+          ((BackRipple) getBackground()).setColor(ColorStateList.valueOf(ripple));
           invalidate();
+        }
+
+        /** Circle only, clipped to the hit rect. {@link #isProjected()} stays false. */
+        static final class BackRipple extends RippleDrawable {
+          BackRipple(int color) {
+            super(ColorStateList.valueOf(color), null, null);
+          }
+
+          @Override
+          public boolean isProjected() {
+            return false;
+          }
         }
 
         @Override

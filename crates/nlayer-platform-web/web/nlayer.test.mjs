@@ -1289,3 +1289,47 @@ test("an open url command opens a new tab once", () => {
   player.apply([["cmd", 1, "openUrl", "https://example.com/terms"]]);
   assert.deepEqual(opened, [["https://example.com/terms", "_blank"]]);
 });
+
+test("the header back chevron fades while pressed and clears on leave", () => {
+  const { player, doc } = createTestEnv();
+  player.apply([
+    ["c", 2, "view"],
+    ["c", 3, "image"],
+    ["i", 2, 3, null],
+    ["a", 2, null, "Back", null, false, false, false, 0, 0, null, null, null, null],
+    ["img", 3, "data:image/svg+xml,chevron", "contain"],
+  ]);
+  const hit = player.view(2);
+  const glyph = player.view(3);
+  hit.getBoundingClientRect = () => ({ left: 0, top: 0, right: 60, bottom: 44 });
+  const down = new doc.defaultView.PointerEvent("pointerdown", {
+    clientX: 10,
+    clientY: 10,
+    button: 0,
+    pointerId: 1,
+    bubbles: true,
+  });
+  Object.defineProperty(down, "target", { value: glyph });
+  player.pointerDown(down);
+  assert.equal(glyph.style.opacity, "0.3");
+  const outside = new doc.defaultView.PointerEvent("pointermove", {
+    clientX: 80,
+    clientY: 10,
+    pointerId: 1,
+    bubbles: true,
+  });
+  player.pointerMove(outside);
+  assert.equal(glyph.style.opacity, "");
+  const back = new doc.defaultView.PointerEvent("pointermove", {
+    clientX: 10,
+    clientY: 10,
+    pointerId: 1,
+    bubbles: true,
+  });
+  player.pointerMove(back);
+  assert.equal(glyph.style.opacity, "", "leaving the hit rect ends the press");
+  player.pointerUp(
+    new doc.defaultView.PointerEvent("pointerup", { clientX: 10, clientY: 10, pointerId: 1 }),
+  );
+  assert.equal(glyph.style.opacity, "");
+});
