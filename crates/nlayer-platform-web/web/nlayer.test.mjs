@@ -590,30 +590,8 @@ test("a dialog popup lets presses through to the backdrop", () => {
   assert.equal(player.view(23).style.pointerEvents, "auto", "the card still takes presses");
 
   player.apply([["r", 21]]);
-  assert.equal(player.view(22).style.pointerEvents, "auto", "popup takes presses once it is alone");
-  assert.equal(player.view(23).style.pointerEvents, "auto", "the card drops the host override");
-});
-
-test("pass-through restores a user none and the host wins while it lasts", () => {
-  const { player } = createTestEnv();
-  player.host.setRootSize = () => {};
-  player.apply([
-    ["c", 20, "modal"],
-    ["i", 1, 20, null],
-    ["c", 21, "view"],
-    ["c", 22, "view"],
-    ["c", 23, "view"],
-    ["i", 20, 21, null],
-    ["i", 20, 22, null],
-    ["i", 22, 23, null],
-    ["pe", 23, false],
-    ["pe", 22, true],
-  ]);
-  assert.equal(player.view(22).style.pointerEvents, "none", "the host none wins during the pass");
-  assert.equal(player.view(23).style.pointerEvents, "auto", "the host auto wins over a user none");
-  player.apply([["r", 21]]);
-  assert.equal(player.view(22).style.pointerEvents, "auto", "the popup's computed auto returns");
-  assert.equal(player.view(23).style.pointerEvents, "none", "the card's user none returns");
+  assert.equal(player.view(22).style.pointerEvents, "", "popup takes presses once it is alone");
+  assert.equal(player.view(23).style.pointerEvents, "", "the card drops the explicit auto");
 });
 
 test("Modal insert calls setRootSize with dimensions and insets", () => {
@@ -747,7 +725,7 @@ test("inserting a modal again cancels an exit that has not finished", () => {
   assert.equal(modal._leaving, false);
   assert.equal(modal.style.transform, "translateY(400px)");
   assert.equal(modal.style.transition, "none");
-  assert.equal(modal.style.pointerEvents, "auto");
+  assert.equal(modal.style.pointerEvents, "");
   assert.equal(modal.isConnected, true);
 });
 

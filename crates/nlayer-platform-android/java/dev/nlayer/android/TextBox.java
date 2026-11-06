@@ -50,9 +50,6 @@ final class TextBox extends ViewGroup {
   /** {@code userSelect} as written: 1 text, 0 none, 2 unset. */
   int userSelect = 2;
 
-  /** Computed `pointer-events`: 0 auto, 1 none. */
-  int pointerEvents;
-
   /** The selectable view whose gesture this touch is, if any. */
   private SelectableView areaGesture;
 
@@ -322,14 +319,10 @@ final class TextBox extends ViewGroup {
   @SuppressLint("ClickableViewAccessibility")
   @Override
   public boolean onTouchEvent(MotionEvent e) {
-    // `none` is not a press, a selection, or a focus. Attachments still dispatch.
-    if (pointerEvents == 1) return false;
-    if (e.getActionMasked() == MotionEvent.ACTION_DOWN && !inside(e)) return false;
     if (disabled || Mounter.blocked(getParent())) {
       if (e.getActionMasked() == MotionEvent.ACTION_DOWN) Mounter.pressed(this, id, false);
       return true;
     }
-
     int action = e.getActionMasked();
     if (action == MotionEvent.ACTION_DOWN) {
       areaGesture = excluded ? null : mounter.selectableViewOf(this);
@@ -359,11 +352,6 @@ final class TextBox extends ViewGroup {
     }
     if (selectable) return selectionTouch(e);
     return pressTouch(e);
-  }
-
-  private boolean inside(MotionEvent e) {
-    float x = e.getX(), y = e.getY();
-    return x >= 0f && y >= 0f && x < getWidth() && y < getHeight();
   }
 
   private boolean selectionTouch(MotionEvent e) {
@@ -419,11 +407,12 @@ final class TextBox extends ViewGroup {
     int action = e.getActionMasked();
     if (action == MotionEvent.ACTION_DOWN) {
       pressedLink = hitLink(e);
-      if (pressTarget(e.getX(), e.getY()) < 0) return true;
+      if (pressTarget(e.getX(), e.getY()) < 0) return false;
       Mounter.pressed(this, id, true);
       return true;
     }
-    if (pressTarget(e.getX(), e.getY()) < 0 && pressedLink < 0 && (pressMask & 1) == 0) return true;
+    if (pressTarget(e.getX(), e.getY()) < 0 && pressedLink < 0 && (pressMask & 1) == 0)
+      return false;
     if (action == MotionEvent.ACTION_UP) releasePress(e);
     else if (action == MotionEvent.ACTION_CANCEL) {
       pressedLink = -1;

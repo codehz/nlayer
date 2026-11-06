@@ -263,15 +263,6 @@ pub enum MountItem {
         /// Whether its texts are selected together.
         selectable: bool,
     },
-    /// Computed CSS `pointer-events`. `auto` is true when this view is a hit
-    /// target. A `none` view is not; its children still can be. Emitted when
-    /// the view is created and whenever the computed value changes.
-    PointerEvents {
-        /// View.
-        id: NodeId,
-        /// `true` is `auto`, `false` is `none`.
-        auto: bool,
-    },
     /// Set the source of an image view.
     Image {
         /// Image view.

@@ -140,10 +140,6 @@ test("pointer styles are paint and a press still lands", () => {
   reveal(app, (node) => node.children.some((child) => child.text === "Light"), "pointer-page");
   app.press("Light");
   expect(app.texts()).toContain("Lit");
-  expect(app.texts()).toContain("cover is none; Child is auto");
-  reveal(app, (node) => node.children.some((child) => child.text === "Child"), "pointer-page");
-  app.press("Child");
-  expect(app.texts()).toContain("Child hit");
 });
 
 test("a static transform is mounted", () => {

@@ -690,14 +690,6 @@ fn a_selectable_view_and_an_open_url_are_ops() {
 }
 
 #[test]
-fn pointer_events_is_a_pe_op() {
-    let json = Encoder::new().encode(&MountBatch {
-        items: vec![MountItem::PointerEvents { id: 4, auto: false }],
-    });
-    assert_eq!(items(&json), vec![serde_json::json!(["pe", 4, false])]);
-}
-
-#[test]
 fn the_mounter_applies_a_batch_in_node() {
     assert!(MOUNTER_JS.contains("export class Player"));
     let script = concat!(env!("CARGO_MANIFEST_DIR"), "/web/nlayer.test.mjs");

@@ -19,10 +19,6 @@ final class ImageBox extends View {
   Bitmap bitmap;
   int mode, pressMask;
   boolean disabled;
-
-  /** Computed `pointer-events`: 0 auto, 1 none. */
-  int pointerEvents;
-
   float xValue = .5f, yValue = .5f;
   int xKind = 1, yKind = 1;
   boolean xEnd, yEnd;
@@ -47,15 +43,12 @@ final class ImageBox extends View {
 
   @Override
   public boolean onTouchEvent(android.view.MotionEvent e) {
-    if (pointerEvents == 1) return false;
-    int action = e.getAction();
-    if (action == android.view.MotionEvent.ACTION_DOWN && !inside(e)) return false;
     if (disabled || Mounter.blocked(getParent())) {
-      if (action == android.view.MotionEvent.ACTION_DOWN) Mounter.pressed(this, id, false);
+      if (e.getAction() == android.view.MotionEvent.ACTION_DOWN) Mounter.pressed(this, id, false);
       return true;
     }
-    // An `auto` image is a target even with no press and a transparent background.
-    if ((pressMask & 1) == 0) return true;
+    if ((pressMask & 1) == 0) return false;
+    int action = e.getAction();
     if (action == android.view.MotionEvent.ACTION_DOWN) Mounter.pressed(this, id, true);
     else if (action == android.view.MotionEvent.ACTION_UP) {
       Mounter.pressed(this, id, false);
@@ -63,11 +56,6 @@ final class ImageBox extends View {
     } else if (action == android.view.MotionEvent.ACTION_CANCEL) Mounter.pressed(this, id, false);
     else return true;
     return true;
-  }
-
-  private boolean inside(android.view.MotionEvent e) {
-    float x = e.getX(), y = e.getY();
-    return x >= 0f && y >= 0f && x < getWidth() && y < getHeight();
   }
 
   void load(final String source, int mode, final HostView host) {

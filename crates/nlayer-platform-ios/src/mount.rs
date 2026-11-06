@@ -150,8 +150,6 @@ struct Slot {
     refresh_control: Option<Retained<UIRefreshControl>>,
     /// Whether refresh is currently active.
     refreshing: bool,
-    /// Computed `pointer-events`. `true` is `auto` (a hit target).
-    pointer_auto: bool,
     /// Outer box-shadow layers, below the background.
     shadows: Vec<Retained<CALayer>>,
     /// Inset box-shadow shapes, above the gradients.
@@ -196,15 +194,6 @@ impl Native {
             Native::Screen(screen) => &screen.view,
             Native::Modal(modal) => &modal.view,
         }
-    }
-
-    /// Image, text and editors. `none` turns interaction off so UIKit skips
-    /// the leaf; a box or scroll stays interactive so its children can hit.
-    fn pointer_leaf(&self) -> bool {
-        matches!(
-            self,
-            Self::Text(_) | Self::Image(_) | Self::Input(_) | Self::Area(_)
-        )
     }
 }
 
@@ -741,8 +730,18 @@ define_class!(
     impl BoxView {
         #[unsafe(method_id(hitTest:withEvent:))]
         fn hit_test(&self, point: CGPoint, event: Option<&UIEvent>) -> Option<Retained<UIView>> {
-            // A `return` would skip `method_id`'s retained conversion.
-            pointer_hit(self, point, event, self.ivars().pass_box.get())
+            // SAFETY: UIView's hit test. `return` would skip `method_id`'s
+            // retained conversion, so both paths fall out of this block.
+            let hit: Option<Retained<UIView>> =
+                unsafe { msg_send![super(self), hitTest: point, withEvent: event] };
+            if self.ivars().pass_box.get() {
+                // The clipping content view (tag < 0) fills this box and would
+                // take the same press. A node inside it still comes back as itself.
+                let mine = self as *const Self as *const UIView;
+                hit.filter(|found| !std::ptr::eq(Retained::as_ptr(found), mine) && found.tag() >= 0)
+            } else {
+                hit
+            }
         }
     }
 );
@@ -758,114 +757,6 @@ impl BoxView {
 
     fn set_pass_box(&self, pass: bool) {
         self.ivars().pass_box.set(pass);
-    }
-}
-
-// A scroll view. `pointer-events: none` returns a descendant so UIKit
-// still scrolls from that touch, and returns nil for empty padding so
-// the gesture falls through. Interaction stays enabled: turning it off
-// would discard the descendant too.
-define_class!(
-    #[unsafe(super(UIScrollView, UIView, UIResponder, NSObject))]
-    #[thread_kind = MainThreadOnly]
-    struct ScrollView;
-
-    unsafe impl NSObjectProtocol for ScrollView {}
-
-    impl ScrollView {
-        #[unsafe(method_id(hitTest:withEvent:))]
-        fn hit_test(&self, point: CGPoint, event: Option<&UIEvent>) -> Option<Retained<UIView>> {
-            pointer_hit(self, point, event, false)
-        }
-    }
-);
-
-impl ScrollView {
-    fn new(mtm: MainThreadMarker) -> Retained<Self> {
-        // SAFETY: UIScrollView's designated initializer.
-        unsafe { msg_send![Self::alloc(mtm), initWithFrame: CGRect::ZERO] }
-    }
-}
-
-fn pointer_key() -> *const std::ffi::c_void {
-    static KEY: u8 = 0;
-    std::ptr::from_ref(&KEY).cast()
-}
-
-/// Computed `pointer-events` on any hit-capable view. Absent means `auto`.
-fn set_view_pointer_auto(view: &UIView, auto: bool) {
-    use objc2::ffi::{OBJC_ASSOCIATION_RETAIN, objc_setAssociatedObject};
-    use objc2_foundation::NSNumber;
-    let number = NSNumber::numberWithBool(auto);
-    // SAFETY: `view` is live. The association retains `number`.
-    unsafe {
-        objc_setAssociatedObject(
-            std::ptr::from_ref(view).cast::<AnyObject>().cast_mut(),
-            pointer_key(),
-            Retained::as_ptr(&number).cast::<AnyObject>().cast_mut(),
-            OBJC_ASSOCIATION_RETAIN,
-        );
-    }
-}
-
-/// The associated bool. Missing means `auto`.
-fn view_pointer_auto(view: &UIView) -> bool {
-    use objc2::ffi::objc_getAssociatedObject;
-    use objc2_foundation::NSNumber;
-    // SAFETY: `view` is live. The value, when present, is the `NSNumber`
-    // [`set_view_pointer_auto`] stored.
-    let value = unsafe {
-        objc_getAssociatedObject(std::ptr::from_ref(view).cast::<AnyObject>(), pointer_key())
-    };
-    if value.is_null() {
-        return true;
-    }
-    unsafe { &*value.cast::<NSNumber>() }.boolValue()
-}
-
-/// Front-to-back hit of `view`.
-///
-/// Children are tested even when `point` is outside `view`, unless `view`
-/// clips. A child hit wins, including one drawn outside the border box. The
-/// clipping content view (`tag < 0`) is not a hit of its own; a node inside
-/// it still is. `view` is returned only when the point is inside its border
-/// box, `pointer-events` is `auto`, and `pass_box` is false. Otherwise nil,
-/// so a sibling behind receives the event.
-///
-/// `userInteractionEnabled` is not consulted. `none` must not block children,
-/// and `opacity: 0` remains a hit. `hidden` does not.
-fn pointer_hit(
-    view: &UIView,
-    point: CGPoint,
-    event: Option<&UIEvent>,
-    pass_box: bool,
-) -> Option<Retained<UIView>> {
-    if view.isHidden() {
-        return None;
-    }
-    let inside = view.pointInside_withEvent(point, event);
-    if !inside && view.clipsToBounds() {
-        return None;
-    }
-    let subs = view.subviews();
-    let mine = std::ptr::from_ref(view);
-    for index in (0..subs.count()).rev() {
-        let sub = subs.objectAtIndex(index);
-        let local = view.convertPoint_toView(point, Some(&sub));
-        let Some(hit) = sub.hitTest_withEvent(local, event) else {
-            continue;
-        };
-        // The clip fills this box. Its own hit covers what is behind it
-        // without being a target. `pass_box` also drops this view.
-        if hit.tag() < 0 || (pass_box && std::ptr::eq(Retained::as_ptr(&hit), mine)) {
-            break;
-        }
-        return Some(hit);
-    }
-    if inside && !pass_box && view_pointer_auto(view) {
-        Some(view.retain())
-    } else {
-        None
     }
 }
 
@@ -1973,18 +1864,6 @@ impl Mounter {
                 // List content is handled by core layout
             }
             MountItem::TrackStates { id, states } => self.track_states(id, states),
-            MountItem::PointerEvents { id, auto } => {
-                let leaf = self.slot(id).is_some_and(|slot| slot.native.pointer_leaf());
-                if let Some(slot) = self.slot_mut(id) {
-                    slot.pointer_auto = auto;
-                }
-                if let Some(view) = self.view_of(id) {
-                    set_view_pointer_auto(&view, auto);
-                    if leaf {
-                        view.setUserInteractionEnabled(auto);
-                    }
-                }
-            }
         }
     }
 
@@ -2015,9 +1894,6 @@ impl Mounter {
         new.setTag(id as isize);
         new.setOpaque(false);
         new.setBackgroundColor(Some(&objc2_ui_kit::UIColor::clearColor()));
-        let auto = self.slot(id).map(|slot| slot.pointer_auto).unwrap_or(true);
-        set_view_pointer_auto(&new, auto);
-        new.setUserInteractionEnabled(auto);
         new.setFrame(old.frame());
         if let Some(parent) = old.superview() {
             let subs = parent.subviews();
@@ -2062,7 +1938,8 @@ impl Mounter {
             ),
             ViewKind::Text => (Native::Text(TextView::new(self.mtm)), None),
             ViewKind::Scroll => {
-                let scroll = Retained::into_super(ScrollView::new(self.mtm));
+                let scroll =
+                    UIScrollView::initWithFrame(UIScrollView::alloc(self.mtm), CGRect::ZERO);
                 scroll.setContentInsetAdjustmentBehavior(
                     UIScrollViewContentInsetAdjustmentBehavior::Never,
                 );
@@ -2110,10 +1987,6 @@ impl Mounter {
             slot.keyboard_tap = Some(keyboard_tap(self.mtm, &self.relay, &view));
         }
         self.slots[id as usize] = Some(slot);
-        if matches!(kind, ViewKind::Text | ViewKind::Image | ViewKind::Input) {
-            let auto = self.slot(id).map(|slot| slot.pointer_auto).unwrap_or(true);
-            view.setUserInteractionEnabled(auto);
-        }
         // Bindings may arrive before the view (the core sets a prop before
         // the batch creates it). Apply what was kept.
         if let Some((x, y)) = self.pending_pan.remove(&id)
@@ -3983,7 +3856,6 @@ impl Slot {
             snap_deceleration: 0.0,
             refresh_control: None,
             refreshing: false,
-            pointer_auto: true,
             shadows: Vec::new(),
             insets: None,
             gradients: Vec::new(),
@@ -5480,10 +5352,6 @@ pub(crate) mod tests {
                 "mount::a_dialog_popup_lets_presses_through_to_the_backdrop",
                 a_dialog_popup_lets_presses_through_to_the_backdrop as fn(),
             ),
-            (
-                "mount::pointer_none_falls_through_and_auto_children_still_hit",
-                pointer_none_falls_through_and_auto_children_still_hit as fn(),
-            ),
         ]
     }
 
@@ -6739,145 +6607,6 @@ pub(crate) mod tests {
             hit_tag(&modal, 100.0, 240.0),
             8,
             "the card still takes presses"
-        );
-    }
-
-    fn pointer_none_falls_through_and_auto_children_still_hit() {
-        let mounter = mounter();
-        apply(
-            &mounter,
-            [
-                child(2, ViewKind::View, frame(0.0, 0.0, 120.0, 120.0)),
-                child(3, ViewKind::View, frame(0.0, 0.0, 120.0, 120.0)),
-                vec![
-                    MountItem::Create {
-                        id: 4,
-                        kind: ViewKind::View,
-                    },
-                    MountItem::Insert {
-                        parent: 3,
-                        child: 4,
-                        before: None,
-                    },
-                    MountItem::Frame {
-                        id: 4,
-                        frame: frame(140.0, 10.0, 30.0, 30.0),
-                    },
-                    MountItem::Create {
-                        id: 5,
-                        kind: ViewKind::View,
-                    },
-                    MountItem::Insert {
-                        parent: 3,
-                        child: 5,
-                        before: None,
-                    },
-                    MountItem::Frame {
-                        id: 5,
-                        frame: frame(10.0, 10.0, 20.0, 20.0),
-                    },
-                ],
-                child(6, ViewKind::Scroll, frame(0.0, 200.0, 200.0, 120.0)),
-                vec![
-                    MountItem::Create {
-                        id: 7,
-                        kind: ViewKind::View,
-                    },
-                    MountItem::Insert {
-                        parent: 6,
-                        child: 7,
-                        before: None,
-                    },
-                    MountItem::Frame {
-                        id: 7,
-                        frame: frame(0.0, 0.0, 40.0, 40.0),
-                    },
-                ],
-                child(8, ViewKind::Text, frame(0.0, 340.0, 80.0, 30.0)),
-                child(9, ViewKind::Image, frame(90.0, 340.0, 80.0, 30.0)),
-                child(10, ViewKind::Input, frame(180.0, 340.0, 80.0, 30.0)),
-                [3, 6, 8, 9, 10]
-                    .into_iter()
-                    .map(|id| MountItem::PointerEvents { id, auto: false })
-                    .collect(),
-            ]
-            .concat(),
-        );
-
-        let root = mounter.borrow().view_of(ROOT_ID).expect("root");
-        assert_eq!(hit_tag(&root, 80.0, 80.0), 2, "empty none falls through");
-        assert_eq!(hit_tag(&root, 15.0, 15.0), 5, "auto child inside none");
-        assert_eq!(hit_tag(&root, 150.0, 20.0), 4, "auto child outside none");
-
-        let front = mounter.borrow().view_of(3).expect("box");
-        assert!(front.isUserInteractionEnabled());
-        assert!(
-            front
-                .hitTest_withEvent(CGPoint::new(80.0, 80.0), None)
-                .is_none()
-        );
-        assert_eq!(hit_tag(&front, 150.0, 20.0), 4);
-        // No associated value: missing means auto, so the box is the hit.
-        let back = mounter.borrow().view_of(2).expect("back");
-        assert_eq!(hit_tag(&back, 10.0, 100.0), 2);
-
-        let scroll = mounter.borrow().scroll(6).expect("scroll");
-        assert!(scroll.isUserInteractionEnabled());
-        assert!(
-            scroll
-                .hitTest_withEvent(CGPoint::new(80.0, 80.0), None)
-                .is_none()
-        );
-        assert_eq!(hit_tag(&scroll, 10.0, 10.0), 7);
-
-        for id in [8, 9, 10] {
-            let view = mounter.borrow().view_of(id).expect("leaf");
-            assert!(!view.isUserInteractionEnabled(), "leaf {id}");
-        }
-        assert_ne!(hit_tag(&root, 10.0, 350.0), 8);
-
-        apply(
-            &mounter,
-            vec![MountItem::PointerEvents { id: 10, auto: true }],
-        );
-        assert!(
-            mounter
-                .borrow()
-                .view_of(10)
-                .expect("field")
-                .isUserInteractionEnabled()
-        );
-        apply(
-            &mounter,
-            vec![MountItem::Input {
-                id: 10,
-                config: Box::new(nlayer_core::InputConfig {
-                    multiline: true,
-                    ..nlayer_core::InputConfig::default()
-                }),
-            }],
-        );
-        // The replacement editor is created while the node is `auto`.
-        assert!(
-            mounter
-                .borrow()
-                .view_of(10)
-                .expect("area")
-                .isUserInteractionEnabled()
-        );
-        apply(
-            &mounter,
-            vec![MountItem::PointerEvents {
-                id: 10,
-                auto: false,
-            }],
-        );
-        assert!(
-            !mounter
-                .borrow()
-                .view_of(10)
-                .expect("area")
-                .isUserInteractionEnabled()
         );
     }
 }

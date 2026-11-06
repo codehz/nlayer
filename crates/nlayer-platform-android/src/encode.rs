@@ -53,9 +53,6 @@ const LIST_CONTENT: i32 = 25;
 const REFRESHING: i32 = 26;
 const SELECTABLE: i32 = 27;
 const TRACK_STATES: i32 = 28;
-/// Computed `pointer-events`: id, then 1 when `auto` and 0 when `none`.
-/// The view stores the other way around (0 auto, 1 none).
-const POINTER_EVENTS: i32 = 29;
 /// A `StaticLayout` measured on the engine thread and drawn on the UI thread.
 #[cfg(target_os = "android")]
 pub(crate) struct AndroidLayout(pub(crate) Arc<jni::refs::Global<jni::objects::JObject<'static>>>);
@@ -453,11 +450,6 @@ pub fn encode(batch: MountBatch) -> Encoded {
                 e.int(TRACK_STATES);
                 e.id(id);
                 e.int(states as i32);
-            }
-            MountItem::PointerEvents { id, auto } => {
-                e.int(POINTER_EVENTS);
-                e.id(id);
-                e.bool(auto);
             }
         }
     }

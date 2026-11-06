@@ -100,8 +100,6 @@ pub struct View {
     pub text_selectable: Option<bool>,
     /// `selectable` on this view: one selection across its texts.
     pub selectable: bool,
-    /// Computed `pointer-events`. `true` (the default) is a hit target.
-    pub pointer_auto: bool,
     /// `selectionColor` of the text's selection.
     pub selection_color: Option<Color>,
     /// Content offset of a scroll view, toward the end of the content.
@@ -491,7 +489,6 @@ impl Screen {
                     links: Vec::new(),
                     text_selectable: None,
                     selectable: false,
-                    pointer_auto: true,
                     selection_color: None,
                     scroll_x: 0.0,
                     scroll_y: 0.0,
@@ -712,12 +709,6 @@ impl Screen {
                     view.selectable = *selectable;
                 }
             }
-            MountItem::PointerEvents { id, auto } => {
-                self.ensure(*id, ViewKind::View);
-                if let Some(view) = self.views.get_mut(id) {
-                    view.pointer_auto = *auto;
-                }
-            }
             MountItem::Animation(op) => {
                 self.graph.apply(op.clone(), &mut self.finished);
                 self.apply_animated();
@@ -850,7 +841,6 @@ impl Screen {
             links: Vec::new(),
             text_selectable: None,
             selectable: false,
-            pointer_auto: true,
             selection_color: None,
             scroll_x: 0.0,
             scroll_y: 0.0,
@@ -879,11 +869,7 @@ impl Screen {
     }
 
     fn hit_test(&self, x: f32, y: f32) -> Option<NodeId> {
-        // Children are tested front to back even outside this box, so an
-        // `overflow: visible` descendant can hit. This node hits only when
-        // the point is inside its border box and it is `pointer-events: auto`.
-        // The root is addressed in surface coordinates: its own frame origin
-        // is not added to the offset.
+        // Walk tree front-to-back (reverse children order)
         fn test_node(
             screen: &Screen,
             id: NodeId,
@@ -892,10 +878,18 @@ impl Screen {
             offset: (f32, f32),
         ) -> Option<NodeId> {
             let view = screen.views.get(&id)?;
+            let local_x = x - offset.0;
+            let local_y = y - offset.1;
+            if local_x < 0.0
+                || local_y < 0.0
+                || local_x >= view.frame.size.width.0
+                || local_y >= view.frame.size.height.0
+            {
+                return None;
+            }
+            // Test children in reverse order (front-to-back)
             for &child in view.children.iter().rev() {
-                let Some(child_view) = screen.views.get(&child) else {
-                    continue;
-                };
+                let child_view = screen.views.get(&child)?;
                 let child_offset = (
                     offset.0 + child_view.frame.origin.x.0,
                     offset.1 + child_view.frame.origin.y.0,
@@ -904,17 +898,7 @@ impl Screen {
                     return Some(hit);
                 }
             }
-            let local_x = x - offset.0;
-            let local_y = y - offset.1;
-            let inside = local_x >= 0.0
-                && local_y >= 0.0
-                && local_x < view.frame.size.width.0
-                && local_y < view.frame.size.height.0;
-            if inside && view.pointer_auto {
-                Some(id)
-            } else {
-                None
-            }
+            Some(id)
         }
         test_node(self, nlayer_core::ROOT_ID, x, y, (0.0, 0.0))
     }
@@ -2169,67 +2153,4 @@ fn remove_cleans_up_stacks_and_modals() {
 
     screen.apply_item(&MountItem::Remove { id: modal_id });
     assert_eq!(screen.top_modal(), None);
-}
-
-#[test]
-fn pointer_events_hit_test() {
-    use nlayer_core::ROOT_ID;
-    use nlayer_core::geometry::{point, px, size};
-
-    fn rect(x: f32, y: f32, width: f32, height: f32) -> Bounds<Points> {
-        Bounds::new(point(px(x), px(y)), size(px(width), px(height)))
-    }
-    fn place(screen: &mut Screen, id: NodeId, parent: NodeId, frame: Bounds<Points>, auto: bool) {
-        screen.apply_item(&MountItem::Create {
-            id,
-            kind: ViewKind::View,
-        });
-        screen.apply_item(&MountItem::Insert {
-            parent,
-            child: id,
-            before: None,
-        });
-        screen.apply_item(&MountItem::Frame { id, frame });
-        screen.apply_item(&MountItem::PointerEvents { id, auto });
-        screen.apply_item(&MountItem::ViewStyle {
-            id,
-            style: Box::new(ViewStyle {
-                background_color: Color(0),
-                ..ViewStyle::default()
-            }),
-        });
-    }
-
-    let mut screen = Screen::default();
-    place(&mut screen, ROOT_ID, 0, rect(0.0, 0.0, 400.0, 200.0), true);
-    // Behind the none parent, and behind the transparent parent.
-    place(&mut screen, 2, ROOT_ID, rect(0.0, 0.0, 100.0, 100.0), true);
-    place(&mut screen, 8, ROOT_ID, rect(200.0, 0.0, 80.0, 80.0), true);
-    place(&mut screen, 3, ROOT_ID, rect(0.0, 0.0, 100.0, 100.0), false);
-    place(&mut screen, 4, 3, rect(10.0, 10.0, 20.0, 20.0), true);
-    place(&mut screen, 5, 3, rect(40.0, 40.0, 20.0, 20.0), false);
-    place(&mut screen, 6, 3, rect(120.0, 0.0, 30.0, 20.0), true);
-    place(&mut screen, 7, ROOT_ID, rect(200.0, 0.0, 80.0, 80.0), true);
-
-    assert_eq!(screen.hit_test(15.0, 15.0), Some(4), "auto child of none");
-    assert_eq!(
-        screen.hit_test(5.0, 5.0),
-        Some(2),
-        "none with no child hits the sibling behind"
-    );
-    assert_eq!(
-        screen.hit_test(50.0, 50.0),
-        Some(2),
-        "unset none child is not a target"
-    );
-    assert_eq!(
-        screen.hit_test(220.0, 20.0),
-        Some(7),
-        "transparent auto still hits"
-    );
-    assert_eq!(
-        screen.hit_test(130.0, 10.0),
-        Some(6),
-        "auto child outside the parent frame still hits"
-    );
 }

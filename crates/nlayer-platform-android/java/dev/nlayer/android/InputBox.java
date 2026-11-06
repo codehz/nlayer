@@ -33,10 +33,6 @@ final class InputBox extends FrameLayout {
   boolean watching;
   int pressMask;
   boolean clip;
-
-  /** Computed `pointer-events`: 0 auto, 1 none. */
-  int pointerEvents;
-
   int textColor;
   private boolean armed;
 
@@ -106,8 +102,7 @@ final class InputBox extends FrameLayout {
 
   /** `onPress` on the field. Returning false leaves focus and typing to the `EditText`. */
   private boolean tap(android.view.MotionEvent e) {
-    if (pointerEvents == 1 || (pressMask & 1) == 0 || disabled || Mounter.blocked(getParent()))
-      return false;
+    if ((pressMask & 1) == 0 || disabled || Mounter.blocked(getParent())) return false;
     int action = e.getActionMasked();
     if (action == android.view.MotionEvent.ACTION_DOWN) {
       armed = true;
@@ -123,25 +118,6 @@ final class InputBox extends FrameLayout {
       Mounter.pressed(this, id, false);
     }
     return false;
-  }
-
-  @Override
-  public boolean dispatchTouchEvent(android.view.MotionEvent e) {
-    // The editor is this field, not a descendant node. `none` does not focus it.
-    if (pointerEvents == 1) return false;
-    if (e.getActionMasked() == android.view.MotionEvent.ACTION_DOWN && !inside(e)) return false;
-    return super.dispatchTouchEvent(e);
-  }
-
-  @Override
-  public boolean onTouchEvent(android.view.MotionEvent e) {
-    if (pointerEvents == 1) return false;
-    return super.onTouchEvent(e);
-  }
-
-  private boolean inside(android.view.MotionEvent e) {
-    float x = e.getX(), y = e.getY();
-    return x >= 0f && y >= 0f && x < getWidth() && y < getHeight();
   }
 
   @Override

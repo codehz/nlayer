@@ -41,12 +41,6 @@ final class ScrollBox extends FrameLayout {
   int pressMask;
   boolean disabled;
 
-  /** Computed `pointer-events`: 0 auto, 1 none. */
-  int pointerEvents;
-
-  /** This gesture started on an `auto` descendant, not on empty padding. */
-  private boolean pointerChild;
-
   /** `keyboardShouldPersistTaps`: 0 never, 1 always, 2 handled. */
   int taps;
 
@@ -102,8 +96,6 @@ final class ScrollBox extends FrameLayout {
     density = c.getResources().getDisplayMetrics().density;
     setBackground(decor);
     content = new Content(c, m, id);
-    // The scroll view is the target. This box only carries the children.
-    content.pointerEvents = 1;
 
     // Add spinner for pull-to-refresh
     spinner = new ProgressBar(c);
@@ -465,8 +457,6 @@ final class ScrollBox extends FrameLayout {
 
   @Override
   public boolean onInterceptTouchEvent(MotionEvent e) {
-    // Empty padding of a `none` scroll is not a pull. An `auto` descendant still is.
-    if (pointerEvents == 1 && !pointerChild) return false;
     if (refreshing || !canPull()) return false;
     if (e.getActionMasked() == MotionEvent.ACTION_MOVE) {
       float dy = e.getY() - startY;
@@ -558,12 +548,6 @@ final class ScrollBox extends FrameLayout {
   @Override
   public boolean dispatchTouchEvent(MotionEvent e) {
     int action = e.getActionMasked();
-    // `none` does not scroll a gesture that starts on empty padding. One that
-    // starts on an `auto` descendant still does.
-    if (pointerEvents == 1) {
-      if (action == MotionEvent.ACTION_DOWN) pointerChild = autoChild(e);
-      if (!pointerChild) return false;
-    }
     if (action == MotionEvent.ACTION_DOWN) {
       startY = e.getY();
       swallowing = false;
@@ -574,7 +558,7 @@ final class ScrollBox extends FrameLayout {
         boolean handled = handles(hit, e);
         tapDismiss = shouldDismiss(onInput, handled);
         // `never`: the tap reaches nothing but the scroll view.
-        swallowing = pointerEvents != 1 && tapDismiss && taps == 0 && !onInput;
+        swallowing = tapDismiss && taps == 0 && !onInput;
       }
     }
     // `released` clears `dragging` while handling the lift. Read it first.
@@ -598,16 +582,8 @@ final class ScrollBox extends FrameLayout {
     if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
       swallowing = false;
       tapDismiss = false;
-      pointerChild = false;
     }
     return handledEvent;
-  }
-
-  /** An `auto` descendant under the finger. The content box itself is not one. */
-  private boolean autoChild(MotionEvent e) {
-    if (content == null) return false;
-    View hit = Mounter.hitNode(content, e.getRawX(), e.getRawY());
-    return hit != null && hit != content;
   }
 
   private boolean keyboardUp() {

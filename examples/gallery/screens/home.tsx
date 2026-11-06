@@ -29,7 +29,7 @@ export function HomePage() {
               → View (layout, press, transform)
             </Link>
             <Link testID="open-pointer" onPress={() => nav.push({ name: "pointer" })}>
-              → Pointer (active, hover, focus, pointer-events)
+              → Pointer (active, hover, focus)
             </Link>
             <Link testID="open-text" onPress={() => nav.push({ name: "text" })}>
               → Text (nested spans)
