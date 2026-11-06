@@ -2,7 +2,7 @@
 
 native-layer（crate、CLI、JS 模块都叫 `nlayer`）是一个 TSX 应用在 web、iOS、Android 上跑的运行时。机制从 [nsh](https://github.com/longbridge/nsh) 抽进新 crate，不保证跑现有 nsh 应用，也不从零重写渲染器。来源和 Apache-2.0 归属在 `NOTICE`。抽代码的起点是 nsh `ca59368b`。
 
-本文件是不做的事和搬运纪律。产品范围在 `docs/v1.md`（验收、产品面、公开模块导出）、`docs/v2.md`（v2 的范围与计划）、`docs/v3.md`（v3 的范围与计划）、`docs/v4.md`（v4 的范围与计划）、`docs/v5.md`（v5 / 0.5.0 的范围与计划）、`docs/v6.md`（v6 / 0.6.0 的范围与计划）、`docs/v7.md`（v7 / 0.7.0 的范围与计划）、`docs/v8.md`（v8 / 0.8.0 的范围与计划）、`docs/v9.md`（v9 / 0.9.0 的范围与计划）和 `docs/v10.md`（v10 / 0.10.0 的范围与计划）。产品文件之间冲突时，不做的事以本文件为准，产品行为以对应的产品文件为准。`docs/v1.md` 不能把本文件禁止的东西写成 v1；`docs/v2.md`、`docs/v3.md`、`docs/v4.md`、`docs/v5.md`、`docs/v6.md`、`docs/v7.md` 只能从「以后要做」里取项。`docs/v8.md` 不取新功能，只改已经在跑的事件形状。`docs/v9.md` 不取新功能，只改 web 的 `NavPage` 头。`docs/v10.md` 不从「以后要做」取其它项：只改 Android 头的绘制、web `NavHeader` 的外观，以及 CSS `pointer-events` 的 `auto` / `none`（见该文件）。
+本文件是不做的事和搬运纪律。产品范围在 `docs/v1.md`（验收、产品面、公开模块导出）、`docs/v2.md`（v2 的范围与计划）、`docs/v3.md`（v3 的范围与计划）、`docs/v4.md`（v4 的范围与计划）、`docs/v5.md`（v5 / 0.5.0 的范围与计划）、`docs/v6.md`（v6 / 0.6.0 的范围与计划）、`docs/v7.md`（v7 / 0.7.0 的范围与计划）、`docs/v8.md`（v8 / 0.8.0 的范围与计划）、`docs/v9.md`（v9 / 0.9.0 的范围与计划）和 `docs/v10.md`（v10 / 0.10.0 的范围与计划）。产品文件之间冲突时，不做的事以本文件为准，产品行为以对应的产品文件为准。`docs/v1.md` 不能把本文件禁止的东西写成 v1；`docs/v2.md`、`docs/v3.md`、`docs/v4.md`、`docs/v5.md`、`docs/v6.md`、`docs/v7.md` 只能从「以后要做」里取项。`docs/v8.md` 不取新功能，只改已经在跑的事件形状。`docs/v9.md` 不取新功能，只改 web 的 `NavPage` 头。`docs/v10.md` 不从「以后要做」取其它项：只改 Android 头的绘制、web `NavHeader` 的外观，以及 nsh 的 `pointerEvents` 四值（见该文件）。
 
 ## 不要做
 
@@ -15,7 +15,7 @@ v1 不做。做到那一层再搬，不留钩子。标了「v2」「v3」「v4�
 - 宿主：Nav 与 pan / pinch / rotation 手势进 v3；Canvas、Video、WebView 仍不做。`List`、动画图、长按、系统返回（`BackHandler`）进 v2
 - 深色模式、无障碍 API、多行输入、输入框选中范围、IME 事件回 JS 进 v2。`Text` 的文本选择、`href` 链接、行内视图进 v4。SVG、GIF 仍不做。`testID` 不是无障碍 API
 - 阴影、渐变的绘制进 v7（`docs/v7.md`）。`AnimationProp` 跟动画图走；v2 只绑定 `opacity`、`backgroundColor`、`borderColor` 和 `transform` 的 translate / rotate / scale
-- Tailwind utility 表进 v5（`docs/v5.md`）：默认主题，解析器基本完整；生效的只是引擎已经在排、三端宿主已经在画的 utility，外加 `active` / `hover` / `focus` / `focus-visible` / `focus-within` / `disabled` / `enabled` 的重算。阴影、渐变以及降成同一份 `boxShadow` 的 `ring` 进 v7 生效（`docs/v7.md`）。`pointer-events-none` / `pointer-events-auto` 进 v10 生效（`docs/v10.md`）。主题配置、`dark:`、断点、`group`、兄弟位置、平台与 `motion` 变体、无障碍变体，以及 filter、动画这些还没画的 utility，仍是以后要做：解析并警告，不生效，不留钩子。
+- Tailwind utility 表进 v5（`docs/v5.md`）：默认主题，解析器基本完整；生效的只是引擎已经在排、三端宿主已经在画的 utility，外加 `active` / `hover` / `focus` / `focus-visible` / `focus-within` / `disabled` / `enabled` 的重算。阴影、渐变以及降成同一份 `boxShadow` 的 `ring` 进 v7 生效（`docs/v7.md`）。`pointer-events-none` / `pointer-events-auto` 进 v10，按 nsh 归并成宿主的四值后生效（`docs/v10.md`）。主题配置、`dark:`、断点、`group`、兄弟位置、平台与 `motion` 变体、无障碍变体，以及 filter、动画这些还没画的 utility，仍是以后要做：解析并警告，不生效，不留钩子。
 - storage 进 v2。`crypto.subtle`、WebSocket 仍不做：`crypto.subtle` 在 QuickJS 宿主是缺的，不是空桩。Web 页面里浏览器自带的全局不遮蔽，也不属于 v2 API
 - `resource` 进 v2。滚动的刷新、分页与吸附、列表结构（sticky header、`inverted`、viewability、`viewport="parent"`）进 v3；缩放的整套 prop、`fetch` 的 cookie 仍不做
 - 未签名的 `nlayer package` 进 v2。HMR 进 v6（`docs/v6.md`）：三端 `nlayer run` 按 nsh 的开发包和补丁留状态，外加没有自定义事件的 `import.meta.hot`。同一条通道替换 `nlayer test --target` 现有的 stdin 步骤，不新增测试 API。嵌入 ABI 仍不做。`nsh-dev` 里其余测试步骤仍不做
