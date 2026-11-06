@@ -121,7 +121,7 @@ export function PointerEventsPage() {
           <Section title="滚动">
             <ScrollUnderNone />
             <Text class="text-xs text-[#64748b]">
-              下面这个滚动容器自己是 box-none：点行能点到，拖空白不滚动。
+              下面这个滚动容器写了 box-none。滚动视图不按这个值停滑：拖空白和拖这行都滚动。
             </Text>
             <Scroll
               style={{ pointerEvents: "box-none" }}

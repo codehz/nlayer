@@ -40,7 +40,6 @@ final class ScrollBox extends FrameLayout {
   float contentPointsW, contentPointsH, offsetX, offsetY;
   int pressMask;
   boolean disabled;
-  int pointerEvents;
 
   /** `keyboardShouldPersistTaps`: 0 never, 1 always, 2 handled. */
   int taps;
@@ -548,7 +547,6 @@ final class ScrollBox extends FrameLayout {
 
   @Override
   public boolean dispatchTouchEvent(MotionEvent e) {
-    if (pointerEvents == 1) return false;
     int action = e.getActionMasked();
     if (action == MotionEvent.ACTION_DOWN) {
       startY = e.getY();
@@ -762,15 +760,7 @@ final class ScrollBox extends FrameLayout {
     }
 
     @Override
-    public boolean onInterceptTouchEvent(MotionEvent e) {
-      if (pointerEvents == 3) return true;
-      if (pointerEvents == 2) return false;
-      return super.onInterceptTouchEvent(e);
-    }
-
-    @Override
     public boolean onTouchEvent(MotionEvent e) {
-      if (pointerEvents == 2) return false;
       boolean up = beforeTouch(e);
       boolean handled = super.onTouchEvent(e);
       if (up) released();
@@ -790,15 +780,7 @@ final class ScrollBox extends FrameLayout {
     }
 
     @Override
-    public boolean onInterceptTouchEvent(MotionEvent e) {
-      if (pointerEvents == 3) return true;
-      if (pointerEvents == 2) return false;
-      return super.onInterceptTouchEvent(e);
-    }
-
-    @Override
     public boolean onTouchEvent(MotionEvent e) {
-      if (pointerEvents == 2) return false;
       boolean up = beforeTouch(e);
       boolean handled = super.onTouchEvent(e);
       if (up) released();

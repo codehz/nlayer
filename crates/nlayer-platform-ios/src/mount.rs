@@ -285,6 +285,17 @@ define_class!(
             {
                 return true.into();
             }
+            // A press (duration 0) must not take the pan away from a scroll
+            // view. nsh's press recognizer never prevents a scroll pan.
+            let press_and_scroll = |a: &UIGestureRecognizer, b: &UIGestureRecognizer| {
+                a.isKindOfClass(UILongPressGestureRecognizer::class())
+                    && b.isKindOfClass(UIPanGestureRecognizer::class())
+                    && b.view()
+                        .is_some_and(|view| view.isKindOfClass(UIScrollView::class()))
+            };
+            if press_and_scroll(gesture, other) || press_and_scroll(other, gesture) {
+                return true.into();
+            }
             let transform = |recognizer: &UIGestureRecognizer| {
                 recognizer.isKindOfClass(UIPanGestureRecognizer::class())
                     || recognizer.isKindOfClass(UIPinchGestureRecognizer::class())
@@ -2138,7 +2149,6 @@ impl Mounter {
         };
         let want = slot.own_press || slot.link_press || slot.own_long;
         let view = slot.native.view().retain();
-        let input = matches!(slot.native, Native::Input(_) | Native::Area(_));
         let mut released = false;
         match (&slot.press, want) {
             (None, true) => {
@@ -2151,10 +2161,8 @@ impl Mounter {
                     )
                 };
                 gesture.setMinimumPressDuration(0.0);
+                gesture.setCancelsTouchesInView(false);
                 gesture.setDelegate(Some(ProtocolObject::from_ref(&*relay)));
-                if input {
-                    gesture.setCancelsTouchesInView(false);
-                }
                 view.addGestureRecognizer(&gesture);
                 slot.press = Some(gesture);
             }
@@ -2293,16 +2301,28 @@ impl Mounter {
         }
     }
 
-    /// `none` takes the view out of hit testing, children included, so a
-    /// scroll behind it still receives the gesture.
+    /// `none` returns nil from `BoxView`'s hit test and stays interaction
+    /// enabled, so a scroll view's hit test falls through to itself (nsh).
+    /// Turning interaction off drops the touch instead. Inputs are the
+    /// exception: `none` and `box-none` must not become first responder.
     fn set_pointer_events(&mut self, id: NodeId, events: nlayer_core::PointerEvents) {
+        let input = self
+            .slot(id)
+            .is_some_and(|slot| matches!(slot.native, Native::Input(_) | Native::Area(_)));
         let Some(view) = self.view(id) else {
             return;
         };
         if let Some(box_view) = view.downcast_ref::<BoxView>() {
             box_view.set_pointer(events);
+        } else if let Some(text) = view.downcast_ref::<crate::text_view::TextView>() {
+            text.set_pointer(events);
         }
-        view.setUserInteractionEnabled(events != nlayer_core::PointerEvents::None);
+        if input {
+            view.setUserInteractionEnabled(!matches!(
+                events,
+                nlayer_core::PointerEvents::None | nlayer_core::PointerEvents::BoxNone
+            ));
+        }
     }
 
     /// Stores which states of `id` the engine reads. `0` stops press and
@@ -5148,7 +5168,7 @@ fn resign_keyboard(shared: &Rc<std::cell::RefCell<Mounter>>) {
 }
 
 fn image_layers(mtm: MainThreadMarker) -> (Retained<UIView>, Picture) {
-    let view = UIView::new(mtm);
+    let view = Retained::into_super(BoxView::new(mtm));
     let clip = CALayer::layer();
     clip.setMasksToBounds(true);
     let layer = CALayer::layer();

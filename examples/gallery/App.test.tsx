@@ -1011,7 +1011,7 @@ test("pointer events screen lists the four values and the class lowering", () =>
     "style pointerEvents none 盖过按钮上的 pointer-events-auto，整棵都不接。",
   );
   expect(texts).toContain("罩层 none");
-  expect(texts).toContain("拖空白不滚动");
+  expect(texts).toContain("拖空白和拖这行都滚动");
 });
 
 test("a long nav link keeps its wrapped second line", () => {

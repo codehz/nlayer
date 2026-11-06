@@ -1297,7 +1297,6 @@ final class Mounter {
   private void setPointer(int id, int events) {
     View v = views.get(id);
     if (v instanceof Box) ((Box) v).pointerEvents = events;
-    else if (v instanceof ScrollBox) ((ScrollBox) v).pointerEvents = events;
     else if (v instanceof TextBox) ((TextBox) v).pointerEvents = events;
     else if (v instanceof ImageBox) ((ImageBox) v).pointerEvents = events;
     else if (v instanceof InputBox) ((InputBox) v).pointerEvents = events;

@@ -27,8 +27,8 @@ use objc2_core_foundation::{CGAffineTransform, CGFloat, CGPoint, CGRect};
 use objc2_core_graphics::CGContext;
 use objc2_foundation::{NSArray, NSComparisonResult, NSDictionary, NSRange, NSString};
 use objc2_ui_kit::{
-    NSWritingDirection, UIColor, UIGraphicsGetCurrentContext, UIKeyInput, UIResponder, UITextInput,
-    UITextInputDelegate, UITextInputTokenizer, UITextInputTraits, UITextInteraction,
+    NSWritingDirection, UIColor, UIEvent, UIGraphicsGetCurrentContext, UIKeyInput, UIResponder,
+    UITextInput, UITextInputDelegate, UITextInputTokenizer, UITextInputTraits, UITextInteraction,
     UITextInteractionDelegate, UITextLayoutDirection, UITextPosition, UITextRange,
     UITextSelectionRect, UITextStorageDirection, UIView,
 };
@@ -43,6 +43,8 @@ pub(crate) struct TextViewIvars {
     pub(crate) selection: Selection,
     /// A selectable view's highlight: UTF-16 range and packed color.
     area_highlight: Cell<Option<((usize, usize), u32)>>,
+    /// Mounted `pointerEvents`: 0 auto, 1 none, 2 box-none, 3 box-only.
+    pointer: Cell<u8>,
 }
 
 define_class!(
@@ -57,6 +59,31 @@ define_class!(
         #[unsafe(method(isOpaque))]
         fn is_opaque(&self) -> bool {
             false
+        }
+
+        #[unsafe(method_id(hitTest:withEvent:))]
+        fn hit_test(&self, point: CGPoint, event: Option<&UIEvent>) -> Option<Retained<UIView>> {
+            let mode = self.ivars().pointer.get();
+            let hit: Option<Retained<UIView>> = if mode == 1 {
+                None
+            } else if mode == 3 {
+                let bounds = self.bounds();
+                let inside = point.x >= 0.0
+                    && point.y >= 0.0
+                    && point.x < bounds.size.width
+                    && point.y < bounds.size.height;
+                inside.then(|| Retained::from(self as &UIView))
+            } else {
+                let hit: Option<Retained<UIView>> =
+                    unsafe { msg_send![super(self), hitTest: point, withEvent: event] };
+                if mode == 2 {
+                    let mine = self as *const Self as *const UIView;
+                    hit.filter(|found| !std::ptr::eq(Retained::as_ptr(found), mine))
+                } else {
+                    hit
+                }
+            };
+            hit
         }
 
         #[unsafe(method(canBecomeFirstResponder))]
@@ -416,12 +443,16 @@ impl TextView {
             color: Cell::new(None),
             selection: Selection::default(),
             area_highlight: Cell::new(None),
+            pointer: Cell::new(0),
         });
         // SAFETY: UIView's designated initializer.
         let this: Retained<Self> = unsafe { msg_send![super(this), init] };
         this.setOpaque(false);
         this.setBackgroundColor(Some(&UIColor::clearColor()));
         this
+    }
+    pub(crate) fn set_pointer(&self, events: nlayer_core::PointerEvents) {
+        self.ivars().pointer.set(events as u8);
     }
 
     pub(crate) fn set_text(
