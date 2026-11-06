@@ -16,6 +16,7 @@ import java.net.URL;
 final class ImageBox extends View {
   final int id;
   final Decor decor = new Decor();
+  int pointerEvents;
   Bitmap bitmap;
   int mode, pressMask;
   boolean disabled;
@@ -43,6 +44,7 @@ final class ImageBox extends View {
 
   @Override
   public boolean onTouchEvent(android.view.MotionEvent e) {
+    if (pointerEvents == 1 || pointerEvents == 2) return false;
     if (disabled || Mounter.blocked(getParent())) {
       if (e.getAction() == android.view.MotionEvent.ACTION_DOWN) Mounter.pressed(this, id, false);
       return true;

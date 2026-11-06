@@ -431,18 +431,33 @@ impl<M: TextEngine> Core<M> {
     /// Stores the node props classes set, and restyles children when the
     /// `space-*` margins they inherit changed.
     fn set_class_props(&mut self, key: Key, props: ClassProps) {
-        let node = &mut self.nodes[key as usize];
-        let old = node.class_props.take().map(|b| *b).unwrap_or_default();
-        if old == props {
-            node.class_props = (props != ClassProps::default()).then(|| Box::new(props));
-            return;
-        }
+        let old = {
+            let node = &mut self.nodes[key as usize];
+            let old = node.class_props.take().map(|b| *b).unwrap_or_default();
+            if old == props {
+                node.class_props = (props != ClassProps::default()).then(|| Box::new(props));
+                return;
+            }
+            old
+        };
         let space_changed = old.space != props.space;
         let selection_changed = old.selection_color != props.selection_color;
-        let kind = node.kind;
-        node.class_props = (props != ClassProps::default()).then(|| Box::new(props));
+        let pointer_changed = old.pointer_events != props.pointer_events;
+        let none = Some(crate::PointerEvents::None);
+        match (old.pointer_events == none, props.pointer_events == none) {
+            (false, true) => self.pointer_none_classes += 1,
+            (true, false) => self.pointer_none_classes -= 1,
+            _ => {}
+        }
+        let kind = self.nodes[key as usize].kind;
+        self.nodes[key as usize].class_props =
+            (props != ClassProps::default()).then(|| Box::new(props));
         if selection_changed && kind == Kind::Text {
             self.mark_text_block(key);
+        }
+        if pointer_changed {
+            let top = self.pointer_region(key).unwrap_or(key);
+            self.update_pointer_events(top);
         }
         if !space_changed {
             return;
@@ -453,5 +468,111 @@ impl<M: TextEngine> Core<M> {
                 self.restyle(child);
             }
         }
+    }
+
+    /// The mounted four-value: an explicit style other than `auto` wins
+    /// over the class lowering.
+    pub(super) fn mounted_pointer(&self, key: Key) -> crate::PointerEvents {
+        let node = &self.nodes[key as usize];
+        node.explicit_pointer.unwrap_or(node.class_pointer)
+    }
+
+    /// The outermost of `key` and its ancestors whose classes say
+    /// `pointer-events-none`, with no `pointer-events-auto` above it.
+    pub(super) fn pointer_region(&self, key: Key) -> Option<Key> {
+        let mut top = None;
+        let mut k = key;
+        while k != NO_KEY {
+            let node = &self.nodes[k as usize];
+            match node.class_props.as_ref().and_then(|c| c.pointer_events) {
+                Some(crate::PointerEvents::None) => top = Some(k),
+                Some(_) if top.is_some() => return top,
+                _ => {}
+            }
+            k = node.parent;
+        }
+        top
+    }
+
+    /// `parent` gained or lost a child: the region it is in follows.
+    pub(super) fn pointer_events_moved(&mut self, parent: Key) {
+        if let Some(top) = self.pointer_region(parent) {
+            self.update_pointer_events(top);
+        }
+    }
+
+    /// What the views of `top`'s subtree mount for the `pointer-events-*`
+    /// classes. Copied from nsh `classes.rs` `update_pointer_events`: a
+    /// `none` that holds a `pointer-events-auto` mounts as `box-none`; a
+    /// view already blocked by a mounted `none` or `box-only` mounts `auto`.
+    pub(super) fn update_pointer_events(&mut self, top: Key) {
+        use crate::PointerEvents;
+        let inherited = {
+            let parent = self.nodes[top as usize].parent;
+            let mut k = parent;
+            let mut found = None;
+            while k != NO_KEY {
+                let node = &self.nodes[k as usize];
+                if let Some(v) = node.class_props.as_ref().and_then(|c| c.pointer_events) {
+                    found = Some(v);
+                    break;
+                }
+                k = node.parent;
+            }
+            found
+        };
+        self.mark_pointer_auto(top, inherited);
+        let mut stack = vec![(top, inherited, false)];
+        while let Some((k, inherited, blocked)) = stack.pop() {
+            let node = &self.nodes[k as usize];
+            let own = node.class_props.as_ref().and_then(|c| c.pointer_events);
+            let effective = own.or(inherited);
+            let mounted = match effective {
+                Some(p @ (PointerEvents::BoxNone | PointerEvents::BoxOnly)) if own.is_some() => p,
+                Some(PointerEvents::None) if node.pointer_auto_inside => PointerEvents::BoxNone,
+                Some(PointerEvents::None) if blocked => PointerEvents::Auto,
+                Some(PointerEvents::None) => PointerEvents::None,
+                _ => PointerEvents::Auto,
+            };
+            let blocked =
+                blocked || matches!(mounted, PointerEvents::None | PointerEvents::BoxOnly);
+            let effective = match effective {
+                Some(PointerEvents::BoxNone | PointerEvents::BoxOnly) => Some(PointerEvents::Auto),
+                e => e,
+            };
+            for &c in &node.children {
+                stack.push((c, effective, blocked));
+            }
+            if self.nodes[k as usize].class_pointer != mounted {
+                self.nodes[k as usize].class_pointer = mounted;
+                if self.nodes[k as usize].explicit_pointer.is_none() {
+                    self.mark(k, super::dirty::POINTER);
+                }
+            }
+        }
+    }
+
+    /// Sets `pointer_auto_inside` over `key`'s subtree. Returns whether a
+    /// `pointer-events-auto` is in it, or it is one under a `none`.
+    fn mark_pointer_auto(&mut self, key: Key, inherited: Option<crate::PointerEvents>) -> bool {
+        use crate::PointerEvents;
+        let own = self.nodes[key as usize]
+            .class_props
+            .as_ref()
+            .and_then(|c| c.pointer_events);
+        let effective = match own.or(inherited) {
+            Some(PointerEvents::BoxNone | PointerEvents::BoxOnly) => Some(PointerEvents::Auto),
+            e => e,
+        };
+        let children = std::mem::take(&mut self.nodes[key as usize].children);
+        let mut inside = false;
+        for &c in &children {
+            inside |= self.mark_pointer_auto(c, effective);
+        }
+        self.nodes[key as usize].children = children;
+        self.nodes[key as usize].pointer_auto_inside = inside;
+        inside
+            || own.is_some_and(|o| o != PointerEvents::None)
+                && inherited == Some(PointerEvents::None)
     }
 }

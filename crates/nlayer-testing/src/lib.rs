@@ -29,7 +29,7 @@ use std::{
 use crossbeam_channel::{Receiver, unbounded};
 use nlayer_core::{
     Accessibility, Command, EventKind, EventMask, ImageSource, InputConfig, Interaction,
-    ModalConfig, MountBatch, MountItem, ResizeMode, ScreenConfig, ViewKind,
+    ModalConfig, MountBatch, MountItem, PointerEvents, ResizeMode, ScreenConfig, ViewKind,
     animation::{AnimationProp, Finished, Graph, NodeId as AnimationNode},
     geometry::{Bounds, Points, Size},
     style::{Color, TextStyle, ViewStyle},
@@ -110,6 +110,8 @@ pub struct View {
     pub text_content: Bounds<Points>,
     /// The text view's layout, so a span has a box.
     pub text_layout: Option<TextLayout>,
+    /// Mounted `pointerEvents`.
+    pub pointer: PointerEvents,
 }
 
 /// A single-line input's configuration and text.
@@ -494,6 +496,7 @@ impl Screen {
                     scroll_y: 0.0,
                     text_content: Bounds::default(),
                     text_layout: None,
+                    pointer: PointerEvents::Auto,
                 });
                 view.kind = *kind;
             }
@@ -688,6 +691,11 @@ impl Screen {
                 }
             }
             MountItem::TrackStates { .. } => {}
+            MountItem::PointerEvents { id, events } => {
+                if let Some(view) = self.views.get_mut(id) {
+                    view.pointer = *events;
+                }
+            }
             MountItem::Command { id, command } => match command {
                 Command::ScrollTo { x, y, .. } => self.set_scroll(*id, x.0, y.0),
                 Command::Blur => self.blur(),
@@ -846,6 +854,7 @@ impl Screen {
             scroll_y: 0.0,
             text_content: Bounds::default(),
             text_layout: None,
+            pointer: PointerEvents::Auto,
         });
     }
 
@@ -869,7 +878,6 @@ impl Screen {
     }
 
     fn hit_test(&self, x: f32, y: f32) -> Option<NodeId> {
-        // Walk tree front-to-back (reverse children order)
         fn test_node(
             screen: &Screen,
             id: NodeId,
@@ -880,14 +888,20 @@ impl Screen {
             let view = screen.views.get(&id)?;
             let local_x = x - offset.0;
             let local_y = y - offset.1;
-            if local_x < 0.0
-                || local_y < 0.0
-                || local_x >= view.frame.size.width.0
-                || local_y >= view.frame.size.height.0
-            {
+            let inside = local_x >= 0.0
+                && local_y >= 0.0
+                && local_x < view.frame.size.width.0
+                && local_y < view.frame.size.height.0;
+            let clip = view
+                .style
+                .as_ref()
+                .is_some_and(|style| style.overflow_hidden);
+            if view.pointer == PointerEvents::None || (!inside && clip) {
                 return None;
             }
-            // Test children in reverse order (front-to-back)
+            if view.pointer == PointerEvents::BoxOnly {
+                return inside.then_some(id);
+            }
             for &child in view.children.iter().rev() {
                 let child_view = screen.views.get(&child)?;
                 let child_offset = (
@@ -898,7 +912,7 @@ impl Screen {
                     return Some(hit);
                 }
             }
-            Some(id)
+            (inside && view.pointer != PointerEvents::BoxNone).then_some(id)
         }
         test_node(self, nlayer_core::ROOT_ID, x, y, (0.0, 0.0))
     }

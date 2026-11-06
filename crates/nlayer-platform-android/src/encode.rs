@@ -53,6 +53,7 @@ const LIST_CONTENT: i32 = 25;
 const REFRESHING: i32 = 26;
 const SELECTABLE: i32 = 27;
 const TRACK_STATES: i32 = 28;
+const POINTER_EVENTS: i32 = 29;
 /// A `StaticLayout` measured on the engine thread and drawn on the UI thread.
 #[cfg(target_os = "android")]
 pub(crate) struct AndroidLayout(pub(crate) Arc<jni::refs::Global<jni::objects::JObject<'static>>>);
@@ -450,6 +451,11 @@ pub fn encode(batch: MountBatch) -> Encoded {
                 e.int(TRACK_STATES);
                 e.id(id);
                 e.int(states as i32);
+            }
+            MountItem::PointerEvents { id, events } => {
+                e.int(POINTER_EVENTS);
+                e.id(id);
+                e.int(events as i32);
             }
         }
     }

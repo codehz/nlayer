@@ -437,6 +437,14 @@ pub enum MountItem {
         /// Whether refresh indicator is active.
         refreshing: bool,
     },
+    /// Who takes a pointer. `auto` is the host default, sent when a view
+    /// returns to it. Not inherited.
+    PointerEvents {
+        /// View.
+        id: NodeId,
+        /// Mounted value.
+        events: crate::PointerEvents,
+    },
 }
 
 /// Everything about an input except its text.

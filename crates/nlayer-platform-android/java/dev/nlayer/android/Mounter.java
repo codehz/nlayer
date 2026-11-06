@@ -64,7 +64,8 @@ final class Mounter {
       LIST_CONTENT = 25,
       REFRESHING = 26,
       SELECTABLE = 27,
-      TRACK_STATES = 28;
+      TRACK_STATES = 28,
+      POINTER_EVENTS = 29;
   final HostView host;
   final float density;
   final SparseArray<View> views = new SparseArray<>();
@@ -288,6 +289,9 @@ final class Mounter {
           break;
         case TRACK_STATES:
           trackStates(b.getInt(), b.getInt());
+          break;
+        case POINTER_EVENTS:
+          setPointer(b.getInt(), b.getInt());
           break;
         default:
           throw new IllegalArgumentException("Unknown nlayer opcode " + opcode);
@@ -1287,7 +1291,16 @@ final class Mounter {
   private static boolean ignoresPointer(View v) {
     if (!(v instanceof Box)) return false;
     int events = ((Box) v).pointerEvents;
-    return events == 1 || events == 3;
+    return events == 1 || events == 2;
+  }
+
+  private void setPointer(int id, int events) {
+    View v = views.get(id);
+    if (v instanceof Box) ((Box) v).pointerEvents = events;
+    else if (v instanceof ScrollBox) ((ScrollBox) v).pointerEvents = events;
+    else if (v instanceof TextBox) ((TextBox) v).pointerEvents = events;
+    else if (v instanceof ImageBox) ((ImageBox) v).pointerEvents = events;
+    else if (v instanceof InputBox) ((InputBox) v).pointerEvents = events;
   }
 
   private void trackStates(int id, int states) {

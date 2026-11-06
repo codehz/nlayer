@@ -16,7 +16,7 @@ class Box extends ViewGroup {
   int pressMask;
   boolean disabled;
   Gestures gestures;
-  int pointerEvents; // 0 auto, 1 none, 2 box-only, 3 box-none
+  int pointerEvents; // 0 auto, 1 none, 2 box-none, 3 box-only
   int panAxis; // 0 free, 1 horizontal, 2 vertical (nsh convention)
 
   /** Scroll content never splits: the scroll view clips its own shadow. */
@@ -175,6 +175,60 @@ class Box extends ViewGroup {
   }
 
   @Override
+  public boolean dispatchTouchEvent(android.view.MotionEvent e) {
+    if (pointerEvents == 1) return false;
+    int action = e.getActionMasked();
+    if (action == android.view.MotionEvent.ACTION_DOWN) {
+      float x = e.getX(), y = e.getY();
+      boolean outside = x < 0 || y < 0 || x >= getWidth() || y >= getHeight();
+      if (outside && pointerEvents != 3) {
+        View target = childContaining(x, y);
+        if (target != null) {
+          android.view.MotionEvent local = eventIn(target, e);
+          boolean handled = target.dispatchTouchEvent(local);
+          local.recycle();
+          return handled;
+        }
+        return false;
+      }
+    }
+    if (pointerEvents == 3) {
+      return onTouchEvent(e);
+    }
+    return super.dispatchTouchEvent(e);
+  }
+
+  /** A direct child whose box holds (`x`, `y`) of this box, front-most first. */
+  private View childContaining(float x, float y) {
+    ViewGroup group = container();
+    for (int i = group.getChildCount() - 1; i >= 0; i--) {
+      View c = group.getChildAt(i);
+      if (c.getVisibility() != VISIBLE) continue;
+      float lx = x - c.getLeft() + group.getScrollX();
+      float ly = y - c.getTop() + group.getScrollY();
+      if (group != this) {
+        lx -= group.getLeft();
+        ly -= group.getTop();
+      }
+      if (lx >= 0 && ly >= 0 && lx < c.getWidth() && ly < c.getHeight()) return c;
+    }
+    return null;
+  }
+
+  private android.view.MotionEvent eventIn(View c, android.view.MotionEvent e) {
+    android.view.MotionEvent local = android.view.MotionEvent.obtain(e);
+    ViewGroup group = container();
+    float dx = group.getScrollX() - c.getLeft();
+    float dy = group.getScrollY() - c.getTop();
+    if (group != this) {
+      dx -= group.getLeft();
+      dy -= group.getTop();
+    }
+    local.offsetLocation(dx, dy);
+    return local;
+  }
+
+  @Override
   public boolean onInterceptTouchEvent(android.view.MotionEvent e) {
     if (gestures != null) {
       return gestures.onInterceptTouchEvent(e);
@@ -184,7 +238,7 @@ class Box extends ViewGroup {
 
   @Override
   public boolean onTouchEvent(android.view.MotionEvent e) {
-    if (disabled || pointerEvents == 1) return false;
+    if (disabled || pointerEvents == 1 || pointerEvents == 2) return false;
 
     int action = e.getActionMasked();
     // Gestures handled by Gestures class (nsh transplant)

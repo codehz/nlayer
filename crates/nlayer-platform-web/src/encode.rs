@@ -650,6 +650,9 @@ impl Encoder {
             MountItem::TrackStates { id, states } => {
                 out.item("ts").num(*id).num(*states).end();
             }
+            MountItem::PointerEvents { id, events } => {
+                out.item("pe").num(*id).num(*events as u8).end();
+            }
             MountItem::Refreshing { id, refreshing } => {
                 out.item("ref").num(*id).bool(*refreshing).end();
             }

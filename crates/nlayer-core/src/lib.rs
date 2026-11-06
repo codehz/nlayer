@@ -46,7 +46,7 @@ pub use ops::{
     ScreenProp, SnapAlignment, Tag, Viewability,
 };
 pub use platform::ColorScheme;
-pub use style::Color;
+pub use style::{Color, PointerEvents};
 pub use tailwind::{
     ClassList, Theme, class_tokens, parse, unknown_classes_warning, unsupported_classes_warning,
 };

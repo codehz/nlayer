@@ -46,8 +46,8 @@ use crate::{
         Interaction, KeyboardDismiss, KeyboardTaps, NodeId, Op, Prop, ROOT_ID, ResizeMode, Tag,
     },
     style::{
-        self, EllipsizeMode, EnvEdges, Style, StylePatch, TextAlign, TextStyle, VerticalAlign,
-        ViewStyle,
+        self, EllipsizeMode, EnvEdges, PointerEvents, Style, StylePatch, TextAlign, TextStyle,
+        VerticalAlign, ViewStyle,
     },
     text::{
         AttachmentAlignments, AttributedText, MeasureCache, ResolvedTextStyle, SpanTestId,
@@ -106,6 +106,8 @@ mod dirty {
     pub(super) const PAN: u32 = 1 << 17;
     /// Emit [`crate::MountItem::Selectable`].
     pub(super) const SELECTABLE: u32 = 1 << 18;
+    /// Emit [`crate::MountItem::PointerEvents`].
+    pub(super) const POINTER: u32 = 1 << 19;
 }
 
 /// Host kind.
@@ -431,6 +433,12 @@ struct Node {
     authored: Option<Box<Style>>,
     /// Node props the classes set (`space-*`, `selection:`).
     class_props: Option<Box<crate::tailwind::ClassProps>>,
+    /// `pointerEvents` from the style, when set and not `auto`.
+    explicit_pointer: Option<PointerEvents>,
+    /// What the `pointer-events-*` classes mount as.
+    class_pointer: PointerEvents,
+    /// A `pointer-events-auto` sits under a `pointer-events-none` inside.
+    pointer_auto_inside: bool,
     /// Interaction states (`tailwind::state` bits).
     states: u16,
     /// Bits the host should report ([`crate::MountItem::TrackStates`]):
@@ -499,6 +507,9 @@ impl Node {
             inline_style: StylePatch::default(),
             authored: None,
             class_props: None,
+            explicit_pointer: None,
+            class_pointer: PointerEvents::Auto,
+            pointer_auto_inside: false,
             states: 0,
             tracked: 0,
             spaced: false,
@@ -589,6 +600,8 @@ pub struct Core<M: TextEngine> {
     keyboard_inset: Points,
     /// Nodes whose padding or margin uses `env()`.
     env_styled: FxHashSet<NodeId>,
+    /// Nodes whose classes say `pointer-events-none`.
+    pointer_none_classes: u32,
     /// Height of the platform's screen header bar, normal and with a large
     /// title (status bar excluded). Screens without a native header use
     /// [`NO_NATIVE_HEADER`].
@@ -657,6 +670,7 @@ impl<M: TextEngine> Core<M> {
             safe_area: Edges::default(),
             keyboard_inset: Points::ZERO,
             env_styled: FxHashSet::default(),
+            pointer_none_classes: 0,
             header_heights: (Points(44.0), Points(96.0)),
             roots: Vec::new(),
             lists: Vec::new(),
@@ -1667,6 +1681,9 @@ impl<M: TextEngine> Core<M> {
         node.number_of_lines = pending.number_of_lines;
         node.ellipsize = pending.text_overflow;
         node.user_select = pending.user_select;
+        let pointer = pending.pointer_events.filter(|p| *p != PointerEvents::Auto);
+        let pointer_changed = node.explicit_pointer != pointer;
+        node.explicit_pointer = pointer;
         node.vertical_align = vertical_align;
         node.z_index = z_index;
         let fit_changed = node.image.is_some() && node.object_fit != fit;
@@ -1722,6 +1739,9 @@ impl<M: TextEngine> Core<M> {
         }
         if animation_changed {
             self.mark(key, dirty::ANIMATION);
+        }
+        if pointer_changed {
+            self.mark(key, dirty::POINTER);
         }
         if fit_changed {
             self.mark(key, dirty::IMAGE);
@@ -2318,6 +2338,9 @@ impl<M: TextEngine> Core<M> {
             self.focus_moved = true;
         }
         self.spacing_changed(parent, child);
+        if self.pointer_none_classes > 0 {
+            self.pointer_events_moved(parent);
+        }
         self.update_direction(child);
         // Style is applied before insert. `env()` was resolved with no
         // parent then; the screen or modal this lands in may owe different
@@ -2399,6 +2422,10 @@ impl<M: TextEngine> Core<M> {
             self.focus_moved = true;
         }
         self.spacing_changed(parent, key);
+        if self.pointer_none_classes > 0 && self.pointer_region(parent).is_some() {
+            self.update_pointer_events(key);
+            self.pointer_events_moved(parent);
+        }
         let (inline, layout, created, id) = (
             self.nodes[key as usize].inline,
             self.nodes[key as usize].layout,
@@ -2450,6 +2477,9 @@ impl<M: TextEngine> Core<M> {
             self.focus_moved = true;
         }
         let node = self.nodes.remove(key as usize);
+        if node.class_props.as_ref().and_then(|c| c.pointer_events) == Some(PointerEvents::None) {
+            self.pointer_none_classes -= 1;
+        }
         self.slots[id as usize] = 0;
         self.lists.retain(|&k| k != key);
         self.roots.retain(|&k| k != key);
@@ -2572,6 +2602,7 @@ impl<M: TextEngine> Core<M> {
     /// children in order.
     fn ensure_created(&mut self, key: Key) {
         let has_attachments = self.attachment_blocks.contains(&key);
+        let pointer = self.mounted_pointer(key);
         let node = &mut self.nodes[key as usize];
         if node.created || node.layout.is_none() {
             return;
@@ -2639,6 +2670,9 @@ impl<M: TextEngine> Core<M> {
         }
         if node.selectable {
             flags |= dirty::SELECTABLE;
+        }
+        if pointer != PointerEvents::Auto {
+            flags |= dirty::POINTER;
         }
         if kind == Kind::Text && has_attachments {
             // Its attachments' views go inside the new view.
@@ -2764,6 +2798,10 @@ impl<M: TextEngine> Core<M> {
             if flags & dirty::SELECTABLE != 0 {
                 let selectable = self.nodes[key as usize].selectable;
                 self.mount.push(MountItem::Selectable { id, selectable });
+            }
+            if flags & dirty::POINTER != 0 {
+                let events = self.mounted_pointer(key);
+                self.mount.push(MountItem::PointerEvents { id, events });
             }
             if flags & dirty::IMAGE != 0
                 && let Some(image) = &self.nodes[key as usize].image
@@ -10370,6 +10408,29 @@ mod tests {
             prop: Prop::Class(class.into()),
         })
         .unwrap();
+    }
+
+    #[test]
+    fn pointer_events_none_with_auto_inside_mounts_box_none() {
+        let mut c = core();
+        view(&mut c, 2);
+        view(&mut c, 3);
+        view(&mut c, 4);
+        set_class(&mut c, 2, "pointer-events-none");
+        set_class(&mut c, 4, "pointer-events-auto");
+        for (parent, child) in [(2, 3), (3, 4), (ROOT_ID, 2)] {
+            c.apply(Op::Insert {
+                parent,
+                child,
+                before: None,
+            })
+            .unwrap();
+        }
+        assert_eq!(c.mounted_pointer(c.key(2).unwrap()), PointerEvents::BoxNone);
+        assert_eq!(c.mounted_pointer(c.key(3).unwrap()), PointerEvents::BoxNone);
+        assert_eq!(c.mounted_pointer(c.key(4).unwrap()), PointerEvents::Auto);
+        set_class(&mut c, 4, "");
+        assert_eq!(c.mounted_pointer(c.key(2).unwrap()), PointerEvents::None);
     }
 
     fn node(c: &Core<FakeEngine>, id: NodeId) -> &Node {

@@ -381,6 +381,14 @@ export class Player {
     this.syncHover(el);
   }
 
+  op_pe([, id, events]) {
+    const el = this.view(id);
+    if (!el) return;
+    el.classList.toggle("nl-inert", events === 1);
+    el.classList.toggle("nl-box-none", events === 2);
+    el.classList.toggle("nl-box-only", events === 3);
+  }
+
   op_i([, parentId, childId, beforeId]) {
     const parent = this.view(parentId);
     const child = this.view(childId);

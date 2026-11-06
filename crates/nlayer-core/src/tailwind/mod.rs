@@ -479,6 +479,9 @@ pub struct ClassProps {
     pub text_shadows: Option<Vec<TextShadow>>,
     /// `space-x-*` / `space-y-*`: margins the view gives its children.
     pub space: Option<Space>,
+    /// `pointer-events-none` / `pointer-events-auto` on this node only.
+    /// The core lowers a `none` that contains an `auto` to `box-none`.
+    pub pointer_events: Option<crate::PointerEvents>,
 }
 
 /// `space-x-*` / `space-y-*` (and `-reverse`): the margins a view gives

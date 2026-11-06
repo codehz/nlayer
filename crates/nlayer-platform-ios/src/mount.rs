@@ -714,6 +714,8 @@ impl Relay {
 struct BoxIvars {
     /// The view's own box is not a hit. Children still are.
     pass_box: Cell<bool>,
+    /// Mounted `pointerEvents`: 0 auto, 1 none, 2 box-none, 3 box-only.
+    pointer: Cell<u8>,
 }
 
 define_class!(
@@ -731,17 +733,30 @@ define_class!(
         #[unsafe(method_id(hitTest:withEvent:))]
         fn hit_test(&self, point: CGPoint, event: Option<&UIEvent>) -> Option<Retained<UIView>> {
             // SAFETY: UIView's hit test. `return` would skip `method_id`'s
-            // retained conversion, so both paths fall out of this block.
-            let hit: Option<Retained<UIView>> =
-                unsafe { msg_send![super(self), hitTest: point, withEvent: event] };
-            if self.ivars().pass_box.get() {
-                // The clipping content view (tag < 0) fills this box and would
-                // take the same press. A node inside it still comes back as itself.
-                let mine = self as *const Self as *const UIView;
-                hit.filter(|found| !std::ptr::eq(Retained::as_ptr(found), mine) && found.tag() >= 0)
+            // retained conversion, so every path falls out of this block.
+            let mode = self.ivars().pointer.get();
+            let hit: Option<Retained<UIView>> = if mode == 1 {
+                None
+            } else if mode == 3 {
+                let bounds = self.bounds();
+                let inside = point.x >= 0.0
+                    && point.y >= 0.0
+                    && point.x < bounds.size.width
+                    && point.y < bounds.size.height;
+                inside.then(|| Retained::from(self as &UIView))
             } else {
-                hit
-            }
+                let hit: Option<Retained<UIView>> =
+                    unsafe { msg_send![super(self), hitTest: point, withEvent: event] };
+                if mode == 2 || self.ivars().pass_box.get() {
+                    let mine = self as *const Self as *const UIView;
+                    hit.filter(|found| {
+                        !std::ptr::eq(Retained::as_ptr(found), mine) && found.tag() >= 0
+                    })
+                } else {
+                    hit
+                }
+            };
+            hit
         }
     }
 );
@@ -750,6 +765,7 @@ impl BoxView {
     fn new(mtm: MainThreadMarker) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(BoxIvars {
             pass_box: Cell::new(false),
+            pointer: Cell::new(0),
         });
         // SAFETY: UIView's designated initializer.
         unsafe { msg_send![super(this), init] }
@@ -757,6 +773,10 @@ impl BoxView {
 
     fn set_pass_box(&self, pass: bool) {
         self.ivars().pass_box.set(pass);
+    }
+
+    fn set_pointer(&self, events: nlayer_core::PointerEvents) {
+        self.ivars().pointer.set(events as u8);
     }
 }
 
@@ -1864,6 +1884,7 @@ impl Mounter {
                 // List content is handled by core layout
             }
             MountItem::TrackStates { id, states } => self.track_states(id, states),
+            MountItem::PointerEvents { id, events } => self.set_pointer_events(id, events),
         }
     }
 
@@ -2270,6 +2291,18 @@ impl Mounter {
             }
             _ => {}
         }
+    }
+
+    /// `none` takes the view out of hit testing, children included, so a
+    /// scroll behind it still receives the gesture.
+    fn set_pointer_events(&mut self, id: NodeId, events: nlayer_core::PointerEvents) {
+        let Some(view) = self.view(id) else {
+            return;
+        };
+        if let Some(box_view) = view.downcast_ref::<BoxView>() {
+            box_view.set_pointer(events);
+        }
+        view.setUserInteractionEnabled(events != nlayer_core::PointerEvents::None);
     }
 
     /// Stores which states of `id` the engine reads. `0` stops press and

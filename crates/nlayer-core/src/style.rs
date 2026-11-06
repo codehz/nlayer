@@ -995,6 +995,20 @@ pub struct Style {
     pub perspective: Option<Points>,
 }
 
+/// Who takes a pointer, as the host mounts it. Not inherited.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum PointerEvents {
+    /// The view and the views in it.
+    #[default]
+    Auto,
+    /// Neither the view nor the views in it.
+    None,
+    /// The views in it, not the view itself.
+    BoxNone,
+    /// The view itself, never the views in it.
+    BoxOnly,
+}
+
 /// Values of properties that take effect only together with another one,
 /// kept so that the result does not depend on the order they are set in:
 /// `outlineWidth` under `outlineStyle: "none"` and the border widths under
@@ -1040,6 +1054,9 @@ pub(crate) struct Pending {
     /// `userSelect`: whether a text can be selected (`None`, `auto`: the
     /// view's around it, else the platform's).
     pub(crate) user_select: Option<bool>,
+    /// `pointerEvents`, when the style sets it. `None` is not set (`auto`,
+    /// so a class can still decide).
+    pub(crate) pointer_events: Option<PointerEvents>,
     /// The `boxShadow` layers (by index) that name no color: CSS's
     /// `currentColor`, filled in by [`Style::apply_current_color`].
     current_shadows: u64,
@@ -1642,6 +1659,7 @@ style_keys! {
     NumberOfLines = "numberOfLines": Text "number" "The most lines a `<Text>` shows (CSS's `line-clamp`, class `line-clamp-*`); 0 shows them all.",
     TextOverflow = "textOverflow": Text "\"ellipsis\" | \"clip\" | \"ellipsis-start\" | \"ellipsis-middle\"" "CSS's `text-overflow`: how a clamped `<Text>` is cut, with an ellipsis at its end (the default), clipped, or with the ellipsis at its start or in its middle.",
     UserSelect = "userSelect": View "\"auto\" | \"none\" | \"text\"" "CSS's `user-select`: whether a `<Text>` can be selected (`\"text\"`) or not (`\"none\"`); a view's reaches the texts in it; `\"auto\"` follows the view around it, and is not selectable when none says so.",
+    PointerEvents = "pointerEvents": View "\"auto\" | \"none\" | \"box-none\" | \"box-only\"" "Who takes a pointer. `\"none\"` takes none, the view and the views in it. `\"box-none\"` takes none on the view itself, only on the views in it. `\"box-only\"` takes them on the view itself, never on the views in it. `\"auto\"` takes them on both. Not inherited: a class `pointer-events-none` is lowered before mount.",
     VerticalAlign = "verticalAlign": View "\"baseline\" | \"text-top\" | \"text-bottom\" | \"middle\"" "Where a view or image inside a `<Text>` sits in its line (CSS `vertical-align`, `align-*`): its bottom on the baseline (the default), its top or bottom at the top or bottom of the text's font, or its middle half the font's x height above the baseline. The line grows to hold it.",
 }
 
@@ -1740,6 +1758,8 @@ pub enum PropertyValue {
     /// Right to left (`Some(true)`), left to right, or unset (`direction`,
     /// `writingDirection`, `fontStyle`'s italic).
     OptBool(Option<bool>),
+    /// `pointerEvents`.
+    PointerEvents(PointerEvents),
     /// A flag (`overflow: hidden`, `visibility: hidden`, `borderCurve:
     /// continuous`, `backfaceVisibility: hidden`).
     Bool(bool),
@@ -1850,6 +1870,7 @@ impl std::hash::Hash for PropertyValue {
             PropertyValue::Color(c) => c.hash(state),
             PropertyValue::Bool(b) => b.hash(state),
             PropertyValue::OptBool(b) => b.hash(state),
+            PropertyValue::PointerEvents(p) => p.hash(state),
             PropertyValue::FontWeight(w) => w.hash(state),
             PropertyValue::Deferred(s, _) => s.hash(state),
             _ => {}
@@ -3005,6 +3026,13 @@ impl StyleKey {
                 Some("text") => Some(true),
                 Some(_) => return Err(StyleError::InvalidValue),
             }),
+            K::PointerEvents => PropertyValue::PointerEvents(match keyword(value)? {
+                None | Some("auto") => PointerEvents::Auto,
+                Some("none") => PointerEvents::None,
+                Some("box-none") => PointerEvents::BoxNone,
+                Some("box-only") => PointerEvents::BoxOnly,
+                Some(_) => return Err(StyleError::InvalidValue),
+            }),
             K::TextAlignVertical => PropertyValue::AlignVertical(match keyword(value)? {
                 None => None,
                 Some("auto" | "top") => Some(percentage(0.0)),
@@ -3650,6 +3678,9 @@ impl Style {
             (K::NumberOfLines, V::NumberOfLines(v)) => self.pending.number_of_lines = *v,
             (K::TextOverflow, V::TextOverflow(v)) => self.pending.text_overflow = *v,
             (K::UserSelect, V::OptBool(v)) => self.pending.user_select = *v,
+            (K::PointerEvents, V::PointerEvents(v)) => {
+                self.pending.pointer_events = Some(*v);
+            }
             (K::FontVariant, V::FontVariant(v)) => self.text.font_variant = *v,
             (K::TextShadow, V::TextShadow(v)) => {
                 self.pending.current_text_shadow = v.is_some_and(|(_, colored)| !colored);

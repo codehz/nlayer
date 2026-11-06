@@ -28,6 +28,7 @@ final class TextBox extends ViewGroup {
   final int id;
   final Decor decor = new Decor();
   final Mounter mounter;
+  int pointerEvents;
   StaticLayout layout;
   float x, y, w, h;
   int[] links = new int[0];
@@ -314,6 +315,12 @@ final class TextBox extends ViewGroup {
       }
     }
     return (pressMask & 1) != 0 ? id : -1;
+  }
+
+  @Override
+  public boolean dispatchTouchEvent(MotionEvent e) {
+    if (pointerEvents == 1) return false;
+    return super.dispatchTouchEvent(e);
   }
 
   @SuppressLint("ClickableViewAccessibility")

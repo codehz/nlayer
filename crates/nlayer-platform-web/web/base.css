@@ -90,6 +90,19 @@
   position: absolute;
   pointer-events: none;
 }
+.nl-inert,
+.nl-inert * {
+  pointer-events: none !important;
+}
+.nl-box-none {
+  pointer-events: none;
+}
+:where(.nl-box-none > *) {
+  pointer-events: auto;
+}
+.nl-box-only * {
+  pointer-events: none !important;
+}
 .nl-border {
   position: absolute;
   inset: 0;

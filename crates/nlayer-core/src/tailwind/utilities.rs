@@ -141,6 +141,8 @@ pub(crate) enum PropDecl {
     Space(bool, PropertyValue),
     /// `space-x-reverse` / `space-y-reverse`.
     SpaceReverse(bool),
+    /// `pointer-events-none` / `pointer-events-auto`.
+    Pointer(crate::style::PointerEvents),
 }
 
 /// What one utility declares.
@@ -171,6 +173,7 @@ pub(crate) enum Decl {
     /// `max-w-prose`, `65ch`.
     Ch(StyleKey, f32),
     /// Parsed, then dropped by the effect gate (`pointer-events-*`).
+    #[allow(dead_code)]
     Rejected,
 }
 
@@ -215,6 +218,7 @@ impl Decl {
             Decl::Part(part) => parts.push(part.clone()),
             Decl::Prop(p) => match p {
                 PropDecl::NoWrap(b) => props.no_wrap = Some(*b),
+                PropDecl::Pointer(p) => props.pointer_events = Some(*p),
                 PropDecl::Caret(c) => props.caret_color = Some(*c),
                 PropDecl::Space(y, v) => {
                     let space = props.space.get_or_insert_default();
@@ -1804,7 +1808,8 @@ fn keyword(u: &str) -> Option<Vec<Decl>> {
         "animate-bounce" => Decl::Part(Part::Animate(Some(Keyframes::Bounce))),
         "animate-none" => Decl::Part(Part::Animate(None)),
         // Interactivity.
-        "pointer-events-none" | "pointer-events-auto" => Decl::Rejected,
+        "pointer-events-none" => Decl::Prop(PropDecl::Pointer(crate::style::PointerEvents::None)),
+        "pointer-events-auto" => Decl::Prop(PropDecl::Pointer(crate::style::PointerEvents::Auto)),
         // `user-select` of a text that says `auto` is its parent's: the
         // classes of the views around it reach it (`Core::rebuild_text`).
         "select-none" => Decl::Set(K::UserSelect, PropertyValue::OptBool(Some(false))),

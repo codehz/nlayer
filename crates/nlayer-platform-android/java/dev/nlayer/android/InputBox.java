@@ -16,6 +16,7 @@ import android.widget.FrameLayout;
 final class InputBox extends FrameLayout {
   final int id;
   final Decor decor = new Decor();
+  int pointerEvents;
   final EditText edit;
   int count;
   boolean setting;
