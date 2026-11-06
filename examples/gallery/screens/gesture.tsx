@@ -17,7 +17,7 @@ export function GestureCardPage() {
   return (
     <NavPage title="Gestures" onDismiss={dismiss}>
       <Scroll testID="gesture-page" class="flex-1 bg-white">
-        <View class="p-4">
+        <View class="pt-[calc(env(safe-area-inset-top)+16px)] pr-4 pb-4 pl-4">
           <Text class="mb-4 text-xl font-bold">Gestures</Text>
 
           <Text class="mb-2 text-base font-semibold">Pan (drag)</Text>

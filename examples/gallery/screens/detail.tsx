@@ -16,7 +16,7 @@ export function DetailPage() {
       onDismiss={dismiss}
     >
       <Scroll testID="detail" class="flex-1 bg-white">
-        <View class="p-4">
+        <View class="pt-[calc(env(safe-area-inset-top)+16px)] pr-4 pb-4 pl-4">
           <Text testID="detail-title" class="mb-3 text-2xl font-bold">
             Detail Screen
           </Text>

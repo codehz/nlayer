@@ -81,7 +81,7 @@ export function InputPage() {
   return (
     <NavPage title="Input" onDismiss={dismiss}>
       <Scroll testID="input-page" class="flex-1 bg-slate-50">
-        <View class="p-4">
+        <View class="pt-[calc(env(safe-area-inset-top)+16px)] pr-4 pb-4 pl-4">
           <Fields />
         </View>
       </Scroll>

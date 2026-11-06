@@ -175,6 +175,49 @@ test("A transparent bar floats over the content and still counts in the top inse
   assert.deepEqual(last.slice(1), [390, 800, 66, 8, 14, 10]);
 });
 
+test("A lone icon group is a circle and a disabled item does not press", () => {
+  const { player } = createTestEnv();
+  player.safeArea = { top: 0, right: 0, bottom: 0, left: 0 };
+  player.apply([
+    ["c", 2, "stack"],
+    ["c", 3, "screen"],
+    ["c", 4, "headeritem"],
+    ["c", 5, "headeritem"],
+    ["i", 1, 2, null],
+    ["i", 2, 3, null],
+    ["i", 3, 4, null],
+    ["i", 3, 5, null],
+    ["f", 2, 0, 0, 390, 800],
+    [
+      "scr",
+      3,
+      {
+        headerVisible: true,
+        headerTransparent: true,
+        barHeight: 44,
+        title: "Inbox",
+        backVisible: true,
+        leading: [],
+        trailing: [
+          [{ id: 4, button: true, image: "asset:/plus.png", enabled: true }],
+          [{ id: 5, button: true, title: "Edit", enabled: false }],
+        ],
+      },
+    ],
+  ]);
+
+  const bar = player.view(3)._bar;
+  const groups = bar.querySelectorAll(".nl-bar-group");
+  assert.equal(groups.length, 2);
+  assert.ok(groups[0].classList.contains("nl-bar-circle"), "a lone icon button is a circle");
+  assert.equal(groups[1].classList.contains("nl-bar-circle"), false);
+  const icon = groups[0].querySelector("img");
+  assert.ok(icon, "the icon button draws its image");
+  const label = groups[1].querySelector(".nl-bar-label");
+  assert.equal(label.textContent, "Edit");
+  assert.ok(player.view(5).classList.contains("nl-bar-disabled"), "a disabled item is marked");
+});
+
 test("The bar's back reads the covered page's title and mode", () => {
   const { player } = createTestEnv();
   player.safeArea = { top: 0, right: 0, bottom: 0, left: 0 };

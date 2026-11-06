@@ -201,6 +201,10 @@ impl Mounter {
         headers.sort_unstable();
         headers.dedup();
         for id in headers {
+            let prefers = self.prefers_large_titles(id);
+            let covered = self.covered_back(id);
+            let assets = self.assets.clone();
+            let scale = super::paint::screen_scale(self.mtm);
             let Some(Slot {
                 native: Native::Screen(screen),
                 ..
@@ -213,6 +217,9 @@ impl Mounter {
                     Some(Native::HeaderItem(v)) => Some(v.retain()),
                     _ => None,
                 },
+                |source| crate::navigation::bar_image(&assets, source, scale),
+                covered,
+                prefers,
                 self.mtm,
             );
         }
@@ -254,16 +261,67 @@ impl Mounter {
         let Some(screen) = controller.downcast_ref::<crate::navigation::ScreenController>() else {
             return;
         };
+        let id = screen.screen_id();
+        let prefers = self.prefers_large_titles(id);
         let Some(Slot {
             native: Native::Screen(screen),
             ..
-        }) = self.slot(screen.screen_id())
+        }) = self.slot(id)
         else {
             return;
         };
         let c = &screen.config;
         nav.setNavigationBarHidden_animated(!c.header_visible, animated);
-        crate::navigation::style_bar(&nav.navigationBar(), c);
+        crate::navigation::style_bar(&nav.navigationBar(), c, prefers);
+    }
+
+    /// `prefersLargeTitles`: any page in this screen's stack asks for a
+    /// large title (`always` or `automatic`).
+    fn prefers_large_titles(&self, id: NodeId) -> bool {
+        let Some(&parent) = self.hosts.get(&id) else {
+            return self.screen_wants_large(id);
+        };
+        let Some(Native::Stack(stack)) = self.slot(parent).map(|slot| &slot.native) else {
+            return self.screen_wants_large(id);
+        };
+        stack
+            .screens
+            .iter()
+            .any(|&screen| self.screen_wants_large(screen))
+    }
+
+    fn screen_wants_large(&self, id: NodeId) -> bool {
+        self.slot(id).is_some_and(|slot| match &slot.native {
+            Native::Screen(screen) => matches!(
+                screen.config.large_title,
+                nlayer_core::LargeTitleDisplayMode::Always
+                    | nlayer_core::LargeTitleDisplayMode::Automatic
+            ),
+            _ => false,
+        })
+    }
+
+    /// The page under `id`, whose back-button fields the page above shows.
+    fn covered_back(&self, id: NodeId) -> Option<crate::navigation::CoveredBack> {
+        let parent = *self.hosts.get(&id)?;
+        let below = {
+            let Native::Stack(stack) = &self.slot(parent)?.native else {
+                return None;
+            };
+            let pos = stack.screens.iter().position(|&screen| screen == id)?;
+            if pos == 0 {
+                return None;
+            }
+            stack.screens[pos - 1]
+        };
+        let Native::Screen(screen) = &self.slot(below)?.native else {
+            return None;
+        };
+        Some(crate::navigation::CoveredBack {
+            item: screen.controller.navigationItem(),
+            title: screen.config.back_button_title.clone(),
+            mode: screen.config.back_button_display_mode,
+        })
     }
 
     /// A stack finished a transition: screens the user popped (back button,

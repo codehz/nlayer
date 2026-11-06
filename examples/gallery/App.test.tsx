@@ -105,10 +105,15 @@ test("column, row, and grid place their children", () => {
   expect(b.frame.x).toBe(d.frame.x);
 
   // The bar floats over the content (no appearance, so no bar bottom), so
-  // `env(safe-area-inset-top)` is the safe area plus the bar's 44pt.
+  // `env(safe-area-inset-top)` is the safe area plus the bar's 44pt. A
+  // native bar reports its own, larger, inset (status bar and bar).
   const inset = holder(nodes, "Inset").children[0];
   expect(inset.frame.x).toBe(10);
-  expect(inset.frame.y).toBe(22 + 44);
+  if (globalThis.__nlayerHeadless === "1" || globalThis.__nlayerOs === "web") {
+    expect(inset.frame.y).toBe(22 + 44);
+  } else {
+    expect(inset.frame.y > 44).toBe(true);
+  }
 });
 
 test("a press updates the label", () => {

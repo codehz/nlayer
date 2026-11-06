@@ -12,26 +12,33 @@
 //! never from JS.
 
 use std::cell::{Cell, RefCell};
+use std::path::Path;
+use std::sync::Arc;
 
 use block2::RcBlock;
 use nlayer_core::geometry::{Points, Size};
 use nlayer_core::{
-    Color, EventKind, ModalAnimation, ModalConfig, ModalPresentation, NodeId, ScreenAnimation,
+    BackButtonDisplayMode, BarAppearance, BarItem, BarShadow, Color, EventKind, ImageSource,
+    LargeTitleDisplayMode, ModalAnimation, ModalConfig, ModalPresentation, NodeId, ScreenAnimation,
     ScreenConfig,
 };
 use nlayer_engine::{EngineControl, EventPayload};
 use objc2::{
     DeclaredClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, rc::Retained,
-    rc::Weak, runtime::AnyClass, runtime::AnyObject, runtime::ProtocolObject,
+    rc::Weak, runtime::AnyClass, runtime::AnyObject, runtime::ProtocolObject, sel,
 };
+use objc2_core_foundation::CGFloat;
 use objc2_foundation::{NSArray, NSObject, NSObjectProtocol, NSString};
 use objc2_quartz_core::{CAMediaTiming, CATransition};
 use objc2_ui_kit::{
-    UIAdaptivePresentationControllerDelegate, UIBarButtonItem, UIBehavioralStyle, UIColor,
-    UIEdgeInsets, UIGestureRecognizer, UIGestureRecognizerDelegate, UIModalPresentationStyle,
+    NSTextAlignment, UIAdaptivePresentationControllerDelegate, UIBarButtonItem,
+    UIBarButtonItemGroup, UIBarButtonItemStyle, UIBehavioralStyle, UIColor, UIEdgeInsets, UIFont,
+    UIFontWeightRegular, UIFontWeightSemibold, UIGestureRecognizer, UIGestureRecognizerDelegate,
+    UIImage, UIImageOrientation, UIImageRenderingMode, UILabel, UIModalPresentationStyle,
     UIModalTransitionStyle, UINavigationBar, UINavigationBarAppearance, UINavigationController,
-    UINavigationControllerDelegate, UINavigationItem, UIPresentationController, UIResponder,
-    UIView, UIViewAutoresizing, UIViewController,
+    UINavigationControllerDelegate, UINavigationItem, UINavigationItemBackButtonDisplayMode,
+    UINavigationItemLargeTitleDisplayMode, UIPresentationController, UIResponder, UIView,
+    UIViewAutoresizing, UIViewController,
 };
 
 type EdgeInsets = nlayer_core::geometry::Edges<Points>;
@@ -831,12 +838,64 @@ impl Drop for StackHost {
     }
 }
 
+/// The back button the page above shows, taken from the page underneath.
+///
+/// UIKit reads `backButtonTitle` and `backButtonDisplayMode` from the
+/// navigation item that is the back item (the covered page), not from the
+/// page on top. Applying the page on top refreshes that item, and a change
+/// to the page underneath re-applies the page on top so the refresh runs
+/// again.
+pub(crate) struct CoveredBack {
+    /// The covered page's navigation item.
+    pub(crate) item: Retained<UINavigationItem>,
+    /// `backButtonTitle` of the covered page.
+    pub(crate) title: Option<Arc<str>>,
+    /// `backButtonDisplayMode` of the covered page.
+    pub(crate) mode: BackButtonDisplayMode,
+}
+
+/// Target of a `UIBarButtonItem` built from [`BarItem::Button`]. UIKit keeps
+/// the target weakly; the screen retains it for as long as the button is
+/// installed.
+struct BarPressIvars {
+    id: NodeId,
+    control: Option<EngineControl>,
+}
+
+define_class!(
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = BarPressIvars]
+    struct BarPress;
+
+    impl BarPress {
+        /// The same press the header item's view would dispatch.
+        #[unsafe(method(nlayerPress:))]
+        fn press(&self, _sender: Option<&NSObject>) {
+            let ivars = self.ivars();
+            if let Some(control) = &ivars.control {
+                control.dispatch_event(ivars.id, EventKind::Press, EventPayload::None);
+            }
+        }
+    }
+);
+
+impl BarPress {
+    fn new(mtm: MainThreadMarker, id: NodeId, control: Option<EngineControl>) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(BarPressIvars { id, control });
+        // SAFETY: NSObject's designated initializer.
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
 /// One screen.
 pub(crate) struct ScreenHost {
     pub(crate) controller: Retained<ScreenController>,
     /// The screen's root view, placed by the core.
     pub(crate) view: Retained<UIView>,
     pub(crate) config: ScreenConfig,
+    /// Bar-button targets installed by the last [`Self::apply_header`].
+    presses: RefCell<Vec<Retained<BarPress>>>,
 }
 
 impl ScreenHost {
@@ -856,34 +915,68 @@ impl ScreenHost {
             controller,
             view,
             config: ScreenConfig::default(),
+            presses: RefCell::new(Vec::new()),
         }
     }
 
-    /// Applies the header options; `item` returns the view of a header item.
+    /// Applies the header options. `view_for` returns a header item's view
+    /// (custom bar buttons and the app's `titleView`). `image_for` resolves
+    /// a button image the way other iOS images are decoded.
+    ///
     /// The bar is UIKit's: a `header` slot (`header_view`, the whole bar
     /// where nlayer draws it) is never placed, so it stays out of sight.
+    /// `prefers_large` is true when any page in the stack uses `always` or
+    /// `automatic`.
     pub(crate) fn apply_header(
         &self,
-        item: impl Fn(NodeId) -> Option<Retained<UIView>>,
+        view_for: impl Fn(NodeId) -> Option<Retained<UIView>>,
+        image_for: impl Fn(&ImageSource) -> Option<Retained<UIImage>>,
+        covered: Option<CoveredBack>,
+        prefers_large: bool,
         mtm: MainThreadMarker,
     ) {
         let c = &self.config;
         let nav_item = self.controller.navigationItem();
         nav_item.setTitle(c.title.as_deref().map(NSString::from_str).as_deref());
-        let title_view = c.title_view.and_then(&item);
-        nav_item.setTitleView(title_view.as_deref());
-        let bar_item = |id: Option<NodeId>| {
-            id.and_then(&item)
-                .map(|v| UIBarButtonItem::initWithCustomView(UIBarButtonItem::alloc(mtm), &v))
-        };
-        nav_item.setLeftBarButtonItem(bar_item(c.left).as_deref());
-        nav_item.setLeftItemsSupplementBackButton(true);
-        nav_item.setRightBarButtonItem(bar_item(c.right).as_deref());
-        nav_item.setHidesBackButton(!c.back_visible);
-        let appearance = header_appearance(mtm, c);
-        nav_item.setStandardAppearance(appearance.as_deref());
-        nav_item.setScrollEdgeAppearance(appearance.as_deref());
-        nav_item.setCompactAppearance(appearance.as_deref());
+        nav_item.setLargeTitleDisplayMode(large_title_mode(c.large_title));
+        nav_item.setHidesBackButton(c.hides_back_button);
+        nav_item.setLeftItemsSupplementBackButton(c.left_items_supplement_back_button);
+        // This page's values are what the page above displays.
+        set_back_button(
+            &nav_item,
+            c.back_button_title.as_deref(),
+            c.back_button_display_mode,
+        );
+        if let Some(covered) = &covered {
+            set_back_button(&covered.item, covered.title.as_deref(), covered.mode);
+        }
+        apply_title_area(&nav_item, c, c.title_view.and_then(&view_for), mtm);
+
+        let control = self.controller.ivars().control.clone();
+        let mut targets = Vec::new();
+        let leading = build_groups(
+            &c.leading,
+            mtm,
+            &view_for,
+            &image_for,
+            control.as_ref(),
+            &mut targets,
+        );
+        let trailing = build_groups(
+            &c.trailing,
+            mtm,
+            &view_for,
+            &image_for,
+            control.as_ref(),
+            &mut targets,
+        );
+        install_items(&nav_item, &leading, &trailing, mtm);
+        *self.presses.borrow_mut() = targets;
+
+        let standard = bar_appearance(mtm, &c.standard);
+        nav_item.setStandardAppearance(standard.as_deref());
+        nav_item.setCompactAppearance(standard.as_deref());
+        nav_item.setScrollEdgeAppearance(bar_appearance(mtm, &c.scroll_edge).as_deref());
         // The bar of the screen on top, too (Catalyst does not always take
         // the item's appearance).
         if let Some(nav) = self.controller.navigationController()
@@ -891,8 +984,12 @@ impl ScreenHost {
                 .topViewController()
                 .is_some_and(|top| std::ptr::eq::<UIViewController>(&*top, &**self.controller))
         {
-            style_bar(&nav.navigationBar(), c);
+            style_bar(&nav.navigationBar(), c, prefers_large);
         }
+        // An opaque bar: the core laid the content out below `header_height`
+        // (the status inset plus [`ScreenConfig::content_bar`]). A
+        // transparent bar leaves that height in the top inset instead.
+        // `hides_back_button` does not change the inset.
         let padded = if c.header_transparent {
             0.0
         } else {
@@ -907,38 +1004,383 @@ impl ScreenHost {
 
 pub(crate) fn keep_in_window(bar: &UINavigationBar) {
     // `preferredBehavioralStyle` is iOS 16+.
-    if bar.respondsToSelector(objc2::sel!(setPreferredBehavioralStyle:)) {
+    if bar.respondsToSelector(sel!(setPreferredBehavioralStyle:)) {
         bar.setPreferredBehavioralStyle(UIBehavioralStyle::Pad);
     }
 }
 
-/// The header's appearance from the screen's options (`None`: UIKit's).
-fn header_appearance(
-    mtm: MainThreadMarker,
+fn large_title_mode(mode: LargeTitleDisplayMode) -> UINavigationItemLargeTitleDisplayMode {
+    match mode {
+        LargeTitleDisplayMode::Automatic => UINavigationItemLargeTitleDisplayMode::Automatic,
+        LargeTitleDisplayMode::Always => UINavigationItemLargeTitleDisplayMode::Always,
+        LargeTitleDisplayMode::Never => UINavigationItemLargeTitleDisplayMode::Never,
+    }
+}
+
+fn set_back_button(item: &UINavigationItem, title: Option<&str>, mode: BackButtonDisplayMode) {
+    item.setBackButtonTitle(title.map(NSString::from_str).as_deref());
+    item.setBackButtonDisplayMode(match mode {
+        BackButtonDisplayMode::Default => UINavigationItemBackButtonDisplayMode::Default,
+        BackButtonDisplayMode::Generic => UINavigationItemBackButtonDisplayMode::Generic,
+        BackButtonDisplayMode::Minimal => UINavigationItemBackButtonDisplayMode::Minimal,
+    });
+}
+
+/// iOS 26 writes `subtitle`. iOS 15–25 has no such property: without an app
+/// `titleView`, a made view stacks the title over the subtitle. An app
+/// `titleView` replaces that area on every version, and the subtitle is
+/// dropped.
+fn apply_title_area(
+    item: &UINavigationItem,
     c: &ScreenConfig,
+    title_view: Option<Retained<UIView>>,
+    mtm: MainThreadMarker,
+) {
+    if item.respondsToSelector(sel!(setSubtitle:)) {
+        if let Some(view) = title_view {
+            item.setTitleView(Some(&view));
+            set_item_subtitle(item, None);
+        } else {
+            item.setTitleView(None);
+            set_item_subtitle(item, c.subtitle.as_deref());
+        }
+        return;
+    }
+    if let Some(view) = title_view {
+        item.setTitleView(Some(&view));
+    } else if let Some(subtitle) = c.subtitle.as_deref() {
+        item.setTitleView(Some(&paired_title_view(
+            mtm,
+            c.title.as_deref(),
+            subtitle,
+            c.standard.title_color,
+        )));
+    } else {
+        item.setTitleView(None);
+    }
+}
+
+/// `setSubtitle:` is iOS 26. The caller has checked `respondsToSelector:`.
+fn set_item_subtitle(item: &UINavigationItem, subtitle: Option<&str>) {
+    let text = subtitle.map(NSString::from_str);
+    // SAFETY: the item responds to `setSubtitle:`, which copies an optional
+    // string.
+    let _: () = unsafe { msg_send![item, setSubtitle: text.as_deref()] };
+}
+
+/// Title over subtitle, centered: 17pt semibold, then 2pt, then 12pt regular
+/// at 60% of the title color. One line each, tail ellipsis.
+fn paired_title_view(
+    mtm: MainThreadMarker,
+    title: Option<&str>,
+    subtitle: &str,
+    title_color: Option<Color>,
+) -> Retained<UIView> {
+    // SAFETY: UIKit's font-weight constants are immutable.
+    let (semibold, regular) = unsafe { (UIFontWeightSemibold, UIFontWeightRegular) };
+    let title_font = UIFont::systemFontOfSize_weight(17.0, semibold);
+    let subtitle_font = UIFont::systemFontOfSize_weight(12.0, regular);
+    let title_label = labeled(mtm, title.unwrap_or(""), &title_font);
+    let subtitle_label = labeled(mtm, subtitle, &subtitle_font);
+    if let Some(color) = title_color {
+        let title = ui_color(color);
+        let subtitle = ui_color(fade(color, 0.6));
+        // SAFETY: plain color setters.
+        unsafe {
+            title_label.setTextColor(Some(&title));
+            subtitle_label.setTextColor(Some(&subtitle));
+        }
+    } else {
+        let color = UIColor::labelColor().colorWithAlphaComponent(0.6);
+        // SAFETY: a plain color setter.
+        unsafe { subtitle_label.setTextColor(Some(&color)) };
+    }
+    let limit = objc2_core_foundation::CGSize::new(10_000.0, 10_000.0);
+    let title_size = if title.is_some() {
+        title_label.sizeThatFits(limit)
+    } else {
+        objc2_core_foundation::CGSize::new(0.0, 0.0)
+    };
+    let subtitle_size = subtitle_label.sizeThatFits(limit);
+    let gap = if title.is_some() { 2.0 } else { 0.0 };
+    let width = title_size.width.max(subtitle_size.width).max(1.0);
+    let height = title_size.height + gap + subtitle_size.height;
+    let view = UIView::new(mtm);
+    view.setUserInteractionEnabled(false);
+    view.setFrame(objc2_core_foundation::CGRect::new(
+        objc2_core_foundation::CGPoint::ZERO,
+        objc2_core_foundation::CGSize::new(width, height),
+    ));
+    if title.is_some() {
+        title_label.setFrame(objc2_core_foundation::CGRect::new(
+            objc2_core_foundation::CGPoint::ZERO,
+            objc2_core_foundation::CGSize::new(width, title_size.height),
+        ));
+        title_label.setAutoresizingMask(UIViewAutoresizing::FlexibleWidth);
+        view.addSubview(&title_label);
+    }
+    subtitle_label.setFrame(objc2_core_foundation::CGRect::new(
+        objc2_core_foundation::CGPoint::new(0.0, title_size.height + gap),
+        objc2_core_foundation::CGSize::new(width, subtitle_size.height),
+    ));
+    subtitle_label.setAutoresizingMask(UIViewAutoresizing::FlexibleWidth);
+    view.addSubview(&subtitle_label);
+    view
+}
+
+fn labeled(mtm: MainThreadMarker, text: &str, font: &UIFont) -> Retained<UILabel> {
+    let label = UILabel::new(mtm);
+    label.setText(Some(&NSString::from_str(text)));
+    // SAFETY: a plain font setter.
+    unsafe { label.setFont(Some(font)) };
+    // `NSTextAlignmentCenter`.
+    label.setTextAlignment(NSTextAlignment(1));
+    label.setNumberOfLines(1);
+    label
+}
+
+fn fade(color: Color, factor: f64) -> Color {
+    let (r, g, b, a) = color.to_f64();
+    let byte = |channel: f64| (channel * 255.0).round().clamp(0.0, 255.0) as u8;
+    Color::rgba(
+        byte(r),
+        byte(g),
+        byte(b),
+        byte((a * factor).clamp(0.0, 1.0)),
+    )
+}
+
+fn build_groups(
+    groups: &[Vec<BarItem>],
+    mtm: MainThreadMarker,
+    view_for: &impl Fn(NodeId) -> Option<Retained<UIView>>,
+    image_for: &impl Fn(&ImageSource) -> Option<Retained<UIImage>>,
+    control: Option<&EngineControl>,
+    targets: &mut Vec<Retained<BarPress>>,
+) -> Vec<Vec<Retained<UIBarButtonItem>>> {
+    groups
+        .iter()
+        .filter_map(|group| {
+            let items: Vec<Retained<UIBarButtonItem>> = group
+                .iter()
+                .filter_map(|item| bar_button(item, mtm, view_for, image_for, control, targets))
+                .collect();
+            (!items.is_empty()).then_some(items)
+        })
+        .collect()
+}
+
+fn bar_button(
+    item: &BarItem,
+    mtm: MainThreadMarker,
+    view_for: &impl Fn(NodeId) -> Option<Retained<UIView>>,
+    image_for: &impl Fn(&ImageSource) -> Option<Retained<UIImage>>,
+    control: Option<&EngineControl>,
+    targets: &mut Vec<Retained<BarPress>>,
+) -> Option<Retained<UIBarButtonItem>> {
+    match item {
+        BarItem::Custom(id) => {
+            let view = view_for(*id)?;
+            Some(UIBarButtonItem::initWithCustomView(
+                UIBarButtonItem::alloc(mtm),
+                &view,
+            ))
+        }
+        BarItem::Button {
+            id,
+            title,
+            image,
+            enabled,
+            tint_color,
+        } => {
+            let target = BarPress::new(mtm, *id, control.cloned());
+            let title = title.as_deref().map(NSString::from_str);
+            let image = image.as_ref().and_then(image_for);
+            let action = Some(sel!(nlayerPress:));
+            // SAFETY: `nlayerPress:` is `BarPress`'s action, and the screen
+            // keeps `target` for as long as the button can fire it.
+            let button = if image.is_some() && title.is_none() {
+                unsafe {
+                    UIBarButtonItem::initWithImage_style_target_action(
+                        UIBarButtonItem::alloc(mtm),
+                        image.as_deref(),
+                        UIBarButtonItemStyle::Plain,
+                        Some(target.as_ref()),
+                        action,
+                    )
+                }
+            } else {
+                unsafe {
+                    UIBarButtonItem::initWithTitle_style_target_action(
+                        UIBarButtonItem::alloc(mtm),
+                        title.as_deref(),
+                        UIBarButtonItemStyle::Plain,
+                        Some(target.as_ref()),
+                        action,
+                    )
+                }
+            };
+            if title.is_some()
+                && let Some(image) = &image
+            {
+                button.setImage(Some(image));
+            }
+            button.setEnabled(*enabled);
+            if let Some(color) = tint_color {
+                button.setTintColor(Some(&ui_color(*color)));
+            }
+            targets.push(target);
+            Some(button)
+        }
+    }
+}
+
+/// iOS 16+ writes item groups. iOS 15 flattens them, outer group first and
+/// index 0 toward the screen edge, so a group boundary is not visible.
+fn install_items(
+    item: &UINavigationItem,
+    leading: &[Vec<Retained<UIBarButtonItem>>],
+    trailing: &[Vec<Retained<UIBarButtonItem>>],
+    mtm: MainThreadMarker,
+) {
+    if item.respondsToSelector(sel!(setLeadingItemGroups:)) {
+        item.setLeadingItemGroups(&item_groups(leading, mtm));
+        item.setTrailingItemGroups(&item_groups(trailing, mtm));
+        return;
+    }
+    item.setLeftBarButtonItems(flattened(leading).as_deref());
+    item.setRightBarButtonItems(flattened(trailing).as_deref());
+}
+
+fn item_groups(
+    groups: &[Vec<Retained<UIBarButtonItem>>],
+    mtm: MainThreadMarker,
+) -> Retained<NSArray<UIBarButtonItemGroup>> {
+    let groups: Vec<Retained<UIBarButtonItemGroup>> = groups
+        .iter()
+        .map(|items| {
+            UIBarButtonItemGroup::initWithBarButtonItems_representativeItem(
+                UIBarButtonItemGroup::alloc(mtm),
+                &NSArray::from_retained_slice(items),
+                None,
+            )
+        })
+        .collect();
+    NSArray::from_retained_slice(&groups)
+}
+
+fn flattened(
+    groups: &[Vec<Retained<UIBarButtonItem>>],
+) -> Option<Retained<NSArray<UIBarButtonItem>>> {
+    let items: Vec<Retained<UIBarButtonItem>> = groups.iter().flatten().cloned().collect();
+    if items.is_empty() {
+        None
+    } else {
+        Some(NSArray::from_retained_slice(&items))
+    }
+}
+
+/// Decodes a bar-button image with the same cache and ImageIO path as other
+/// images. A bundled asset with scale variants loads the file for `scale`.
+pub(crate) fn bar_image(
+    assets: &Path,
+    source: &ImageSource,
+    scale: f32,
+) -> Option<Retained<UIImage>> {
+    if source.uri.is_empty() {
+        return None;
+    }
+    let uri = resolved_uri(source, scale);
+    let decoded = crate::image::cached(&uri).or_else(|| {
+        let decoded = crate::image::load(assets, &uri).ok()?;
+        crate::image::store(Arc::from(uri.as_ref()), &decoded, crate::image::epoch());
+        Some(decoded)
+    })?;
+    let image = UIImage::imageWithCGImage_scale_orientation(
+        &decoded.image,
+        scale as CGFloat,
+        UIImageOrientation::Up,
+    );
+    Some(image.imageWithRenderingMode(UIImageRenderingMode::AlwaysTemplate))
+}
+
+fn resolved_uri<'a>(source: &'a ImageSource, scale: f32) -> std::borrow::Cow<'a, str> {
+    if source.scales.is_empty()
+        || !source.uri.starts_with("asset:/")
+        || source.uri.contains(['?', '#'])
+    {
+        return std::borrow::Cow::Borrowed(source.uri.as_ref());
+    }
+    let variant = source
+        .scales
+        .iter()
+        .find(|variant| *variant >= scale)
+        .or_else(|| source.scales.iter().last());
+    match variant {
+        Some(variant) if variant != 1.0 => {
+            std::borrow::Cow::Owned(variant_file(&source.uri, variant))
+        }
+        _ => std::borrow::Cow::Borrowed(source.uri.as_ref()),
+    }
+}
+
+fn variant_file(uri: &str, scale: f32) -> String {
+    let name = uri.rfind('/').map_or(0, |i| i + 1);
+    let (stem, ext) = match uri[name..].rfind('.') {
+        Some(dot) if dot > 0 => uri.split_at(name + dot),
+        _ => (uri, ""),
+    };
+    format!("{stem}@{scale}x{ext}")
+}
+
+fn foreground(
+    color: Color,
+) -> Retained<objc2_foundation::NSDictionary<objc2_foundation::NSString, AnyObject>> {
+    objc2_foundation::NSDictionary::from_retained_objects(
+        // SAFETY: an immutable UIKit constant.
+        &[unsafe { objc2_ui_kit::NSForegroundColorAttributeName }],
+        &[Retained::into_super(Retained::into_super(ui_color(color)))],
+    )
+}
+
+/// An appearance for the fields the app set. `None` when every field is
+/// unset, so the system appearance is left alone.
+fn bar_appearance(
+    mtm: MainThreadMarker,
+    look: &BarAppearance,
 ) -> Option<Retained<UINavigationBarAppearance>> {
-    if c.background_color.is_none() && c.title_color.is_none() && !c.header_transparent {
+    if look.background_color.is_none()
+        && look.title_color.is_none()
+        && look.large_title_color.is_none()
+        && look.shadow.is_none()
+    {
         return None;
     }
     let appearance = UINavigationBarAppearance::new(mtm);
-    if c.header_transparent {
-        appearance.configureWithTransparentBackground();
-    } else if let Some(bg) = c.background_color {
-        appearance.configureWithOpaqueBackground();
-        appearance.setBackgroundColor(Some(&ui_color(bg)));
-    } else {
-        appearance.configureWithDefaultBackground();
-    }
-    if let Some(color) = c.title_color {
-        let attributes = objc2_foundation::NSDictionary::from_retained_objects(
-            // SAFETY: an immutable UIKit constant.
-            &[unsafe { objc2_ui_kit::NSForegroundColorAttributeName }],
-            &[Retained::into_super(Retained::into_super(ui_color(color)))],
-        );
-        // SAFETY: a valid title attributes dictionary.
-        unsafe {
-            appearance.setTitleTextAttributes(&attributes);
+    match look.background_color {
+        Some(color) if color.is_transparent() => appearance.configureWithTransparentBackground(),
+        Some(color) => {
+            appearance.configureWithOpaqueBackground();
+            appearance.setBackgroundColor(Some(&ui_color(color)));
         }
+        None => {}
+    }
+    if let Some(color) = look.title_color {
+        let attributes = foreground(color);
+        // SAFETY: a foreground-color attribute dictionary.
+        unsafe { appearance.setTitleTextAttributes(&attributes) };
+    }
+    if let Some(color) = look.large_title_color {
+        let attributes = foreground(color);
+        // SAFETY: a foreground-color attribute dictionary.
+        unsafe { appearance.setLargeTitleTextAttributes(&attributes) };
+    }
+    // `shadow` absent does not override. `"none"` clears it. A color tints it.
+    // Applied after `configureWith*`, which installs its own shadow.
+    match look.shadow {
+        None => {}
+        Some(BarShadow::None) => appearance.setShadowColor(None),
+        Some(BarShadow::Color(color)) => appearance.setShadowColor(Some(&ui_color(color))),
     }
     Some(appearance)
 }
@@ -946,24 +1388,29 @@ fn header_appearance(
 /// Styles a stack's navigation bar for the screen it shows: the screen's
 /// navigation item carries the same appearance, but Mac Catalyst does not
 /// always apply it, so the bar gets it as well.
-pub(crate) fn style_bar(bar: &UINavigationBar, c: &ScreenConfig) {
+///
+/// `standard` feeds `standardAppearance` and `compactAppearance`.
+/// `scroll_edge` feeds `scrollEdgeAppearance` only when the app set it;
+/// otherwise the system keeps its scroll-edge transition. `prefers_large`
+/// is the stack's, not this screen's alone.
+pub(crate) fn style_bar(bar: &UINavigationBar, c: &ScreenConfig, prefers_large: bool) {
     let mtm = bar.mtm();
-    let tint = c.tint_color.map(ui_color);
+    bar.setPrefersLargeTitles(prefers_large);
+    let tint = c.standard.tint_color.map(ui_color);
     // SAFETY: a plain setter; `None` restores the default tint.
     unsafe { bar.setTintColor(tint.as_deref()) };
-    match header_appearance(mtm, c) {
+    match bar_appearance(mtm, &c.standard) {
         Some(appearance) => {
             bar.setStandardAppearance(&appearance);
-            bar.setScrollEdgeAppearance(Some(&appearance));
             bar.setCompactAppearance(Some(&appearance));
         }
         None => {
-            let appearance = UINavigationBarAppearance::new(mtm);
-            bar.setStandardAppearance(&appearance);
-            bar.setScrollEdgeAppearance(None);
+            // A fresh appearance drops a color the app has since cleared.
+            bar.setStandardAppearance(&UINavigationBarAppearance::new(mtm));
             bar.setCompactAppearance(None);
         }
     }
+    bar.setScrollEdgeAppearance(bar_appearance(mtm, &c.scroll_edge).as_deref());
 }
 
 /// One modal.

@@ -16,7 +16,7 @@ export function ImagePage() {
   return (
     <NavPage title="Image" onDismiss={dismiss}>
       <Scroll testID="image-page" class="flex-1 bg-slate-50">
-        <View class="p-4">
+        <View class="pt-[calc(env(safe-area-inset-top)+16px)] pr-4 pb-4 pl-4">
           <Pictures />
         </View>
       </Scroll>

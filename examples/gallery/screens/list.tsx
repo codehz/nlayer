@@ -21,7 +21,7 @@ export function ListDemoPage() {
   return (
     <NavPage title="Virtual List" onDismiss={dismiss}>
       <View testID="list-page" class="flex-1 bg-white">
-        <View class="border-b border-b-slate-200 p-4">
+        <View class="border-b border-b-slate-200 pt-[calc(env(safe-area-inset-top)+16px)] pr-4 pb-4 pl-4">
           <Text class="text-xl font-bold">Virtual List</Text>
 
           <View class="mt-2 flex flex-col gap-2">

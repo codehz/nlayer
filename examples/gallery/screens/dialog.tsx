@@ -11,7 +11,10 @@ export function DialogDemoPage() {
 
   return (
     <NavPage title="Dialog" onDismiss={dismiss}>
-      <View testID="dialog-page" class="flex-1 bg-white p-4">
+      <View
+        testID="dialog-page"
+        class="flex-1 bg-white pt-[calc(env(safe-area-inset-top)+16px)] pr-4 pb-4 pl-4"
+      >
         <Text class="mb-4 text-xl font-bold">Dialog Demo</Text>
 
         {lastCloseReason() && (

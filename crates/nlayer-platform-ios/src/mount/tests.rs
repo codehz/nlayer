@@ -105,6 +105,10 @@ pub(crate) fn tests() -> Vec<(&'static str, fn())> {
             a_screen_header_and_back_policy_reach_uikit as fn(),
         ),
         (
+            "mount::a_covered_page_owns_the_back_button",
+            a_covered_page_owns_the_back_button as fn(),
+        ),
+        (
             "mount::a_back_swipe_follows_the_mounted_policy",
             a_back_swipe_follows_the_mounted_policy as fn(),
         ),
@@ -986,7 +990,7 @@ fn a_screen_header_and_back_policy_reach_uikit() {
     // Create first screen with back disabled
     let mut config = nlayer_core::ScreenConfig::default();
     config.title = Some("Inbox".into());
-    config.back_visible = false;
+    config.hides_back_button = true;
     config.prevent_back = true;
     config.gesture_enabled = false;
 
@@ -1053,6 +1057,212 @@ fn a_screen_header_and_back_policy_reach_uikit() {
         let borrowed = mounter.borrow();
         assert!(borrowed.stack_can_pop(2));
         assert_eq!(borrowed.stack_back_press(2), Some((4, false, false)));
+    }
+}
+fn a_covered_page_owns_the_back_button() {
+    use nlayer_core::{
+        BackButtonDisplayMode, BarAppearance, BarItem, BarShadow, LargeTitleDisplayMode,
+    };
+    use objc2::rc::Retained;
+    use objc2::{msg_send, sel};
+    use objc2_foundation::NSString;
+    use objc2_ui_kit::{
+        UINavigationItemBackButtonDisplayMode, UINavigationItemLargeTitleDisplayMode,
+    };
+
+    let mounter = mounter();
+    apply(
+        &mounter,
+        vec![
+            MountItem::Create {
+                id: 2,
+                kind: ViewKind::Stack,
+            },
+            MountItem::Insert {
+                parent: ROOT_ID,
+                child: 2,
+                before: None,
+            },
+            MountItem::Frame {
+                id: 2,
+                frame: frame(0.0, 0.0, 320.0, 640.0),
+            },
+        ],
+    );
+
+    let mut below = nlayer_core::ScreenConfig::default();
+    below.title = Some("Inbox".into());
+    below.subtitle = Some("12 unread".into());
+    below.back_button_title = Some("Mail".into());
+    below.back_button_display_mode = BackButtonDisplayMode::Minimal;
+    below.large_title = LargeTitleDisplayMode::Automatic;
+    below.animation = nlayer_core::ScreenAnimation::None;
+    below.standard = BarAppearance {
+        background_color: Some(Color::rgba(255, 255, 255, 255)),
+        title_color: Some(Color::rgba(0, 0, 0, 255)),
+        shadow: Some(BarShadow::None),
+        ..BarAppearance::default()
+    };
+    below.leading = vec![
+        vec![BarItem::Button {
+            id: 10,
+            title: Some("Outer".into()),
+            image: None,
+            enabled: true,
+            tint_color: None,
+        }],
+        vec![BarItem::Button {
+            id: 11,
+            title: Some("Inner".into()),
+            image: None,
+            enabled: false,
+            tint_color: Some(Color::rgba(0, 122, 255, 255)),
+        }],
+    ];
+    apply(
+        &mounter,
+        vec![
+            MountItem::Create {
+                id: 3,
+                kind: ViewKind::Screen,
+            },
+            MountItem::ScreenConfig {
+                id: 3,
+                config: Box::new(below),
+            },
+            MountItem::Insert {
+                parent: 2,
+                child: 3,
+                before: None,
+            },
+        ],
+    );
+
+    let mut above = nlayer_core::ScreenConfig::default();
+    above.animation = nlayer_core::ScreenAnimation::None;
+    above.hides_back_button = false;
+    above.left_items_supplement_back_button = true;
+    above.large_title = LargeTitleDisplayMode::Never;
+    above.scroll_edge = BarAppearance {
+        background_color: Some(Color::TRANSPARENT),
+        ..BarAppearance::default()
+    };
+    apply(
+        &mounter,
+        vec![
+            MountItem::Create {
+                id: 4,
+                kind: ViewKind::Screen,
+            },
+            MountItem::ScreenConfig {
+                id: 4,
+                config: Box::new(above),
+            },
+            MountItem::Insert {
+                parent: 2,
+                child: 4,
+                before: None,
+            },
+        ],
+    );
+
+    {
+        let borrowed = mounter.borrow();
+        let covered = borrowed.screen(3).unwrap().controller.navigationItem();
+        let current = borrowed.screen(4).unwrap().controller.navigationItem();
+        assert_eq!(
+            covered.backButtonTitle().map(|title| title.to_string()),
+            Some("Mail".to_string())
+        );
+        assert_eq!(
+            covered.backButtonDisplayMode(),
+            UINavigationItemBackButtonDisplayMode::Minimal
+        );
+        assert_eq!(
+            covered.largeTitleDisplayMode(),
+            UINavigationItemLargeTitleDisplayMode::Automatic
+        );
+        assert!(!current.hidesBackButton());
+        assert!(current.leftItemsSupplementBackButton());
+        assert_eq!(
+            current.largeTitleDisplayMode(),
+            UINavigationItemLargeTitleDisplayMode::Never
+        );
+        assert!(current.scrollEdgeAppearance().is_some());
+        assert!(covered.scrollEdgeAppearance().is_none());
+        let standard = covered.standardAppearance().expect("standard appearance");
+        assert!(standard.backgroundColor().is_some());
+        assert!(standard.shadowColor().is_none());
+        assert!(
+            borrowed
+                .stack(2)
+                .unwrap()
+                .nav
+                .navigationBar()
+                .prefersLargeTitles()
+        );
+
+        let titles = leading_titles(&covered);
+        assert_eq!(titles, vec!["Outer".to_string(), "Inner".to_string()]);
+
+        if covered.respondsToSelector(sel!(subtitle)) {
+            // SAFETY: the item responds to `subtitle`.
+            let subtitle: Option<Retained<NSString>> = unsafe { msg_send![&*covered, subtitle] };
+            assert_eq!(
+                subtitle.as_deref().map(|text| text.to_string()),
+                Some("12 unread".to_string())
+            );
+            assert!(covered.titleView().is_none());
+        } else {
+            assert!(covered.titleView().is_some());
+        }
+    }
+
+    let mut below = nlayer_core::ScreenConfig::default();
+    below.title = Some("Inbox".into());
+    below.back_button_title = Some("Box".into());
+    below.back_button_display_mode = BackButtonDisplayMode::Generic;
+    below.large_title = LargeTitleDisplayMode::Automatic;
+    below.animation = nlayer_core::ScreenAnimation::None;
+    apply(
+        &mounter,
+        vec![MountItem::ScreenConfig {
+            id: 3,
+            config: Box::new(below),
+        }],
+    );
+    let borrowed = mounter.borrow();
+    let covered = borrowed.screen(3).unwrap().controller.navigationItem();
+    assert_eq!(
+        covered.backButtonTitle().map(|title| title.to_string()),
+        Some("Box".to_string())
+    );
+    assert_eq!(
+        covered.backButtonDisplayMode(),
+        UINavigationItemBackButtonDisplayMode::Generic
+    );
+}
+
+fn leading_titles(item: &objc2_ui_kit::UINavigationItem) -> Vec<String> {
+    use objc2::sel;
+
+    let title = |button: &objc2_ui_kit::UIBarButtonItem| {
+        button
+            .title()
+            .map(|text| text.to_string())
+            .unwrap_or_default()
+    };
+    if item.respondsToSelector(sel!(leadingItemGroups)) {
+        let mut titles = Vec::new();
+        for group in item.leadingItemGroups().iter() {
+            let buttons = group.barButtonItems();
+            titles.extend(buttons.iter().map(|button| title(&button)));
+        }
+        titles
+    } else {
+        item.leftBarButtonItems()
+            .map(|items| items.iter().map(|button| title(&button)).collect())
+            .unwrap_or_default()
     }
 }
 

@@ -428,15 +428,34 @@ impl Mounter {
                 }
             }
             MountItem::ScreenConfig { id, config } => {
-                if let Some(Slot {
+                let parent = self.hosts.get(&id).copied();
+                let stored = if let Some(Slot {
                     native: Native::Screen(screen),
                     ..
                 }) = self.slot_mut(id)
                 {
                     screen.config = *config;
+                    true
+                } else {
+                    false
+                };
+                if stored {
                     self.dirty_headers.push(id);
-                    if let Some(&parent) = self.hosts.get(&id) {
+                    if let Some(parent) = parent {
                         self.dirty_stacks.push(parent);
+                        // The page above shows this page's back button.
+                        // Re-apply it so that item is refreshed from the
+                        // values just stored.
+                        let above = self.slot(parent).and_then(|slot| {
+                            let Native::Stack(stack) = &slot.native else {
+                                return None;
+                            };
+                            let pos = stack.screens.iter().position(|&screen| screen == id)?;
+                            stack.screens.get(pos + 1).copied()
+                        });
+                        if let Some(above) = above {
+                            self.dirty_headers.push(above);
+                        }
                     }
                 }
             }
