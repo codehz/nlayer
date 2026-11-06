@@ -472,12 +472,6 @@ final class ScrollBox extends FrameLayout {
   }
 
   @Override
-  public boolean dispatchTouchEvent(MotionEvent e) {
-    if (pointerEvents == 1) return false;
-    return super.dispatchTouchEvent(e);
-  }
-
-  @Override
   public boolean onTouchEvent(MotionEvent e) {
     if (!pulling) return false;
     float d = density;
@@ -554,6 +548,7 @@ final class ScrollBox extends FrameLayout {
 
   @Override
   public boolean dispatchTouchEvent(MotionEvent e) {
+    if (pointerEvents == 1) return false;
     int action = e.getActionMasked();
     if (action == MotionEvent.ACTION_DOWN) {
       startY = e.getY();
