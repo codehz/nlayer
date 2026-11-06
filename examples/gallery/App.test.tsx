@@ -54,6 +54,9 @@ function openScreen(app: App, testID: string, pageID: string): void {
   reveal(app, (node) => node.testID === testID);
   app.press(testID);
   app.waitFor(pageID);
+  // The pushed screen slides in. A browser delivers a click only when the
+  // pointer stays over one pressable through the motion, so wait it out.
+  app.advance(350);
 }
 
 function must<T>(value: T | null | undefined): T {
@@ -100,6 +103,11 @@ test("column, row, and grid place their children", () => {
   expect(a.frame.y < c.frame.y).toBe(true);
   expect(a.frame.x).toBe(c.frame.x);
   expect(b.frame.x).toBe(d.frame.x);
+
+  // The insets pad the view's own edges; the header covers the top one.
+  const inset = holder(nodes, "Inset").children[0];
+  expect(inset.frame.x).toBe(10);
+  expect(inset.frame.y).toBe(0);
 });
 
 test("a press updates the label", () => {
@@ -161,11 +169,6 @@ test("safe-area env insets pad the view", () => {
   expect(section.frame.x + section.frame.width).toBe(safe.frame.width - 24);
   const last = must(safe.children[safe.children.length - 1]);
   expect(safe.frame.height - (last.frame.y + last.frame.height)).toBe(72);
-
-  openScreen(app, "open-view", "view-page");
-  const inset = holder(flat(app.tree(), []), "Inset").children[0];
-  expect(inset.frame.x).toBe(10);
-  expect(inset.frame.y).toBe(top);
 });
 
 test("nested text is one block with distinct spans", () => {
@@ -501,9 +504,7 @@ test("list demo shows virtual list", () => {
 
 test("list with snapToInterval and stickyHeaderIndices", () => {
   const app = open("./App.tsx");
-  reveal(app, (n) => n.testID === "open-list");
-  app.press("open-list");
-  app.waitFor("list-page");
+  openScreen(app, "open-list", "list-page");
 
   // Enable snap and scroll
   app.press("toggle-snap");
@@ -554,9 +555,7 @@ test("list with snapToInterval and stickyHeaderIndices", () => {
 
 test("list with inverted and onViewableItemsChange", () => {
   const app = open("./App.tsx");
-  reveal(app, (n) => n.testID === "open-list");
-  app.press("open-list");
-  app.waitFor("list-page");
+  openScreen(app, "open-list", "list-page");
 
   // Get baseline: item-0 position before inverted (should be at top, y=0)
   let tree = app.tree();
@@ -690,9 +689,11 @@ test("header demo shows title and header props", () => {
   const screen = nodes.find((node) => node.screen?.title === "Header");
   if (screen) {
     expect(screen.screen?.headerVisible).toBe(true);
-  } else {
+  } else if (globalThis.__nlayerOs === "web") {
     expect(texts).toContain("Header");
   }
+  // iOS and Android draw the title in the system bar, so the mounted tree
+  // has no text for it. `Back`, `Right` and the content above cover the rest.
   app.back();
   app.waitFor("page"); // Wait for home page scroll view
 });
