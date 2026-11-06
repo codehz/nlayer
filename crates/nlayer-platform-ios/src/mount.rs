@@ -150,6 +150,8 @@ struct Slot {
     refresh_control: Option<Retained<UIRefreshControl>>,
     /// Whether refresh is currently active.
     refreshing: bool,
+    /// Computed `pointer-events`. `true` is `auto` (a hit target).
+    pointer_auto: bool,
     /// Outer box-shadow layers, below the background.
     shadows: Vec<Retained<CALayer>>,
     /// Inset box-shadow shapes, above the gradients.
@@ -757,6 +759,23 @@ impl BoxView {
 
     fn set_pass_box(&self, pass: bool) {
         self.ivars().pass_box.set(pass);
+    }
+}
+
+/// Computed `pointer-events` on any hit-capable view. Absent means `auto`.
+fn set_view_pointer_auto(view: &UIView, auto: bool) {
+    use objc2::ffi::{OBJC_ASSOCIATION_RETAIN, objc_setAssociatedObject};
+    use objc2_foundation::NSNumber;
+    static KEY: u8 = 0;
+    let number = NSNumber::numberWithBool(auto);
+    // SAFETY: `view` is live. The association retains `number`.
+    unsafe {
+        objc_setAssociatedObject(
+            std::ptr::from_ref(view).cast::<AnyObject>().cast_mut(),
+            std::ptr::from_ref(&KEY).cast(),
+            Retained::as_ptr(&number).cast::<AnyObject>().cast_mut(),
+            OBJC_ASSOCIATION_RETAIN,
+        );
     }
 }
 
@@ -1864,6 +1883,14 @@ impl Mounter {
                 // List content is handled by core layout
             }
             MountItem::TrackStates { id, states } => self.track_states(id, states),
+            MountItem::PointerEvents { id, auto } => {
+                if let Some(slot) = self.slot_mut(id) {
+                    slot.pointer_auto = auto;
+                }
+                if let Some(view) = self.view_of(id) {
+                    set_view_pointer_auto(&view, auto);
+                }
+            }
         }
     }
 
@@ -1894,6 +1921,8 @@ impl Mounter {
         new.setTag(id as isize);
         new.setOpaque(false);
         new.setBackgroundColor(Some(&objc2_ui_kit::UIColor::clearColor()));
+        let auto = self.slot(id).map(|slot| slot.pointer_auto).unwrap_or(true);
+        set_view_pointer_auto(&new, auto);
         new.setFrame(old.frame());
         if let Some(parent) = old.superview() {
             let subs = parent.subviews();
@@ -3856,6 +3885,7 @@ impl Slot {
             snap_deceleration: 0.0,
             refresh_control: None,
             refreshing: false,
+            pointer_auto: true,
             shadows: Vec::new(),
             insets: None,
             gradients: Vec::new(),

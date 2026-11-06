@@ -19,6 +19,10 @@ final class ImageBox extends View {
   Bitmap bitmap;
   int mode, pressMask;
   boolean disabled;
+
+  /** Computed `pointer-events`: 0 auto, 1 none. */
+  int pointerEvents;
+
   float xValue = .5f, yValue = .5f;
   int xKind = 1, yKind = 1;
   boolean xEnd, yEnd;

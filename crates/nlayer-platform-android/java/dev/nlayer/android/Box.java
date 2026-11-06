@@ -16,7 +16,7 @@ class Box extends ViewGroup {
   int pressMask;
   boolean disabled;
   Gestures gestures;
-  int pointerEvents; // 0 auto, 1 none, 2 box-only, 3 box-none
+  int pointerEvents; // 0 auto, 1 none
   int panAxis; // 0 free, 1 horizontal, 2 vertical (nsh convention)
 
   /** Scroll content never splits: the scroll view clips its own shadow. */

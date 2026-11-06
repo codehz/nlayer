@@ -231,6 +231,8 @@ export interface ViewStyle extends LayoutStyle {
   strokeDasharray?: number | string;
   /** CSS's `user-select`: whether a `<Text>` can be selected (`"text"`) or not (`"none"`); a view's reaches the texts in it; `"auto"` follows the view around it, and is not selectable when none says so. */
   userSelect?: "auto" | "none" | "text";
+  /** CSS's `pointer-events`: `"auto"` is a hit target even under `"none"`; `"none"` is not a hit target (its descendants still are, unless they inherit); `"inherit"` and a missing value follow the parent. The initial value is `"auto"`. */
+  pointerEvents?: "auto" | "none" | "inherit";
   /** Where a view or image inside a `<Text>` sits in its line (CSS `vertical-align`, `align-*`): its bottom on the baseline (the default), its top or bottom at the top or bottom of the text's font, or its middle half the font's x height above the baseline. The line grows to hold it. */
   verticalAlign?: "baseline" | "text-top" | "text-bottom" | "middle";
 }

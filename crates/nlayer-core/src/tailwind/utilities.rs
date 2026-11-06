@@ -170,8 +170,6 @@ pub(crate) enum Decl {
     /// A length in CSS's `ch` (the advance of the font's `0`):
     /// `max-w-prose`, `65ch`.
     Ch(StyleKey, f32),
-    /// Parsed, then dropped by the effect gate (`pointer-events-*`).
-    Rejected,
 }
 
 impl Decl {
@@ -242,7 +240,6 @@ impl Decl {
             Decl::Ch(key, n) => {
                 let _ = style.set_key(*key, StyleValue::Number(n * parts.ch));
             }
-            Decl::Rejected => {}
         }
     }
 
@@ -1804,7 +1801,8 @@ fn keyword(u: &str) -> Option<Vec<Decl>> {
         "animate-bounce" => Decl::Part(Part::Animate(Some(Keyframes::Bounce))),
         "animate-none" => Decl::Part(Part::Animate(None)),
         // Interactivity.
-        "pointer-events-none" | "pointer-events-auto" => Decl::Rejected,
+        "pointer-events-none" => Decl::Set(K::PointerEvents, PropertyValue::OptBool(Some(false))),
+        "pointer-events-auto" => Decl::Set(K::PointerEvents, PropertyValue::OptBool(Some(true))),
         // `user-select` of a text that says `auto` is its parent's: the
         // classes of the views around it reach it (`Core::rebuild_text`).
         "select-none" => Decl::Set(K::UserSelect, PropertyValue::OptBool(Some(false))),

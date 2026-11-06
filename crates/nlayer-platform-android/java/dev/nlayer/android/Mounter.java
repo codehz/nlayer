@@ -64,7 +64,8 @@ final class Mounter {
       LIST_CONTENT = 25,
       REFRESHING = 26,
       SELECTABLE = 27,
-      TRACK_STATES = 28;
+      TRACK_STATES = 28,
+      POINTER_EVENTS = 29;
   final HostView host;
   final float density;
   final SparseArray<View> views = new SparseArray<>();
@@ -288,6 +289,9 @@ final class Mounter {
           break;
         case TRACK_STATES:
           trackStates(b.getInt(), b.getInt());
+          break;
+        case POINTER_EVENTS:
+          pointerEvents(b.getInt(), b.getInt() != 0);
           break;
         default:
           throw new IllegalArgumentException("Unknown nlayer opcode " + opcode);
@@ -1283,11 +1287,31 @@ final class Mounter {
     return false;
   }
 
-  /** `pointerEvents` none or box-none: this view does not take the pointer. */
+  /** `pointerEvents: none`: this view is not the hit target. Children still are. */
   private static boolean ignoresPointer(View v) {
-    if (!(v instanceof Box)) return false;
-    int events = ((Box) v).pointerEvents;
-    return events == 1 || events == 3;
+    return pointerValue(v) == 1;
+  }
+
+  /** `0` auto, `1` none. Views that are not hit targets still default to auto. */
+  private static int pointerValue(View v) {
+    if (v instanceof Box) return ((Box) v).pointerEvents;
+    if (v instanceof TextBox) return ((TextBox) v).pointerEvents;
+    if (v instanceof ImageBox) return ((ImageBox) v).pointerEvents;
+    if (v instanceof ScrollBox) return ((ScrollBox) v).pointerEvents;
+    if (v instanceof InputBox) return ((InputBox) v).pointerEvents;
+    return 0;
+  }
+
+  /** Stores computed `pointer-events`: `auto` is 0, `none` is 1. */
+  private void pointerEvents(int id, boolean auto) {
+    View v = views.get(id);
+    if (v == null) return;
+    int value = auto ? 0 : 1;
+    if (v instanceof Box) ((Box) v).pointerEvents = value;
+    else if (v instanceof TextBox) ((TextBox) v).pointerEvents = value;
+    else if (v instanceof ImageBox) ((ImageBox) v).pointerEvents = value;
+    else if (v instanceof ScrollBox) ((ScrollBox) v).pointerEvents = value;
+    else if (v instanceof InputBox) ((InputBox) v).pointerEvents = value;
   }
 
   private void trackStates(int id, int states) {

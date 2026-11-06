@@ -565,7 +565,7 @@ export class Player {
     el._entering = false;
     el._presented = false;
     el.style.transition = "";
-    el.style.pointerEvents = "none";
+    this.holdPointer(el, "none");
     const motion = this.modalMotion(el);
     this.hideModal(el, motion);
     const delay = motion === "none" ? 0 : motion === "fade" ? 250 : 350;
@@ -586,7 +586,7 @@ export class Player {
       el._leaveTimer = 0;
     }
     this.dropLeftWith(el);
-    el.style.pointerEvents = "";
+    this.releasePointer(el);
     el.style.transform = "";
     el.style.opacity = "";
     this.openModal(el);
@@ -597,7 +597,7 @@ export class Player {
     for (const child of el.querySelectorAll(".nl-v")) {
       if (child._leftWith !== el) continue;
       child._leftWith = null;
-      child.style.pointerEvents = "";
+      this.releasePointer(child);
       child.remove();
     }
   }
@@ -697,7 +697,7 @@ export class Player {
         ...options,
         fill: "forwards",
       });
-      old.style.pointerEvents = "none";
+      this.holdPointer(old, "none");
       if (!motion.fade && top) top.animate(shift(parallax, 0), options);
     }
     if (done) anim.onfinish = done;
@@ -730,7 +730,7 @@ export class Player {
   releaseScreen(screen) {
     screen._removedFrom = null;
     screen._popping = false;
-    screen.style.pointerEvents = "";
+    this.releasePointer(screen);
     screen.style.visibility = "";
     screen.classList.remove("nl-top", "nl-shown");
     screen.remove();
@@ -753,25 +753,50 @@ export class Player {
     }
   }
 
+  /** Computed `pointer-events`. Absent is `auto`. */
+  pointerCss(el) {
+    return el._pointerAuto === false ? "none" : "auto";
+  }
+
+  /** A host override. `op_pe` will not clobber it. */
+  holdPointer(el, value) {
+    el._pointerHold = true;
+    el.style.pointerEvents = value;
+  }
+
+  /** Writes the computed value back. Never clears the property. */
+  releasePointer(el) {
+    el._pointerHold = false;
+    el.style.pointerEvents = this.pointerCss(el);
+  }
+
   setPassThrough(el, pass) {
     if (pass) {
-      el.style.pointerEvents = "none";
+      this.holdPointer(el, "none");
       el._passThrough = true;
       for (const node of el.querySelectorAll(".nl-v")) {
         if (node._passThrough) continue;
-        node.style.pointerEvents = "auto";
+        this.holdPointer(node, "auto");
         node._passChild = true;
       }
       return;
     }
     if (!el._passThrough) return;
-    el.style.pointerEvents = "";
     el._passThrough = false;
+    this.releasePointer(el);
     for (const node of el.querySelectorAll(".nl-v")) {
       if (!node._passChild || node._passThrough) continue;
-      node.style.pointerEvents = "";
       node._passChild = false;
+      this.releasePointer(node);
     }
+  }
+
+  /** Computed `pointer-events`. `auto` is a hit target. */
+  op_pe([, id, auto]) {
+    const el = this.view(id);
+    if (!el) return;
+    el._pointerAuto = !!auto;
+    if (!el._pointerHold) el.style.pointerEvents = this.pointerCss(el);
   }
 
   op_f([, id, x, y, w, h]) {

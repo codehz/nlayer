@@ -33,6 +33,10 @@ final class InputBox extends FrameLayout {
   boolean watching;
   int pressMask;
   boolean clip;
+
+  /** Computed `pointer-events`: 0 auto, 1 none. */
+  int pointerEvents;
+
   int textColor;
   private boolean armed;
 

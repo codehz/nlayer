@@ -430,3 +430,22 @@ fn hover_shadows_rewrite_the_main_style() {
         px(4.0)
     );
 }
+
+#[test]
+fn pointer_events_classes_set_the_style() {
+    let (s, mut props, list) = applied("pointer-events-none", 0);
+    assert!(list.unsupported().is_empty(), "{:?}", list.unsupported());
+    s.node_props(&mut props);
+    assert_eq!(props.pointer_events, Some(false));
+    let (s, mut props, list) = applied("pointer-events-auto hover:pointer-events-none", 0);
+    assert!(list.unsupported().is_empty(), "{:?}", list.unsupported());
+    s.node_props(&mut props);
+    assert_eq!(props.pointer_events, Some(true));
+    let (s, mut props, list) = applied(
+        "pointer-events-auto hover:pointer-events-none",
+        state::HOVERED,
+    );
+    assert!(list.unsupported().is_empty(), "{:?}", list.unsupported());
+    s.node_props(&mut props);
+    assert_eq!(props.pointer_events, Some(false));
+}

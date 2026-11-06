@@ -653,6 +653,9 @@ impl Encoder {
             MountItem::Refreshing { id, refreshing } => {
                 out.item("ref").num(*id).bool(*refreshing).end();
             }
+            MountItem::PointerEvents { id, auto } => {
+                out.item("pe").num(*id).bool(*auto).end();
+            }
         }
     }
 

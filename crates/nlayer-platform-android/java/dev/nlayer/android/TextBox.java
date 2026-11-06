@@ -50,6 +50,9 @@ final class TextBox extends ViewGroup {
   /** {@code userSelect} as written: 1 text, 0 none, 2 unset. */
   int userSelect = 2;
 
+  /** Computed `pointer-events`: 0 auto, 1 none. */
+  int pointerEvents;
+
   /** The selectable view whose gesture this touch is, if any. */
   private SelectableView areaGesture;
 

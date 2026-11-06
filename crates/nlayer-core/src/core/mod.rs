@@ -106,6 +106,8 @@ mod dirty {
     pub(super) const PAN: u32 = 1 << 17;
     /// Emit [`crate::MountItem::Selectable`].
     pub(super) const SELECTABLE: u32 = 1 << 18;
+    /// Emit [`crate::MountItem::PointerEvents`].
+    pub(super) const POINTER: u32 = 1 << 19;
 }
 
 /// Host kind.
@@ -365,6 +367,12 @@ struct Node {
     /// `userSelect` as written: `Some(true)` is `"text"`, `Some(false)` is
     /// `"none"`, `None` is `"auto"` (follow the views around it).
     user_select: Option<bool>,
+    /// `pointerEvents` as written: `Some(true)` is `"auto"`, `Some(false)`
+    /// is `"none"`, `None` inherits. A specified `"auto"` does not follow
+    /// the parent.
+    pointer_events: Option<bool>,
+    /// Computed `pointer-events`: `true` is a hit target (`auto`).
+    pointer_auto: bool,
     /// `selectable` on a `View`: one selection across its texts.
     selectable: bool,
     /// `href` on a `Text` (block or span): the address a short press opens.
@@ -460,6 +468,8 @@ impl Node {
             ellipsize: None,
             vertical_align: VerticalAlign::Baseline,
             user_select: None,
+            pointer_events: None,
+            pointer_auto: true,
             selectable: false,
             href: None,
             attached: Vec::new(),
@@ -1655,6 +1665,7 @@ impl<M: TextEngine> Core<M> {
             && (node.number_of_lines != pending.number_of_lines
                 || node.ellipsize != pending.text_overflow);
         let select_changed = node.user_select != pending.user_select;
+        let pointer_changed = node.pointer_events != pending.pointer_events;
         let align_changed = node.vertical_align != vertical_align;
         let text_changed = node.text_style != text || span_background_changed || lines_changed;
         node.rtl = rtl;
@@ -1667,6 +1678,7 @@ impl<M: TextEngine> Core<M> {
         node.number_of_lines = pending.number_of_lines;
         node.ellipsize = pending.text_overflow;
         node.user_select = pending.user_select;
+        node.pointer_events = pending.pointer_events;
         node.vertical_align = vertical_align;
         node.z_index = z_index;
         let fit_changed = node.image.is_some() && node.object_fit != fit;
@@ -1743,6 +1755,9 @@ impl<M: TextEngine> Core<M> {
         }
         if flipped {
             self.update_children_direction(key);
+        }
+        if pointer_changed {
+            self.recompute_pointer_events(key);
         }
         Ok(())
     }
@@ -2314,6 +2329,8 @@ impl<M: TextEngine> Core<M> {
         self.set_inline(child, inline);
         self.nodes[child as usize].parent = parent;
         self.nodes[parent as usize].children.insert(pos, child);
+        // Unset descendants pick up the new parent before the first mount.
+        self.recompute_pointer_events(child);
         if self.nodes[child as usize].states & crate::tailwind::state::FOCUS_WITHIN != 0 {
             self.focus_moved = true;
         }
@@ -2640,6 +2657,8 @@ impl<M: TextEngine> Core<M> {
         if node.selectable {
             flags |= dirty::SELECTABLE;
         }
+        // The first mount always says whether the view is a hit target.
+        flags |= dirty::POINTER;
         if kind == Kind::Text && has_attachments {
             // Its attachments' views go inside the new view.
             node.attached.clear();
@@ -2764,6 +2783,10 @@ impl<M: TextEngine> Core<M> {
             if flags & dirty::SELECTABLE != 0 {
                 let selectable = self.nodes[key as usize].selectable;
                 self.mount.push(MountItem::Selectable { id, selectable });
+            }
+            if flags & dirty::POINTER != 0 {
+                let auto = self.nodes[key as usize].pointer_auto;
+                self.mount.push(MountItem::PointerEvents { id, auto });
             }
             if flags & dirty::IMAGE != 0
                 && let Some(image) = &self.nodes[key as usize].image
@@ -3468,6 +3491,39 @@ impl<M: TextEngine> Core<M> {
             k = self.nodes[k as usize].parent;
         }
         None
+    }
+
+    /// Computed `pointer-events` of `key`: a specified `"auto"` or `"none"`
+    /// wins, including `"auto"` under a `"none"` ancestor. Only a missing
+    /// value follows the parent. The initial value is `"auto"`.
+    fn resolved_pointer_auto(&self, key: Key) -> bool {
+        let mut k = key;
+        while k != NO_KEY {
+            if let Some(auto) = self.nodes[k as usize].pointer_events {
+                return auto;
+            }
+            k = self.nodes[k as usize].parent;
+        }
+        true
+    }
+
+    /// Stores `key`'s computed `pointer-events` and walks descendants whose
+    /// specified value is unset. Already-mounted views are marked when the
+    /// bit changes.
+    fn recompute_pointer_events(&mut self, key: Key) {
+        let auto = self.resolved_pointer_auto(key);
+        if self.nodes[key as usize].pointer_auto != auto {
+            self.nodes[key as usize].pointer_auto = auto;
+            if self.nodes[key as usize].created {
+                self.mark(key, dirty::POINTER);
+            }
+        }
+        let children = self.nodes[key as usize].children.clone();
+        for child in children {
+            if self.nodes[child as usize].pointer_events.is_none() {
+                self.recompute_pointer_events(child);
+            }
+        }
     }
 
     /// Collects `key`'s characters into `out`: raw text, its spans and
@@ -10049,6 +10105,102 @@ mod tests {
                 selectable: true
             }
         )));
+    }
+
+    #[test]
+    fn pointer_events_follows_unset_and_keeps_specified_auto() {
+        let mut c = Core::new(ApproxTextEngine, size(px(200.0), px(200.0)));
+        for (id, tag) in [(2, Tag::View), (3, Tag::View), (4, Tag::View)] {
+            c.apply(Op::Create { id, tag }).unwrap();
+        }
+        c.apply(Op::Insert {
+            parent: 3,
+            child: 4,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: 2,
+            child: 3,
+            before: None,
+        })
+        .unwrap();
+        c.apply(Op::Insert {
+            parent: ROOT_ID,
+            child: 2,
+            before: None,
+        })
+        .unwrap();
+        let batch = c.commit().expect("a frame");
+        assert_eq!(pointer_of(&batch, 2), Some(true), "initial auto");
+        assert_eq!(pointer_of(&batch, 3), Some(true));
+        assert_eq!(pointer_of(&batch, 4), Some(true));
+
+        let mut style = Style::default();
+        style.set("pointerEvents", StyleValue::Str("auto")).unwrap();
+        apply_style(&mut c, 3, style);
+        let mut none = Style::default();
+        none.set("pointerEvents", StyleValue::Str("none")).unwrap();
+        apply_style(&mut c, 2, none);
+        let batch = c.commit().expect("a frame");
+        assert_eq!(pointer_of(&batch, 2), Some(false));
+        assert_eq!(
+            pointer_of(&batch, 3),
+            None,
+            "specified auto under none stays auto"
+        );
+        assert_eq!(
+            pointer_of(&batch, 4),
+            None,
+            "unset follows the specified child"
+        );
+
+        let mut inherit = Style::default();
+        inherit
+            .set("pointerEvents", StyleValue::Str("inherit"))
+            .unwrap();
+        apply_style(&mut c, 3, inherit);
+        let batch = c.commit().expect("a frame");
+        assert_eq!(pointer_of(&batch, 3), Some(false), "inherit clears");
+        assert_eq!(
+            pointer_of(&batch, 4),
+            Some(false),
+            "unset follows the parent"
+        );
+
+        let mut back = Style::default();
+        back.set("pointerEvents", StyleValue::Str("auto")).unwrap();
+        apply_style(&mut c, 2, back);
+        let batch = c.commit().expect("a frame");
+        assert_eq!(pointer_of(&batch, 2), Some(true));
+        assert_eq!(pointer_of(&batch, 3), Some(true));
+        assert_eq!(pointer_of(&batch, 4), Some(true));
+
+        let mut kept = Style::default();
+        kept.set("pointerEvents", StyleValue::Str("none")).unwrap();
+        assert!(
+            kept.set("pointerEvents", StyleValue::Str("box-none"))
+                .is_err()
+        );
+        assert!(
+            kept.set("pointerEvents", StyleValue::Str("box-only"))
+                .is_err()
+        );
+        apply_style(&mut c, 3, kept);
+        let batch = c.commit().expect("a frame");
+        assert_eq!(
+            pointer_of(&batch, 3),
+            Some(false),
+            "a rejected value does not apply"
+        );
+        assert_eq!(pointer_of(&batch, 4), Some(false));
+    }
+
+    fn pointer_of(batch: &MountBatch, id: NodeId) -> Option<bool> {
+        batch.items.iter().rev().find_map(|item| match item {
+            MountItem::PointerEvents { id: i, auto } if *i == id => Some(*auto),
+            _ => None,
+        })
     }
 
     #[test]

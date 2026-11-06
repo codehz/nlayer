@@ -468,6 +468,10 @@ pub struct ClassProps {
     /// view's reach the texts in it that say none, as CSS's `user-select:
     /// auto` takes its parent's.
     pub selectable: Option<bool>,
+    /// `pointerEvents` (`pointer-events-none` / `pointer-events-auto`).
+    /// `Some(true)` is `"auto"`, `Some(false)` is `"none"`, `None` inherits.
+    /// A specified `"auto"` does not follow a `none` parent.
+    pub pointer_events: Option<bool>,
     /// `placeholder:text-*` (inputs).
     pub placeholder_color: Option<Color>,
     /// `selection:bg-*`: the highlight of a selection (inputs, selectable
@@ -985,7 +989,7 @@ fn decl_allowed(decl: &Decl) -> bool {
     use crate::style::StyleDecl;
     use utilities::PropDecl;
     match decl {
-        Decl::Screen(..) | Decl::CurrentPart(..) | Decl::Rejected => false,
+        Decl::Screen(..) | Decl::CurrentPart(..) => false,
         Decl::Prop(PropDecl::Caret(_)) => false,
         Decl::Prop(_) | Decl::Ch(..) => true,
         Decl::Part(part) => part_allowed(part),
@@ -1138,6 +1142,7 @@ fn key_allowed(key: crate::style::StyleKey) -> bool {
             | K::NumberOfLines
             | K::TextOverflow
             | K::UserSelect
+            | K::PointerEvents
             | K::SelectionColor
             | K::WritingDirection
             | K::VerticalAlign

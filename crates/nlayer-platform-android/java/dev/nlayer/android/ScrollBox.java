@@ -41,6 +41,9 @@ final class ScrollBox extends FrameLayout {
   int pressMask;
   boolean disabled;
 
+  /** Computed `pointer-events`: 0 auto, 1 none. */
+  int pointerEvents;
+
   /** `keyboardShouldPersistTaps`: 0 never, 1 always, 2 handled. */
   int taps;
 
