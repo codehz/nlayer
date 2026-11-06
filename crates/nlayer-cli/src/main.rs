@@ -71,6 +71,10 @@ enum Command {
         /// Host that runs the app `open` starts.
         #[arg(long, value_enum)]
         target: Option<TestHost>,
+        /// iOS simulator UDID or name, or Android `adb` serial. Required
+        /// when more than one device is available.
+        #[arg(long)]
+        device: Option<String>,
     },
     /// Create a TSX app and its project configuration.
     Init {
@@ -100,6 +104,10 @@ enum Command {
         /// Do not open a browser. Web only.
         #[arg(long)]
         no_open: bool,
+        /// iOS simulator UDID or name, or Android `adb` serial. Required
+        /// when more than one device is available.
+        #[arg(long)]
+        device: Option<String>,
     },
 }
 
@@ -196,7 +204,12 @@ fn main() -> ExitCode {
             path,
             filter,
             target,
+            device,
         } => {
+            if device.is_some() && !matches!(target, Some(TestHost::Ios | TestHost::Android)) {
+                eprintln!("--device applies to --target ios and --target android");
+                return ExitCode::FAILURE;
+            }
             warn_types(&path);
             let target = target.map(|target| match target {
                 TestHost::Web => TestTarget::Web,
@@ -207,6 +220,7 @@ fn main() -> ExitCode {
                 path,
                 filter,
                 target,
+                device,
             }) {
                 Ok(report) => {
                     println!("{report}");
@@ -238,7 +252,12 @@ fn main() -> ExitCode {
             port,
             release,
             no_open,
+            device,
         } => {
+            if device.is_some() && matches!(target, Target::Web) {
+                eprintln!("--device applies to --target ios and --target android");
+                return ExitCode::FAILURE;
+            }
             warn_types(&entry);
             match target {
                 Target::Web => match run_web(entry, port, release, !no_open) {
@@ -255,6 +274,7 @@ fn main() -> ExitCode {
                     entry,
                     release,
                     port,
+                    device,
                 }) {
                     Ok(session) => {
                         session.park();
@@ -270,6 +290,7 @@ fn main() -> ExitCode {
                     entry,
                     release,
                     port,
+                    device,
                 }) {
                     Ok(session) => {
                         session.park();

@@ -19,11 +19,32 @@ fn lock() -> std::sync::MutexGuard<'static, ()> {
     LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// `NLAYER_IOS_DEVICE` / `NLAYER_ANDROID_DEVICE` pick the simulator or
+/// emulator when more than one is available. Without them, a lone device
+/// is used.
+fn device(target: Option<TestTarget>) -> Option<String> {
+    let key = match target {
+        Some(TestTarget::Ios) => "NLAYER_IOS_DEVICE",
+        Some(TestTarget::Android) => "NLAYER_ANDROID_DEVICE",
+        _ => return None,
+    };
+    std::env::var(key).ok()
+}
+
+fn android_device() -> Option<String> {
+    std::env::var("NLAYER_ANDROID_DEVICE").ok()
+}
+
+fn ios_device() -> Option<String> {
+    std::env::var("NLAYER_IOS_DEVICE").ok()
+}
+
 fn run(path: &Path, target: Option<TestTarget>) -> nlayer_testing::Report {
     test(&TestOptions {
         path: path.to_path_buf(),
         filter: None,
         target,
+        device: device(target),
     })
     .unwrap_or_else(|error| panic!("{target:?}: {error}"))
 }
@@ -215,7 +236,7 @@ fn the_emulator_renders_and_scrolls_a_long_list() {
 #[test]
 fn the_java_host_tests_pass_on_the_emulator() {
     let _guard = lock();
-    let report = nlayer_cli::android_java_tests()
+    let report = nlayer_cli::android_java_tests(android_device().as_deref())
         .unwrap_or_else(|error| panic!("android Java tests: {error}"));
     assert!(
         report.failures.is_empty(),
@@ -229,8 +250,8 @@ fn the_java_host_tests_pass_on_the_emulator() {
 #[test]
 fn the_ios_host_tests_pass_in_the_simulator() {
     let _guard = lock();
-    let report =
-        nlayer_cli::ios_host_tests().unwrap_or_else(|error| panic!("iOS host tests: {error}"));
+    let report = nlayer_cli::ios_host_tests(ios_device().as_deref())
+        .unwrap_or_else(|error| panic!("iOS host tests: {error}"));
     assert!(
         report.failures.is_empty(),
         "iOS host tests:\n{}",

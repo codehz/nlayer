@@ -20,6 +20,8 @@ use crate::session::{RecyclePin, SharedSession};
 /// The emulator or device one `nlayer test --target android` run drives.
 pub(crate) struct AndroidHost {
     boot: Option<Boot>,
+    /// The `adb` serial `--device` named.
+    device: Option<String>,
     /// The socket the running host is on. `None` until the first launch,
     /// and after that launch's socket dies.
     shared: Option<Arc<SharedSession>>,
@@ -38,9 +40,10 @@ struct Forward {
 }
 
 impl AndroidHost {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(device: Option<String>) -> Self {
         Self {
             boot: None,
+            device,
             shared: None,
             forward: None,
         }
@@ -49,7 +52,8 @@ impl AndroidHost {
     fn boot(&mut self) -> Result<&Boot, String> {
         if self.boot.is_none() {
             let sdk = android::Sdk::find().map_err(|error| error.to_string())?;
-            let serial = android::device(&sdk).map_err(|error| error.to_string())?;
+            let serial =
+                android::device(&sdk, self.device.as_deref()).map_err(|error| error.to_string())?;
             let abi = android::device_abi(&sdk, &serial).map_err(|error| error.to_string())?;
             let apk = android::host_apk(&sdk, &abi, false).map_err(|error| error.to_string())?;
             android::install_if_needed(&sdk, &serial, &apk).map_err(|error| error.to_string())?;

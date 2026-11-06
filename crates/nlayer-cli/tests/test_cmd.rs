@@ -39,6 +39,7 @@ test("shows hello", () => {
         path: dir.join("App.test.tsx"),
         filter: None,
         target: None,
+        device: None,
     })
     .expect("it runs");
     assert!(report.ok(), "{report}");

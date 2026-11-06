@@ -20,6 +20,8 @@ use crate::session::{RecyclePin, SharedSession};
 /// The simulator host one `nlayer test --target ios` run drives.
 pub(crate) struct IosHost {
     boot: Option<Boot>,
+    /// The simulator `--device` named.
+    device: Option<String>,
     /// The socket the running host is on. `None` until the first launch,
     /// and after that launch's socket dies.
     shared: Option<Arc<SharedSession>>,
@@ -38,9 +40,10 @@ impl Drop for IosHost {
     }
 }
 impl IosHost {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(device: Option<String>) -> Self {
         Self {
             boot: None,
+            device,
             shared: None,
         }
     }
@@ -48,7 +51,8 @@ impl IosHost {
     fn boot(&mut self) -> Result<&Boot, String> {
         if self.boot.is_none() {
             let host = ios::ios_host().map_err(|error| error.to_string())?;
-            let (udid, name) = ios::simulator().map_err(|error| error.to_string())?;
+            let (udid, name) =
+                ios::simulator(self.device.as_deref()).map_err(|error| error.to_string())?;
             let app = ios::package(&host).map_err(|error| error.to_string())?;
             if ios::host_changed(&udid, &host).map_err(|error| error.to_string())? {
                 eprintln!("installing {BUNDLE_ID}");

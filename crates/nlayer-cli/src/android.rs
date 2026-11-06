@@ -69,6 +69,9 @@ pub struct AndroidOptions {
     pub release: bool,
     /// Dev server port to reverse onto the device. `0` picks a free one.
     pub port: u16,
+    /// `adb` serial of the device to install on. `None` requires exactly
+    /// one connected device.
+    pub device: Option<String>,
 }
 
 /// A device session. Dropping it force-stops the app and removes the dev pin.
@@ -158,7 +161,7 @@ pub fn run_android(options: AndroidOptions) -> Result<AndroidSession, RunError> 
         ));
     };
     let sdk = Sdk::find()?;
-    let serial = device(&sdk)?;
+    let serial = device(&sdk, options.device.as_deref())?;
     let abi = device_abi(&sdk, &serial)?;
     let apk = host_apk(&sdk, &abi, options.release)?;
     install_if_needed(&sdk, &serial, &apk)?;
@@ -267,8 +270,38 @@ fn newest(dir: &Path) -> Result<PathBuf, RunError> {
     best.ok_or_else(|| RunError::message(format!("{} is empty", dir.display())))
 }
 
-/// `serial` of an emulator, else the first connected device.
-pub(crate) fn device(sdk: &Sdk) -> Result<String, RunError> {
+/// The serial `--device` names, or the only connected device.
+///
+/// Which device receives the app is not guessed: with more than one
+/// connected, the caller must name one.
+pub(crate) fn device(sdk: &Sdk, wanted: Option<&str>) -> Result<String, RunError> {
+    let devices = attached_devices(sdk)?;
+    if let Some(wanted) = wanted {
+        return devices
+            .iter()
+            .find(|serial| *serial == wanted)
+            .cloned()
+            .ok_or_else(|| {
+                RunError::message(format!(
+                    "no connected Android device {wanted}; available: {}",
+                    devices.join(", ")
+                ))
+            });
+    }
+    match devices.as_slice() {
+        [only] => Ok(only.clone()),
+        [] => Err(RunError::message(
+            "no Android emulator or device. Start one, then re-run",
+        )),
+        _ => Err(RunError::message(format!(
+            "more than one Android device is connected; pass --device <serial> to choose one: {}",
+            devices.join(", ")
+        ))),
+    }
+}
+
+/// Serials of the devices `adb` reports as online.
+fn attached_devices(sdk: &Sdk) -> Result<Vec<String>, RunError> {
     let output = Command::new(sdk.adb())
         .arg("devices")
         .output()
@@ -279,23 +312,20 @@ pub(crate) fn device(sdk: &Sdk) -> Result<String, RunError> {
             String::from_utf8_lossy(&output.stderr)
         )));
     }
-    let mut emulator = None;
-    let mut other = None;
-    for line in String::from_utf8_lossy(&output.stdout).lines().skip(1) {
-        let mut parts = line.split_whitespace();
-        let Some(serial) = parts.next() else { continue };
-        if parts.next() != Some("device") {
-            continue;
-        }
-        if serial.starts_with("emulator-") {
-            emulator.get_or_insert_with(|| serial.to_owned());
-        } else {
-            other.get_or_insert_with(|| serial.to_owned());
-        }
-    }
-    emulator
-        .or(other)
-        .ok_or_else(|| RunError::message("no Android emulator or device. Start one, then re-run"))
+    Ok(parse_devices(&String::from_utf8_lossy(&output.stdout)))
+}
+
+/// One serial per `device` line; offline and unauthorized entries are not
+/// installable.
+fn parse_devices(list: &str) -> Vec<String> {
+    list.lines()
+        .skip(1)
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let serial = parts.next()?;
+            (parts.next() == Some("device")).then(|| serial.to_owned())
+        })
+        .collect()
 }
 
 pub(crate) fn device_abi(sdk: &Sdk, serial: &str) -> Result<Abi, RunError> {
@@ -754,9 +784,9 @@ pub struct AndroidJavaTests {
 /// Builds and installs the test APK and runs it against the installed
 /// host. Needs the Android SDK and a booted emulator or device, as
 /// `nlayer test --target android` does.
-pub fn android_java_tests() -> Result<AndroidJavaTests, RunError> {
+pub fn android_java_tests(wanted: Option<&str>) -> Result<AndroidJavaTests, RunError> {
     let sdk = Sdk::find()?;
-    let serial = device(&sdk)?;
+    let serial = device(&sdk, wanted)?;
     let workspace = workspace_root()
         .ok_or_else(|| RunError::message("no Android runtime. Run nlayer from a checkout"))?;
     let abi = device_abi(&sdk, &serial)?;
@@ -1263,6 +1293,18 @@ pub(crate) fn run(command: &mut Command) -> Result<(), RunError> {
 #[cfg(test)]
 mod tests {
     use super::Abi;
+
+    #[test]
+    fn only_online_devices_are_choices() {
+        let devices = super::parse_devices(
+            "List of devices attached\n\
+             emulator-5554\tdevice\n\
+             R58M1234\tunauthorized\n\
+             10.0.0.2:5555\toffline\n\
+             R58M5678\tdevice\n",
+        );
+        assert_eq!(devices, vec!["emulator-5554", "R58M5678"]);
+    }
 
     #[test]
     fn device_abis_map_to_rust_triples() {

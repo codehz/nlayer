@@ -42,6 +42,7 @@ fn storage_reads_back_after_a_restart() {
         path: dir.clone(),
         filter: None,
         target: None,
+        device: None,
     })
     .expect("the test runs");
     assert!(report.ok(), "{report}");
@@ -66,6 +67,7 @@ fn resource_loads_reloads_and_reports_failures() {
         path: dir.clone(),
         filter: None,
         target: None,
+        device: None,
     })
     .expect("the test runs");
     assert!(report.ok(), "{report}");
@@ -86,6 +88,7 @@ fn the_scheme_and_accessibility_run_on_the_headless_engine() {
         path: dir.clone(),
         filter: None,
         target: None,
+        device: None,
     })
     .expect("the test runs");
     assert!(report.ok(), "{report}");
@@ -106,6 +109,7 @@ fn a_multiline_input_reports_selection_and_composition() {
         path: dir.clone(),
         filter: None,
         target: None,
+        device: None,
     })
     .expect("the test runs");
     assert!(report.ok(), "{report}");
@@ -129,6 +133,7 @@ fn a_long_list_renders_windows_and_scrolls_on_the_headless_engine() {
         path: dir.clone(),
         filter: None,
         target: None,
+        device: None,
     })
     .expect("the test runs");
     assert!(report.ok(), "{report}");
@@ -152,6 +157,7 @@ fn a_list_follows_measured_rows_on_the_headless_engine() {
         path: dir.clone(),
         filter: None,
         target: None,
+        device: None,
     })
     .expect("the test runs");
     assert!(report.ok(), "{report}");
@@ -172,6 +178,7 @@ fn a_list_lays_items_out_in_columns() {
         path: dir.clone(),
         filter: None,
         target: None,
+        device: None,
     })
     .expect("the test runs");
     assert!(report.ok(), "{report}");
@@ -192,6 +199,7 @@ fn a_list_opens_at_initial_scroll_index() {
         path: dir.clone(),
         filter: None,
         target: None,
+        device: None,
     })
     .expect("the test runs");
     assert!(report.ok(), "{report}");
@@ -212,6 +220,7 @@ fn animations_move_values_on_a_deterministic_clock() {
         path: dir.clone(),
         filter: None,
         target: None,
+        device: None,
     })
     .expect("the test runs");
     assert!(report.ok(), "{report}");
@@ -232,6 +241,7 @@ fn a_long_press_runs_on_the_headless_engine() {
         path: dir.clone(),
         filter: None,
         target: None,
+        device: None,
     })
     .expect("the test runs");
     assert!(report.ok(), "{report}");

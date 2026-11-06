@@ -54,6 +54,9 @@ pub struct IosOptions {
     /// Dev server port. `0` picks a free one. The simulator connects to
     /// `127.0.0.1` on this port.
     pub port: u16,
+    /// UDID or name of the simulator to install on. `None` requires exactly
+    /// one booted simulator, or one available when none is booted.
+    pub device: Option<String>,
 }
 
 /// A simulator app. Dropping it terminates the process and removes the dev pin.
@@ -136,7 +139,7 @@ pub fn run_ios(options: IosOptions) -> Result<IosSession, RunError> {
         return Err(RunError::message("the app failed to build"));
     };
     let host = ios_host()?;
-    let (udid, name) = simulator()?;
+    let (udid, name) = simulator(options.device.as_deref())?;
     let app = package(&host)?;
     if host_changed(&udid, &host)? {
         eprintln!("installing {BUNDLE_ID}");
@@ -457,11 +460,11 @@ fn info_plist() -> String {
     )
 }
 
-pub(crate) fn simulator() -> Result<(String, String), RunError> {
+pub(crate) fn simulator(wanted: Option<&str>) -> Result<(String, String), RunError> {
     let list: DeviceList =
         serde_json::from_str(&simctl(&["list", "devices", "available", "--json"])?)
             .map_err(|error| RunError::message(format!("simctl device list: {error}")))?;
-    let device = select(&list, None).map_err(RunError::message)?;
+    let device = select(&list, wanted).map_err(RunError::message)?;
     let udid = device.udid.clone();
     let name = device.name.clone();
     if device.state != "Booted" {
@@ -498,7 +501,7 @@ struct DeviceList {
     devices: std::collections::BTreeMap<String, Vec<Device>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct Device {
     udid: String,
     name: String,
@@ -516,33 +519,46 @@ fn select<'a>(list: &'a DeviceList, wanted: Option<&str>) -> Result<&'a Device, 
         .filter(|device| device.available)
         .collect();
     devices.reverse();
-    let device = match wanted {
-        Some(wanted) => devices
-            .into_iter()
-            .find(|device| device.udid == wanted || device.name == wanted)
-            .ok_or_else(|| format!("no available simulator named {wanted}"))?,
-        None => devices
+    if let Some(wanted) = wanted {
+        return devices
             .iter()
             .copied()
-            .find(|device| device.state == "Booted")
-            .or_else(|| {
-                devices
-                    .iter()
-                    .copied()
-                    .find(|device| device.name.starts_with("iPhone") && device.name.contains("Pro"))
-            })
-            .or_else(|| {
-                devices
-                    .iter()
-                    .copied()
-                    .find(|device| device.name.starts_with("iPhone"))
-            })
+            .find(|device| device.udid == wanted || device.name == wanted)
             .ok_or_else(|| {
-                "no iOS simulator available: install one with `xcodebuild -downloadPlatform iOS`"
-                    .to_owned()
-            })?,
-    };
-    Ok(device)
+                format!(
+                    "no available simulator named {wanted}; available: {}",
+                    names(&devices)
+                )
+            });
+    }
+    // A single booted simulator is the one the user is looking at. With
+    // none booted, the only available simulator is unambiguous; several
+    // are not, and which one receives the app is not guessed.
+    let booted: Vec<&Device> = devices
+        .iter()
+        .copied()
+        .filter(|device| device.state == "Booted")
+        .collect();
+    let candidates = if booted.is_empty() { &devices } else { &booted };
+    match candidates.as_slice() {
+        [] => Err(
+            "no iOS simulator available: install one with `xcodebuild -downloadPlatform iOS`"
+                .to_owned(),
+        ),
+        [only] => Ok(only),
+        many => Err(format!(
+            "more than one iOS simulator is available; pass --device <udid|name> to choose one: {}",
+            names(many)
+        )),
+    }
+}
+
+fn names(devices: &[&Device]) -> String {
+    devices
+        .iter()
+        .map(|device| format!("{} ({})", device.name, device.udid))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The iOS device layer's unit tests, run in the simulator.
@@ -565,11 +581,11 @@ pub struct IosHostTests {
 
 /// Builds the simulator test binary and runs it. Needs Xcode and a booted
 /// simulator, as `nlayer test --target ios` does.
-pub fn ios_host_tests() -> Result<IosHostTests, RunError> {
+pub fn ios_host_tests(wanted: Option<&str>) -> Result<IosHostTests, RunError> {
     let workspace =
         workspace_root().ok_or_else(|| RunError::message("not inside the nlayer workspace"))?;
     let binary = host_test_binary(&workspace)?;
-    let (udid, _name) = simulator()?;
+    let (udid, _name) = simulator(wanted)?;
     let output = Command::new("xcrun")
         .args(["simctl", "spawn", &udid])
         .arg(&binary)
@@ -751,7 +767,22 @@ mod tests {
     }
 
     #[test]
-    fn without_a_booted_simulator_the_newest_iphone_pro_is_used() {
+    fn without_a_booted_simulator_one_available_is_used() {
+        let list: DeviceList = serde_json::from_str(
+            r#"{
+              "devices": {
+                "com.apple.CoreSimulator.SimRuntime.iOS-18-0": [
+                  {"udid": "only", "name": "iPhone 16", "state": "Shutdown", "isAvailable": true}
+                ]
+              }
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(select(&list, None).unwrap().udid, "only");
+    }
+
+    #[test]
+    fn several_simulators_require_a_name() {
         let list: DeviceList = serde_json::from_str(
             r#"{
               "devices": {
@@ -766,7 +797,32 @@ mod tests {
             }"#,
         )
         .unwrap();
-        assert_eq!(select(&list, None).unwrap().udid, "pro");
+        let error = select(&list, None).unwrap_err();
+        assert!(error.contains("--device"), "{error}");
+        assert!(error.contains("iPhone 15 Pro (old-pro)"), "{error}");
+        assert!(error.contains("iPhone 16 Pro (pro)"), "{error}");
+        assert_eq!(select(&list, Some("pro")).unwrap().udid, "pro");
+        let error = select(&list, Some("iPad")).unwrap_err();
+        assert!(error.contains("iPhone 16 Pro (pro)"), "{error}");
+    }
+
+    #[test]
+    fn two_booted_simulators_are_ambiguous() {
+        let list: DeviceList = serde_json::from_str(
+            r#"{
+              "devices": {
+                "com.apple.CoreSimulator.SimRuntime.iOS-18-0": [
+                  {"udid": "a", "name": "iPhone 16", "state": "Booted", "isAvailable": true},
+                  {"udid": "b", "name": "iPhone 16 Pro", "state": "Booted", "isAvailable": true},
+                  {"udid": "c", "name": "iPhone 15", "state": "Shutdown", "isAvailable": true}
+                ]
+              }
+            }"#,
+        )
+        .unwrap();
+        let error = select(&list, None).unwrap_err();
+        assert!(error.contains("--device"), "{error}");
+        assert!(!error.contains("iPhone 15"), "{error}");
     }
 
     #[test]

@@ -138,6 +138,9 @@ pub struct TestOptions {
     pub filter: Option<String>,
     /// Host that runs the app `open` starts. `None` is the headless engine.
     pub target: Option<TestTarget>,
+    /// iOS simulator UDID or name, or Android `adb` serial, to install on.
+    /// Required when more than one is available.
+    pub device: Option<String>,
 }
 
 /// A host `nlayer test --target` can drive.
@@ -163,11 +166,11 @@ pub fn test(options: &TestOptions) -> Result<nlayer_testing::Report, nlayer_test
             nlayer_testing::run_with(&options.path, options.filter.as_deref(), &mut host)
         }
         Some(TestTarget::Ios) => {
-            let mut host = ios_test::IosHost::new();
+            let mut host = ios_test::IosHost::new(options.device.clone());
             nlayer_testing::run_with(&options.path, options.filter.as_deref(), &mut host)
         }
         Some(TestTarget::Android) => {
-            let mut host = android_test::AndroidHost::new();
+            let mut host = android_test::AndroidHost::new(options.device.clone());
             nlayer_testing::run_with(&options.path, options.filter.as_deref(), &mut host)
         }
     }
