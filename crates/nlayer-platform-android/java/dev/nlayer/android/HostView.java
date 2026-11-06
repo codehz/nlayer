@@ -437,9 +437,13 @@ public final class HostView extends FrameLayout {
 
   /** The system's color scheme changed (`onConfigurationChanged`). */
   public void setColorScheme(boolean dark) {
-    this.dark = dark;
     // A test pin replaces the system for the run.
     if (pin != null && pin.colorScheme != null) return;
+    this.dark = dark;
+    for (int i = 0; i < mounter.views.size(); i++) {
+      android.view.View view = mounter.views.valueAt(i);
+      if (view instanceof StackBox.ScreenBox) ((StackBox.ScreenBox) view).schemeChanged();
+    }
     Native.colorScheme(handle, dark);
   }
 

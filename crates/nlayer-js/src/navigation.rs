@@ -4,9 +4,9 @@
 //! A stack renders each route of its state with the app's function; pages
 //! stay mounted while their route is in the stack. A page the user pops
 //! natively removes its route. Pages and dialogs provide their insets to
-//! what they render. `setNavHeader` does nothing here: iOS and Android draw
-//! the system bar. `NavHeader` is the same bar web mounts, for an app that
-//! places it itself.
+//! what they render. `setNavHeader` does nothing here. iOS draws the system
+//! bar. Android draws its own 44pt bar in the platform. `NavHeader` is the
+//! web bar, and the bar an app can place itself; it is not that Android view.
 //!
 //! M1: JS surface only. Native containers (UINavigationController, Android
 //! stack, web history) come in M2.
@@ -855,17 +855,17 @@ struct BarPalette {
 fn bar_palette(dark: bool) -> BarPalette {
     if dark {
         BarPalette {
-            bg: "#1e293b",
-            title: "#f1f5f9",
-            tint: "#60a5fa",
-            line: "#334155",
+            bg: "#000000",
+            title: "#ffffff",
+            tint: "#0A84FF",
+            line: "rgba(84,84,88,0.6)",
         }
     } else {
         BarPalette {
             bg: "#ffffff",
-            title: "#0f172a",
-            tint: "#3b82f6",
-            line: "#e2e8f0",
+            title: "#000000",
+            tint: "#007AFF",
+            line: "rgba(60,60,67,0.29)",
         }
     }
 }
@@ -972,33 +972,25 @@ fn style_of(cx: *mut JsContext, fields: &[(&str, JsValue)]) -> JsValue {
     object
 }
 
-fn labeled_text(
+fn styled_text(
     cx: *mut JsContext,
-    class_name: &str,
-    color: Option<&str>,
+    fields: &[(&str, JsValue)],
     label: Option<&str>,
     text: &str,
     on_press: JsValue,
 ) -> Result<JsValue, JsValue> {
-    let node = host_node(cx, Tag::Text)?;
-    if let Err(error) = set_owned(cx, node, "class", new_string(cx, class_name)) {
-        free(cx, node);
-        free(cx, on_press);
-        return Err(error);
-    }
-    if let Some(color) = color {
-        let color_value = new_string(cx, color);
-        let style = if label.is_none() {
-            style_of(
-                cx,
-                &[
-                    ("color", color_value),
-                    ("numberOfLines", qjs::JS_NewFloat64(1.0)),
-                ],
-            )
-        } else {
-            style_of(cx, &[("color", color_value)])
-        };
+    let node = match host_node(cx, Tag::Text) {
+        Ok(node) => node,
+        Err(error) => {
+            for (_, value) in fields {
+                free(cx, *value);
+            }
+            free(cx, on_press);
+            return Err(error);
+        }
+    };
+    if !fields.is_empty() {
+        let style = style_of(cx, fields);
         if let Err(error) = set_owned(cx, node, "style", style) {
             free(cx, node);
             free(cx, on_press);
@@ -1029,14 +1021,58 @@ fn labeled_text(
     Ok(node)
 }
 
-fn side_slot(cx: *mut JsContext, end: bool, content: JsValue) -> Result<JsValue, JsValue> {
-    let node = host_node(cx, Tag::View)?;
-    let class_name = if end {
-        "min-w-0 flex-1 flex-row items-center justify-end px-3"
+fn side_style(cx: *mut JsContext, end: bool) -> JsValue {
+    let position = new_string(cx, "absolute");
+    let top = qjs::JS_NewFloat64(0.0);
+    let bottom = qjs::JS_NewFloat64(0.0);
+    let width = new_string(cx, "50%");
+    let overflow = new_string(cx, "hidden");
+    let direction = new_string(cx, "row");
+    let align = new_string(cx, "center");
+    if end {
+        style_of(
+            cx,
+            &[
+                ("position", position),
+                ("top", top),
+                ("bottom", bottom),
+                ("width", width),
+                ("overflow", overflow),
+                ("flexDirection", direction),
+                ("alignItems", align),
+                ("end", qjs::JS_NewFloat64(0.0)),
+                ("paddingEnd", qjs::JS_NewFloat64(16.0)),
+                ("justifyContent", new_string(cx, "flex-end")),
+            ],
+        )
     } else {
-        "min-w-0 flex-1 flex-row items-center px-3"
+        style_of(
+            cx,
+            &[
+                ("position", position),
+                ("top", top),
+                ("bottom", bottom),
+                ("width", width),
+                ("overflow", overflow),
+                ("flexDirection", direction),
+                ("alignItems", align),
+                ("start", qjs::JS_NewFloat64(0.0)),
+                ("paddingStart", qjs::JS_NewFloat64(16.0)),
+            ],
+        )
+    }
+}
+
+fn side_slot(cx: *mut JsContext, end: bool, content: JsValue) -> Result<JsValue, JsValue> {
+    let node = match host_node(cx, Tag::View) {
+        Ok(node) => node,
+        Err(error) => {
+            free(cx, content);
+            return Err(error);
+        }
     };
-    if let Err(error) = set_owned(cx, node, "class", new_string(cx, class_name)) {
+    let style = side_style(cx, end);
+    if let Err(error) = set_owned(cx, node, "style", style) {
         free(cx, node);
         free(cx, content);
         return Err(error);
@@ -1049,7 +1085,13 @@ fn side_slot(cx: *mut JsContext, end: bool, content: JsValue) -> Result<JsValue,
         content
     } else if let Some(text) = js_string(cx, content) {
         free(cx, content);
-        match labeled_text(cx, "font-semibold", None, None, &text, UNDEFINED) {
+        match styled_text(
+            cx,
+            &[("fontWeight", new_string(cx, "600"))],
+            None,
+            &text,
+            UNDEFINED,
+        ) {
             Ok(text) => text,
             Err(error) => {
                 free(cx, node);
@@ -1067,6 +1109,59 @@ fn side_slot(cx: *mut JsContext, end: bool, content: JsValue) -> Result<JsValue,
     Ok(node)
 }
 
+fn string_title(cx: *mut JsContext, text: &str, color: &str) -> Result<JsValue, JsValue> {
+    styled_text(
+        cx,
+        &[
+            ("position", new_string(cx, "absolute")),
+            ("left", qjs::JS_NewFloat64(16.0)),
+            ("right", qjs::JS_NewFloat64(16.0)),
+            ("top", qjs::JS_NewFloat64(0.0)),
+            ("bottom", qjs::JS_NewFloat64(0.0)),
+            ("textAlign", new_string(cx, "center")),
+            ("textAlignVertical", new_string(cx, "center")),
+            ("fontSize", qjs::JS_NewFloat64(17.0)),
+            ("fontWeight", new_string(cx, "600")),
+            ("numberOfLines", qjs::JS_NewFloat64(1.0)),
+            ("color", new_string(cx, color)),
+            ("pointerEvents", new_string(cx, "none")),
+        ],
+        None,
+        text,
+        UNDEFINED,
+    )
+}
+
+fn custom_title(cx: *mut JsContext, child: JsValue) -> Result<JsValue, JsValue> {
+    let node = match host_node(cx, Tag::View) {
+        Ok(node) => node,
+        Err(error) => {
+            free(cx, child);
+            return Err(error);
+        }
+    };
+    let style = style_of(
+        cx,
+        &[
+            ("position", new_string(cx, "absolute")),
+            ("alignSelf", new_string(cx, "center")),
+            ("top", qjs::JS_NewFloat64(0.0)),
+            ("bottom", qjs::JS_NewFloat64(0.0)),
+            ("justifyContent", new_string(cx, "center")),
+        ],
+    );
+    if let Err(error) = set_owned(cx, node, "style", style) {
+        free(cx, node);
+        free(cx, child);
+        return Err(error);
+    }
+    if let Err(error) = insert_owned(cx, node, child) {
+        free(cx, node);
+        return Err(error);
+    }
+    Ok(node)
+}
+
 fn title_slot(
     cx: *mut JsContext,
     header_title: JsValue,
@@ -1076,32 +1171,18 @@ fn title_slot(
     if !absent(cx, header_title) {
         if dom::is_node_value(cx, header_title) {
             free(cx, title);
-            return Ok(header_title);
+            return custom_title(cx, header_title);
         }
         if let Some(text) = js_string(cx, header_title) {
             free(cx, header_title);
             free(cx, title);
-            return labeled_text(
-                cx,
-                "shrink-0 px-2 text-center text-[15px] font-semibold",
-                Some(color),
-                None,
-                &text,
-                UNDEFINED,
-            );
+            return string_title(cx, &text, color);
         }
     }
     free(cx, header_title);
     let text = js_string(cx, title).unwrap_or_default();
     free(cx, title);
-    labeled_text(
-        cx,
-        "shrink-0 px-2 text-center text-[15px] font-semibold",
-        Some(color),
-        None,
-        &text,
-        UNDEFINED,
-    )
+    string_title(cx, &text, color)
 }
 
 fn render_nav_header(cx: *mut JsContext, props: JsValue) -> Result<JsValue, JsValue> {
@@ -1122,20 +1203,10 @@ fn render_nav_header(cx: *mut JsContext, props: JsValue) -> Result<JsValue, JsVa
     } else {
         custom_background.unwrap_or_else(|| palette.bg.to_owned())
     };
-    let title_color = style_color(cx, header_style, "color").unwrap_or_else(|| {
-        if is_transparent {
-            "#ffffff".to_owned()
-        } else {
-            palette.title.to_owned()
-        }
-    });
-    let tint = style_color(cx, header_style, "tintColor").unwrap_or_else(|| {
-        if is_transparent {
-            "#ffffff".to_owned()
-        } else {
-            palette.tint.to_owned()
-        }
-    });
+    let title_color =
+        style_color(cx, header_style, "color").unwrap_or_else(|| palette.title.to_owned());
+    let tint =
+        style_color(cx, header_style, "tintColor").unwrap_or_else(|| palette.tint.to_owned());
     free(cx, header_style);
 
     let header_left = prop_of(cx, props, "headerLeft");
@@ -1157,7 +1228,17 @@ fn render_nav_header(cx: *mut JsContext, props: JsValue) -> Result<JsValue, JsVa
     let leading = if absent(cx, header_left) {
         free(cx, header_left);
         if show_back {
-            match labeled_text(cx, "font-semibold", Some(&tint), Some("Back"), "←", on_back) {
+            match styled_text(
+                cx,
+                &[
+                    ("color", new_string(cx, &tint)),
+                    ("fontSize", qjs::JS_NewFloat64(17.0)),
+                    ("fontWeight", new_string(cx, "600")),
+                ],
+                Some("Back"),
+                "←",
+                on_back,
+            ) {
                 Ok(button) => button,
                 Err(error) => {
                     release(cx, &[header_title, title, header_right]);
@@ -1219,21 +1300,15 @@ fn render_nav_header(cx: *mut JsContext, props: JsValue) -> Result<JsValue, JsVa
             return Err(error);
         }
     };
-    if let Err(error) = set_owned(
-        cx,
-        row,
-        "class",
-        new_string(cx, "h-11 flex-row items-center"),
-    ) {
-        release(cx, &[root, row, left, middle, right]);
-        return Err(error);
-    }
     let row_style = style_of(
         cx,
         &[
+            ("position", new_string(cx, "relative")),
+            ("height", qjs::JS_NewFloat64(44.0)),
+            ("overflow", new_string(cx, "hidden")),
             (
                 "borderBottomWidth",
-                qjs::JS_NewFloat64(if hairline { 1.0 } else { 0.0 }),
+                qjs::JS_NewFloat64(if hairline { 0.5 } else { 0.0 }),
             ),
             ("borderBottomColor", new_string(cx, palette.line)),
         ],
@@ -1242,15 +1317,16 @@ fn render_nav_header(cx: *mut JsContext, props: JsValue) -> Result<JsValue, JsVa
         release(cx, &[root, row, left, middle, right]);
         return Err(error);
     }
+    // Sides first so the title paints above them.
     if let Err(error) = insert_owned(cx, row, left) {
         release(cx, &[root, row, middle, right]);
         return Err(error);
     }
-    if let Err(error) = insert_owned(cx, row, middle) {
-        release(cx, &[root, row, right]);
+    if let Err(error) = insert_owned(cx, row, right) {
+        release(cx, &[root, row, middle]);
         return Err(error);
     }
-    if let Err(error) = insert_owned(cx, row, right) {
+    if let Err(error) = insert_owned(cx, row, middle) {
         release(cx, &[root, row]);
         return Err(error);
     }

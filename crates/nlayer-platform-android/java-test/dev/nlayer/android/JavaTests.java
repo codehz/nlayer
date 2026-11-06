@@ -1103,8 +1103,8 @@ public final class JavaTests extends Instrumentation {
       StackBox.ScreenBox screen1 = (StackBox.ScreenBox) host.mounter.views.get(11);
       check(stack != null && screen1 != null, "views were created");
       equal(1, stack.screens.size(), "stack has one screen");
-      equal("Screen 1", screen1.toolbar.getTitle(), "root toolbar title");
-      check(screen1.toolbar.getNavigationIcon() == null, "no back arrow on root screen");
+      equal("Screen 1", screen1.bar.title.getText().toString(), "root title");
+      check(screen1.bar.back.getVisibility() != View.VISIBLE, "no back control on the root");
 
       // Second batch: push screen 2 with header item
       Batch b2 = batch();
@@ -1139,10 +1139,14 @@ public final class JavaTests extends Instrumentation {
       Box headerItem = (Box) host.mounter.views.get(13);
       check(screen2 != null, "screen 2 created");
       equal(2, stack.screens.size(), "stack has two screens");
-      equal(null, screen2.toolbar.getTitle(), "a custom title view replaces the title text");
-      equal(View.VISIBLE, screen2.toolbar.getVisibility(), "toolbar visible");
-      check(screen2.toolbar.getNavigationIcon() != null, "back arrow shown on pushed screen");
-      check(headerItem.getParent() == screen2.toolbar, "header item parent is toolbar");
+      check(
+          screen2.bar.title.getVisibility() != View.VISIBLE,
+          "a custom title view replaces the string");
+      equal(View.VISIBLE, screen2.bar.getVisibility(), "bar visible");
+      equal(View.VISIBLE, screen2.bar.back.getVisibility(), "pushed screen shows back");
+      equal("\u2190", screen2.bar.back.getText().toString(), "back control is ←");
+      equal("Back", String.valueOf(screen2.bar.back.getContentDescription()), "back name is Back");
+      check(headerItem.getParent() == screen2.bar, "custom title is parented in the bar");
       int[] sizes = host.mounter.headerSizes.get(13);
       check(
           sizes != null && sizes[0] == Math.round(40 * host.density),
@@ -1305,7 +1309,7 @@ public final class JavaTests extends Instrumentation {
       StackBox stack = (StackBox) host.mounter.views.get(10);
       StackBox.ScreenBox screen2 = (StackBox.ScreenBox) host.mounter.views.get(12);
       check(stack != null && screen2 != null, "stack and screen created");
-      equal(View.GONE, screen2.toolbar.getVisibility(), "toolbar hidden when shown=false");
+      equal(View.GONE, screen2.bar.getVisibility(), "bar hidden when shown=false");
 
       // Test transparent background
       Batch b2 = batch();
@@ -1327,9 +1331,12 @@ public final class JavaTests extends Instrumentation {
             host.mounter.apply(b2.bytes(), b2.objects());
             return null;
           });
-      equal(0, screen2.toolbar.getBackground().getAlpha(), "transparent toolbar background");
+      equal(
+          Color.TRANSPARENT,
+          ((android.graphics.drawable.ColorDrawable) screen2.bar.getBackground()).getColor(),
+          "transparent bar background");
       check(
-          screen2.toolbar.getLayoutParams().height > 0,
+          screen2.bar.getLayoutParams().height > 0,
           "a transparent header still draws above the content");
       equal(
           120f,
@@ -1365,10 +1372,39 @@ public final class JavaTests extends Instrumentation {
             return null;
           });
       check(
-          screen2.toolbar.getNavigationIcon() == null, "no navigation icon when backVisible=false");
+          screen2.bar.back.getVisibility() != View.VISIBLE,
+          "back hidden when backVisible is false");
       check(!stack.canPop(), "canPop false when the top screen prevents back");
       check(!stack.canSwipe(), "canSwipe false when gesture=false");
       check(stack.preventsBack(), "preventsBack true when preventBack=true");
+      main(
+          () -> {
+            screen2.configure(
+                host.mounter,
+                "Row",
+                true,
+                false,
+                0,
+                0,
+                false,
+                0,
+                true,
+                true,
+                false,
+                2,
+                -1,
+                -1,
+                -1,
+                0f,
+                true);
+            return null;
+          });
+      int rowPx = Math.round(44 * host.density);
+      equal(rowPx, screen2.bar.contentRow, "content row is 44pt, not 56pt");
+      equal(
+          host.safeTop + rowPx,
+          screen2.bar.getLayoutParams().height,
+          "opaque bar is the status inset plus 44pt");
     } finally {
       main(
           () -> {

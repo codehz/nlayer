@@ -10,24 +10,25 @@ import android.animation.AnimatorListenerAdapter;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.Canvas;
-import android.graphics.ColorFilter;
+import android.graphics.Color;
 import android.graphics.Paint;
-import android.graphics.Path;
-import android.graphics.PixelFormat;
-import android.graphics.drawable.Drawable;
+import android.graphics.Typeface;
+import android.text.TextUtils;
 import android.util.TypedValue;
+import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.animation.DecelerateInterpolator;
 import android.widget.FrameLayout;
-import android.widget.Toolbar;
+import android.widget.TextView;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * `<stack>`: screens stacked natively, with a toolbar header per screen, push / pop transitions and
- * the back button (predictive back on Android 14). The core lays every screen out at the stack's
- * size, below its header.
+ * `<stack>`: screens stacked natively, with a header bar per screen, push / pop transitions and the
+ * back button (predictive back on Android 14). The core lays every screen out at the stack's size,
+ * below its header.
  */
 @SuppressLint("ViewConstructor")
 final class StackBox extends FrameLayout {
@@ -192,8 +193,8 @@ final class StackBox extends FrameLayout {
   }
 
   /**
-   * The back button, the toolbar's arrow or a finished back gesture: the top screen hears of it
-   * when it listens, and pops unless it keeps the user (`popOnBack` false).
+   * The back button, the bar's ← or a finished back gesture: the top screen hears of it when it
+   * listens, and pops unless it keeps the user (`popOnBack` false).
    */
   void back() {
     mounter.host.back();
@@ -241,10 +242,15 @@ final class StackBox extends FrameLayout {
 
   // --- Screens --------------------------------------------------------------
 
-  /** One screen: the core's root view plus a toolbar for its header. */
+  /** One screen: the core's root view plus the header bar drawn inside the page. */
   @SuppressLint("ViewConstructor")
   static final class ScreenBox extends Box {
-    final Toolbar toolbar;
+    /** Content row in pixels: 44pt, not a 56dp toolbar. */
+    static int contentRowPx(float density) {
+      return Math.round(44f * density);
+    }
+
+    final Bar bar;
     int animation;
     boolean gestureEnabled = true;
 
@@ -253,7 +259,17 @@ final class StackBox extends FrameLayout {
 
     boolean transparent;
     boolean shown;
-    private final BackArrow arrow;
+    private float headerHeight;
+    private int tint;
+    private int background;
+    private boolean backgroundPresent;
+    private int titleColor;
+    private boolean backVisible = true;
+    private boolean canGoBack;
+    private int leftId = -1;
+    private int rightId = -1;
+    private int titleId = -1;
+    private String titleText;
     private float lastHeaderHeight = -1;
     private float lastInsetTop = -1;
     private float lastInsetRight = -1;
@@ -262,35 +278,30 @@ final class StackBox extends FrameLayout {
 
     ScreenBox(Context context, Mounter mounter, int id) {
       super(context, mounter, id);
-      toolbar = new Toolbar(context);
-      arrow = new BackArrow(mounter.density);
-      toolbar.setNavigationOnClickListener(
+      bar = new Bar(context, mounter.density);
+      bar.back.setOnClickListener(
           v -> {
             if (getParent() instanceof StackBox) ((StackBox) getParent()).back();
           });
-      addView(toolbar, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0));
+      addView(bar, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0));
     }
 
     @Override
     public void onViewAdded(View child) {
       super.onViewAdded(child);
-      if (child != toolbar) {
-        toolbar.bringToFront();
-      }
+      if (bar != null && child != bar) bar.bringToFront();
     }
 
     @Override
     protected void onMeasure(int widthSpec, int heightSpec) {
       int w = MeasureSpec.getSize(widthSpec), h = MeasureSpec.getSize(heightSpec);
       setMeasuredDimension(w, h);
-      // Measure the toolbar at full width x toolbarHeight
-      toolbar.measure(
+      bar.measure(
           MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY),
-          MeasureSpec.makeMeasureSpec(toolbar.getLayoutParams().height, MeasureSpec.EXACTLY));
-      // Measure other children using Box's margin-based logic
+          MeasureSpec.makeMeasureSpec(bar.getLayoutParams().height, MeasureSpec.EXACTLY));
       for (int i = 0; i < getChildCount(); i++) {
         View v = getChildAt(i);
-        if (v == toolbar) continue;
+        if (v == bar) continue;
         v.measure(
             MeasureSpec.makeMeasureSpec(v.getLayoutParams().width, MeasureSpec.EXACTLY),
             MeasureSpec.makeMeasureSpec(v.getLayoutParams().height, MeasureSpec.EXACTLY));
@@ -299,12 +310,10 @@ final class StackBox extends FrameLayout {
 
     @Override
     protected void onLayout(boolean changed, int l, int t, int r, int b) {
-      // Layout the toolbar at (0,0)
-      toolbar.layout(0, 0, r - l, toolbar.getMeasuredHeight());
-      // Layout other children using Box's margin-based logic
+      bar.layout(0, 0, r - l, bar.getMeasuredHeight());
       for (int i = 0; i < getChildCount(); i++) {
         View v = getChildAt(i);
-        if (v == toolbar) continue;
+        if (v == bar) continue;
         ViewGroup.LayoutParams raw = v.getLayoutParams();
         if (raw instanceof ViewGroup.MarginLayoutParams) {
           ViewGroup.MarginLayoutParams p = (ViewGroup.MarginLayoutParams) raw;
@@ -313,7 +322,10 @@ final class StackBox extends FrameLayout {
       }
     }
 
-    /** Applies `encode.rs` `screen_config`. */
+    /**
+     * Applies `encode.rs` `screen_config`. `backgroundPresent` is distinct from a transparent
+     * color.
+     */
     void configure(
         Mounter m,
         String title,
@@ -321,6 +333,7 @@ final class StackBox extends FrameLayout {
         boolean transparent,
         int tint,
         int background,
+        boolean backgroundPresent,
         int titleColor,
         boolean backVisible,
         boolean gesture,
@@ -336,44 +349,101 @@ final class StackBox extends FrameLayout {
       this.preventBack = preventBack;
       this.transparent = transparent;
       this.shown = shown;
-      float d = m.density;
-      toolbar.setVisibility(shown ? VISIBLE : GONE);
-      toolbar.setTitle(titleView >= 0 ? null : title);
-      int height = Math.round(headerHeight * d);
-      int bar = Math.round(56 * d);
-      // A transparent header has no height in the core (the content starts
-      // at the top), but the bar still shows over the content.
-      if (transparent) height = Math.max(height, m.host.safeTop + bar);
-      toolbar.setPadding(0, Math.max(0, height - bar), 0, 0);
-      ViewGroup.LayoutParams p = toolbar.getLayoutParams();
-      p.height = height;
-      toolbar.setLayoutParams(p);
-      int foreground =
-          tint != 0 ? tint : themeColor(getContext(), android.R.attr.textColorPrimary, 0xff1f2328);
-      toolbar.setTitleTextColor(
-          titleColor != 0
-              ? titleColor
-              : themeColor(getContext(), android.R.attr.textColorPrimary, 0xff1f2328));
-      if (transparent) toolbar.setBackgroundColor(0);
-      else
-        toolbar.setBackgroundColor(
-            background != 0
-                ? background
-                : themeColor(getContext(), android.R.attr.colorBackground, 0xffffffff));
-      arrow.setColor(foreground);
-      toolbar.setNavigationIcon(backVisible && canGoBack ? arrow : null);
-      toolbar.setNavigationContentDescription(backVisible && canGoBack ? upDescription() : null);
-      // Header items: the core sized them; the toolbar places them.
-      for (int i = toolbar.getChildCount() - 1; i >= 0; i--) {
-        View child = toolbar.getChildAt(i);
-        if (child instanceof Box) toolbar.removeViewAt(i);
-      }
-      add(m, left, android.view.Gravity.START);
-      add(m, titleView, android.view.Gravity.START);
-      add(m, right, android.view.Gravity.END);
-      toolbar.bringToFront();
+      this.tint = tint;
+      this.background = background;
+      this.backgroundPresent = backgroundPresent;
+      this.titleColor = titleColor;
+      this.backVisible = backVisible;
+      this.headerHeight = headerHeight;
+      this.canGoBack = canGoBack;
+      this.titleText = title;
+      this.leftId = left;
+      this.rightId = right;
+      this.titleId = titleView;
+      bar.setVisibility(shown ? VISIBLE : GONE);
+      applyHeight();
+      placeHeader(m);
+      applyChrome();
       reportHeader();
       reportInsets();
+    }
+
+    /** The system scheme changed. Defaults follow `host.dark`; explicit colors stay. */
+    void schemeChanged() {
+      applyChrome();
+    }
+
+    /**
+     * A positive encoded height is the whole bar, status inset included. Otherwise the bar is the
+     * status inset plus the 44pt content row. The row sits at the bottom of the bar.
+     */
+    private void applyHeight() {
+      float d = mounter.density;
+      int row = contentRowPx(d);
+      int encoded = Math.round(headerHeight * d);
+      int height = encoded > 0 ? encoded : mounter.host.safeTop + row;
+      bar.contentRow = row;
+      ViewGroup.LayoutParams p = bar.getLayoutParams();
+      if (p.height != height) {
+        p.height = height;
+        bar.setLayoutParams(p);
+      }
+    }
+
+    private void placeHeader(Mounter m) {
+      bar.leading.keep(bar.back);
+      bar.trailing.removeAllViews();
+      for (int i = bar.getChildCount() - 1; i >= 0; i--) {
+        View child = bar.getChildAt(i);
+        if (child != bar.leading && child != bar.trailing && child != bar.title)
+          bar.removeViewAt(i);
+      }
+      boolean showBack = canGoBack && backVisible && leftId < 0;
+      bar.back.setVisibility(showBack ? VISIBLE : GONE);
+      if (leftId >= 0) addItem(m, leftId, bar.leading);
+      if (rightId >= 0) addItem(m, rightId, bar.trailing);
+      if (titleId >= 0) {
+        bar.title.setVisibility(GONE);
+        addItem(m, titleId, bar);
+        View custom = m.views.get(titleId);
+        if (custom != null) custom.bringToFront();
+      } else {
+        boolean has = titleText != null && !titleText.isEmpty();
+        bar.title.setText(has ? titleText : "");
+        bar.title.setVisibility(has ? VISIBLE : GONE);
+        if (has) bar.title.bringToFront();
+      }
+    }
+
+    private void addItem(Mounter m, int itemId, ViewGroup parent) {
+      View item = m.views.get(itemId);
+      if (item == null) return;
+      if (item.getParent() instanceof ViewGroup) ((ViewGroup) item.getParent()).removeView(item);
+      int[] size = m.headerSizes.get(itemId);
+      int w = size != null ? size[0] : 1, h = size != null ? size[1] : 1;
+      parent.addView(item, new ViewGroup.LayoutParams(Math.max(1, w), Math.max(1, h)));
+    }
+
+    private void applyChrome() {
+      boolean dark = mounter.host.dark;
+      // Light: background #ffffff, title #000000, buttons #007AFF.
+      // Dark: background #000000, title #ffffff, buttons #0A84FF.
+      int buttons = tint != 0 ? tint : (dark ? 0xFF0A84FF : 0xFF007AFF);
+      int titles = titleColor != 0 ? titleColor : (dark ? 0xFFFFFFFF : 0xFF000000);
+      int bg;
+      if (transparent) bg = Color.TRANSPARENT;
+      else if (backgroundPresent) bg = background;
+      else bg = dark ? 0xFF000000 : 0xFFFFFFFF;
+      bar.setBackgroundColor(bg);
+      bar.title.setTextColor(titles);
+      bar.back.setTextColor(buttons);
+      // Hairline only when the bar is shown, opaque, and no background was set.
+      bar.hairline = shown && !transparent && !backgroundPresent;
+      bar.hairlineColor =
+          dark
+              ? Color.argb((int) Math.round(0.6 * 255), 0x54, 0x54, 0x58)
+              : Color.argb((int) Math.round(0.29 * 255), 0x3C, 0x3C, 0x43);
+      bar.invalidate();
     }
 
     /** Reports header height to native. */
@@ -384,7 +454,7 @@ final class StackBox extends FrameLayout {
       // at the top until this call reports again.
       if (!shown || transparent) return;
       int safeTopPx = mounter.host.safeTop;
-      int barPx = Math.round(56 * mounter.density);
+      int barPx = contentRowPx(mounter.density);
       float height = (safeTopPx + barPx) / mounter.density;
       if (height == lastHeaderHeight) return;
       long handle = mounter.host.handle();
@@ -414,7 +484,7 @@ final class StackBox extends FrameLayout {
               shown,
               transparent,
               mounter.host.safeTop,
-              toolbar.getLayoutParams().height,
+              bar.getLayoutParams().height,
               mounter.density);
       float right = mounter.host.safeRight / mounter.density;
       float bottom = mounter.host.safeBottom / mounter.density;
@@ -434,9 +504,7 @@ final class StackBox extends FrameLayout {
 
     /** Called when host insets change after the screen is mounted. */
     void insetsChanged() {
-      int height = toolbar.getLayoutParams().height;
-      int bar = Math.round(56 * mounter.density);
-      toolbar.setPadding(0, Math.max(0, height - bar), 0, 0);
+      applyHeight();
       reportHeader();
       reportInsets();
       requestLayout();
@@ -450,98 +518,197 @@ final class StackBox extends FrameLayout {
     }
 
     /**
-     * What the up arrow reads as: the system's own words for it (the action bar's, not in the
-     * public resources).
+     * Header drawn in the page, so it moves with the transition. The status inset is the space
+     * above a 44pt content row. Leading and trailing each take half the width and clip to it.
      */
-    private CharSequence upDescription() {
-      android.content.res.Resources system = android.content.res.Resources.getSystem();
-      int up = system.getIdentifier("action_bar_up_description", "string", "android");
-      return up != 0 ? system.getString(up) : null;
-    }
+    @SuppressLint("ViewConstructor")
+    static final class Bar extends ViewGroup {
+      final Column leading;
+      final Column trailing;
+      final TextView title;
+      final TextView back;
+      int contentRow;
+      private boolean hairline;
+      private int hairlineColor;
+      private final float density;
+      private final Paint line = new Paint(Paint.ANTI_ALIAS_FLAG);
 
-    private void add(Mounter m, int itemId, int gravity) {
-      if (itemId < 0) return;
-      View item = m.views.get(itemId);
-      if (item == null) return;
-      if (item.getParent() instanceof ViewGroup) ((ViewGroup) item.getParent()).removeView(item);
-      int[] size = m.headerSizes.get(itemId);
-      int w = size != null ? size[0] : 1, h = size != null ? size[1] : 1;
-      Toolbar.LayoutParams p =
-          new Toolbar.LayoutParams(
-              Math.max(1, w), Math.max(1, h), gravity | android.view.Gravity.CENTER_VERTICAL);
-      if (gravity == android.view.Gravity.END) p.rightMargin = Math.round(12 * m.density);
-      toolbar.addView(item, p);
-    }
+      Bar(Context context, float density) {
+        super(context);
+        this.density = density;
+        contentRow = contentRowPx(density);
+        setClipChildren(true);
+        leading = new Column(context, density, true);
+        trailing = new Column(context, density, false);
+        title = new Title(context);
+        title.setMaxLines(1);
+        title.setHorizontallyScrolling(false);
+        title.setEllipsize(TextUtils.TruncateAt.END);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_PX, 17f * density);
+        title.setTypeface(Typeface.create(Typeface.DEFAULT, 600, false));
+        title.setGravity(Gravity.CENTER);
+        title.setPadding(0, 0, 0, 0);
+        title.setMinimumWidth(0);
+        title.setMinimumHeight(0);
+        title.setClickable(false);
+        title.setLongClickable(false);
+        title.setFocusable(false);
+        title.setVisibility(GONE);
+        back = new TextView(context);
+        back.setText("\u2190");
+        back.setContentDescription("Back");
+        back.setMaxLines(1);
+        back.setTextSize(TypedValue.COMPLEX_UNIT_PX, 17f * density);
+        back.setTypeface(Typeface.create(Typeface.DEFAULT, 600, false));
+        back.setGravity(Gravity.CENTER_VERTICAL);
+        back.setPadding(0, 0, 0, 0);
+        back.setMinimumWidth(0);
+        back.setMinimumHeight(0);
+        back.setVisibility(GONE);
+        addView(leading);
+        addView(trailing);
+        addView(title);
+        leading.addView(
+            back, new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT));
+      }
 
-    private static int themeColor(Context context, int attr, int fallback) {
-      TypedValue v = new TypedValue();
-      if (!context.getTheme().resolveAttribute(attr, v, true)) return fallback;
-      if (v.resourceId != 0) {
-        try {
-          return context.getColorStateList(v.resourceId).getDefaultColor();
-        } catch (Exception e) {
-          return fallback;
+      /** Empty bar chrome swallows presses so they do not fall through to the page. */
+      @Override
+      public boolean onTouchEvent(MotionEvent event) {
+        return true;
+      }
+
+      @Override
+      protected void dispatchDraw(Canvas canvas) {
+        super.dispatchDraw(canvas);
+        if (!hairline || getWidth() <= 0 || getHeight() <= 0) return;
+        float t = 0.5f * density;
+        if (!(t > 0f)) return;
+        line.setColor(hairlineColor);
+        canvas.drawRect(0, getHeight() - t, getWidth(), getHeight(), line);
+      }
+
+      @Override
+      protected void onMeasure(int ws, int hs) {
+        int w = MeasureSpec.getSize(ws), h = MeasureSpec.getSize(hs);
+        setMeasuredDimension(w, h);
+        int row = Math.min(Math.max(0, contentRow), Math.max(0, h));
+        int leadW = w / 2;
+        int rowSpec = MeasureSpec.makeMeasureSpec(row, MeasureSpec.EXACTLY);
+        leading.measure(MeasureSpec.makeMeasureSpec(leadW, MeasureSpec.EXACTLY), rowSpec);
+        trailing.measure(MeasureSpec.makeMeasureSpec(w - leadW, MeasureSpec.EXACTLY), rowSpec);
+        if (title.getVisibility() != GONE) {
+          int max = Math.max(0, w - 2 * Math.round(16f * density));
+          title.measure(
+              MeasureSpec.makeMeasureSpec(max, MeasureSpec.AT_MOST),
+              MeasureSpec.makeMeasureSpec(row, MeasureSpec.AT_MOST));
+        }
+        for (int i = 0; i < getChildCount(); i++) {
+          View c = getChildAt(i);
+          if (c == leading || c == trailing || c == title || c.getVisibility() == GONE) continue;
+          ViewGroup.LayoutParams lp = c.getLayoutParams();
+          int cw = lp != null && lp.width > 0 ? lp.width : 1;
+          int ch = lp != null && lp.height > 0 ? lp.height : 1;
+          c.measure(
+              MeasureSpec.makeMeasureSpec(cw, MeasureSpec.EXACTLY),
+              MeasureSpec.makeMeasureSpec(ch, MeasureSpec.EXACTLY));
         }
       }
-      return v.data;
-    }
-  }
 
-  /** Material's "arrow back" icon, drawn from its path. */
-  static final class BackArrow extends Drawable {
-    private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Path path = new Path();
-    private final int size;
+      @Override
+      protected void onLayout(boolean changed, int l, int t, int r, int b) {
+        int w = r - l, h = b - t;
+        int row = Math.min(Math.max(0, contentRow), Math.max(0, h));
+        int top = h - row;
+        boolean rtl = getLayoutDirection() == LAYOUT_DIRECTION_RTL;
+        int leadW = w / 2;
+        int trailW = w - leadW;
+        int leadX = rtl ? w - leadW : 0;
+        int trailX = rtl ? 0 : leadW;
+        leading.layout(leadX, top, leadX + leadW, top + row);
+        trailing.layout(trailX, top, trailX + trailW, top + row);
+        if (title.getVisibility() != GONE) {
+          int tw = title.getMeasuredWidth(), th = title.getMeasuredHeight();
+          int x = (w - tw) / 2;
+          int y = top + Math.max(0, (row - th) / 2);
+          title.layout(x, y, x + tw, y + th);
+        }
+        for (int i = 0; i < getChildCount(); i++) {
+          View c = getChildAt(i);
+          if (c == leading || c == trailing || c == title || c.getVisibility() == GONE) continue;
+          int cw = c.getMeasuredWidth(), ch = c.getMeasuredHeight();
+          int x = (w - cw) / 2;
+          int y = top + (row - ch) / 2;
+          c.layout(x, y, x + cw, y + ch);
+        }
+      }
 
-    BackArrow(float density) {
-      size = Math.round(24 * density);
-      float s = density;
-      // M20,11H7.83l5.59-5.59L12,4l-8,8 8,8 1.41-1.41L7.83,13H20v-2z
-      path.moveTo(20 * s, 11 * s);
-      path.lineTo(7.83f * s, 11 * s);
-      path.lineTo(13.42f * s, 5.41f * s);
-      path.lineTo(12 * s, 4 * s);
-      path.lineTo(4 * s, 12 * s);
-      path.lineTo(12 * s, 20 * s);
-      path.lineTo(13.41f * s, 18.59f * s);
-      path.lineTo(7.83f * s, 13 * s);
-      path.lineTo(20 * s, 13 * s);
-      path.close();
-    }
+      /** String title: not a hit target, so ← and header items still receive presses. */
+      static final class Title extends TextView {
+        Title(Context context) {
+          super(context);
+        }
 
-    void setColor(int color) {
-      paint.setColor(color);
-      invalidateSelf();
-    }
+        @Override
+        public boolean dispatchTouchEvent(MotionEvent event) {
+          return false;
+        }
+      }
 
-    @Override
-    public void draw(Canvas canvas) {
-      canvas.save();
-      canvas.translate(getBounds().left, getBounds().top);
-      canvas.drawPath(path, paint);
-      canvas.restore();
-    }
+      /** One half of the bar. Children clip to this half and inset 16pt from the outer edge. */
+      static final class Column extends ViewGroup {
+        final float density;
+        final boolean leading;
 
-    @Override
-    public int getIntrinsicWidth() {
-      return size;
-    }
+        Column(Context context, float density, boolean leading) {
+          super(context);
+          this.density = density;
+          this.leading = leading;
+          setClipChildren(true);
+        }
 
-    @Override
-    public int getIntrinsicHeight() {
-      return size;
-    }
+        void keep(View stay) {
+          for (int i = getChildCount() - 1; i >= 0; i--) {
+            if (getChildAt(i) != stay) removeViewAt(i);
+          }
+        }
 
-    @Override
-    public void setAlpha(int alpha) {}
+        @Override
+        protected void onMeasure(int ws, int hs) {
+          int w = MeasureSpec.getSize(ws), h = MeasureSpec.getSize(hs);
+          setMeasuredDimension(w, h);
+          int avail = Math.max(0, w - Math.round(16f * density));
+          for (int i = 0; i < getChildCount(); i++) {
+            View c = getChildAt(i);
+            if (c.getVisibility() == GONE) continue;
+            ViewGroup.LayoutParams lp = c.getLayoutParams();
+            if (lp != null && lp.width > 0 && lp.height > 0) {
+              c.measure(
+                  MeasureSpec.makeMeasureSpec(lp.width, MeasureSpec.EXACTLY),
+                  MeasureSpec.makeMeasureSpec(lp.height, MeasureSpec.EXACTLY));
+            } else {
+              c.measure(
+                  MeasureSpec.makeMeasureSpec(avail, MeasureSpec.AT_MOST),
+                  MeasureSpec.makeMeasureSpec(Math.max(0, h), MeasureSpec.AT_MOST));
+            }
+          }
+        }
 
-    @Override
-    public void setColorFilter(ColorFilter filter) {}
-
-    @Override
-    @SuppressWarnings("deprecation")
-    public int getOpacity() {
-      return PixelFormat.TRANSLUCENT;
+        @Override
+        protected void onLayout(boolean changed, int l, int t, int r, int b) {
+          int w = r - l, h = b - t;
+          int inset = Math.round(16f * density);
+          boolean rtl = getLayoutDirection() == LAYOUT_DIRECTION_RTL;
+          for (int i = 0; i < getChildCount(); i++) {
+            View c = getChildAt(i);
+            if (c.getVisibility() == GONE) continue;
+            int cw = c.getMeasuredWidth(), ch = c.getMeasuredHeight();
+            int x = (leading != rtl) ? inset : w - inset - cw;
+            int y = (h - ch) / 2;
+            c.layout(x, y, x + cw, y + ch);
+          }
+        }
+      }
     }
   }
 }

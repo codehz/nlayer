@@ -117,8 +117,18 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
     headerComponent.set(component ?? null);
   }
 
-  const LIGHT_BAR = { bg: "#ffffff", title: "#0f172a", tint: "#3b82f6", line: "#e2e8f0" };
-  const DARK_BAR = { bg: "#1e293b", title: "#f1f5f9", tint: "#60a5fa", line: "#334155" };
+  const LIGHT_BAR = {
+    bg: "#ffffff",
+    title: "#000000",
+    tint: "#007AFF",
+    line: "rgba(60,60,67,0.29)",
+  };
+  const DARK_BAR = {
+    bg: "#000000",
+    title: "#ffffff",
+    tint: "#0A84FF",
+    line: "rgba(84,84,88,0.6)",
+  };
 
   function absent(value) {
     return value == null || value === false;
@@ -126,8 +136,7 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
 
   function backControl(tint, onBack) {
     const node = rt.element("text");
-    rt.prop(node, "class", "font-semibold");
-    rt.prop(node, "style", { color: tint });
+    rt.prop(node, "style", { color: tint, fontSize: 17, fontWeight: "600" });
     rt.prop(node, "accessibilityLabel", "Back");
     rt.prop(node, "onPress", () => onBack?.());
     rt.insert(node, "←");
@@ -135,23 +144,51 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
   }
 
   function titleView(title, color) {
-    if (title != null && typeof title === "object") return title;
+    if (title != null && typeof title === "object") {
+      const node = rt.element("view");
+      rt.prop(node, "style", {
+        position: "absolute",
+        alignSelf: "center",
+        top: 0,
+        bottom: 0,
+        justifyContent: "center",
+      });
+      rt.insert(node, title);
+      return node;
+    }
     const node = rt.element("text");
-    rt.prop(node, "class", "shrink-0 px-2 text-center text-[15px] font-semibold");
-    rt.prop(node, "style", { color, numberOfLines: 1 });
+    rt.prop(node, "style", {
+      position: "absolute",
+      left: 16,
+      right: 16,
+      top: 0,
+      bottom: 0,
+      textAlign: "center",
+      textAlignVertical: "center",
+      fontSize: 17,
+      fontWeight: "600",
+      numberOfLines: 1,
+      color,
+      pointerEvents: "none",
+    });
     rt.insert(node, title == null ? "" : String(title));
     return node;
   }
 
   function side(end, content) {
     const node = rt.element("view");
-    rt.prop(
-      node,
-      "class",
-      end
-        ? "min-w-0 flex-1 flex-row items-center justify-end px-3"
-        : "min-w-0 flex-1 flex-row items-center px-3",
-    );
+    rt.prop(node, "style", {
+      position: "absolute",
+      top: 0,
+      bottom: 0,
+      width: "50%",
+      overflow: "hidden",
+      flexDirection: "row",
+      alignItems: "center",
+      ...(end
+        ? { end: 0, paddingEnd: 16, justifyContent: "flex-end" }
+        : { start: 0, paddingStart: 16 }),
+    });
     if (content != null) rt.insert(node, content);
     return node;
   }
@@ -161,8 +198,8 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
     const transparent = !!props.headerTransparent;
     const headerStyle = props.headerStyle ?? {};
     const background = transparent ? "transparent" : (headerStyle.backgroundColor ?? scheme.bg);
-    const titleColor = headerStyle.color ?? (transparent ? "#ffffff" : scheme.title);
-    const tint = headerStyle.tintColor ?? (transparent ? "#ffffff" : scheme.tint);
+    const titleColor = headerStyle.color ?? scheme.title;
+    const tint = headerStyle.tintColor ?? scheme.tint;
     const hairline = !transparent && headerStyle.backgroundColor == null;
     const customLeading = !absent(props.headerLeft);
     const showBack = !!props.canGoBack && props.headerBackVisible !== false && !customLeading;
@@ -180,12 +217,15 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
       backgroundColor: background,
     });
     const row = rt.element("view");
-    rt.prop(row, "class", "h-11 flex-row items-center");
     rt.prop(row, "style", {
-      borderBottomWidth: hairline ? 1 : 0,
+      position: "relative",
+      height: 44,
+      overflow: "hidden",
+      borderBottomWidth: hairline ? 0.5 : 0,
       borderBottomColor: scheme.line,
     });
-    rt.insert(row, [side(false, leading), titleView(title, titleColor), side(true, trailing)]);
+    // Sides first so the title paints above them.
+    rt.insert(row, [side(false, leading), side(true, trailing), titleView(title, titleColor)]);
     rt.insert(root, row);
     return root;
   }

@@ -391,6 +391,7 @@ test("NavPage mounts the default header and can hide or replace it", () => {
     },
   };
   let backs = 0;
+  let scheme = "light";
   const nav = createNavigation(
     reactive,
     {
@@ -399,7 +400,7 @@ test("NavPage mounts the default header and can hide or replace it", () => {
       requestBack: () => {
         backs += 1;
       },
-      colorScheme: () => "light",
+      colorScheme: () => scheme,
     },
     { createAnimatedValue: () => ({}), Animated: { timing: () => ({}) } },
     () => ({ top: 47, right: 1, bottom: 20, left: 2 }),
@@ -433,6 +434,38 @@ test("NavPage mounts the default header and can hide or replace it", () => {
   const back = tree.find((el) => el.props.accessibilityLabel === "Back");
   back.props.onPress();
   assert.equal(backs, 1);
+  assert.equal(pushed.props.style.backgroundColor, "#ffffff");
+  const row = pushed.kids[0];
+  assert.equal(row.props.style.height, 44);
+  assert.equal(row.props.style.borderBottomWidth, 0.5);
+  assert.equal(row.props.style.borderBottomColor, "rgba(60,60,67,0.29)");
+  const titleNode = tree.find((el) => el._tag === "text" && el.kids.join("") === "Detail");
+  assert.equal(titleNode.props.style.color, "#000000");
+  assert.equal(back.props.style.color, "#007AFF");
+
+  tree.length = 0;
+  const clear = nav.NavHeader({
+    title: "Clear",
+    canGoBack: true,
+    headerTransparent: true,
+  });
+  assert.equal(clear.props.style.backgroundColor, "transparent");
+  assert.equal(clear.kids[0].props.style.borderBottomWidth, 0);
+  const clearTitle = tree.find((el) => el._tag === "text" && el.kids.join("") === "Clear");
+  const clearBack = tree.find((el) => el.props.accessibilityLabel === "Back");
+  assert.notEqual(clearTitle.props.style.color, "#ffffff");
+  assert.notEqual(clearBack.props.style.color, "#ffffff");
+  assert.equal(clearTitle.props.style.color, "#000000");
+  assert.equal(clearBack.props.style.color, "#007AFF");
+
+  scheme = "dark";
+  tree.length = 0;
+  const dark = nav.NavHeader({ title: "Night", canGoBack: true });
+  assert.equal(dark.props.style.backgroundColor, "#000000");
+  const darkTitle = tree.find((el) => el._tag === "text" && el.kids.join("") === "Night");
+  const darkBack = tree.find((el) => el.props.accessibilityLabel === "Back");
+  assert.equal(darkTitle.props.style.color, "#ffffff");
+  assert.equal(darkBack.props.style.color, "#0A84FF");
 
   tree.length = 0;
   nav.setNavHeader(() => {

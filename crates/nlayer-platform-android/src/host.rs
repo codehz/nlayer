@@ -280,8 +280,8 @@ fn start_engine(host: &Host, bundle: &str, data_dir: &str, dark: bool) -> Result
     });
     let mut config = EngineConfig::new(bundle, viewport)
         .with_os(Os::Android)
-        // Android's toolbar is 56dp; it has no large titles.
-        .with_header_heights((Points(56.0), Points(56.0)))
+        // The bar is 44pt with no large title, not a 56dp Toolbar.
+        .with_header_heights((Points(44.0), Points(44.0)))
         .with_color_scheme(nlayer_core::ColorScheme::from_dark(dark));
     if !data_dir.is_empty() {
         config = config.with_data_dir(data_dir);
