@@ -35,6 +35,18 @@ export const headerLargeTitle = signal(false);
 /** Header demo: leading items next to the system back instead of replacing it. */
 export const headerSupplement = signal(false);
 
+/** The covered page's `backButtonTitle` / `backButtonDisplayMode`: the page
+ * pushed above shows them on its back button. */
+export const backButtonTitle = "Home";
+export const backDisplayMode = signal<"default" | "generic" | "minimal">("default");
+
+const BACK_MODES = ["default", "generic", "minimal"] as const;
+
+export function cycleBackDisplayMode(): void {
+  const at = BACK_MODES.indexOf(backDisplayMode());
+  backDisplayMode.set(BACK_MODES[(at + 1) % BACK_MODES.length]);
+}
+
 /** Counts a screen the user popped. Every screen hands this to its `NavPage`. */
 export function dismiss(): void {
   dismissedCount.set(dismissedCount() + 1);

@@ -1025,7 +1025,7 @@ test("a long nav link keeps its wrapped second line", () => {
   reveal(app, (node) => node.testID === "open-header");
   const header = must(flat(app.tree(), []).find((node) => node.testID === "open-header"));
   const dialog = must(flat(app.tree(), []).find((node) => node.testID === "open-dialog"));
-  expect(header.text).toBe("→ Header Demo (title, headerStyle, headerTransparent)");
+  expect(header.text).toBe("→ Header Demo (subtitle, item groups, bar appearances)");
   expect(dialog.text).toBe("→ Dialog Demo");
   expect(header.frame.height > dialog.frame.height + 8).toBe(true);
 });

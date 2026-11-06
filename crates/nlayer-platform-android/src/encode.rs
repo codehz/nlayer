@@ -19,8 +19,9 @@ use nlayer_core::geometry::{DefiniteLength, Points, REM_SIZE};
 use nlayer_core::style::{BorderStyle, Color, PositionAxis, TextAlign, TextStyle, ViewStyle};
 use nlayer_core::text::AttributedText;
 use nlayer_core::{
-    Command, EventMask, ImageSource, InputConfig, Interaction, KeyboardDismiss, KeyboardTaps,
-    KeyboardType, MountBatch, MountItem, NodeId, ResizeMode, ViewKind,
+    BackButtonDisplayMode, BarItem, BarShadow, Command, EventMask, ImageSource, InputConfig,
+    Interaction, KeyboardDismiss, KeyboardTaps, KeyboardType, LargeTitleDisplayMode, MountBatch,
+    MountItem, NodeId, ResizeMode, ViewKind,
 };
 
 const CREATE: i32 = 0;
@@ -377,27 +378,7 @@ pub fn encode(batch: MountBatch) -> Encoded {
                 e.id(id);
                 e.bool(selectable);
             }
-            MountItem::ScreenConfig { id, config } => {
-                e.int(SCREEN_CONFIG);
-                e.id(id);
-                match &config.title {
-                    Some(title) => e.string(title.to_string()),
-                    None => e.int(-1),
-                }
-                e.bool(config.header_visible);
-                e.bool(config.header_transparent);
-                opt_color(&mut e, config.tint_color);
-                opt_color(&mut e, config.background_color);
-                opt_color(&mut e, config.title_color);
-                e.bool(config.back_visible);
-                e.bool(config.gesture_enabled);
-                e.bool(config.prevent_back);
-                e.int(screen_animation_code(config.animation));
-                e.int(config.left.map_or(-1, |id| id as i32));
-                e.int(config.right.map_or(-1, |id| id as i32));
-                e.int(config.title_view.map_or(-1, |id| id as i32));
-                e.float(config.header_height.0);
-            }
+            MountItem::ScreenConfig { id, config } => screen_config(&mut e, id, &config),
             MountItem::ModalConfig { id, config } => {
                 e.int(MODAL_CONFIG);
                 e.id(id);
@@ -512,6 +493,114 @@ fn opt_color(e: &mut Encoded, color: Option<Color>) {
             e.int(argb(color));
         }
         None => e.bool(false),
+    }
+}
+
+/// `SCREEN_CONFIG` (opcode 20). Java `Mounter.screenConfig` reads the same words.
+///
+/// ```text
+/// id
+/// titleIndex, subtitleIndex          i32, -1 or a string
+/// headerVisible, headerTransparent   i32 0/1
+/// backVisible                        i32 0/1  (!hides_back_button)
+/// supplement                         i32 0/1  (leftItemsSupplementBackButton)
+/// gestureEnabled, preventBack        i32 0/1
+/// animation                          i32
+/// largeTitle                         i32  0 automatic, 1 always, 2 never
+/// backTitleIndex                     i32  this page's backButtonTitle
+/// backMode                           i32  0 default, 1 generic, 2 minimal
+/// titleView                          i32  node id or -1
+/// headerHeight, barHeight            f32
+/// background, title, large title, tint:
+///   present i32 0/1 [, argb i32]
+/// shadowKind                         i32  0 absent, 1 none, 2 color [, argb]
+/// groupCount                         i32
+/// per group, leading then trailing:
+///   slot i32 (0 leading, 1 trailing), itemCount i32
+///   per item: id i32, kind i32 (0 button, 1 custom)
+///     button: titleIndex, imagePresent [, uriIndex], enabled,
+///             tintPresent [, argb]
+/// ```
+fn screen_config(e: &mut Encoded, id: NodeId, config: &nlayer_core::ScreenConfig) {
+    e.int(SCREEN_CONFIG);
+    e.id(id);
+    opt_str(e, config.title.as_deref());
+    opt_str(e, config.subtitle.as_deref());
+    e.bool(config.header_visible);
+    e.bool(config.header_transparent);
+    e.bool(!config.hides_back_button);
+    e.bool(config.left_items_supplement_back_button);
+    e.bool(config.gesture_enabled);
+    e.bool(config.prevent_back);
+    e.int(screen_animation_code(config.animation));
+    e.int(match config.large_title {
+        LargeTitleDisplayMode::Automatic => 0,
+        LargeTitleDisplayMode::Always => 1,
+        LargeTitleDisplayMode::Never => 2,
+    });
+    opt_str(e, config.back_button_title.as_deref());
+    e.int(match config.back_button_display_mode {
+        BackButtonDisplayMode::Default => 0,
+        BackButtonDisplayMode::Generic => 1,
+        BackButtonDisplayMode::Minimal => 2,
+    });
+    e.int(config.title_view.map_or(-1, |id| id as i32));
+    e.float(config.header_height.0);
+    e.float(config.bar_height.0);
+    let appearance = config.standard;
+    opt_color(e, appearance.background_color);
+    opt_color(e, appearance.title_color);
+    opt_color(e, appearance.large_title_color);
+    opt_color(e, appearance.tint_color);
+    match appearance.shadow {
+        None => e.int(0),
+        Some(BarShadow::None) => e.int(1),
+        Some(BarShadow::Color(color)) => {
+            e.int(2);
+            e.int(argb(color));
+        }
+    }
+    e.int((config.leading.len() + config.trailing.len()) as i32);
+    for (slot, groups) in [(0_i32, &config.leading), (1, &config.trailing)] {
+        for group in groups {
+            e.int(slot);
+            e.int(group.len() as i32);
+            for item in group {
+                match item {
+                    BarItem::Button {
+                        id,
+                        title,
+                        image,
+                        enabled,
+                        tint_color,
+                    } => {
+                        e.int(*id as i32);
+                        e.int(0);
+                        opt_str(e, title.as_deref());
+                        match image {
+                            Some(source) => {
+                                e.bool(true);
+                                e.string(source.uri.to_string());
+                            }
+                            None => e.bool(false),
+                        }
+                        e.bool(*enabled);
+                        opt_color(e, *tint_color);
+                    }
+                    BarItem::Custom(id) => {
+                        e.int(*id as i32);
+                        e.int(1);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn opt_str(e: &mut Encoded, value: Option<&str>) {
+    match value {
+        Some(value) => e.string(value.to_string()),
+        None => e.int(-1),
     }
 }
 
@@ -1575,26 +1664,69 @@ mod tests {
 
     #[test]
     fn screen_config_encodes_all_fields() {
-        use nlayer_core::ScreenConfig;
+        use nlayer_core::geometry::Points;
+        use nlayer_core::{
+            BackButtonDisplayMode, BarAppearance, BarItem, BarShadow, LargeTitleDisplayMode,
+            ScreenConfig,
+        };
         let encoded = super::encode(MountBatch {
             items: vec![MountItem::ScreenConfig {
                 id: 20,
                 config: Box::new(ScreenConfig {
                     title: Some(Arc::from("Test Screen")),
+                    subtitle: Some(Arc::from("Sub")),
                     header_visible: true,
                     header_transparent: false,
-                    tint_color: Some(Color::rgba(255, 0, 0, 255)),
-                    background_color: None,
-                    title_color: Some(Color::rgba(0, 0, 255, 255)),
-                    back_visible: false,
+                    large_title: LargeTitleDisplayMode::Always,
+                    back_button_title: Some(Arc::from("Inbox")),
+                    back_button_display_mode: BackButtonDisplayMode::Generic,
+                    hides_back_button: true,
+                    left_items_supplement_back_button: true,
+                    standard: BarAppearance {
+                        background_color: Some(Color::rgba(1, 2, 3, 255)),
+                        title_color: Some(Color::rgba(0, 0, 255, 255)),
+                        large_title_color: Some(Color::rgba(0, 255, 0, 128)),
+                        tint_color: Some(Color::rgba(255, 0, 0, 255)),
+                        shadow: Some(BarShadow::Color(Color::rgba(0, 0, 0, 255))),
+                    },
+                    leading: vec![
+                        vec![BarItem::Button {
+                            id: 7,
+                            title: Some(Arc::from("Edit")),
+                            image: None,
+                            enabled: true,
+                            tint_color: None,
+                        }],
+                        vec![
+                            BarItem::Custom(8),
+                            BarItem::Button {
+                                id: 9,
+                                title: None,
+                                image: Some(ImageSource {
+                                    uri: Arc::from("asset:/plus.png"),
+                                    ..ImageSource::default()
+                                }),
+                                enabled: false,
+                                tint_color: Some(Color::rgba(9, 9, 9, 255)),
+                            },
+                        ],
+                    ],
+                    trailing: vec![vec![BarItem::Button {
+                        id: 10,
+                        title: Some(Arc::from("Done")),
+                        image: Some(ImageSource {
+                            uri: Arc::from("asset:/ok.png"),
+                            ..ImageSource::default()
+                        }),
+                        enabled: true,
+                        tint_color: None,
+                    }]],
                     gesture_enabled: true,
                     prevent_back: false,
                     animation: nlayer_core::ScreenAnimation::Fade,
-                    left: Some(100),
-                    right: None,
                     title_view: Some(101),
-                    header_view: None,
-                    header_height: nlayer_core::geometry::Points(44.0),
+                    header_height: Points(88.0),
+                    bar_height: Points(112.0),
                     ..ScreenConfig::default()
                 }),
             }],
@@ -1603,21 +1735,53 @@ mod tests {
         assert_eq!(words.int(), super::SCREEN_CONFIG);
         assert_eq!(words.int(), 20);
         assert_eq!(object(&encoded, words.int()), "Test Screen");
-        assert_eq!(words.int(), 1); // header_visible true
-        assert_eq!(words.int(), 0); // header_transparent false
-        assert_eq!(words.int(), 1); // tint_color present
-        assert_eq!(words.int(), 0xFFFF0000u32 as i32); // tint_color ARGB
-        assert_eq!(words.int(), 0); // background_color absent
-        assert_eq!(words.int(), 1); // title_color present
-        assert_eq!(words.int(), 0xFF0000FFu32 as i32); // title_color ARGB
-        assert_eq!(words.int(), 0); // back_visible false
-        assert_eq!(words.int(), 1); // gesture_enabled true
-        assert_eq!(words.int(), 0); // prevent_back false
-        assert_eq!(words.int(), 1); // animation Fade
-        assert_eq!(words.int(), 100); // left id
-        assert_eq!(words.int(), -1); // right id (None)
-        assert_eq!(words.int(), 101); // title_view id
-        assert_eq!(words.float(), 44.0); // header_height
+        assert_eq!(object(&encoded, words.int()), "Sub");
+        assert_eq!(words.int(), 1); // header visible
+        assert_eq!(words.int(), 0); // not transparent
+        assert_eq!(words.int(), 0); // back hidden
+        assert_eq!(words.int(), 1); // leading supplements back
+        assert_eq!(words.int(), 1); // gesture
+        assert_eq!(words.int(), 0); // prevent back
+        assert_eq!(words.int(), 1); // fade
+        assert_eq!(words.int(), 1); // large title always
+        assert_eq!(object(&encoded, words.int()), "Inbox");
+        assert_eq!(words.int(), 1); // generic back
+        assert_eq!(words.int(), 101); // title view
+        assert_eq!(words.float(), 88.0);
+        assert_eq!(words.float(), 112.0);
+        assert_eq!(words.int(), 1);
+        assert_eq!(words.int(), 0xFF01_0203_u32 as i32);
+        assert_eq!(words.int(), 1);
+        assert_eq!(words.int(), 0xFF00_00FF_u32 as i32);
+        assert_eq!(words.int(), 1);
+        assert_eq!(words.int(), 0x8000_FF00_u32 as i32);
+        assert_eq!(words.int(), 1);
+        assert_eq!(words.int(), 0xFFFF_0000_u32 as i32);
+        assert_eq!(words.int(), 2); // shadow color
+        assert_eq!(words.int(), 0xFF00_0000_u32 as i32);
+        assert_eq!(words.int(), 3); // groups
+        assert_eq!((words.int(), words.int()), (0, 1));
+        assert_eq!((words.int(), words.int()), (7, 0));
+        assert_eq!(object(&encoded, words.int()), "Edit");
+        assert_eq!(words.int(), 0); // no image
+        assert_eq!(words.int(), 1); // enabled
+        assert_eq!(words.int(), 0); // no item tint
+        assert_eq!((words.int(), words.int()), (0, 2));
+        assert_eq!((words.int(), words.int()), (8, 1)); // custom
+        assert_eq!((words.int(), words.int()), (9, 0));
+        assert_eq!(words.int(), -1); // no title
+        assert_eq!(words.int(), 1);
+        assert_eq!(object(&encoded, words.int()), "asset:/plus.png");
+        assert_eq!(words.int(), 0); // disabled
+        assert_eq!(words.int(), 1);
+        assert_eq!(words.int(), 0xFF09_0909_u32 as i32);
+        assert_eq!((words.int(), words.int()), (1, 1));
+        assert_eq!((words.int(), words.int()), (10, 0));
+        assert_eq!(object(&encoded, words.int()), "Done");
+        assert_eq!(words.int(), 1);
+        assert_eq!(object(&encoded, words.int()), "asset:/ok.png");
+        assert_eq!(words.int(), 1);
+        assert_eq!(words.int(), 0);
         assert!(words.done());
     }
 
@@ -1636,20 +1800,27 @@ mod tests {
         let mut words = read(&encoded);
         assert_eq!(words.int(), super::SCREEN_CONFIG);
         assert_eq!(words.int(), 21);
-        assert_eq!(words.int(), -1); // title absent
-        assert_eq!(words.int(), 1); // header_visible (default true)
-        assert_eq!(words.int(), 1); // header_transparent (no opaque background)
-        assert_eq!(words.int(), 0); // tint_color absent
-        assert_eq!(words.int(), 0); // background_color absent
-        assert_eq!(words.int(), 0); // title_color absent
-        assert_eq!(words.int(), 1); // back_visible (default true)
-        assert_eq!(words.int(), 1); // gesture_enabled (default true)
-        assert_eq!(words.int(), 0); // prevent_back (default false)
-        assert_eq!(words.int(), 0); // animation Default
-        assert_eq!(words.int(), -1); // left absent
-        assert_eq!(words.int(), -1); // right absent
-        assert_eq!(words.int(), -1); // title_view absent
-        assert_eq!(words.float(), 0.0); // header_height (default 0)
+        assert_eq!(words.int(), -1); // title
+        assert_eq!(words.int(), -1); // subtitle
+        assert_eq!(words.int(), 1); // header visible
+        assert_eq!(words.int(), 1); // transparent
+        assert_eq!(words.int(), 1); // back visible
+        assert_eq!(words.int(), 0); // supplement
+        assert_eq!(words.int(), 1); // gesture
+        assert_eq!(words.int(), 0); // prevent back
+        assert_eq!(words.int(), 0); // animation
+        assert_eq!(words.int(), 2); // large title never
+        assert_eq!(words.int(), -1); // back title
+        assert_eq!(words.int(), 0); // back mode
+        assert_eq!(words.int(), -1); // title view
+        assert_eq!(words.float(), 0.0); // header height
+        assert_eq!(words.float(), 44.0); // bar height
+        assert_eq!(words.int(), 0); // background
+        assert_eq!(words.int(), 0); // title color
+        assert_eq!(words.int(), 0); // large title color
+        assert_eq!(words.int(), 0); // tint
+        assert_eq!(words.int(), 0); // shadow absent
+        assert_eq!(words.int(), 0); // no groups
         assert!(words.done());
     }
 

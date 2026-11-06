@@ -71,36 +71,7 @@ final class ImageBox extends View {
     new Thread(
             new Runnable() {
               public void run() {
-                Bitmap result = null;
-                try {
-                  if (source.startsWith("asset:/")) {
-                    String rest = source.substring(7);
-                    if (rest.contains("..")) return;
-                    InputStream in = host.openAsset(rest);
-                    try {
-                      result = BitmapFactory.decodeStream(in);
-                    } finally {
-                      in.close();
-                    }
-                  } else if (source.startsWith("http://") || source.startsWith("https://")) {
-                    HttpURLConnection c = (HttpURLConnection) new URL(source).openConnection();
-                    c.setInstanceFollowRedirects(true);
-                    c.setConnectTimeout(15000);
-                    c.setReadTimeout(20000);
-                    try {
-                      InputStream in = c.getInputStream();
-                      try {
-                        result = BitmapFactory.decodeStream(in);
-                      } finally {
-                        in.close();
-                      }
-                    } finally {
-                      c.disconnect();
-                    }
-                  }
-                } catch (Exception ignored) {
-                }
-                final Bitmap decoded = result;
+                final Bitmap decoded = decode(host, source);
                 post(
                     new Runnable() {
                       public void run() {
@@ -113,6 +84,41 @@ final class ImageBox extends View {
               }
             })
         .start();
+  }
+
+  /** `asset:/` and http(s) bytes, or null. Shared with bar-button icons. */
+  static Bitmap decode(HostView host, String source) {
+    if (host == null || source == null) return null;
+    try {
+      if (source.startsWith("asset:/")) {
+        String rest = source.substring(7);
+        if (rest.contains("..")) return null;
+        InputStream in = host.openAsset(rest);
+        try {
+          return BitmapFactory.decodeStream(in);
+        } finally {
+          in.close();
+        }
+      }
+      if (source.startsWith("http://") || source.startsWith("https://")) {
+        HttpURLConnection c = (HttpURLConnection) new URL(source).openConnection();
+        c.setInstanceFollowRedirects(true);
+        c.setConnectTimeout(15000);
+        c.setReadTimeout(20000);
+        try {
+          InputStream in = c.getInputStream();
+          try {
+            return BitmapFactory.decodeStream(in);
+          } finally {
+            in.close();
+          }
+        } finally {
+          c.disconnect();
+        }
+      }
+    } catch (Exception ignored) {
+    }
+    return null;
   }
 
   private float place(float free, boolean end, int kind, float value) {

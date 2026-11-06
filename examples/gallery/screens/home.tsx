@@ -1,5 +1,12 @@
 import { NavPage, Scroll, Text, View } from "@nlayer/ui";
-import { dismiss, dismissedCount, nav } from "../nav";
+import {
+  backButtonTitle,
+  backDisplayMode,
+  cycleBackDisplayMode,
+  dismiss,
+  dismissedCount,
+  nav,
+} from "../nav";
 import { Section } from "../Section";
 
 /** A row of the index: the screen it pushes, and the demo it holds. */
@@ -13,7 +20,12 @@ function Link(props: { testID: string; children: string; onPress: () => void }) 
 
 export function HomePage() {
   return (
-    <NavPage title="Gallery" onDismiss={dismiss}>
+    <NavPage
+      title="Gallery"
+      backButtonTitle={backButtonTitle}
+      backButtonDisplayMode={backDisplayMode()}
+      onDismiss={dismiss}
+    >
       <Scroll testID="page" class="flex-1 bg-slate-50">
         <View
           testID="safe"
@@ -83,7 +95,7 @@ export function HomePage() {
               → Virtual List (header, footer, separator)
             </Link>
             <Link testID="open-header" onPress={() => nav.push({ name: "header" })}>
-              → Header Demo (title, headerStyle, headerTransparent)
+              → Header Demo (subtitle, item groups, bar appearances)
             </Link>
             <Link
               testID="open-viewport-parent"
@@ -100,6 +112,20 @@ export function HomePage() {
             <Link testID="open-effects" onPress={() => nav.push({ name: "effects" })}>
               → Effects (shadows, gradients)
             </Link>
+          </Section>
+
+          <Section title="The bar">
+            <Text
+              testID="cycle-back-mode"
+              onPress={() => cycleBackDisplayMode()}
+              class="rounded-md bg-[#cbd5e1] p-2 text-center font-semibold"
+            >
+              backButtonDisplayMode: {backDisplayMode()}
+            </Text>
+            <Text class="text-sm text-[#64748b]">
+              The page above shows this page's back title and display mode; hide the system back to
+              replace it with a leading group.
+            </Text>
           </Section>
         </View>
       </Scroll>

@@ -8,24 +8,58 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 final class Mounter {
-  static final class ScreenOptions {
+  static final class BarEntry {
+    int id;
+    boolean custom;
     String title;
-    boolean shown;
-    boolean transparent;
+    String image;
+    boolean enabled = true;
     boolean tintPresent;
     int tint;
+  }
+
+  static final class BarGroup {
+    final java.util.ArrayList<BarEntry> items = new java.util.ArrayList<>();
+  }
+
+  /** One screen's bar, as `encode.rs` `screen_config` writes it. */
+  static final class ScreenOptions {
+    String title;
+    String subtitle;
+    boolean shown;
+    boolean transparent;
+    boolean backVisible = true;
+    boolean supplement;
+    boolean gesture = true;
+    boolean preventBack;
+    int animation;
+
+    /** 0 automatic, 1 always, 2 never. */
+    int largeTitle = 2;
+
+    String backTitle;
+
+    /** 0 default, 1 generic, 2 minimal. This page's mode, read by the page above. */
+    int backMode;
+
+    int titleView = -1;
+    float headerHeight;
+    float barHeight = 44f;
     boolean backgroundPresent;
     int background;
     boolean titleColorPresent;
     int titleColor;
-    boolean backVisible;
-    boolean gesture;
-    boolean preventBack;
-    int animation;
-    int left;
-    int right;
-    int titleView;
-    float headerHeight;
+    boolean largeTitleColorPresent;
+    int largeTitleColor;
+    boolean tintPresent;
+    int tint;
+
+    /** 0 absent, 1 none, 2 a color in {@link #shadowColor}. */
+    int shadowKind;
+
+    int shadowColor;
+    final java.util.ArrayList<BarGroup> leading = new java.util.ArrayList<>();
+    final java.util.ArrayList<BarGroup> trailing = new java.util.ArrayList<>();
   }
 
   static final class ModalOptions {
@@ -786,9 +820,18 @@ final class Mounter {
         py = Math.round(y * density),
         pw = Math.round(w * density),
         ph = Math.round(h * density);
-    // Header items: store size but don't set margins/layout
+    // Header items: the bar places them. A later frame updates one already shown.
     if (headerItems.contains(id)) {
       headerSizes.put(id, new int[] {pw, ph});
+      if (v.getParent() instanceof ViewGroup && v.getLayoutParams() != null) {
+        ViewGroup.LayoutParams lp = v.getLayoutParams();
+        int nw = Math.max(1, pw), nh = Math.max(1, ph);
+        if (lp.width != nw || lp.height != nh) {
+          lp.width = nw;
+          lp.height = nh;
+          v.setLayoutParams(lp);
+        }
+      }
       return;
     }
     ViewGroup.LayoutParams lp = v.getLayoutParams();
@@ -1520,30 +1563,71 @@ final class Mounter {
   private void screenConfig(ByteBuffer b, Object[] objects) {
     int id = b.getInt();
     ScreenOptions opts = new ScreenOptions();
-    int titleIndex = b.getInt();
-    opts.title = titleIndex < 0 ? null : (String) objects[titleIndex];
+    opts.title = str(b, objects);
+    opts.subtitle = str(b, objects);
     opts.shown = b.getInt() != 0;
     opts.transparent = b.getInt() != 0;
-    opts.tintPresent = b.getInt() != 0;
-    if (opts.tintPresent) opts.tint = b.getInt();
-    opts.backgroundPresent = b.getInt() != 0;
-    if (opts.backgroundPresent) opts.background = b.getInt();
-    opts.titleColorPresent = b.getInt() != 0;
-    if (opts.titleColorPresent) opts.titleColor = b.getInt();
     opts.backVisible = b.getInt() != 0;
+    opts.supplement = b.getInt() != 0;
     opts.gesture = b.getInt() != 0;
     opts.preventBack = b.getInt() != 0;
     opts.animation = b.getInt();
-    opts.left = b.getInt();
-    opts.right = b.getInt();
+    opts.largeTitle = b.getInt();
+    opts.backTitle = str(b, objects);
+    opts.backMode = b.getInt();
     opts.titleView = b.getInt();
     opts.headerHeight = b.getFloat();
+    opts.barHeight = b.getFloat();
+    if (b.getInt() != 0) {
+      opts.backgroundPresent = true;
+      opts.background = b.getInt();
+    }
+    if (b.getInt() != 0) {
+      opts.titleColorPresent = true;
+      opts.titleColor = b.getInt();
+    }
+    if (b.getInt() != 0) {
+      opts.largeTitleColorPresent = true;
+      opts.largeTitleColor = b.getInt();
+    }
+    if (b.getInt() != 0) {
+      opts.tintPresent = true;
+      opts.tint = b.getInt();
+    }
+    opts.shadowKind = b.getInt();
+    if (opts.shadowKind == 2) opts.shadowColor = b.getInt();
+    int groups = b.getInt();
+    for (int g = 0; g < groups; g++) {
+      int slot = b.getInt();
+      int count = b.getInt();
+      BarGroup group = new BarGroup();
+      for (int i = 0; i < count; i++) {
+        BarEntry item = new BarEntry();
+        item.id = b.getInt();
+        item.custom = b.getInt() != 0;
+        if (!item.custom) {
+          item.title = str(b, objects);
+          if (b.getInt() != 0) item.image = str(b, objects);
+          item.enabled = b.getInt() != 0;
+          if (b.getInt() != 0) {
+            item.tintPresent = true;
+            item.tint = b.getInt();
+          }
+        }
+        group.items.add(item);
+      }
+      (slot == 1 ? opts.trailing : opts.leading).add(group);
+    }
     screenOptions.put(id, opts);
     dirtyScreens.add(id);
     int parentId = hosts.get(id, -1);
-    if (parentId >= 0) {
-      dirtyStacks.add(parentId);
-    }
+    if (parentId >= 0) dirtyStacks.add(parentId);
+  }
+
+  private static String str(ByteBuffer b, Object[] objects) {
+    int index = b.getInt();
+    if (index < 0 || objects == null || index >= objects.length) return null;
+    return objects[index] instanceof String ? (String) objects[index] : null;
   }
 
   private void modalConfig(ByteBuffer b) {
@@ -1584,35 +1668,19 @@ final class Mounter {
       StackBox.ScreenBox screen = (StackBox.ScreenBox) v;
       ScreenOptions opts = screenOptions.get(screenId);
       if (opts == null) continue;
-      // Find the screen's index in its stack to determine canGoBack
       int parentId = hosts.get(screenId, -1);
       boolean canGoBack = false;
+      ScreenOptions under = null;
       if (parentId >= 0) {
         View parent = views.get(parentId);
         if (parent instanceof StackBox) {
           StackBox stack = (StackBox) parent;
           int index = stack.screens.indexOf(screenId);
           canGoBack = index > 0;
+          if (canGoBack) under = screenOptions.get(stack.screens.get(index - 1));
         }
       }
-      screen.configure(
-          this,
-          opts.title,
-          opts.shown,
-          opts.transparent,
-          opts.tintPresent ? opts.tint : 0,
-          opts.background,
-          opts.backgroundPresent,
-          opts.titleColorPresent ? opts.titleColor : 0,
-          opts.backVisible,
-          opts.gesture,
-          opts.preventBack,
-          opts.animation,
-          opts.left,
-          opts.right,
-          opts.titleView,
-          opts.headerHeight,
-          canGoBack);
+      screen.configure(this, opts, canGoBack, under);
     }
     dirtyScreens.clear();
     // Reconcile dirty stacks AFTER screen configs are applied

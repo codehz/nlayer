@@ -1057,6 +1057,44 @@ public final class JavaTests extends Instrumentation {
     length(b, fraction);
   }
 
+  /**
+   * `SCREEN_CONFIG` in the v11 word order. A null title is absent. Colors, the shadow and item
+   * groups are absent; the large title is `never` and the bar is 44pt.
+   */
+  private static void screen(
+      Batch b,
+      int id,
+      String title,
+      boolean shown,
+      boolean transparent,
+      boolean backVisible,
+      boolean gesture,
+      boolean preventBack,
+      int animation,
+      int titleView,
+      float headerHeight) {
+    b.word(20).word(id);
+    if (title == null) b.word(-1);
+    else b.string(title);
+    b.word(-1); // subtitle
+    b.bool(shown);
+    b.bool(transparent);
+    b.bool(backVisible);
+    b.bool(false); // supplement
+    b.bool(gesture);
+    b.bool(preventBack);
+    b.word(animation);
+    b.word(2); // large title never
+    b.word(-1); // back title
+    b.word(0); // back mode
+    b.word(titleView);
+    b.real(headerHeight);
+    b.real(44f);
+    b.word(0).word(0).word(0).word(0); // background, title, large title, tint
+    b.word(0); // shadow
+    b.word(0); // groups
+  }
+
   // --- StackBox ------------------------------------------------------------
 
   void testStackMountsScreensAndHeaders() {
@@ -1080,19 +1118,7 @@ public final class JavaTests extends Instrumentation {
       b.word(1).word(10).word(11).word(-1); // insert screen 1 into stack
       b.word(4).word(10).real(0).real(0).real(200).real(400); // frame stack
       b.word(4).word(11).real(0).real(0).real(200).real(400); // frame screen 1
-      b.word(20).word(11); // SCREEN_CONFIG for screen 1
-      b.string("Screen 1"); // title
-      b.bool(true); // shown
-      b.bool(false); // transparent
-      b.bool(false); // tint
-      b.bool(false); // background
-      b.bool(false); // titleColor
-      b.bool(true); // backVisible
-      b.bool(true); // gesture
-      b.bool(false); // preventBack
-      b.word(2); // animation=none
-      b.word(-1).word(-1).word(-1); // left, right, titleView
-      b.real(64); // headerHeight
+      screen(b, 11, "Screen 1", true, false, true, true, false, 2, -1, 64);
       main(
           () -> {
             host.mounter.apply(b.bytes(), b.objects());
@@ -1116,19 +1142,7 @@ public final class JavaTests extends Instrumentation {
       b2.word(1).word(13).word(14).word(-1); // insert content box into header item
       b2.word(4).word(12).real(0).real(0).real(200).real(400); // frame screen 2
       b2.word(4).word(13).real(50).real(10).real(40).real(20); // frame header item
-      b2.word(20).word(12); // SCREEN_CONFIG for screen 2
-      b2.string("Title"); // title
-      b2.bool(true); // shown
-      b2.bool(false); // transparent
-      b2.bool(true).word(0xffff0000); // tint
-      b2.bool(false); // background
-      b2.bool(false); // titleColor
-      b2.bool(true); // backVisible
-      b2.bool(true); // gesture
-      b2.bool(false); // preventBack
-      b2.word(2); // animation=none
-      b2.word(-1).word(-1).word(13); // left, right, titleView=13
-      b2.real(64); // headerHeight
+      screen(b2, 12, "Title", true, false, true, true, false, 2, 13, 64);
       main(
           () -> {
             host.mounter.apply(b2.bytes(), b2.objects());
@@ -1148,11 +1162,12 @@ public final class JavaTests extends Instrumentation {
           screen2.bar.back instanceof StackBox.ScreenBox.Bar.Chevron,
           "back control is the chevron");
       equal("M15 18 9 12 15 6", StackBox.ScreenBox.Bar.Chevron.PATH, "chevron path is inlined");
-      equal("Back", String.valueOf(screen2.bar.back.getContentDescription()), "back name is Back");
-      android.graphics.drawable.RippleDrawable ripple =
-          (android.graphics.drawable.RippleDrawable) screen2.bar.back.getBackground();
-      equal(0x33ff0000, ripple.getColor().getDefaultColor(), "ripple is 20% of the button color");
-      check(!ripple.isProjected(), "ripple is clipped to the hit rect");
+      equal(
+          "Screen 1",
+          String.valueOf(screen2.bar.back.getContentDescription()),
+          "back name is the covered page's title");
+      equal("Screen 1", screen2.bar.backLabel.getText().toString(), "back label is that title");
+      check(screen2.bar.getBackground() == null, "no default bar background");
       check(headerItem.getParent() == screen2.bar, "custom title is parented in the bar");
       int[] sizes = host.mounter.headerSizes.get(13);
       check(
@@ -1196,19 +1211,7 @@ public final class JavaTests extends Instrumentation {
       b.word(4).word(13).real(0).real(0).real(200).real(400);
       // Configure all three screens with animation=none
       for (int i = 11; i <= 13; i++) {
-        b.word(20).word(i);
-        b.word(-1); // no title
-        b.bool(true); // shown
-        b.bool(false); // transparent
-        b.bool(false); // tint
-        b.bool(false); // background
-        b.bool(false); // titleColor
-        b.bool(true); // backVisible
-        b.bool(true); // gesture
-        b.bool(false); // preventBack
-        b.word(2); // animation=none
-        b.word(-1).word(-1).word(-1); // left, right, titleView
-        b.real(64); // headerHeight
+        screen(b, i, null, true, false, true, true, false, 2, -1, 64);
       }
       main(
           () -> {
@@ -1294,19 +1297,7 @@ public final class JavaTests extends Instrumentation {
       b.word(4).word(11).real(0).real(0).real(200).real(400); // frame screens
       b.word(4).word(12).real(0).real(0).real(200).real(400);
       // Configure screen 2 with headerVisible=false
-      b.word(20).word(12);
-      b.word(-1); // no title
-      b.bool(false); // shown=false (header hidden)
-      b.bool(false); // transparent
-      b.bool(false); // tint
-      b.bool(false); // background
-      b.bool(false); // titleColor
-      b.bool(true); // backVisible
-      b.bool(true); // gesture
-      b.bool(false); // preventBack
-      b.word(0); // animation=slide
-      b.word(-1).word(-1).word(-1); // left, right, titleView
-      b.real(64); // headerHeight
+      screen(b, 12, null, false, false, true, true, false, 0, -1, 64);
       main(
           () -> {
             host.mounter.apply(b.bytes(), b.objects());
@@ -1320,28 +1311,15 @@ public final class JavaTests extends Instrumentation {
 
       // Test transparent background
       Batch b2 = batch();
-      b2.word(20).word(12);
-      b2.word(-1); // no title
-      b2.bool(true); // shown=true
-      b2.bool(true); // transparent=true
-      b2.bool(false); // tint
-      b2.bool(false); // background
-      b2.bool(false); // titleColor
-      b2.bool(true); // backVisible
-      b2.bool(true); // gesture
-      b2.bool(false); // preventBack
-      b2.word(0); // animation
-      b2.word(-1).word(-1).word(-1); // left, right, titleView
-      b2.real(64); // headerHeight
+      screen(b2, 12, null, true, true, true, true, false, 0, -1, 64);
       main(
           () -> {
             host.mounter.apply(b2.bytes(), b2.objects());
             return null;
           });
-      equal(
-          Color.TRANSPARENT,
-          ((android.graphics.drawable.ColorDrawable) screen2.bar.getBackground()).getColor(),
-          "transparent bar background");
+      check(
+          !screen2.bar.opaque && screen2.bar.getBackground() == null,
+          "transparent bar has no fill");
       check(
           screen2.bar.getLayoutParams().height > 0,
           "a transparent header still draws above the content");
@@ -1360,19 +1338,7 @@ public final class JavaTests extends Instrumentation {
 
       // Test preventBack=true, gesture=false
       Batch b3 = batch();
-      b3.word(20).word(12);
-      b3.word(-1); // no title
-      b3.bool(true); // shown
-      b3.bool(false); // transparent
-      b3.bool(false); // tint
-      b3.bool(false); // background
-      b3.bool(false); // titleColor
-      b3.bool(false); // backVisible=false
-      b3.bool(false); // gesture=false
-      b3.bool(true); // preventBack=true
-      b3.word(0); // animation
-      b3.word(-1).word(-1).word(-1); // left, right, titleView
-      b3.real(64); // headerHeight
+      screen(b3, 12, null, true, false, false, false, true, 0, -1, 64);
       main(
           () -> {
             host.mounter.apply(b3.bytes(), b3.objects());
@@ -1386,24 +1352,12 @@ public final class JavaTests extends Instrumentation {
       check(stack.preventsBack(), "preventsBack true when preventBack=true");
       main(
           () -> {
-            screen2.configure(
-                host.mounter,
-                "Row",
-                true,
-                false,
-                0,
-                0,
-                false,
-                0,
-                true,
-                true,
-                false,
-                2,
-                -1,
-                -1,
-                -1,
-                0f,
-                true);
+            Mounter.ScreenOptions row = new Mounter.ScreenOptions();
+            row.title = "Row";
+            row.shown = true;
+            row.largeTitle = 2;
+            row.barHeight = 44f;
+            screen2.configure(host.mounter, row, true, null);
             return null;
           });
       int rowPx = Math.round(44 * host.density);
@@ -1525,38 +1479,8 @@ public final class JavaTests extends Instrumentation {
       b.word(1).word(stackId).word(screen2Id).word(-1); // insert screen2
       b.word(4).word(stackId).real(0).real(0).real(300).real(400);
       // Configure screens
-      b.word(20)
-          .word(screen1Id)
-          .word(-1)
-          .word(1)
-          .word(0)
-          .word(0)
-          .word(0)
-          .word(0)
-          .word(1)
-          .word(1)
-          .word(0)
-          .word(0)
-          .word(-1)
-          .word(-1)
-          .word(-1)
-          .real(0);
-      b.word(20)
-          .word(screen2Id)
-          .word(-1)
-          .word(1)
-          .word(0)
-          .word(0)
-          .word(0)
-          .word(0)
-          .word(1)
-          .word(1)
-          .word(0)
-          .word(0)
-          .word(-1)
-          .word(-1)
-          .word(-1)
-          .real(0);
+      screen(b, screen1Id, null, true, false, true, true, false, 0, -1, 0);
+      screen(b, screen2Id, null, true, false, true, true, false, 0, -1, 0);
       // Create modal
       b.word(0).word(modalId).word(7);
       b.word(1).word(1).word(modalId).word(-1); // insert modal into root
@@ -1643,19 +1567,7 @@ public final class JavaTests extends Instrumentation {
       b1.word(1).word(10).word(11).word(-1); // insert screen 1 into stack
       b1.word(4).word(10).real(0).real(0).real(200).real(400); // frame stack
       b1.word(4).word(11).real(0).real(0).real(200).real(400); // frame screen 1
-      b1.word(20).word(11); // SCREEN_CONFIG for screen 1
-      b1.string("First"); // title
-      b1.bool(true); // shown
-      b1.bool(false); // transparent
-      b1.bool(false); // tint
-      b1.bool(false); // background
-      b1.bool(false); // titleColor
-      b1.bool(true); // backVisible
-      b1.bool(true); // gesture
-      b1.bool(false); // preventBack
-      b1.word(2); // animation=none
-      b1.word(-1).word(-1).word(-1); // left, right, titleView
-      b1.real(64); // headerHeight
+      screen(b1, 11, "First", true, false, true, true, false, 2, -1, 64);
       main(
           () -> {
             host.mounter.apply(b1.bytes(), b1.objects());
@@ -1671,19 +1583,7 @@ public final class JavaTests extends Instrumentation {
       b2.word(0).word(12).word(6); // create screen 2
       b2.word(1).word(10).word(12).word(-1); // insert screen 2 into stack
       b2.word(4).word(12).real(0).real(0).real(200).real(400); // frame screen 2
-      b2.word(20).word(12); // SCREEN_CONFIG for screen 2 (in same batch as push)
-      b2.string("Second"); // title
-      b2.bool(true); // shown
-      b2.bool(false); // transparent
-      b2.bool(false); // tint
-      b2.bool(false); // background
-      b2.bool(false); // titleColor
-      b2.bool(true); // backVisible
-      b2.bool(true); // gesture
-      b2.bool(false); // preventBack
-      b2.word(2); // animation=none (not default slide)
-      b2.word(-1).word(-1).word(-1); // left, right, titleView
-      b2.real(64); // headerHeight
+      screen(b2, 12, "Second", true, false, true, true, false, 2, -1, 64);
       main(
           () -> {
             host.mounter.apply(b2.bytes(), b2.objects());
