@@ -1313,7 +1313,7 @@ dependencies = [
 
 [[package]]
 name = "nlayer-bundler"
-version = "0.8.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "dunce",
@@ -1333,7 +1333,7 @@ dependencies = [
 
 [[package]]
 name = "nlayer-cli"
-version = "0.8.0"
+version = "0.10.0"
 dependencies = [
  "clap",
  "libc",
@@ -1351,7 +1351,7 @@ dependencies = [
 
 [[package]]
 name = "nlayer-core"
-version = "0.8.0"
+version = "0.10.0"
 dependencies = [
  "log",
  "ordered-float",
@@ -1366,7 +1366,7 @@ dependencies = [
 
 [[package]]
 name = "nlayer-engine"
-version = "0.8.0"
+version = "0.10.0"
 dependencies = [
  "crossbeam-channel",
  "log",
@@ -1381,7 +1381,7 @@ dependencies = [
 
 [[package]]
 name = "nlayer-js"
-version = "0.8.0"
+version = "0.10.0"
 dependencies = [
  "base64",
  "getrandom 0.4.3",
@@ -1395,7 +1395,7 @@ dependencies = [
 
 [[package]]
 name = "nlayer-platform-android"
-version = "0.8.0"
+version = "0.10.0"
 dependencies = [
  "jni",
  "log",
@@ -1408,7 +1408,7 @@ dependencies = [
 
 [[package]]
 name = "nlayer-platform-ios"
-version = "0.8.0"
+version = "0.10.0"
 dependencies = [
  "block2",
  "dispatch2",
@@ -1432,7 +1432,7 @@ dependencies = [
 
 [[package]]
 name = "nlayer-platform-web"
-version = "0.8.0"
+version = "0.10.0"
 dependencies = [
  "crossbeam-channel",
  "log",
@@ -1446,7 +1446,7 @@ dependencies = [
 
 [[package]]
 name = "nlayer-testing"
-version = "0.8.0"
+version = "0.10.0"
 dependencies = [
  "crossbeam-channel",
  "log",
