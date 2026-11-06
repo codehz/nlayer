@@ -6,7 +6,7 @@ declare global {
 }
 
 const COUNT = 48;
-const HEADER = "→ Header Demo (title, headerStyle, headerTransparent)";
+const HEADER = "→ Header Demo (title, subtitle, item groups)";
 
 function deviceOnly(): void {
   const os = globalThis.__nlayerOs;

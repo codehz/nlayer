@@ -28,8 +28,12 @@ export const nav = createNavStack<Route>([{ name: "home" }]);
 export const detailInterceptBack = signal(false);
 export const detailBackIntercepted = signal(false);
 export const dismissedCount = signal(0);
-/** Header demo: the web bar and the native `headerTransparent` flag. */
+/** Header demo: whether `standardAppearance` has no opaque background. */
 export const headerTransparent = signal(false);
+/** Header demo: the static large title (`largeTitleDisplayMode="always"`). */
+export const headerLargeTitle = signal(false);
+/** Header demo: leading items next to the system back instead of replacing it. */
+export const headerSupplement = signal(false);
 
 /** Counts a screen the user popped. Every screen hands this to its `NavPage`. */
 export function dismiss(): void {

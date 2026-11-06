@@ -131,10 +131,10 @@ function App() {
       </Text>
 
       <Text testID="header-u" style={{ ...text, fontWeight: "600" }}>
-        → Header Demo (title, headerStyle, headerTransparent)
+        → Header Demo (title, subtitle, item groups)
       </Text>
       <Text testID="header-p" style={{ ...text, fontWeight: "600", padding: 8 }}>
-        → Header Demo (title, headerStyle, headerTransparent)
+        → Header Demo (title, subtitle, item groups)
       </Text>
       <Text testID="header-short" style={{ ...text, fontWeight: "600", padding: 8 }}>
         → Dialog Demo

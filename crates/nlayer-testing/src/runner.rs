@@ -1390,6 +1390,8 @@ fn node_json(node: &TreeNode, screen: &Screen) -> serde_json::Value {
                     "popOnBack": !config.prevent_back,
                     "leading": bar_groups(&config.leading),
                     "trailing": bar_groups(&config.trailing),
+                    "standardAppearance": bar_appearance(&config.standard),
+                    "scrollEdgeAppearance": bar_appearance(&config.scroll_edge),
                 }),
             );
         }
@@ -1556,6 +1558,33 @@ fn bar_groups(groups: &[Vec<nlayer_core::BarItem>]) -> serde_json::Value {
             })
             .collect(),
     )
+}
+
+/// `standardAppearance` / `scrollEdgeAppearance`: only the fields the app set.
+fn bar_appearance(appearance: &nlayer_core::BarAppearance) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    if let Some(color) = appearance.background_color {
+        map.insert("backgroundColor".into(), style_color_hex(color).into());
+    }
+    if let Some(color) = appearance.title_color {
+        map.insert("titleColor".into(), style_color_hex(color).into());
+    }
+    if let Some(color) = appearance.large_title_color {
+        map.insert("largeTitleColor".into(), style_color_hex(color).into());
+    }
+    if let Some(color) = appearance.tint_color {
+        map.insert("tintColor".into(), style_color_hex(color).into());
+    }
+    match appearance.shadow {
+        Some(nlayer_core::BarShadow::None) => {
+            map.insert("shadow".into(), "none".into());
+        }
+        Some(nlayer_core::BarShadow::Color(color)) => {
+            map.insert("shadow".into(), style_color_hex(color).into());
+        }
+        None => {}
+    }
+    serde_json::Value::Object(map)
 }
 
 fn keyboard_name(keyboard: KeyboardType) -> &'static str {

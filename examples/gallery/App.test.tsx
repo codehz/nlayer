@@ -683,8 +683,8 @@ test("header demo shows title and header props", () => {
   expect(texts).toContain("Header Demo");
   expect(texts).toContain("Back");
   expect(texts).toContain("Right");
-  // Headless records the system header as `screen.title`. Every host draws
-  // the title itself (the system bar on iOS, the drawn bar on Android, the
+  // Headless records the system header as `screen`. Every host draws the
+  // title itself (the system bar on iOS, the drawn bar on Android, the
   // player on web), so the mounted tree has no text for it.
   const nodes = flat(app.tree(), []) as Array<
     Node & { screen?: { title?: string | null; headerVisible?: boolean } }
@@ -698,81 +698,75 @@ test("header demo shows title and header props", () => {
   app.waitFor("page"); // Wait for home page scroll view
 });
 
-function place(app: App, pred: (node: Node) => boolean, what: string): number {
-  const hit = locate(app.tree(), pred, 0, 0);
-  if (!hit) throw new Error(what);
-  return hit.y;
-}
-
-/** Content top of the header demo, and the "Header Demo" title under it. */
-function headerPlace(app: App): { content: number; title: number } {
-  return {
-    content: place(app, (node) => node.testID === "header-demo", "header-demo"),
-    title: place(app, (node) => node.text === "Header Demo", "Header Demo"),
+test("the bar model carries the v11 options", () => {
+  type Bar = {
+    title?: string | null;
+    subtitle?: string | null;
+    headerVisible: boolean;
+    headerHeight: number;
+    largeTitleDisplayMode: string;
+    backButtonTitle?: string | null;
+    backButtonDisplayMode: string;
+    hidesBackButton: boolean;
+    leftItemsSupplementBackButton: boolean;
+    leading: Array<Array<{ title?: string | null; view?: number; enabled?: boolean }>>;
+    trailing: Array<Array<{ title?: string | null; view?: number }>>;
+    standardAppearance: { backgroundColor?: string; titleColor?: string; tintColor?: string };
+    scrollEdgeAppearance: { backgroundColor?: string; shadow?: string };
   };
-}
-
-test("header transparent toggle does not stack or drop the top inset", () => {
   const app = open("./App.tsx", {
     width: 390,
     height: 844,
     safeArea: { top: 47, right: 0, bottom: 34, left: 0 },
   });
-  const openHeader = () => {
-    reveal(app, (node) => node.testID === "open-header");
-    app.press("open-header");
-    app.waitFor("header-demo");
-  };
-  openHeader();
+  reveal(app, (n) => n.testID === "open-header");
+  app.press("open-header");
+  app.waitFor("header-demo");
 
-  const opaque = headerPlace(app);
+  const screenOf = () => {
+    const nodes = flat(app.tree(), []) as Array<Node & { screen?: Bar }>;
+    return nodes.find((node) => node.screen?.title === "Header")?.screen;
+  };
+  // The mounted model is the headless host's; the other hosts draw the bar.
+  const first = screenOf();
+  if (!first) {
+    app.back();
+    return;
+  }
+  expect(first.subtitle).toBe("v11 bar");
+  expect(first.headerVisible).toBe(true);
+  // A subtitle raises the content row to 56pt.
+  expect(first.headerHeight).toBe(56);
+  expect(first.largeTitleDisplayMode).toBe("never");
+  expect(first.hidesBackButton).toBe(false);
+  expect(first.leftItemsSupplementBackButton).toBe(false);
+  expect(first.leading.length).toBe(2);
+  expect(first.leading[1][0].title).toBe("Edit");
+  expect(first.trailing.length).toBe(2);
+  expect(first.trailing[0].length).toBe(2);
+  expect(typeof first.trailing[1][0].view).toBe("number");
+  expect(first.standardAppearance.backgroundColor).toBe("#10b981ff");
+  expect(first.standardAppearance.titleColor).toBe("#ffffffff");
+  expect(first.scrollEdgeAppearance.backgroundColor).toBe("#00000000");
+  expect(first.scrollEdgeAppearance.shadow).toBe("none");
+
+  reveal(app, (n) => n.testID === "toggle-large-title");
+  app.press("toggle-large-title");
+  const large = screenOf();
+  expect(large?.largeTitleDisplayMode).toBe("always");
+  // The content row, the static large-title row, and the subtitle under it.
+  expect(large?.headerHeight).toBe(44 + 52 + 16);
+
+  reveal(app, (n) => n.testID === "toggle-transparent");
   app.press("toggle-transparent");
-  const toggled = headerPlace(app);
+  expect(screenOf()?.standardAppearance.backgroundColor).toBe("#00000000");
+
+  reveal(app, (n) => n.testID === "toggle-supplement");
+  app.press("toggle-supplement");
+  expect(screenOf()?.leftItemsSupplementBackButton).toBe(true);
+
   app.back();
   app.waitFor("page");
-  openHeader();
-  const reopened = headerPlace(app);
-  app.press("toggle-transparent");
-  const restored = headerPlace(app);
-
-  const problems: string[] = [];
-  // Opaque: content below the bar, title 16pt under it (p-4).
-  if (!(opaque.content > 40))
-    problems.push(`opaque content ${opaque.content} is not below the bar`);
-  if (Math.abs(opaque.title - (opaque.content + 16)) > 1) {
-    problems.push(`opaque title ${opaque.title} is not 16pt below ${opaque.content}`);
-  }
-  // Transparent: the scroll moves to the page top. The top inset includes
-  // the bar, so the title stays where the opaque page put it.
-  if (!(toggled.content < opaque.content - 20)) {
-    problems.push(`toggled content ${toggled.content} did not move up from ${opaque.content}`);
-  }
-  if (Math.abs(toggled.title - opaque.title) > 1) {
-    problems.push(`toggled title ${toggled.title} left the opaque place ${opaque.title}`);
-  }
-  // Pop and push keeps the flag. The new screen matches the toggled one.
-  if (
-    Math.abs(reopened.content - toggled.content) > 1 ||
-    Math.abs(reopened.title - toggled.title) > 1
-  ) {
-    problems.push(
-      `reopened ${reopened.content}/${reopened.title} != toggled ${toggled.content}/${toggled.title}`,
-    );
-  }
-  // Toggling off restores the first opaque place, instead of leaving content under the bar.
-  if (
-    Math.abs(restored.content - opaque.content) > 1 ||
-    Math.abs(restored.title - opaque.title) > 1
-  ) {
-    problems.push(
-      `restored ${restored.content}/${restored.title} != opaque ${opaque.content}/${opaque.title}`,
-    );
-  }
-  if (problems.length > 0) {
-    throw new Error(
-      `opaque ${opaque.content}/${opaque.title}; toggled ${toggled.content}/${toggled.title}; reopened ${reopened.content}/${reopened.title}; restored ${restored.content}/${restored.title}; ${problems.join("; ")}`,
-    );
-  }
 });
 
 test("reading screen shows its selectable texts", () => {
