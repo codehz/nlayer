@@ -593,20 +593,26 @@ final class StackBox extends FrameLayout {
 
         @Override
         protected void onMeasure(int ws, int hs) {
+          // The glyph stays 24; Column lays this view out as the hit target.
           int size = Math.round(24f * density);
           setMeasuredDimension(size, size);
         }
 
         @Override
         protected void onDraw(Canvas canvas) {
-          float unit = getWidth() / 24f;
+          float glyph = 24f * density;
+          if (getWidth() <= 0 || getHeight() <= 0 || !(glyph > 0f)) return;
+          float unit = glyph / 24f;
           paint.setStrokeWidth(2f * unit);
           path.rewind();
           trace(path, PATH, unit);
+          float inset = 16f * density;
+          boolean rtl = getLayoutDirection() == LAYOUT_DIRECTION_RTL;
+          float dx = rtl ? getWidth() - inset - glyph : inset;
+          float dy = (getHeight() - glyph) / 2f;
           canvas.save();
-          if (getLayoutDirection() == LAYOUT_DIRECTION_RTL) {
-            canvas.scale(-1f, 1f, getWidth() / 2f, getHeight() / 2f);
-          }
+          canvas.translate(dx, dy);
+          if (rtl) canvas.scale(-1f, 1f, glyph / 2f, glyph / 2f);
           canvas.drawPath(path, paint);
           canvas.restore();
         }
@@ -770,6 +776,14 @@ final class StackBox extends FrameLayout {
           for (int i = 0; i < getChildCount(); i++) {
             View c = getChildAt(i);
             if (c.getVisibility() == GONE) continue;
+            if (c instanceof Chevron) {
+              // Hit target: the content row, from the bar's outer edge through 44pt
+              // past the 16pt inset. The glyph stays a 24pt box at that inset.
+              int hitW = Math.min(w, inset + Math.round(44f * density));
+              int x = (leading != rtl) ? 0 : w - hitW;
+              c.layout(x, 0, x + hitW, h);
+              continue;
+            }
             int cw = c.getMeasuredWidth(), ch = c.getMeasuredHeight();
             int x = (leading != rtl) ? inset : w - inset - cw;
             int y = (h - ch) / 2;

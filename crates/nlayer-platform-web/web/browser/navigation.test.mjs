@@ -445,9 +445,16 @@ test("NavPage mounts the default header and can hide or replace it", () => {
   assert.equal(row.props.style.borderBottomColor, "rgba(60,60,67,0.29)");
   const titleNode = tree.find((el) => el._tag === "text" && el.kids.join("") === "Detail");
   assert.equal(titleNode.props.style.color, "#000000");
-  assert.equal(back._tag, "image");
-  assert.match(decodeURIComponent(back.props.src), /M15 18 9 12 15 6/);
-  assert.match(decodeURIComponent(back.props.src), /stroke="#007AFF"/);
+  assert.equal(back._tag, "view");
+  assert.equal(back.props.style.width, 60);
+  assert.equal(back.props.style.height, 44);
+  assert.equal(back.props.style.marginStart, -16);
+  const backGlyph = back.kids[0];
+  assert.equal(backGlyph._tag, "image");
+  assert.equal(backGlyph.props.style.width, 24);
+  assert.equal(backGlyph.props.style.height, 24);
+  assert.match(decodeURIComponent(backGlyph.props.src), /M15 18 9 12 15 6/);
+  assert.match(decodeURIComponent(backGlyph.props.src), /stroke="#007AFF"/);
 
   tree.length = 0;
   const clear = nav.NavHeader({
@@ -460,7 +467,7 @@ test("NavPage mounts the default header and can hide or replace it", () => {
   const clearTitle = tree.find((el) => el._tag === "text" && el.kids.join("") === "Clear");
   const clearBack = tree.find((el) => el.props.accessibilityLabel === "Back");
   assert.notEqual(clearTitle.props.style.color, "#ffffff");
-  assert.match(decodeURIComponent(clearBack.props.src), /stroke="#007AFF"/);
+  assert.match(decodeURIComponent(clearBack.kids[0].props.src), /stroke="#007AFF"/);
   assert.equal(clearTitle.props.style.color, "#000000");
 
   scheme = "dark";
@@ -470,7 +477,7 @@ test("NavPage mounts the default header and can hide or replace it", () => {
   const darkTitle = tree.find((el) => el._tag === "text" && el.kids.join("") === "Night");
   const darkBack = tree.find((el) => el.props.accessibilityLabel === "Back");
   assert.equal(darkTitle.props.style.color, "#ffffff");
-  assert.match(decodeURIComponent(darkBack.props.src), /stroke="#0A84FF"/);
+  assert.match(decodeURIComponent(darkBack.kids[0].props.src), /stroke="#0A84FF"/);
 
   tree.length = 0;
   nav.setNavHeader(() => {

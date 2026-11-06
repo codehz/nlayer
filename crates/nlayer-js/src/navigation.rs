@@ -995,8 +995,10 @@ fn encode_uri(value: &str) -> String {
 }
 
 /// The web back mark: the same 24-viewport chevron the Android bar strokes.
+/// The press target is the content row (44) and runs from the bar's start
+/// edge through 44pt past the 16pt inset. The glyph stays at that inset.
 fn chevron_button(cx: *mut JsContext, tint: &str, on_press: JsValue) -> Result<JsValue, JsValue> {
-    let node = match host_node(cx, Tag::Image) {
+    let hit = match host_node(cx, Tag::View) {
         Ok(node) => node,
         Err(error) => {
             free(cx, on_press);
@@ -1006,34 +1008,61 @@ fn chevron_button(cx: *mut JsContext, tint: &str, on_press: JsValue) -> Result<J
     let style = style_of(
         cx,
         &[
-            ("width", qjs::JS_NewFloat64(24.0)),
-            ("height", qjs::JS_NewFloat64(24.0)),
+            ("width", qjs::JS_NewFloat64(60.0)),
+            ("height", qjs::JS_NewFloat64(44.0)),
+            ("marginStart", qjs::JS_NewFloat64(-16.0)),
+            ("paddingStart", qjs::JS_NewFloat64(16.0)),
+            ("paddingEnd", qjs::JS_NewFloat64(20.0)),
+            ("justifyContent", new_string(cx, "center")),
         ],
     );
-    if let Err(error) = set_owned(cx, node, "style", style) {
-        free(cx, node);
+    if let Err(error) = set_owned(cx, hit, "style", style) {
+        free(cx, hit);
         free(cx, on_press);
         return Err(error);
     }
-    if let Err(error) = set_owned(cx, node, "src", new_string(cx, &chevron_src(tint))) {
-        free(cx, node);
-        free(cx, on_press);
-        return Err(error);
-    }
-    if let Err(error) = set_owned(cx, node, "accessibilityLabel", new_string(cx, "Back")) {
-        free(cx, node);
+    if let Err(error) = set_owned(cx, hit, "accessibilityLabel", new_string(cx, "Back")) {
+        free(cx, hit);
         free(cx, on_press);
         return Err(error);
     }
     if unsafe { qjs::JS_IsFunction(cx, on_press) } {
-        if let Err(error) = set_owned(cx, node, "onPress", on_press) {
-            free(cx, node);
+        if let Err(error) = set_owned(cx, hit, "onPress", on_press) {
+            free(cx, hit);
             return Err(error);
         }
     } else {
         free(cx, on_press);
     }
-    Ok(node)
+    let image = match host_node(cx, Tag::Image) {
+        Ok(node) => node,
+        Err(error) => {
+            free(cx, hit);
+            return Err(error);
+        }
+    };
+    let glyph = style_of(
+        cx,
+        &[
+            ("width", qjs::JS_NewFloat64(24.0)),
+            ("height", qjs::JS_NewFloat64(24.0)),
+        ],
+    );
+    if let Err(error) = set_owned(cx, image, "style", glyph) {
+        free(cx, image);
+        free(cx, hit);
+        return Err(error);
+    }
+    if let Err(error) = set_owned(cx, image, "src", new_string(cx, &chevron_src(tint))) {
+        free(cx, image);
+        free(cx, hit);
+        return Err(error);
+    }
+    if let Err(error) = insert_owned(cx, hit, image) {
+        free(cx, hit);
+        return Err(error);
+    }
+    Ok(hit)
 }
 
 fn styled_text(

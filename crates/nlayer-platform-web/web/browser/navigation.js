@@ -145,12 +145,24 @@ export function createNavigation(reactive, dom, animation, safeArea, reduceMotio
   }
 
   function backControl(tint, onBack) {
+    // Hit target: content row, from the bar edge through 44px past the 16px inset.
+    // The column already insets 16px; the negative margin gives that gutter back.
+    const hit = rt.element("view");
+    rt.prop(hit, "style", {
+      width: 60,
+      height: 44,
+      marginStart: -16,
+      paddingStart: 16,
+      paddingEnd: 20,
+      justifyContent: "center",
+    });
+    rt.prop(hit, "accessibilityLabel", "Back");
+    rt.prop(hit, "onPress", () => onBack?.());
     const node = rt.element("image");
     rt.prop(node, "style", { width: 24, height: 24 });
     rt.prop(node, "src", chevronSrc(tint));
-    rt.prop(node, "accessibilityLabel", "Back");
-    rt.prop(node, "onPress", () => onBack?.());
-    return node;
+    rt.insert(hit, node);
+    return hit;
   }
 
   function titleView(title, color) {
