@@ -52,11 +52,10 @@ pub const NO_NATIVE_HEADER: (Points, Points) = (Points::ZERO, Points::ZERO);
 
 /// Options of a screen: its header and transitions.
 ///
-/// `header_transparent`, `background_color`, `title_color`, `tint_color` and
-/// `back_visible` are derived from the appearance and `hidesBackButton` so
-/// hosts that still read the old cover can compile. A platform without a
-/// native header ([`NO_NATIVE_HEADER`]) reads `header_view`, `header_height`,
-/// `prevent_back`, `gesture_enabled` and `animation`.
+/// `header_transparent` is derived from `standard`; hosts read the appearance
+/// itself for colors. A platform without a native header ([`NO_NATIVE_HEADER`])
+/// reads `header_view`, `header_height`, `prevent_back`, `gesture_enabled` and
+/// `animation`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScreenConfig {
     /// Title in the header.
@@ -68,14 +67,6 @@ pub struct ScreenConfig {
     /// Content extends under the header. True when `standard` has no opaque
     /// `background_color` (the v11 default).
     pub header_transparent: bool,
-    /// Tint from `standardAppearance`, when set.
-    pub tint_color: Option<crate::Color>,
-    /// Background from `standardAppearance`, when set.
-    pub background_color: Option<crate::Color>,
-    /// Title color from `standardAppearance`, when set.
-    pub title_color: Option<crate::Color>,
-    /// `hidesBackButton` is false.
-    pub back_visible: bool,
     /// `largeTitleDisplayMode`.
     pub large_title: crate::ops::LargeTitleDisplayMode,
     /// `backButtonTitle` of this page, for the page that covers it.
@@ -100,10 +91,6 @@ pub struct ScreenConfig {
     pub prevent_back: bool,
     /// Push / pop transition.
     pub animation: crate::ops::ScreenAnimation,
-    /// First custom leading view. Hosts that still place one item read this.
-    pub left: Option<NodeId>,
-    /// First custom trailing view.
-    pub right: Option<NodeId>,
     /// `titleView`.
     pub title_view: Option<NodeId>,
     /// The app's header slot on a platform without a native header.
@@ -137,15 +124,12 @@ pub enum BarItem {
 }
 
 impl ScreenConfig {
-    /// Copies appearance fields onto the derived cover the layout still reads.
+    /// Derives the cover the layout and the insets read from `standard`.
     pub fn sync_cover(&mut self) {
-        self.background_color = self.standard.background_color;
-        self.title_color = self.standard.title_color;
-        self.tint_color = self.standard.tint_color;
         self.header_transparent = !self
+            .standard
             .background_color
             .is_some_and(|color| !color.is_transparent());
-        self.back_visible = !self.hides_back_button;
     }
 
     /// Bar content height in points. `title_view` hides the subtitle and the
@@ -173,9 +157,6 @@ impl Default for ScreenConfig {
             subtitle: None,
             header_visible: true,
             header_transparent: true,
-            tint_color: None,
-            background_color: None,
-            title_color: None,
             large_title: crate::ops::LargeTitleDisplayMode::Never,
             back_button_title: None,
             back_button_display_mode: crate::ops::BackButtonDisplayMode::Default,
@@ -185,12 +166,9 @@ impl Default for ScreenConfig {
             scroll_edge: crate::ops::BarAppearance::default(),
             leading: Vec::new(),
             trailing: Vec::new(),
-            back_visible: true,
             gesture_enabled: true,
             prevent_back: false,
             animation: crate::ops::ScreenAnimation::Default,
-            left: None,
-            right: None,
             title_view: None,
             header_view: None,
             header_height: Points::ZERO,

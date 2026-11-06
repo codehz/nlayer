@@ -382,8 +382,6 @@ impl<M: TextEngine> Core<M> {
         }
         config.leading = compact_groups(leading);
         config.trailing = compact_groups(trailing);
-        config.left = first_custom(&config.leading);
-        config.right = first_custom(&config.trailing);
         config.bar_height = config.content_bar(config.title_view.is_some());
         config.sync_cover();
         Some(config)
@@ -595,11 +593,4 @@ fn compact_groups(groups: Vec<Vec<crate::BarItem>>) -> Vec<Vec<crate::BarItem>> 
         })
         .filter(|group| !group.is_empty())
         .collect()
-}
-
-fn first_custom(groups: &[Vec<crate::BarItem>]) -> Option<crate::NodeId> {
-    groups.iter().flatten().find_map(|item| match item {
-        crate::BarItem::Custom(id) if *id != 0 => Some(*id),
-        _ => None,
-    })
 }

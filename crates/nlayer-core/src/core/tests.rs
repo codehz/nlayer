@@ -3603,7 +3603,15 @@ fn header_item_layout_and_config() {
         "config should have header height"
     );
     assert_eq!(config_item.header_view, Some(4));
-    assert_eq!(config_item.left, Some(5));
+    // The leading header item is a custom view in the first group.
+    assert!(
+        config_item
+            .leading
+            .iter()
+            .flatten()
+            .any(|item| matches!(item, crate::BarItem::Custom(5))),
+        "the leading header item is a custom view"
+    );
 }
 
 #[test]
