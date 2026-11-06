@@ -1187,6 +1187,19 @@ impl Mounter {
         self.pin.as_ref().map(|pin| (pin.width, pin.height))
     }
 
+    /// The safe area the test pin replaced the system with, in points:
+    /// top, right, bottom, left. `None` follows the window.
+    pub(crate) fn pin_safe_area(&self) -> Option<(f32, f32, f32, f32)> {
+        self.pin.as_ref().map(|pin| {
+            (
+                pin.safe_area.top,
+                pin.safe_area.right,
+                pin.safe_area.bottom,
+                pin.safe_area.left,
+            )
+        })
+    }
+
     /// Drops every view except the root. The next engine's ids start over,
     /// so a slot left behind would be that id's new view.
     pub(crate) fn clear_app(&mut self) {
@@ -1952,7 +1965,8 @@ impl Mounter {
             }
             ViewKind::Screen => {
                 let control = self.control.clone();
-                let screen = crate::navigation::ScreenHost::new(self.mtm, id, control);
+                let screen =
+                    crate::navigation::ScreenHost::new(self.mtm, id, control, self.pin_safe_area());
                 (Native::Screen(Box::new(screen)), None)
             }
             ViewKind::Modal => {

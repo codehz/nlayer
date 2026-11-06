@@ -80,6 +80,9 @@ pub(crate) struct ScreenIvars {
     /// The header height last reported to the core.
     measured: Cell<Option<f32>>,
     insets: Cell<Option<EdgeInsets>>,
+    /// `top, right, bottom, left`: the test pin's safe area, or `None` to
+    /// follow the window.
+    pinned: Cell<Option<(f32, f32, f32, f32)>>,
 }
 
 define_class!(
@@ -138,6 +141,7 @@ impl ScreenController {
         mtm: MainThreadMarker,
         id: NodeId,
         control: Option<EngineControl>,
+        pinned: Option<(f32, f32, f32, f32)>,
     ) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(ScreenIvars {
             id,
@@ -146,6 +150,7 @@ impl ScreenController {
             measure: Cell::new(false),
             measured: Cell::new(None),
             insets: Cell::new(None),
+            pinned: Cell::new(pinned),
         });
         // SAFETY: UIViewController's designated initializer.
         unsafe {
@@ -162,7 +167,15 @@ impl ScreenController {
     /// the header.
     pub(crate) fn report_insets(&self) {
         let Some(view) = self.view() else { return };
-        let s = view.safeAreaInsets();
+        let mut s = view.safeAreaInsets();
+        // A test pin replaces the window's side and bottom safe area inside
+        // a screen UIKit re-laid out on a push. The top stays the screen's
+        // own: the header's height is measured against it.
+        if let Some((_top, right, bottom, left)) = self.ivars().pinned.get() {
+            s.right = right as _;
+            s.bottom = bottom as _;
+            s.left = left as _;
+        }
         self.report_header(&view, s.top as f32);
         let insets = EdgeInsets {
             top: Points((s.top as f32 - self.ivars().padded.get()).max(0.0)),
@@ -827,8 +840,13 @@ pub(crate) struct ScreenHost {
 }
 
 impl ScreenHost {
-    pub(crate) fn new(mtm: MainThreadMarker, id: NodeId, control: Option<EngineControl>) -> Self {
-        let controller = ScreenController::new(mtm, id, control);
+    pub(crate) fn new(
+        mtm: MainThreadMarker,
+        id: NodeId,
+        control: Option<EngineControl>,
+        pinned: Option<(f32, f32, f32, f32)>,
+    ) -> Self {
+        let controller = ScreenController::new(mtm, id, control, pinned);
         let view = UIView::new(mtm);
         if let Some(root) = controller.view() {
             root.setBackgroundColor(Some(&UIColor::systemBackgroundColor()));
@@ -1099,7 +1117,39 @@ pub(crate) mod tests {
                 "navigation::the_insets_payload_is_points",
                 the_insets_payload_is_points as fn(),
             ),
+            (
+                "navigation::a_test_pin_replaces_the_screen_sides",
+                a_test_pin_replaces_the_screen_sides as fn(),
+            ),
         ]
+    }
+
+    fn a_test_pin_replaces_the_screen_sides() {
+        use objc2_foundation::NSArray;
+        use objc2_ui_kit::{UIViewController, UIWindow};
+
+        let mtm = mtm();
+        let window = UIWindow::initWithFrame(
+            UIWindow::alloc(mtm),
+            CGRect::new(CGPoint::ZERO, CGSize::new(320.0, 640.0)),
+        );
+        let root = UIViewController::new(mtm);
+        let nav = NavController::new(mtm, 1);
+        let screen = ScreenController::new(mtm, 2, None, Some((22.0, 8.0, 14.0, 10.0)));
+
+        nav.setViewControllers_animated(
+            &NSArray::from_retained_slice(&[Retained::into_super(screen.clone())]),
+            false,
+        );
+        root.view().unwrap().addSubview(&*nav.view().unwrap());
+        window.setRootViewController(Some(&root));
+        window.makeKeyAndVisible();
+        nav.view().unwrap().layoutIfNeeded();
+
+        screen.report_insets();
+
+        let (_, right, bottom, left) = screen.reported_insets().expect("insets");
+        assert_eq!((right, bottom, left), (8.0, 14.0, 10.0));
     }
 
     fn a_screen_in_a_window_reports_insets() {
@@ -1114,7 +1164,7 @@ pub(crate) mod tests {
 
         let root = UIViewController::new(mtm);
         let nav = NavController::new(mtm, 1);
-        let screen = ScreenController::new(mtm, 2, None);
+        let screen = ScreenController::new(mtm, 2, None, None);
 
         nav.setViewControllers_animated(
             &NSArray::from_retained_slice(&[Retained::into_super(screen.clone())]),
