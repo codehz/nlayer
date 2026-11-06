@@ -1,6 +1,12 @@
 use super::*;
 use nlayer_core::geometry::{Bounds, point, px, size};
+use nlayer_core::style::Color;
 use nlayer_core::text::{AttributedText, ResolvedTextStyle, TextEngine, TextSpan};
+use nlayer_core::{EventKind, ImageSource, Interaction, MountBatch, MountItem, ViewKind};
+use objc2::runtime::NSObjectProtocol;
+use objc2::{MainThreadOnly, Message};
+use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+use objc2_ui_kit::{UIGestureRecognizerDelegate, UIGestureRecognizerState};
 
 /// The tests own the main thread (the runner is a `harness = false`
 /// binary): UIKit views, CoreText and the run loop's queue are
@@ -606,11 +612,9 @@ fn an_input_takes_its_configuration_and_value() {
 }
 
 fn a_return_resigns_text_and_email_but_not_number() {
-    use objc2_ui_kit::UIWindow;
-
     let mtm = MainThreadMarker::new().expect("the iOS host test runner runs on the main thread");
     let bounds = CGRect::new(CGPoint::ZERO, CGSize::new(320.0, 480.0));
-    let window = UIWindow::initWithFrame(UIWindow::alloc(mtm), bounds);
+    let window = crate::app::test_window(mtm, 320.0, 480.0);
     let root = UIView::new(mtm);
     root.setFrame(bounds);
     window.addSubview(&root);
@@ -1183,16 +1187,12 @@ fn a_back_swipe_follows_the_mounted_policy() {
 }
 
 fn the_modal_presents_over_the_root() {
-    use objc2_ui_kit::{UIPresentationController, UIViewController, UIWindow};
+    use objc2_ui_kit::{UIPresentationController, UIViewController};
 
     let mounter = mounter();
     let mtm = MainThreadMarker::new().expect("the iOS host test runner runs on the main thread");
 
-    // Create window and root controller
-    let window = UIWindow::initWithFrame(
-        UIWindow::alloc(mtm),
-        CGRect::new(CGPoint::ZERO, CGSize::new(320.0, 640.0)),
-    );
+    let window = crate::app::test_window(mtm, 320.0, 640.0);
 
     let controller = UIViewController::new(mtm);
     let root_view = mounter.borrow().view_of(ROOT_ID).unwrap();

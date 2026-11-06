@@ -16,23 +16,18 @@ use std::sync::Arc;
 
 use dispatch2::DispatchQueue;
 use nlayer_core::geometry::{Bounds, Points, Size};
-use nlayer_core::style::{Color, TextStyle, ViewStyle};
-use nlayer_core::{
-    EventKind, EventMask, ImageSource, Interaction, KeyboardDismiss, KeyboardTaps, MountBatch,
-    MountItem, NodeId, ROOT_ID, ResizeMode, ViewKind,
-};
+use nlayer_core::style::{TextStyle, ViewStyle};
+use nlayer_core::{EventMask, KeyboardDismiss, KeyboardTaps, NodeId, ROOT_ID, ResizeMode};
 use nlayer_engine::{EngineControl, EventPayload};
 use objc2::rc::Retained;
-use objc2::runtime::NSObjectProtocol;
-use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, sel};
-use objc2_core_foundation::{CGFloat, CGPoint, CGRect, CGSize};
+use objc2::{DefinedClass, MainThreadMarker, sel};
+use objc2_core_foundation::CGFloat;
 use objc2_foundation::{NSRunLoop, NSRunLoopCommonModes};
 use objc2_quartz_core::{CADisplayLink, CAFrameRateRange, CAGradientLayer, CALayer, CAShapeLayer};
 use objc2_ui_kit::{
-    UIGestureRecognizerDelegate, UIGestureRecognizerState, UIHoverGestureRecognizer,
-    UILongPressGestureRecognizer, UIPanGestureRecognizer, UIPinchGestureRecognizer,
-    UIRefreshControl, UIRotationGestureRecognizer, UIScreen, UIScrollView, UITapGestureRecognizer,
-    UIView,
+    UIHoverGestureRecognizer, UILongPressGestureRecognizer, UIPanGestureRecognizer,
+    UIPinchGestureRecognizer, UIRefreshControl, UIRotationGestureRecognizer, UIScreen,
+    UIScrollView, UITapGestureRecognizer, UIView,
 };
 
 use crate::input::{AreaInput, Field};

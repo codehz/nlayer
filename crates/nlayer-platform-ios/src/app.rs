@@ -141,11 +141,22 @@ pub(crate) fn run_app(bundle: String, assets: PathBuf) -> ! {
     UIApplication::main(None, Some(&delegate), mtm)
 }
 
+/// Host tests have no `UIWindowScene`. `initWithFrame:` still sizes the
+/// window; the running app uses `initWithWindowScene:`.
+#[cfg(feature = "host-tests")]
+#[allow(deprecated)]
+pub(crate) fn test_window(mtm: MainThreadMarker, width: f64, height: f64) -> Retained<UIWindow> {
+    use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+    UIWindow::initWithFrame(
+        UIWindow::alloc(mtm),
+        CGRect::new(CGPoint::ZERO, CGSize::new(width, height)),
+    )
+}
+
 #[cfg(feature = "host-tests")]
 pub(crate) mod tests {
     use super::*;
     use nlayer_core::{MountBatch, MountItem, ROOT_ID, ViewKind};
-    use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
     pub(crate) fn tests() -> Vec<(&'static str, fn())> {
         vec![(
@@ -159,10 +170,7 @@ pub(crate) mod tests {
     fn a_stack_is_a_child_of_the_window_root() {
         let mtm =
             MainThreadMarker::new().expect("the iOS host test runner runs on the main thread");
-        let window = UIWindow::initWithFrame(
-            UIWindow::alloc(mtm),
-            CGRect::new(CGPoint::ZERO, CGSize::new(320.0, 640.0)),
-        );
+        let window = test_window(mtm, 320.0, 640.0);
         let controller = RootController::new(mtm);
         let root = controller.view().expect("view controller has a view");
         window.setRootViewController(Some(&controller));

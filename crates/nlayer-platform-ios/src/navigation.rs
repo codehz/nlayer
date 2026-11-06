@@ -1100,7 +1100,6 @@ pub(crate) fn in_dismissing_modal(view: &UIView) -> bool {
 pub(crate) mod tests {
     use super::*;
     use objc2::rc::Retained;
-    use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
     fn mtm() -> objc2_foundation::MainThreadMarker {
         objc2_foundation::MainThreadMarker::new()
@@ -1126,13 +1125,10 @@ pub(crate) mod tests {
 
     fn a_test_pin_replaces_the_screen_sides() {
         use objc2_foundation::NSArray;
-        use objc2_ui_kit::{UIViewController, UIWindow};
+        use objc2_ui_kit::UIViewController;
 
         let mtm = mtm();
-        let window = UIWindow::initWithFrame(
-            UIWindow::alloc(mtm),
-            CGRect::new(CGPoint::ZERO, CGSize::new(320.0, 640.0)),
-        );
+        let window = crate::app::test_window(mtm, 320.0, 640.0);
         let root = UIViewController::new(mtm);
         let nav = NavController::new(mtm, 1);
         let screen = ScreenController::new(mtm, 2, None, Some((22.0, 8.0, 14.0, 10.0)));
@@ -1154,13 +1150,10 @@ pub(crate) mod tests {
 
     fn a_screen_in_a_window_reports_insets() {
         use objc2_foundation::NSArray;
-        use objc2_ui_kit::{UIViewController, UIWindow};
+        use objc2_ui_kit::UIViewController;
 
         let mtm = mtm();
-        let window = UIWindow::initWithFrame(
-            UIWindow::alloc(mtm),
-            CGRect::new(CGPoint::ZERO, CGSize::new(320.0, 640.0)),
-        );
+        let window = crate::app::test_window(mtm, 320.0, 640.0);
 
         let root = UIViewController::new(mtm);
         let nav = NavController::new(mtm, 1);
