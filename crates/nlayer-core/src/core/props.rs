@@ -534,32 +534,39 @@ impl<M: TextEngine> Core<M> {
                         ScreenProp::HeaderVisible(visible) => {
                             root.screen.header_visible != *visible
                         }
-                        ScreenProp::HeaderTransparent(transparent) => {
-                            root.screen.header_transparent != *transparent
+                        ScreenProp::StandardAppearance(appearance) => {
+                            let was = root.screen.header_transparent;
+                            let next = !appearance
+                                .background_color
+                                .is_some_and(|color| !color.is_transparent());
+                            was != next
                         }
+                        ScreenProp::Subtitle(_) | ScreenProp::LargeTitle(_) => true,
                         _ => false,
                     };
                     let config = &mut root.screen;
                     match screen_prop {
                         ScreenProp::Title(title) => config.title = title,
+                        ScreenProp::Subtitle(subtitle) => config.subtitle = subtitle,
                         ScreenProp::HeaderVisible(visible) => config.header_visible = visible,
-                        ScreenProp::HeaderTransparent(transparent) => {
-                            config.header_transparent = transparent
+                        ScreenProp::LargeTitle(mode) => config.large_title = mode,
+                        ScreenProp::BackButtonTitle(title) => config.back_button_title = title,
+                        ScreenProp::BackButtonDisplayMode(mode) => {
+                            config.back_button_display_mode = mode
                         }
-                        ScreenProp::HeaderBackVisible(visible) => config.back_visible = visible,
+                        ScreenProp::HidesBackButton(hides) => config.hides_back_button = hides,
+                        ScreenProp::LeftItemsSupplementBackButton(supplement) => {
+                            config.left_items_supplement_back_button = supplement
+                        }
                         ScreenProp::PopOnSwipe(enabled) => config.gesture_enabled = enabled,
                         ScreenProp::PopOnBack(pop) => config.prevent_back = !pop,
                         ScreenProp::Animation(animation) => config.animation = animation,
-                        ScreenProp::HeaderStyle {
-                            background_color,
-                            title_color,
-                            tint_color,
-                        } => {
-                            config.background_color = background_color;
-                            config.title_color = title_color;
-                            config.tint_color = tint_color;
+                        ScreenProp::StandardAppearance(appearance) => config.standard = appearance,
+                        ScreenProp::ScrollEdgeAppearance(appearance) => {
+                            config.scroll_edge = appearance
                         }
                     }
+                    config.sync_cover();
                     self.nodes[key as usize]
                         .root
                         .as_mut()
@@ -568,8 +575,6 @@ impl<M: TextEngine> Core<M> {
                     self.nodes[key as usize].dirty |= dirty::SCREEN;
                     self.needs_layout = true;
                 }
-                // Showing, hiding or making the header transparent changes
-                // whether the content still owes the surface's top inset.
                 if cover_changed {
                     self.sync_env();
                 }
@@ -621,11 +626,49 @@ impl<M: TextEngine> Core<M> {
             Prop::HeaderSlot(slot) => {
                 if let Some(root) = self.nodes[key as usize].root.as_mut() {
                     root.slot = slot;
-                    // Re-layout the parent screen when the slot changes.
                     let parent = self.nodes[key as usize].parent;
                     if parent != NO_KEY {
                         self.needs_layout = true;
                     }
+                }
+            }
+            Prop::HeaderGroup(group) => {
+                if let Some(root) = self.nodes[key as usize].root.as_mut() {
+                    root.group = group;
+                }
+                self.mark(key, dirty::SCREEN);
+            }
+            Prop::HeaderIndex(index) => {
+                if let Some(root) = self.nodes[key as usize].root.as_mut() {
+                    root.index = index;
+                }
+            }
+            Prop::BarButton(button) => {
+                if let Some(root) = self.nodes[key as usize].root.as_mut() {
+                    root.button = button;
+                    if button {
+                        root.bar_enabled = true;
+                    }
+                }
+            }
+            Prop::BarTitle(title) => {
+                if let Some(root) = self.nodes[key as usize].root.as_mut() {
+                    root.bar_title = title;
+                }
+            }
+            Prop::BarImage(image) => {
+                if let Some(root) = self.nodes[key as usize].root.as_mut() {
+                    root.bar_image = image;
+                }
+            }
+            Prop::BarEnabled(enabled) => {
+                if let Some(root) = self.nodes[key as usize].root.as_mut() {
+                    root.bar_enabled = enabled;
+                }
+            }
+            Prop::BarTint(tint) => {
+                if let Some(root) = self.nodes[key as usize].root.as_mut() {
+                    root.bar_tint = tint;
                 }
             }
         }

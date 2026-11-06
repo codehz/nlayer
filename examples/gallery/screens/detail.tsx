@@ -5,7 +5,7 @@ export function DetailPage() {
   return (
     <NavPage
       title="Detail"
-      headerStyle={{ backgroundColor: "#3b82f6", color: "#fff", tintColor: "#fff" }}
+      standardAppearance={{ backgroundColor: "#3b82f6", titleColor: "#fff", tintColor: "#fff" }}
       popOnBack={!detailInterceptBack()}
       onBackPress={() => {
         if (detailInterceptBack()) {

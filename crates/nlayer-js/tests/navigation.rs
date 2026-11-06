@@ -318,7 +318,7 @@ fn nav_page_creates_header_items_in_the_requested_slots() {
         r#"
         import { NavPage } from "@nlayer/ui";
         import { mount } from "@nlayer/runtime";
-        globalThis.dispose = mount(() => NavPage({ headerLeft: "Left", headerRight: "Right", headerTitle: "Title", children: "content" }));
+        globalThis.dispose = mount(() => NavPage({ leadingItemGroups: [[{ title: "Left" }]], trailingItemGroups: [[{ title: "Right" }]], children: "content" }));
         "#,
     )
     .unwrap();
@@ -335,10 +335,7 @@ fn nav_page_creates_header_items_in_the_requested_slots() {
             _ => None,
         })
         .collect();
-    assert_eq!(
-        slots,
-        [HeaderSlot::Left, HeaderSlot::Right, HeaderSlot::Title]
-    );
+    assert_eq!(slots, [HeaderSlot::Leading, HeaderSlot::Trailing]);
 }
 
 #[test]
@@ -974,12 +971,11 @@ fn nav_page_header_slots_create_header_items_with_slot_prop() {
         r#"
         import { NavPage } from "@nlayer/ui";
         import { mount } from "@nlayer/runtime";
-        globalThis.dispose = mount(() => 
-            NavPage({ 
-                headerLeft: "Left", 
-                headerRight: "Right", 
-                headerTitle: "Title",
-                children: "content" 
+        globalThis.dispose = mount(() =>
+            NavPage({
+                leadingItemGroups: [[{ title: "Left" }]],
+                trailingItemGroups: [[{ title: "Right" }]],
+                children: "content"
             })
         );
         "#,
@@ -1002,7 +998,7 @@ fn nav_page_header_slots_create_header_items_with_slot_prop() {
         .collect();
     assert_eq!(
         header_items.len(),
-        3,
+        2,
         "Should create HeaderItem for each system-bar slot"
     );
 
@@ -1016,9 +1012,8 @@ fn nav_page_header_slots_create_header_items_with_slot_prop() {
             _ => None,
         })
         .collect();
-    assert!(slots.contains(&HeaderSlot::Left));
-    assert!(slots.contains(&HeaderSlot::Right));
-    assert!(slots.contains(&HeaderSlot::Title));
+    assert!(slots.contains(&HeaderSlot::Leading));
+    assert!(slots.contains(&HeaderSlot::Trailing));
     assert!(
         !slots.contains(&HeaderSlot::Header),
         "the header slot is web-only"
@@ -1026,52 +1021,28 @@ fn nav_page_header_slots_create_header_items_with_slot_prop() {
 }
 
 #[test]
-fn nav_header_draws_title_and_back_and_set_nav_header_is_ignored() {
+fn nav_page_records_a_bar_button() {
     let host = Host::new().unwrap();
     host.eval_source(
         r#"
-        import { NavHeader, setNavHeader } from "@nlayer/ui";
+        import { NavPage } from "@nlayer/ui";
         import { mount } from "@nlayer/runtime";
-        setNavHeader(() => {
-            throw new Error("native setNavHeader is a no-op");
-        });
         globalThis.dispose = mount(() =>
-            NavHeader({ title: "Hello", canGoBack: true, onBack() {} })
+            NavPage({ trailingItemGroups: [[{ title: "Save", image: "icon.png" }]] })
         );
         "#,
     )
     .unwrap();
-
     let mut ops = Vec::new();
     host.take_ops(&mut ops);
-    let texts: Vec<_> = ops
-        .iter()
-        .filter_map(|op| match op {
-            Op::CreateText { text, .. } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect();
-    assert!(texts.contains(&"Hello"), "title text, got {texts:?}");
-    assert!(
-        !texts.contains(&"←"),
-        "back is not an arrow glyph, got {texts:?}"
-    );
-    let sources: Vec<_> = ops
-        .iter()
-        .filter_map(|op| match op {
-            Op::SetProp {
-                prop: Prop::Source(Some(source)),
-                ..
-            } => Some(source.uri.as_ref()),
-            _ => None,
-        })
-        .collect();
-    assert!(
-        sources
-            .iter()
-            .any(|uri| uri.contains("M15%2018%209%2012%2015%206")),
-        "back image is the inlined chevron, got {sources:?}"
-    );
+    assert!(ops.iter().any(|op| matches!(
+        op,
+        Op::SetProp { prop: Prop::BarTitle(Some(title)), .. } if title.as_ref() == "Save"
+    )));
+    assert!(ops.iter().any(|op| matches!(
+        op,
+        Op::SetProp { prop: Prop::BarImage(Some(source)), .. } if source.uri.as_ref() == "icon.png"
+    )));
 }
 
 #[test]

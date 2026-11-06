@@ -1,15 +1,11 @@
-//! Navigation and dialogs: `createNavStack`, `NavStack`, `NavPage`,
-//! `NavHeader`, `setNavHeader` and `Dialog` (`@nlayer/ui` exports them).
+//! Navigation and dialogs: `createNavStack`, `NavStack`, `NavPage` and
+//! `Dialog` (`@nlayer/ui` exports them).
 //!
 //! A stack renders each route of its state with the app's function; pages
 //! stay mounted while their route is in the stack. A page the user pops
 //! natively removes its route. Pages and dialogs provide their insets to
-//! what they render. `setNavHeader` does nothing here. iOS draws the system
-//! bar. Android draws its own 44pt bar in the platform. `NavHeader` is the
-//! web bar, and the bar an app can place itself; it is not that Android view.
-//!
-//! M1: JS surface only. Native containers (UINavigationController, Android
-//! stack, web history) come in M2.
+//! what they render. The header is the host's: iOS draws the system bar,
+//! Android draws its own, and the web player draws the same rules in CSS.
 
 #![allow(unsafe_op_in_unsafe_fn)]
 
@@ -59,8 +55,6 @@ pub(crate) const EXPORTS: &[(&str, ExportFn)] = &[
     ("createNavStack", create_nav_stack_export),
     ("NavStack", stack_export),
     ("NavPage", screen_export),
-    ("NavHeader", nav_header_export),
-    ("setNavHeader", set_nav_header_export),
     ("Dialog", modal_export),
 ];
 
@@ -520,8 +514,9 @@ fn screen_for(cx: *mut JsContext, rendered: JsValue, popped: JsValue) -> JsValue
 
 // --- Screen -----------------------------------------------------------------------
 
-/// `<NavPage title …>`: one page of a stack. `headerLeft` / `headerRight` /
-/// `headerTitle` are system-bar items. `header` is not a prop.
+/// `<NavPage title …>`: one page of a stack. Its header props are the
+/// `UINavigationItem` core (`subtitle`, item groups, back button, the two
+/// appearances); `header` is not a prop.
 fn screen_export(cx: *mut JsContext) -> JsValue {
     reactive::new_function(cx, c"NavPage", screen_component, 1)
 }
@@ -540,12 +535,11 @@ unsafe extern "C" fn screen_component(
         return node;
     }
 
-    // Spread all props except our special ones
     let skip = &[
         "children",
-        "headerLeft",
-        "headerRight",
-        "headerTitle",
+        "leadingItemGroups",
+        "trailingItemGroups",
+        "titleView",
         "onDismiss",
         "onBackPress",
         "onInsets",
@@ -603,36 +597,40 @@ unsafe extern "C" fn screen_component(
     }
     free(cx, on_back);
 
-    // System-bar items. Web does not create these: they are children of
-    // `NavHeader` there. The `header` slot is web-only and web builds it.
-    let slots = [
-        ("headerLeft", "left"),
-        ("headerRight", "right"),
-        ("headerTitle", "title"),
-    ];
-
+    // Item groups and titleView. Back title and display mode stay on this
+    // page (spread above) for the page that covers it.
     let mut slot_nodes = Vec::new();
-    for (prop_key, slot_name) in &slots {
-        let key_str = format!("{}\0", prop_key);
-        let c_key = match CStr::from_bytes_with_nul(key_str.as_bytes()) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        let content = unsafe { qjs::JS_GetPropertyStr(cx, props, c_key.as_ptr()) };
-        // SAFETY: content is a live JS value
-        if !unsafe {
-            qjs::JS_IsUndefined(content) || qjs::JS_IsNull(content) || qjs::JS_IsBool(content)
-        } {
-            let slot_fn = {
-                let mut data = [content, new_string(cx, slot_name)];
-                native(cx, header_slot_fn, 2, &mut data)
-            };
-            let slot_memo = reactive::memo(cx, slot_fn, false);
-            slot_nodes.push(slot_memo);
+    for (prop_key, slot_name) in [
+        ("leadingItemGroups", "leading"),
+        ("trailingItemGroups", "trailing"),
+    ] {
+        let content = prop_of(cx, props, prop_key);
+        if absent(cx, content) {
+            free(cx, content);
+            continue;
         }
+        let slot_name_value = new_string(cx, slot_name);
+        let slot_fn = {
+            let mut data = [content, slot_name_value];
+            native(cx, item_groups_fn, 2, &mut data)
+        };
         free(cx, content);
+        free(cx, slot_name_value);
+        slot_nodes.push(reactive::memo(cx, slot_fn, false));
     }
-
+    let title_view = prop_of(cx, props, "titleView");
+    if !absent(cx, title_view) {
+        let slot_name_value = new_string(cx, "title");
+        let slot_fn = {
+            let mut data = [title_view, slot_name_value];
+            native(cx, header_slot_fn, 2, &mut data)
+        };
+        free(cx, title_view);
+        free(cx, slot_name_value);
+        slot_nodes.push(reactive::memo(cx, slot_fn, false));
+    } else {
+        free(cx, title_view);
+    }
     // Wrap children with insets context provider
     let children = qjs::JS_GetPropertyStr(cx, props, c"children".as_ptr());
     let children_fn = {
@@ -754,6 +752,137 @@ unsafe extern "C" fn on_back_handler(
     UNDEFINED
 }
 
+unsafe extern "C" fn item_groups_fn(
+    cx: *mut JsContext,
+    _this: JsValue,
+    _argc: c_int,
+    _argv: *mut JsValue,
+    _magic: c_int,
+    data: *mut JsValue,
+) -> JsValue {
+    let groups = unsafe { *data };
+    let slot_name = unsafe { *data.add(1) };
+    if unsafe { !qjs::JS_IsArray(groups) } {
+        return UNDEFINED;
+    }
+    let mut glen: i64 = 0;
+    if unsafe { qjs::JS_GetLength(cx, groups, &mut glen) } != 0 {
+        return qjs::JS_EXCEPTION;
+    }
+    let mut items = Vec::new();
+    for gi in 0..glen.max(0) as u32 {
+        let group = unsafe { qjs::JS_GetPropertyUint32(cx, groups, gi) };
+        if unsafe { !qjs::JS_IsArray(group) } {
+            free(cx, group);
+            continue;
+        }
+        let mut ilen: i64 = 0;
+        if unsafe { qjs::JS_GetLength(cx, group, &mut ilen) } != 0 {
+            free(cx, group);
+            return qjs::JS_EXCEPTION;
+        }
+        let mut kept = 0u32;
+        for ii in 0..ilen.max(0) as u32 {
+            let item = unsafe { qjs::JS_GetPropertyUint32(cx, group, ii) };
+            match bar_item(cx, item, slot_name, gi, kept) {
+                Some(node) => {
+                    items.push(node);
+                    kept += 1;
+                }
+                None => {}
+            }
+            free(cx, item);
+        }
+        free(cx, group);
+    }
+    if items.is_empty() {
+        UNDEFINED
+    } else {
+        new_array(cx, items)
+    }
+}
+
+fn bar_item(
+    cx: *mut JsContext,
+    item: JsValue,
+    slot_name: JsValue,
+    group: u32,
+    index: u32,
+) -> Option<JsValue> {
+    if absent(cx, item) {
+        return None;
+    }
+    let node = dom::create_element(cx, Tag::HeaderItem);
+    if unsafe { qjs::JS_IsException(node) } {
+        return None;
+    }
+    let slot = unsafe { qjs::JS_DupValue(cx, slot_name) };
+    if dom::set_prop_value(cx, node, "headerSlot", slot).is_err() {
+        free(cx, slot);
+        free(cx, node);
+        return None;
+    }
+    free(cx, slot);
+    set_index(cx, node, "headerGroup", group);
+    set_index(cx, node, "headerIndex", index);
+    if dom::node_id(cx, item).is_some() || unsafe { qjs::JS_IsFunction(cx, item) } {
+        let inserted = dom::insert_value_at(cx, node, item, None);
+        if inserted.is_err() {
+            free(cx, node);
+            return None;
+        }
+        return Some(node);
+    }
+    if unsafe { !qjs::JS_IsObject(item) } {
+        free(cx, node);
+        dom::warn(cx, "a header item is not a button or a view");
+        return None;
+    }
+    let title = prop_of(cx, item, "title");
+    let image = prop_of(cx, item, "image");
+    let has_title = !absent(cx, title);
+    let has_image = !absent(cx, image);
+    if !has_title && !has_image {
+        free(cx, title);
+        free(cx, image);
+        free(cx, node);
+        dom::warn(cx, "a bar button needs a title or an image");
+        return None;
+    }
+    let _ = dom::set_prop_value(cx, node, "barButton", qjs::JS_TRUE);
+    if has_title {
+        let _ = dom::set_prop_value(cx, node, "barTitle", title);
+    }
+    free(cx, title);
+    if has_image {
+        let _ = dom::set_prop_value(cx, node, "barImage", image);
+    }
+    free(cx, image);
+    let on_press = prop_of(cx, item, "onPress");
+    if !absent(cx, on_press) {
+        let _ = dom::set_prop_value(cx, node, "onPress", on_press);
+    }
+    free(cx, on_press);
+    let enabled = prop_of(cx, item, "enabled");
+    if !absent(cx, enabled) {
+        let _ = dom::set_prop_value(cx, node, "barEnabled", enabled);
+    }
+    free(cx, enabled);
+    let tint = prop_of(cx, item, "tintColor");
+    if !absent(cx, tint) {
+        let _ = dom::set_prop_value(cx, node, "barTint", tint);
+    }
+    free(cx, tint);
+    Some(node)
+}
+
+fn set_index(cx: *mut JsContext, node: JsValue, name: &str, index: u32) {
+    let value = qjs::JS_NewFloat64(f64::from(index));
+    if dom::set_prop_value(cx, node, name, value).is_err() {
+        free(cx, value);
+    }
+}
+
 unsafe extern "C" fn header_slot_fn(
     cx: *mut JsContext,
     _this: JsValue,
@@ -812,79 +941,7 @@ unsafe extern "C" fn unwrap_children(
     }
 }
 
-// --- Default header ---------------------------------------------------------------
-
-fn nav_header_export(cx: *mut JsContext) -> JsValue {
-    reactive::new_function(cx, c"NavHeader", nav_header_component, 1)
-}
-
-fn set_nav_header_export(cx: *mut JsContext) -> JsValue {
-    reactive::new_function(cx, c"setNavHeader", set_nav_header_component, 1)
-}
-
-/// The system bar does not read this. Shared code can still call it.
-unsafe extern "C" fn set_nav_header_component(
-    _cx: *mut JsContext,
-    _this: JsValue,
-    _argc: c_int,
-    _argv: *mut JsValue,
-) -> JsValue {
-    UNDEFINED
-}
-
-unsafe extern "C" fn nav_header_component(
-    cx: *mut JsContext,
-    _this: JsValue,
-    argc: c_int,
-    argv: *mut JsValue,
-) -> JsValue {
-    let props = reactive::arg(argc, argv, 0);
-    match render_nav_header(cx, props) {
-        Ok(node) => node,
-        Err(error) => error,
-    }
-}
-
-struct BarPalette {
-    bg: &'static str,
-    title: &'static str,
-    tint: &'static str,
-    line: &'static str,
-}
-
-fn bar_palette(dark: bool) -> BarPalette {
-    if dark {
-        BarPalette {
-            bg: "#000000",
-            title: "#ffffff",
-            tint: "#0A84FF",
-            line: "rgba(84,84,88,0.6)",
-        }
-    } else {
-        BarPalette {
-            bg: "#ffffff",
-            title: "#000000",
-            tint: "#007AFF",
-            line: "rgba(60,60,67,0.29)",
-        }
-    }
-}
-
-fn dark_scheme(cx: *mut JsContext) -> bool {
-    // SAFETY: the color-scheme signal of this context, called like
-    // `platform.colorScheme()`.
-    unsafe {
-        let signal = (*crate::state::state(cx)).color_scheme.get();
-        if qjs::JS_IsUndefined(signal) {
-            return false;
-        }
-        let value = qjs::JS_Call(cx, signal, UNDEFINED, 0, std::ptr::null_mut());
-        let dark = dom::string_value(cx, value).as_deref() == Some("dark");
-        free(cx, value);
-        dark
-    }
-}
-
+/// The property `name` of `object` (owned).
 fn prop_of(cx: *mut JsContext, object: JsValue, name: &str) -> JsValue {
     let key = format!("{name}\0");
     match CStr::from_bytes_with_nul(key.as_bytes()) {
@@ -893,16 +950,7 @@ fn prop_of(cx: *mut JsContext, object: JsValue, name: &str) -> JsValue {
     }
 }
 
-fn put_prop(cx: *mut JsContext, object: JsValue, name: &str, value: JsValue) {
-    let key = format!("{name}\0");
-    match CStr::from_bytes_with_nul(key.as_bytes()) {
-        Ok(name) => unsafe {
-            qjs::JS_SetPropertyStr(cx, object, name.as_ptr(), value);
-        },
-        Err(_) => free(cx, value),
-    }
-}
-
+/// Whether `value` says "no": undefined, null, or `false`.
 fn absent(cx: *mut JsContext, value: JsValue) -> bool {
     unsafe {
         qjs::JS_IsUndefined(value)
@@ -910,517 +958,6 @@ fn absent(cx: *mut JsContext, value: JsValue) -> bool {
             || (qjs::JS_IsBool(value) && qjs::JS_ToBool(cx, value) == 0)
     }
 }
-
-fn prop_flag(cx: *mut JsContext, value: JsValue) -> Option<bool> {
-    unsafe { qjs::JS_IsBool(value).then(|| qjs::JS_ToBool(cx, value) == 1) }
-}
-
-fn style_color(cx: *mut JsContext, style: JsValue, name: &str) -> Option<String> {
-    if absent(cx, style) || unsafe { !qjs::JS_IsObject(style) } {
-        return None;
-    }
-    let value = prop_of(cx, style, name);
-    let color = if absent(cx, value) {
-        None
-    } else {
-        dom::string_value(cx, value)
-    };
-    free(cx, value);
-    color
-}
-
-fn js_string(cx: *mut JsContext, value: JsValue) -> Option<String> {
-    unsafe {
-        qjs::JS_IsString(value)
-            .then(|| dom::string_value(cx, value))
-            .flatten()
-    }
-}
-
-fn release(cx: *mut JsContext, values: &[JsValue]) {
-    for value in values {
-        free(cx, *value);
-    }
-}
-
-fn host_node(cx: *mut JsContext, tag: Tag) -> Result<JsValue, JsValue> {
-    let node = dom::create_element(cx, tag);
-    if unsafe { qjs::JS_IsException(node) } {
-        Err(node)
-    } else {
-        Ok(node)
-    }
-}
-
-fn set_owned(cx: *mut JsContext, node: JsValue, name: &str, value: JsValue) -> Result<(), JsValue> {
-    let result = dom::set_prop_value(cx, node, name, value);
-    free(cx, value);
-    result
-}
-
-fn insert_owned(cx: *mut JsContext, parent: JsValue, child: JsValue) -> Result<(), JsValue> {
-    let result = dom::insert_value_at(cx, parent, child, None);
-    free(cx, child);
-    result
-}
-
-fn style_of(cx: *mut JsContext, fields: &[(&str, JsValue)]) -> JsValue {
-    let object = unsafe { qjs::JS_NewObject(cx) };
-    for (name, value) in fields {
-        put_prop(cx, object, name, *value);
-    }
-    object
-}
-
-const CHEVRON_LEFT: &str = "M15 18 9 12 15 6";
-
-fn chevron_src(color: &str) -> String {
-    let svg = format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"{CHEVRON_LEFT}\" stroke=\"{color}\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>"
-    );
-    format!("data:image/svg+xml,{}", encode_uri(&svg))
-}
-
-fn encode_uri(value: &str) -> String {
-    let mut out = String::new();
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(byte as char)
-            }
-            _ => out.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    out
-}
-
-/// The web back mark: the same 24-viewport chevron the Android bar strokes.
-/// The press target is the content row (44) and runs from the bar's start
-/// edge through 44pt past the 16pt inset. The glyph stays at that inset.
-fn chevron_button(cx: *mut JsContext, tint: &str, on_press: JsValue) -> Result<JsValue, JsValue> {
-    let hit = match host_node(cx, Tag::View) {
-        Ok(node) => node,
-        Err(error) => {
-            free(cx, on_press);
-            return Err(error);
-        }
-    };
-    let style = style_of(
-        cx,
-        &[
-            ("width", qjs::JS_NewFloat64(60.0)),
-            ("height", qjs::JS_NewFloat64(44.0)),
-            ("marginStart", qjs::JS_NewFloat64(-16.0)),
-            ("paddingStart", qjs::JS_NewFloat64(16.0)),
-            ("paddingEnd", qjs::JS_NewFloat64(20.0)),
-            ("justifyContent", new_string(cx, "center")),
-        ],
-    );
-    if let Err(error) = set_owned(cx, hit, "style", style) {
-        free(cx, hit);
-        free(cx, on_press);
-        return Err(error);
-    }
-    if let Err(error) = set_owned(cx, hit, "accessibilityLabel", new_string(cx, "Back")) {
-        free(cx, hit);
-        free(cx, on_press);
-        return Err(error);
-    }
-    if unsafe { qjs::JS_IsFunction(cx, on_press) } {
-        if let Err(error) = set_owned(cx, hit, "onPress", on_press) {
-            free(cx, hit);
-            return Err(error);
-        }
-    } else {
-        free(cx, on_press);
-    }
-    let image = match host_node(cx, Tag::Image) {
-        Ok(node) => node,
-        Err(error) => {
-            free(cx, hit);
-            return Err(error);
-        }
-    };
-    let glyph = style_of(
-        cx,
-        &[
-            ("width", qjs::JS_NewFloat64(24.0)),
-            ("height", qjs::JS_NewFloat64(24.0)),
-        ],
-    );
-    if let Err(error) = set_owned(cx, image, "style", glyph) {
-        free(cx, image);
-        free(cx, hit);
-        return Err(error);
-    }
-    if let Err(error) = set_owned(cx, image, "src", new_string(cx, &chevron_src(tint))) {
-        free(cx, image);
-        free(cx, hit);
-        return Err(error);
-    }
-    if let Err(error) = insert_owned(cx, hit, image) {
-        free(cx, hit);
-        return Err(error);
-    }
-    Ok(hit)
-}
-
-fn styled_text(
-    cx: *mut JsContext,
-    fields: &[(&str, JsValue)],
-    label: Option<&str>,
-    text: &str,
-    on_press: JsValue,
-) -> Result<JsValue, JsValue> {
-    let node = match host_node(cx, Tag::Text) {
-        Ok(node) => node,
-        Err(error) => {
-            for (_, value) in fields {
-                free(cx, *value);
-            }
-            free(cx, on_press);
-            return Err(error);
-        }
-    };
-    if !fields.is_empty() {
-        let style = style_of(cx, fields);
-        if let Err(error) = set_owned(cx, node, "style", style) {
-            free(cx, node);
-            free(cx, on_press);
-            return Err(error);
-        }
-    }
-    if let Some(label) = label
-        && let Err(error) = set_owned(cx, node, "accessibilityLabel", new_string(cx, label))
-    {
-        free(cx, node);
-        free(cx, on_press);
-        return Err(error);
-    }
-    if unsafe { qjs::JS_IsFunction(cx, on_press) }
-        && let Err(error) = set_owned(cx, node, "onPress", on_press)
-    {
-        free(cx, node);
-        return Err(error);
-    } else if unsafe { !qjs::JS_IsFunction(cx, on_press) } {
-        free(cx, on_press);
-    }
-    // `set_owned` of a function consumes it. The else frees a non-function.
-    // A successful set also consumed it. Don't free twice.
-    if let Err(error) = insert_owned(cx, node, new_string(cx, text)) {
-        free(cx, node);
-        return Err(error);
-    }
-    Ok(node)
-}
-
-fn side_style(cx: *mut JsContext, end: bool) -> JsValue {
-    let position = new_string(cx, "absolute");
-    let top = qjs::JS_NewFloat64(0.0);
-    let bottom = qjs::JS_NewFloat64(0.0);
-    let width = new_string(cx, "50%");
-    let overflow = new_string(cx, "hidden");
-    let direction = new_string(cx, "row");
-    let align = new_string(cx, "center");
-    if end {
-        style_of(
-            cx,
-            &[
-                ("position", position),
-                ("top", top),
-                ("bottom", bottom),
-                ("width", width),
-                ("overflow", overflow),
-                ("flexDirection", direction),
-                ("alignItems", align),
-                ("end", qjs::JS_NewFloat64(0.0)),
-                ("paddingEnd", qjs::JS_NewFloat64(16.0)),
-                ("justifyContent", new_string(cx, "flex-end")),
-            ],
-        )
-    } else {
-        style_of(
-            cx,
-            &[
-                ("position", position),
-                ("top", top),
-                ("bottom", bottom),
-                ("width", width),
-                ("overflow", overflow),
-                ("flexDirection", direction),
-                ("alignItems", align),
-                ("start", qjs::JS_NewFloat64(0.0)),
-                ("paddingStart", qjs::JS_NewFloat64(16.0)),
-            ],
-        )
-    }
-}
-
-fn side_slot(cx: *mut JsContext, end: bool, content: JsValue) -> Result<JsValue, JsValue> {
-    let node = match host_node(cx, Tag::View) {
-        Ok(node) => node,
-        Err(error) => {
-            free(cx, content);
-            return Err(error);
-        }
-    };
-    let style = side_style(cx, end);
-    if let Err(error) = set_owned(cx, node, "style", style) {
-        free(cx, node);
-        free(cx, content);
-        return Err(error);
-    }
-    if absent(cx, content) {
-        free(cx, content);
-        return Ok(node);
-    }
-    let child = if dom::is_node_value(cx, content) {
-        content
-    } else if let Some(text) = js_string(cx, content) {
-        free(cx, content);
-        match styled_text(
-            cx,
-            &[("fontWeight", new_string(cx, "600"))],
-            None,
-            &text,
-            UNDEFINED,
-        ) {
-            Ok(text) => text,
-            Err(error) => {
-                free(cx, node);
-                return Err(error);
-            }
-        }
-    } else {
-        free(cx, content);
-        return Ok(node);
-    };
-    if let Err(error) = insert_owned(cx, node, child) {
-        free(cx, node);
-        return Err(error);
-    }
-    Ok(node)
-}
-
-fn string_title(cx: *mut JsContext, text: &str, color: &str) -> Result<JsValue, JsValue> {
-    styled_text(
-        cx,
-        &[
-            ("position", new_string(cx, "absolute")),
-            ("left", qjs::JS_NewFloat64(16.0)),
-            ("right", qjs::JS_NewFloat64(16.0)),
-            ("top", qjs::JS_NewFloat64(0.0)),
-            ("bottom", qjs::JS_NewFloat64(0.0)),
-            ("textAlign", new_string(cx, "center")),
-            ("textAlignVertical", new_string(cx, "center")),
-            ("fontSize", qjs::JS_NewFloat64(17.0)),
-            ("fontWeight", new_string(cx, "600")),
-            ("numberOfLines", qjs::JS_NewFloat64(1.0)),
-            ("color", new_string(cx, color)),
-            ("pointerEvents", new_string(cx, "none")),
-        ],
-        None,
-        text,
-        UNDEFINED,
-    )
-}
-
-fn custom_title(cx: *mut JsContext, child: JsValue) -> Result<JsValue, JsValue> {
-    let node = match host_node(cx, Tag::View) {
-        Ok(node) => node,
-        Err(error) => {
-            free(cx, child);
-            return Err(error);
-        }
-    };
-    let style = style_of(
-        cx,
-        &[
-            ("position", new_string(cx, "absolute")),
-            ("alignSelf", new_string(cx, "center")),
-            ("top", qjs::JS_NewFloat64(0.0)),
-            ("bottom", qjs::JS_NewFloat64(0.0)),
-            ("justifyContent", new_string(cx, "center")),
-        ],
-    );
-    if let Err(error) = set_owned(cx, node, "style", style) {
-        free(cx, node);
-        free(cx, child);
-        return Err(error);
-    }
-    if let Err(error) = insert_owned(cx, node, child) {
-        free(cx, node);
-        return Err(error);
-    }
-    Ok(node)
-}
-
-fn title_slot(
-    cx: *mut JsContext,
-    header_title: JsValue,
-    title: JsValue,
-    color: &str,
-) -> Result<JsValue, JsValue> {
-    if !absent(cx, header_title) {
-        if dom::is_node_value(cx, header_title) {
-            free(cx, title);
-            return custom_title(cx, header_title);
-        }
-        if let Some(text) = js_string(cx, header_title) {
-            free(cx, header_title);
-            free(cx, title);
-            return string_title(cx, &text, color);
-        }
-    }
-    free(cx, header_title);
-    let text = js_string(cx, title).unwrap_or_default();
-    free(cx, title);
-    string_title(cx, &text, color)
-}
-
-fn render_nav_header(cx: *mut JsContext, props: JsValue) -> Result<JsValue, JsValue> {
-    let (props, own_props) = if unsafe { qjs::JS_IsObject(props) && !qjs::JS_IsNull(props) } {
-        (props, false)
-    } else {
-        (unsafe { qjs::JS_NewObject(cx) }, true)
-    };
-    let palette = bar_palette(dark_scheme(cx));
-    let header_style = prop_of(cx, props, "headerStyle");
-    let transparent = prop_of(cx, props, "headerTransparent");
-    let is_transparent = prop_flag(cx, transparent) == Some(true);
-    free(cx, transparent);
-    let custom_background = style_color(cx, header_style, "backgroundColor");
-    let hairline = !is_transparent && custom_background.is_none();
-    let background = if is_transparent {
-        "transparent".to_owned()
-    } else {
-        custom_background.unwrap_or_else(|| palette.bg.to_owned())
-    };
-    let title_color =
-        style_color(cx, header_style, "color").unwrap_or_else(|| palette.title.to_owned());
-    let tint =
-        style_color(cx, header_style, "tintColor").unwrap_or_else(|| palette.tint.to_owned());
-    free(cx, header_style);
-
-    let header_left = prop_of(cx, props, "headerLeft");
-    let can_go_back = prop_of(cx, props, "canGoBack");
-    let back_visible = prop_of(cx, props, "headerBackVisible");
-    let show_back = absent(cx, header_left)
-        && prop_flag(cx, can_go_back) == Some(true)
-        && prop_flag(cx, back_visible) != Some(false);
-    free(cx, can_go_back);
-    free(cx, back_visible);
-    let on_back = prop_of(cx, props, "onBack");
-    let header_title = prop_of(cx, props, "headerTitle");
-    let title = prop_of(cx, props, "title");
-    let header_right = prop_of(cx, props, "headerRight");
-    if own_props {
-        free(cx, props);
-    }
-
-    let leading = if absent(cx, header_left) {
-        free(cx, header_left);
-        if show_back {
-            match chevron_button(cx, &tint, on_back) {
-                Ok(button) => button,
-                Err(error) => {
-                    release(cx, &[header_title, title, header_right]);
-                    return Err(error);
-                }
-            }
-        } else {
-            free(cx, on_back);
-            UNDEFINED
-        }
-    } else {
-        free(cx, on_back);
-        header_left
-    };
-    let left = match side_slot(cx, false, leading) {
-        Ok(node) => node,
-        Err(error) => {
-            release(cx, &[header_title, title, header_right]);
-            return Err(error);
-        }
-    };
-    let middle = match title_slot(cx, header_title, title, &title_color) {
-        Ok(node) => node,
-        Err(error) => {
-            release(cx, &[left, header_right]);
-            return Err(error);
-        }
-    };
-    let right = match side_slot(cx, true, header_right) {
-        Ok(node) => node,
-        Err(error) => {
-            release(cx, &[left, middle]);
-            return Err(error);
-        }
-    };
-
-    let root = match host_node(cx, Tag::View) {
-        Ok(node) => node,
-        Err(error) => {
-            release(cx, &[left, middle, right]);
-            return Err(error);
-        }
-    };
-    let root_style = style_of(
-        cx,
-        &[
-            ("paddingTop", new_string(cx, "env(safe-area-inset-top)")),
-            ("backgroundColor", new_string(cx, &background)),
-        ],
-    );
-    if let Err(error) = set_owned(cx, root, "style", root_style) {
-        release(cx, &[root, left, middle, right]);
-        return Err(error);
-    }
-    let row = match host_node(cx, Tag::View) {
-        Ok(node) => node,
-        Err(error) => {
-            release(cx, &[root, left, middle, right]);
-            return Err(error);
-        }
-    };
-    let row_style = style_of(
-        cx,
-        &[
-            ("position", new_string(cx, "relative")),
-            ("height", qjs::JS_NewFloat64(44.0)),
-            ("overflow", new_string(cx, "hidden")),
-            (
-                "borderBottomWidth",
-                qjs::JS_NewFloat64(if hairline { 0.5 } else { 0.0 }),
-            ),
-            ("borderBottomColor", new_string(cx, palette.line)),
-        ],
-    );
-    if let Err(error) = set_owned(cx, row, "style", row_style) {
-        release(cx, &[root, row, left, middle, right]);
-        return Err(error);
-    }
-    // Sides first so the title paints above them.
-    if let Err(error) = insert_owned(cx, row, left) {
-        release(cx, &[root, row, middle, right]);
-        return Err(error);
-    }
-    if let Err(error) = insert_owned(cx, row, right) {
-        release(cx, &[root, row, middle]);
-        return Err(error);
-    }
-    if let Err(error) = insert_owned(cx, row, middle) {
-        release(cx, &[root, row]);
-        return Err(error);
-    }
-    if let Err(error) = insert_owned(cx, root, row) {
-        free(cx, root);
-        return Err(error);
-    }
-    Ok(root)
-}
-
-// --- Dialog -----------------------------------------------------------------------
 
 /// `<Dialog open onOpenChange …>`: content over everything else.
 fn modal_export(cx: *mut JsContext) -> JsValue {

@@ -785,40 +785,42 @@ export interface NavStackProps<R> {
   children: (route: R, index: Accessor<number>) => unknown;
 }
 
+export interface NavBarButton {
+  title?: string;
+  image?: ImageSource;
+  onPress?: () => void;
+  enabled?: boolean;
+  tintColor?: ColorValue;
+}
+
+export interface NavBarAppearance {
+  backgroundColor?: ColorValue;
+  titleColor?: ColorValue;
+  largeTitleColor?: ColorValue;
+  tintColor?: ColorValue;
+  shadowColor?: ColorValue | "none";
+}
+
 export interface NavPageProps {
   testID?: string;
-  /** The page's title. */
   title?: string;
-  /** Whether the header is visible (default true). `false` mounts no header:
-   * web drops the header slot, and the content's top inset is the safe area. */
+  subtitle?: string;
+  titleView?: unknown;
+  largeTitleDisplayMode?: "automatic" | "always" | "never";
+  backButtonTitle?: string;
+  backButtonDisplayMode?: "default" | "generic" | "minimal";
+  hidesBackButton?: boolean;
+  leftItemsSupplementBackButton?: boolean;
+  leadingItemGroups?: ReadonlyArray<ReadonlyArray<NavBarButton | unknown>>;
+  trailingItemGroups?: ReadonlyArray<ReadonlyArray<NavBarButton | unknown>>;
+  standardAppearance?: NavBarAppearance;
+  scrollEdgeAppearance?: NavBarAppearance;
   headerVisible?: boolean;
-  /** Whether the back button is visible (default true). */
-  headerBackVisible?: boolean;
-  /** Custom left header content. */
-  headerLeft?: unknown;
-  /** Custom right header content. */
-  headerRight?: unknown;
-  /** Custom title header content. */
-  headerTitle?: unknown;
-  /** Header style properties. */
-  headerStyle?: {
-    backgroundColor?: ColorValue;
-    color?: ColorValue;
-    tintColor?: ColorValue;
-  };
-  /** Whether the header is transparent. */
-  headerTransparent?: boolean;
-  /** The page transition animation. */
   animation?: "default" | "fade" | "none";
-  /** Whether swiping can pop the page (default true). */
   popOnSwipe?: boolean;
-  /** Whether the back button pops the page (default true). */
   popOnBack?: boolean;
-  /** The user pressed back on the page, whether or not it popped. */
   onBackPress?: () => void;
-  /** The user popped the page (back button, swipe); its route is gone. */
   onDismiss?: () => void;
-  /** Platform insets changed (safe area). */
   onInsets?: (insets: { top: number; right: number; bottom: number; left: number }) => void;
   style?: StyleProp<ViewStyle>;
   class?: string;
@@ -859,44 +861,11 @@ export interface DialogProps {
   children?: unknown;
 }
 
-/** Props of the default header, and of a component passed to `setNavHeader`.
- * `NavPage` fills `canGoBack` and `onBack` when it mounts the component. */
-export interface NavHeaderProps {
-  /** The page's `title`, when `headerTitle` is absent. */
-  title?: string;
-  /** Replaces the back control. */
-  headerLeft?: unknown;
-  /** Trailing content. */
-  headerRight?: unknown;
-  /** Replaces the title string. */
-  headerTitle?: unknown;
-  /** Whether the back control is visible (default true). */
-  headerBackVisible?: boolean;
-  /** Header colors. `backgroundColor` also drops the hairline. */
-  headerStyle?: {
-    backgroundColor?: ColorValue;
-    color?: ColorValue;
-    tintColor?: ColorValue;
-  };
-  /** Whether the header is transparent. */
-  headerTransparent?: boolean;
-  /** False on the root page, and when the page is not in a stack. */
-  canGoBack?: boolean;
-  /** Engine back: `onBackPress`, then `popOnBack`. Not a direct pop. */
-  onBack?: () => void;
-}
-
 /** Creates a navigation stack state. */
 export function createNavStack<R>(routes: readonly R[]): NavStackState<R>;
 export function NavStack<R>(props: NavStackProps<R>): unknown;
 export function NavPage(props: NavPageProps): unknown;
-/** The default header bar. Web `NavPage` mounts it; an app can also place it. */
-export function NavHeader(props: NavHeaderProps): unknown;
-/** Web: the component `NavPage` mounts in the header slot. `null` restores
- * `NavHeader`. iOS and Android ignore it. */
-export function setNavHeader(
-  component: ((props: NavHeaderProps) => unknown) | null,
-): void;
+
 export function Dialog(props: DialogProps): unknown;
 
 
@@ -1403,19 +1372,14 @@ mod tests {
         );
 
         // NavPageProps contract
-        assert!(ui.contains("headerStyle?:"));
-        assert!(
-            ui.contains("backgroundColor?: ColorValue"),
-            "headerStyle should use ColorValue"
-        );
-        assert!(
-            ui.contains("color?: ColorValue"),
-            "headerStyle should use ColorValue"
-        );
-        assert!(
-            ui.contains("tintColor?: ColorValue"),
-            "headerStyle should use ColorValue"
-        );
+        assert!(ui.contains("leadingItemGroups?:"));
+        assert!(ui.contains("subtitle?:"));
+        assert!(ui.contains("standardAppearance?:"));
+        assert!(ui.contains("backgroundColor?: ColorValue"));
+        assert!(ui.contains("tintColor?: ColorValue"));
+        assert!(!ui.contains("headerStyle?:"));
+        assert!(!ui.contains("export function NavHeader"));
+        assert!(!ui.contains("export function setNavHeader"));
         assert!(ui.contains("headerVisible?:"));
         assert!(
             ui.contains("popOnSwipe?:"),

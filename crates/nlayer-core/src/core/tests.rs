@@ -12,6 +12,19 @@ use crate::{
     text::{ApproxTextEngine, AttributedText, TextEngine, TextLayout},
 };
 
+fn cover(opaque: bool) -> Prop {
+    Prop::Screen(crate::ops::ScreenProp::StandardAppearance(
+        crate::ops::BarAppearance {
+            background_color: Some(if opaque {
+                Color::rgba(255, 255, 255, 255)
+            } else {
+                Color::TRANSPARENT
+            }),
+            ..Default::default()
+        },
+    ))
+}
+
 /// 8pt per character, 16pt per line, wrapping at `max_width`.
 struct FakeEngine;
 
@@ -2066,8 +2079,13 @@ fn screen_env_does_not_repeat_the_header_safe_area() {
     })
     .unwrap();
 
-    // A transparent native bar still counts: 44pt bar + 20pt status
-    // inset, plus the 8pt padding, around a 10pt child.
+    // An opaque bar covers the top. A transparent one counts: 44pt plus
+    // the 20pt status inset, plus the 8pt padding, around a 10pt child.
+    c.apply(Op::SetProp {
+        id: 6,
+        prop: cover(true),
+    })
+    .unwrap();
     c.apply(Op::Create {
         id: 10,
         tag: Tag::Screen,
@@ -2075,7 +2093,7 @@ fn screen_env_does_not_repeat_the_header_safe_area() {
     .unwrap();
     c.apply(Op::SetProp {
         id: 10,
-        prop: Prop::Screen(crate::ops::ScreenProp::HeaderTransparent(true)),
+        prop: cover(false),
     })
     .unwrap();
     c.apply(Op::Create {
@@ -2283,7 +2301,7 @@ fn drawn_header_keeps_the_surface_top_inset() {
     // inset. Content reads it. The header slot still reads the surface.
     c.apply(Op::SetProp {
         id: 3,
-        prop: Prop::Screen(crate::ops::ScreenProp::HeaderTransparent(true)),
+        prop: cover(false),
     })
     .unwrap();
     c.set_root_insets(
@@ -3522,7 +3540,7 @@ fn header_item_layout_and_config() {
     .unwrap();
     c.apply(Op::SetProp {
         id: 5,
-        prop: Prop::HeaderSlot(crate::ops::HeaderSlot::Left),
+        prop: Prop::HeaderSlot(crate::ops::HeaderSlot::Leading),
     })
     .unwrap();
     c.apply(Op::Insert {
@@ -3764,16 +3782,21 @@ fn native_header_moves_content() {
     })
     .unwrap();
 
+    c.apply(Op::SetProp {
+        id: 3,
+        prop: cover(true),
+    })
+    .unwrap();
     c.commit();
 
-    // Content should start at y=64 (native header height).
+    // Opaque background: content starts under the 44pt bar.
     let child_frame = c.nodes.iter().find(|(_, n)| n.id == 4).unwrap().1.frame;
-    assert_eq!(child_frame.origin.y.0, 64.0);
+    assert_eq!(child_frame.origin.y.0, 44.0);
 
     // With headerTransparent, content should start at y=0.
     c.apply(Op::SetProp {
         id: 3,
-        prop: Prop::Screen(crate::ops::ScreenProp::HeaderTransparent(true)),
+        prop: cover(false),
     })
     .unwrap();
     c.commit();
@@ -3781,6 +3804,67 @@ fn native_header_moves_content() {
     let child_frame = c.nodes.iter().find(|(_, n)| n.id == 4).unwrap().1.frame;
     assert_eq!(child_frame.origin.y.0, 0.0);
 }
+
+#[test]
+fn bar_height_follows_subtitle_large_title_and_visibility() {
+    let mut c = Core::new(FakeEngine, size_pt(400.0, 800.0));
+    c.set_header_heights(Points(44.0), Points(96.0));
+    c.apply(Op::Create {
+        id: 2,
+        tag: Tag::Stack,
+    })
+    .unwrap();
+    c.apply(Op::Insert {
+        parent: ROOT_ID,
+        child: 2,
+        before: None,
+    })
+    .unwrap();
+    c.apply(Op::Create {
+        id: 3,
+        tag: Tag::Screen,
+    })
+    .unwrap();
+    c.apply(Op::Insert {
+        parent: 2,
+        child: 3,
+        before: None,
+    })
+    .unwrap();
+    let height = |c: &mut Core<FakeEngine>| {
+        c.commit()
+            .unwrap()
+            .items
+            .iter()
+            .rev()
+            .find_map(|item| match item {
+                MountItem::ScreenConfig { id, config } if *id == 3 => Some(config.bar_height.0),
+                _ => None,
+            })
+    };
+    assert_eq!(height(&mut c), Some(44.0));
+    c.apply(Op::SetProp {
+        id: 3,
+        prop: Prop::Screen(crate::ops::ScreenProp::Subtitle(Some("12".into()))),
+    })
+    .unwrap();
+    assert_eq!(height(&mut c), Some(56.0));
+    c.apply(Op::SetProp {
+        id: 3,
+        prop: Prop::Screen(crate::ops::ScreenProp::LargeTitle(
+            crate::ops::LargeTitleDisplayMode::Always,
+        )),
+    })
+    .unwrap();
+    assert_eq!(height(&mut c), Some(44.0 + 52.0 + 16.0));
+    c.apply(Op::SetProp {
+        id: 3,
+        prop: Prop::Screen(crate::ops::ScreenProp::HeaderVisible(false)),
+    })
+    .unwrap();
+    assert_eq!(height(&mut c), Some(0.0));
+}
+
 #[test]
 fn transparent_toggle_keeps_inset_padded_content_put() {
     let mut c = Core::new(FakeEngine, size_pt(400.0, 800.0));
@@ -3842,6 +3926,11 @@ fn transparent_toggle_keeps_inset_padded_content_put() {
         before: None,
     })
     .unwrap();
+    c.apply(Op::SetProp {
+        id: 3,
+        prop: cover(true),
+    })
+    .unwrap();
     // Opaque: the bar covers the top, and the platform measured it.
     c.set_screen_header(3, Some(Points(80.0)));
     c.set_root_insets(
@@ -3870,7 +3959,7 @@ fn transparent_toggle_keeps_inset_padded_content_put() {
 
     c.apply(Op::SetProp {
         id: 3,
-        prop: Prop::Screen(crate::ops::ScreenProp::HeaderTransparent(true)),
+        prop: cover(false),
     })
     .unwrap();
     c.commit();
@@ -3894,13 +3983,13 @@ fn transparent_toggle_keeps_inset_padded_content_put() {
 
     c.apply(Op::SetProp {
         id: 3,
-        prop: Prop::Screen(crate::ops::ScreenProp::HeaderTransparent(false)),
+        prop: cover(true),
     })
     .unwrap();
     c.commit();
     assert_eq!(
         place(&c),
-        96.0,
+        84.0,
         "a zero measurement must not drop the content"
     );
 }
@@ -3972,6 +4061,11 @@ fn drawn_header_transparent_lets_content_start_at_top() {
         before: None,
     })
     .unwrap();
+    c.apply(Op::SetProp {
+        id: 3,
+        prop: cover(true),
+    })
+    .unwrap();
     c.commit().expect("the screen lays out");
 
     let content = c.nodes.iter().find(|(_, n)| n.id == 6).unwrap().1.frame;
@@ -3981,7 +4075,7 @@ fn drawn_header_transparent_lets_content_start_at_top() {
 
     c.apply(Op::SetProp {
         id: 3,
-        prop: Prop::Screen(crate::ops::ScreenProp::HeaderTransparent(true)),
+        prop: cover(false),
     })
     .unwrap();
     c.commit().expect("transparent relayout");

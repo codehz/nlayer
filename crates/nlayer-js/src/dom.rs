@@ -190,6 +190,10 @@ fn dom(cx: *mut JsContext) -> &'static Dom {
     unsafe { &(*state::state(cx)).dom }
 }
 
+pub(crate) fn warn(cx: *mut JsContext, message: impl Into<String>) {
+    dom(cx).warn(message.into());
+}
+
 /// The renderer of `cx`, mutably (only during installation).
 #[allow(clippy::mut_from_ref)]
 unsafe fn dom_mut<'a>(cx: *mut JsContext) -> &'a mut Dom {

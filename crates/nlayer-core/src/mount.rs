@@ -52,61 +52,139 @@ pub const NO_NATIVE_HEADER: (Points, Points) = (Points::ZERO, Points::ZERO);
 
 /// Options of a screen: its header and transitions.
 ///
-/// The header options are the native header's (iOS, Android); a platform
-/// without one ([`NO_NATIVE_HEADER`]) reads only `header_view`,
-/// `header_height`, `prevent_back`, `gesture_enabled` and `animation`.
+/// `header_transparent`, `background_color`, `title_color`, `tint_color` and
+/// `back_visible` are derived from the appearance and `hidesBackButton` so
+/// hosts that still read the old cover can compile. A platform without a
+/// native header ([`NO_NATIVE_HEADER`]) reads `header_view`, `header_height`,
+/// `prevent_back`, `gesture_enabled` and `animation`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScreenConfig {
     /// Title in the header.
     pub title: Option<Arc<str>>,
-    /// Show the native header.
+    /// Subtitle under the title. Hidden when `title_view` is set.
+    pub subtitle: Option<Arc<str>>,
+    /// Show the header.
     pub header_visible: bool,
-    /// The content extends under the header.
+    /// Content extends under the header. True when `standard` has no opaque
+    /// `background_color` (the v11 default).
     pub header_transparent: bool,
-    /// Color of the back button and bar buttons.
+    /// Tint from `standardAppearance`, when set.
     pub tint_color: Option<crate::Color>,
-    /// Header background.
+    /// Background from `standardAppearance`, when set.
     pub background_color: Option<crate::Color>,
-    /// Title color.
+    /// Title color from `standardAppearance`, when set.
     pub title_color: Option<crate::Color>,
-    /// Show the back button.
+    /// `hidesBackButton` is false.
     pub back_visible: bool,
-    /// The interactive back gesture (iOS swipe back, Android predictive back
-    /// following the finger) is on; the back button pops either way
-    /// (`popOnSwipe`).
+    /// `largeTitleDisplayMode`.
+    pub large_title: crate::ops::LargeTitleDisplayMode,
+    /// `backButtonTitle` of this page, for the page that covers it.
+    pub back_button_title: Option<Arc<str>>,
+    /// `backButtonDisplayMode` of this page.
+    pub back_button_display_mode: crate::ops::BackButtonDisplayMode,
+    /// `hidesBackButton`.
+    pub hides_back_button: bool,
+    /// `leftItemsSupplementBackButton`.
+    pub left_items_supplement_back_button: bool,
+    /// `standardAppearance`.
+    pub standard: crate::ops::BarAppearance,
+    /// `scrollEdgeAppearance`. iOS only.
+    pub scroll_edge: crate::ops::BarAppearance,
+    /// Leading groups, outer group first.
+    pub leading: Vec<Vec<BarItem>>,
+    /// Trailing groups, outer group first.
+    pub trailing: Vec<Vec<BarItem>>,
+    /// The interactive back gesture is on (`popOnSwipe`).
     pub gesture_enabled: bool,
-    /// The user cannot leave the screen (`popOnBack` false: no swipe, the
-    /// back buttons do not pop): answered by the platform when the system
-    /// asks, without JS. Every back press sends `onBackPress` either way.
+    /// The user cannot leave the screen (`popOnBack` false).
     pub prevent_back: bool,
     /// Push / pop transition.
     pub animation: crate::ops::ScreenAnimation,
-    /// Leading header item view.
+    /// First custom leading view. Hosts that still place one item read this.
     pub left: Option<NodeId>,
-    /// Trailing header item view.
+    /// First custom trailing view.
     pub right: Option<NodeId>,
-    /// Custom title view.
+    /// `titleView`.
     pub title_view: Option<NodeId>,
-    /// The app's header (`header`): on a platform without a native header
-    /// ([`NO_NATIVE_HEADER`]), a view at the top of the screen whose frame
-    /// the core sets (as wide as the screen, as tall as it lays out),
-    /// above the content.
+    /// The app's header slot on a platform without a native header.
     pub header_view: Option<NodeId>,
-    /// Height of the header area at the top of the screen, as the core laid
-    /// the content out below it: the native header's (status bar included),
-    /// or the `header` view's without a native header.
+    /// Height of the header area the core laid content out below: the native
+    /// header's (status bar included) or the `header` view's.
     pub header_height: Points,
+    /// Content-row height of the bar, without the status inset: 0 when
+    /// hidden, 44, 56 with a subtitle, or that plus a static large title.
+    pub bar_height: Points,
+}
+
+/// One control in an item group.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BarItem {
+    /// A button. `id` is the header item that owns `onPress`.
+    Button {
+        /// Node id.
+        id: NodeId,
+        /// Title. At least one of `title` and `image` is set.
+        title: Option<Arc<str>>,
+        /// Image source.
+        image: Option<crate::ops::ImageSource>,
+        /// `enabled`.
+        enabled: bool,
+        /// `tintColor`.
+        tint_color: Option<crate::Color>,
+    },
+    /// A custom view.
+    Custom(NodeId),
+}
+
+impl ScreenConfig {
+    /// Copies appearance fields onto the derived cover the layout still reads.
+    pub fn sync_cover(&mut self) {
+        self.background_color = self.standard.background_color;
+        self.title_color = self.standard.title_color;
+        self.tint_color = self.standard.tint_color;
+        self.header_transparent = !self
+            .background_color
+            .is_some_and(|color| !color.is_transparent());
+        self.back_visible = !self.hides_back_button;
+    }
+
+    /// Bar content height in points. `title_view` hides the subtitle and the
+    /// large title.
+    pub fn content_bar(&self, title_view: bool) -> Points {
+        if !self.header_visible {
+            return Points::ZERO;
+        }
+        let subtitle = self.subtitle.is_some() && !title_view;
+        let large = self.large_title == crate::ops::LargeTitleDisplayMode::Always && !title_view;
+        Points(if large {
+            44.0 + 52.0 + if subtitle { 16.0 } else { 0.0 }
+        } else if subtitle {
+            56.0
+        } else {
+            44.0
+        })
+    }
 }
 
 impl Default for ScreenConfig {
     fn default() -> Self {
         Self {
             title: None,
+            subtitle: None,
             header_visible: true,
-            header_transparent: false,
+            header_transparent: true,
             tint_color: None,
             background_color: None,
             title_color: None,
+            large_title: crate::ops::LargeTitleDisplayMode::Never,
+            back_button_title: None,
+            back_button_display_mode: crate::ops::BackButtonDisplayMode::Default,
+            hides_back_button: false,
+            left_items_supplement_back_button: false,
+            standard: crate::ops::BarAppearance::default(),
+            scroll_edge: crate::ops::BarAppearance::default(),
+            leading: Vec::new(),
+            trailing: Vec::new(),
             back_visible: true,
             gesture_enabled: true,
             prevent_back: false,
@@ -116,6 +194,7 @@ impl Default for ScreenConfig {
             title_view: None,
             header_view: None,
             header_height: Points::ZERO,
+            bar_height: Points(44.0),
         }
     }
 }

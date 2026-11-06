@@ -1595,6 +1595,7 @@ mod tests {
                     title_view: Some(101),
                     header_view: None,
                     header_height: nlayer_core::geometry::Points(44.0),
+                    ..ScreenConfig::default()
                 }),
             }],
         });
@@ -1637,7 +1638,7 @@ mod tests {
         assert_eq!(words.int(), 21);
         assert_eq!(words.int(), -1); // title absent
         assert_eq!(words.int(), 1); // header_visible (default true)
-        assert_eq!(words.int(), 0); // header_transparent (default false)
+        assert_eq!(words.int(), 1); // header_transparent (no opaque background)
         assert_eq!(words.int(), 0); // tint_color absent
         assert_eq!(words.int(), 0); // background_color absent
         assert_eq!(words.int(), 0); // title_color absent

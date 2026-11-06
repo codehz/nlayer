@@ -328,6 +328,20 @@ struct RootState {
     modal: crate::ModalConfig,
     /// Where a header item goes (header items).
     slot: crate::ops::HeaderSlot,
+    /// Group index (0 at the outer edge).
+    group: u32,
+    /// Index inside the group (0 at the outer edge).
+    index: u32,
+    /// A bar button, not a custom view.
+    button: bool,
+    /// Button title.
+    bar_title: Option<Arc<str>>,
+    /// Button image.
+    bar_image: Option<crate::ops::ImageSource>,
+    /// Button enabled.
+    bar_enabled: bool,
+    /// Button tint.
+    bar_tint: Option<crate::Color>,
 }
 
 /// Animation nodes the platform's gestures drive on a view: pan X and Y,

@@ -1379,10 +1379,17 @@ fn node_json(node: &TreeNode, screen: &Screen) -> serde_json::Value {
                 "screen".into(),
                 serde_json::json!({
                     "title": config.title.as_deref(),
+                    "subtitle": config.subtitle.as_deref(),
                     "headerVisible": config.header_visible,
-                    "headerTransparent": config.header_transparent,
+                    "headerHeight": config.bar_height.0,
+                    "largeTitleDisplayMode": large_title_name(config.large_title),
+                    "backButtonTitle": config.back_button_title.as_deref(),
+                    "backButtonDisplayMode": back_display_name(config.back_button_display_mode),
+                    "hidesBackButton": config.hides_back_button,
+                    "leftItemsSupplementBackButton": config.left_items_supplement_back_button,
                     "popOnBack": !config.prevent_back,
-                    "headerHeight": config.header_height.0,
+                    "leading": bar_groups(&config.leading),
+                    "trailing": bar_groups(&config.trailing),
                 }),
             );
         }
@@ -1505,6 +1512,50 @@ fn color_hex(packed: u32) -> String {
     } else {
         format!("#{packed:08x}")
     }
+}
+
+fn large_title_name(mode: nlayer_core::LargeTitleDisplayMode) -> &'static str {
+    match mode {
+        nlayer_core::LargeTitleDisplayMode::Automatic => "automatic",
+        nlayer_core::LargeTitleDisplayMode::Always => "always",
+        nlayer_core::LargeTitleDisplayMode::Never => "never",
+    }
+}
+
+fn back_display_name(mode: nlayer_core::BackButtonDisplayMode) -> &'static str {
+    match mode {
+        nlayer_core::BackButtonDisplayMode::Default => "default",
+        nlayer_core::BackButtonDisplayMode::Generic => "generic",
+        nlayer_core::BackButtonDisplayMode::Minimal => "minimal",
+    }
+}
+
+fn bar_groups(groups: &[Vec<nlayer_core::BarItem>]) -> serde_json::Value {
+    serde_json::Value::Array(
+        groups
+            .iter()
+            .map(|group| {
+                serde_json::Value::Array(
+                    group
+                        .iter()
+                        .map(|item| match item {
+                            nlayer_core::BarItem::Button {
+                                title,
+                                image,
+                                enabled,
+                                ..
+                            } => serde_json::json!({
+                                "title": title.as_deref(),
+                                "image": image.as_ref().map(|source| source.uri.as_ref()),
+                                "enabled": enabled,
+                            }),
+                            nlayer_core::BarItem::Custom(id) => serde_json::json!({ "view": id }),
+                        })
+                        .collect(),
+                )
+            })
+            .collect(),
+    )
 }
 
 fn keyboard_name(keyboard: KeyboardType) -> &'static str {

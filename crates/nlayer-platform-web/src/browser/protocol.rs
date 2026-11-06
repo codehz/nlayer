@@ -286,14 +286,42 @@ pub(super) fn decode_prop(
             Prop::Slot(slot)
         }
         (Some(Tag::Screen), "title") => Prop::Screen(ScreenProp::Title(optional_string(value))),
+        (Some(Tag::Screen), "subtitle") => {
+            Prop::Screen(ScreenProp::Subtitle(optional_string(value)))
+        }
         (Some(Tag::Screen), "headerVisible") => {
             Prop::Screen(ScreenProp::HeaderVisible(unless_false(value)))
         }
-        (Some(Tag::Screen), "headerTransparent") => {
-            Prop::Screen(ScreenProp::HeaderTransparent(value.bool()))
+        (Some(Tag::Screen), "largeTitleDisplayMode") => {
+            Prop::Screen(ScreenProp::LargeTitle(match string(value).as_str() {
+                "automatic" => nlayer_core::LargeTitleDisplayMode::Automatic,
+                "always" => nlayer_core::LargeTitleDisplayMode::Always,
+                "never" => nlayer_core::LargeTitleDisplayMode::Never,
+                other => {
+                    warnings.warn(format!("unknown largeTitleDisplayMode `{other}`"));
+                    nlayer_core::LargeTitleDisplayMode::Never
+                }
+            }))
         }
-        (Some(Tag::Screen), "headerBackVisible") => {
-            Prop::Screen(ScreenProp::HeaderBackVisible(unless_false(value)))
+        (Some(Tag::Screen), "backButtonTitle") => {
+            Prop::Screen(ScreenProp::BackButtonTitle(optional_string(value)))
+        }
+        (Some(Tag::Screen), "backButtonDisplayMode") => Prop::Screen(
+            ScreenProp::BackButtonDisplayMode(match string(value).as_str() {
+                "generic" => nlayer_core::BackButtonDisplayMode::Generic,
+                "minimal" => nlayer_core::BackButtonDisplayMode::Minimal,
+                "default" => nlayer_core::BackButtonDisplayMode::Default,
+                other => {
+                    warnings.warn(format!("unknown backButtonDisplayMode `{other}`"));
+                    nlayer_core::BackButtonDisplayMode::Default
+                }
+            }),
+        ),
+        (Some(Tag::Screen), "hidesBackButton") => {
+            Prop::Screen(ScreenProp::HidesBackButton(value.bool()))
+        }
+        (Some(Tag::Screen), "leftItemsSupplementBackButton") => {
+            Prop::Screen(ScreenProp::LeftItemsSupplementBackButton(value.bool()))
         }
         (Some(Tag::Screen), "popOnSwipe") => {
             Prop::Screen(ScreenProp::PopOnSwipe(unless_false(value)))
@@ -315,11 +343,12 @@ pub(super) fn decode_prop(
                 }
             }
         }
-        (Some(Tag::Screen), "headerStyle") => Prop::Screen(ScreenProp::HeaderStyle {
-            background_color: style_color(value, "backgroundColor"),
-            title_color: style_color(value, "color"),
-            tint_color: style_color(value, "tintColor"),
-        }),
+        (Some(Tag::Screen), "standardAppearance") => Prop::Screen(ScreenProp::StandardAppearance(
+            bar_appearance(value, warnings),
+        )),
+        (Some(Tag::Screen), "scrollEdgeAppearance") => Prop::Screen(
+            ScreenProp::ScrollEdgeAppearance(bar_appearance(value, warnings)),
+        ),
         (Some(Tag::Modal), "animation") => {
             let name = string(value);
             match name.as_str() {
@@ -362,8 +391,8 @@ pub(super) fn decode_prop(
         (Some(Tag::HeaderItem), "headerSlot") => {
             let name = string(value);
             match name.as_str() {
-                "left" => Prop::HeaderSlot(HeaderSlot::Left),
-                "right" => Prop::HeaderSlot(HeaderSlot::Right),
+                "leading" | "left" => Prop::HeaderSlot(HeaderSlot::Leading),
+                "trailing" | "right" => Prop::HeaderSlot(HeaderSlot::Trailing),
                 "title" => Prop::HeaderSlot(HeaderSlot::Title),
                 "header" => Prop::HeaderSlot(HeaderSlot::Header),
                 other => {
@@ -371,6 +400,19 @@ pub(super) fn decode_prop(
                     return Ok(None);
                 }
             }
+        }
+        (Some(Tag::HeaderItem), "headerGroup") => {
+            Prop::HeaderGroup(value.number_value().unwrap_or(0.0).max(0.0) as u32)
+        }
+        (Some(Tag::HeaderItem), "headerIndex") => {
+            Prop::HeaderIndex(value.number_value().unwrap_or(0.0).max(0.0) as u32)
+        }
+        (Some(Tag::HeaderItem), "barButton") => Prop::BarButton(value.bool()),
+        (Some(Tag::HeaderItem), "barTitle") => Prop::BarTitle(optional_string(value)),
+        (Some(Tag::HeaderItem), "barImage") => Prop::BarImage(image_source(value)?),
+        (Some(Tag::HeaderItem), "barEnabled") => Prop::BarEnabled(value.bool()),
+        (Some(Tag::HeaderItem), "barTint") => {
+            Prop::BarTint(optional_string(value).and_then(|text| Color::parse(&text)))
         }
         (Some(Tag::Cell), "cellIndex") => {
             Prop::CellIndex(value.number_value().unwrap_or(0.0).max(0.0) as u32)
@@ -410,6 +452,34 @@ pub(super) fn decode_prop(
         }
     };
     Ok(Some(Op::SetProp { id, prop }))
+}
+
+fn bar_appearance(value: &Value, warnings: &Warnings) -> nlayer_core::BarAppearance {
+    let color = |key: &str| style_color(value, key);
+    let shadow = value.get("shadowColor").ok().and_then(|v| {
+        if nullish(&v) {
+            return None;
+        }
+        let text = string(&v);
+        if text == "none" {
+            Some(nlayer_core::BarShadow::None)
+        } else {
+            match Color::parse(&text) {
+                Some(color) => Some(nlayer_core::BarShadow::Color(color)),
+                None => {
+                    warnings.warn(format!("invalid shadowColor `{text}`"));
+                    None
+                }
+            }
+        }
+    });
+    nlayer_core::BarAppearance {
+        background_color: color("backgroundColor"),
+        title_color: color("titleColor"),
+        large_title_color: color("largeTitleColor"),
+        tint_color: color("tintColor"),
+        shadow,
+    }
 }
 
 /// The numbers of an array prop, when it is one.

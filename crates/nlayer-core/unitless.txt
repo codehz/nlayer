@@ -2,63 +2,63 @@
 # (geometry::unit_types): one item path per line, then the reason.
 # Reasons copied from nsh where the item already existed.
 
-core::Core::set_pixel_ratio(pixel_ratio)                         # device pixels per point
-css::Color::with_alpha(factor)                                   # an opacity factor
-effects::Filter::Brightness.0                                    # a filter amount (1 leaves the image as it is)
-effects::Filter::Contrast.0                                      # a filter amount (1 leaves the image as it is)
-effects::Filter::Grayscale.0                                     # a filter amount (1 leaves the image as it is)
-effects::Filter::Invert.0                                        # a filter amount (1 leaves the image as it is)
-effects::Filter::Opacity.0                                       # an opacity, 0..1
-effects::Filter::Saturate.0                                      # a filter amount (1 leaves the image as it is)
-effects::Filter::Sepia.0                                         # a filter amount (1 leaves the image as it is)
-effects::Filter::color_matrix ->                                 # color components
-effects::KeyframeAnimation.delay                                 # time
-effects::KeyframeAnimation.duration                              # time
-effects::KeyframeAnimation.easing                                # easing curve coordinates (unit square)
-effects::KeyframeAnimation::delay(ms)                            # time
-effects::KeyframeAnimation::duration(ms)                         # time
-effects::KeyframeAnimation::easing(curve)                        # easing curve coordinates (unit square)
-effects::Transition.delay                                        # time
-effects::Transition.duration                                     # time
-effects::Transition.easing                                       # easing curve coordinates (unit square)
-effects::Transition::EASE                                        # easing curve coordinates (unit square)
-effects::compose_color_matrices ->                               # color components
-style::Color::to_f64 ->                                          # color components
-style::LineHeight::Em.0                                          # a multiple of the element's font size
-style::LineHeight::Multiple.0                                    # a multiple of the font size
-style::PropertyValue::Easing.0                                   # easing curve coordinates (unit square)
-style::PropertyValue::Flex.0                                     # a flex grow factor
-style::PropertyValue::Flex.1                                     # a flex shrink factor
-style::PropertyValue::LetterSpacing.1                            # ems of the font size
-style::PropertyValue::Ms.0                                       # time
-style::PropertyValue::Number.0                                   # a unitless style number (a flex factor, an opacity, a z-index)
-style::PropertyValue::OptNumber.0                                # an aspect ratio
-style::PropertyValue::Transform.0                                # transform operands (any of their kinds' units)
-style::Style::set_transform(steps)                               # transform operands (any of their kinds' units)
-style::StyleDecl::SetTransform.1                                 # transform operands (any of their kinds' units)
-style::StyleDecl::Transform.1                                    # a transform operand (any of its kinds' units)
-style::StyleKey::number_value(n)                                 # a style number as TSX writes it (points or a factor, by property)
-style::StyleValue::Number.0                                      # a generic number (a JS value, a recorded slot)
-style::TextStyle.letter_spacing_em                               # a multiple of the font size (em)
-style::TextStyle.line_height_em                                  # a line-height length in multiples of the element font size
-style::TextStyle.line_height_multiple                            # a multiple of the font's line height
-style::ViewStyle.opacity                                         # an opacity, 0..1
-transform::Decomposed.scale                                      # a scale factor
-transform::Matrix.0                                              # a transform operand (any of its kinds' units)
-transform::Matrix::of(v)                                         # a transform operand (any of its kinds' units)
-transform::Transform::matrix(value)                              # a transform operand (any of its kinds' units)
-transform::Transform::push(value)                                # a transform operand (any of its kinds' units)
-transform::TransformKind::identity ->                            # a transform operand (any of its kinds' units)
-transform::TransformOp.value                                     # a transform operand (any of its kinds' units)
-text::ResolvedTextStyle.line_height_multiple                     # a multiple of the font's line height
-ops::IMAGE_SCALES                                                # pixel densities (device pixels per point)
-ops::ImageScales::iter ->                                        # pixel densities (device pixels per point)
-ops::AccessibilityValue.min                                     # a screen-reader range value (unitless)
-ops::AccessibilityValue.max                                     # a screen-reader range value (unitless)
-ops::AccessibilityValue.now                                     # a screen-reader range value (unitless)
-ops::Prop::LoadMoreThreshold.0                                   # a distance to the end in viewports
-animation::graph::Graph::tick(now)                               # seconds since the graph's epoch
-animation::graph::Graph::value ->                                # an animated value (a number the graph interpolates)
+core::Core::set_pixel_ratio(pixel_ratio)                          # device pixels per point
+css::Color::with_alpha(factor)                                    # an opacity factor
+effects::Filter::Brightness.0                                     # a filter amount (1 leaves the image as it is)
+effects::Filter::Contrast.0                                       # a filter amount (1 leaves the image as it is)
+effects::Filter::Grayscale.0                                      # a filter amount (1 leaves the image as it is)
+effects::Filter::Invert.0                                         # a filter amount (1 leaves the image as it is)
+effects::Filter::Opacity.0                                        # an opacity, 0..1
+effects::Filter::Saturate.0                                       # a filter amount (1 leaves the image as it is)
+effects::Filter::Sepia.0                                          # a filter amount (1 leaves the image as it is)
+effects::Filter::color_matrix ->                                  # color components
+effects::KeyframeAnimation.delay                                  # time
+effects::KeyframeAnimation.duration                               # time
+effects::KeyframeAnimation.easing                                 # easing curve coordinates (unit square)
+effects::KeyframeAnimation::delay(ms)                             # time
+effects::KeyframeAnimation::duration(ms)                          # time
+effects::KeyframeAnimation::easing(curve)                         # easing curve coordinates (unit square)
+effects::Transition.delay                                         # time
+effects::Transition.duration                                      # time
+effects::Transition.easing                                        # easing curve coordinates (unit square)
+effects::Transition::EASE                                         # easing curve coordinates (unit square)
+effects::compose_color_matrices ->                                # color components
+style::Color::to_f64 ->                                           # color components
+style::parse::LineHeight::Em.0                                    # a multiple of the element's font size
+style::parse::LineHeight::Multiple.0                              # a multiple of the font size
+style::parse::PropertyValue::Easing.0                             # easing curve coordinates (unit square)
+style::parse::PropertyValue::Flex.0                               # a flex grow factor
+style::parse::PropertyValue::Flex.1                               # a flex shrink factor
+style::parse::PropertyValue::LetterSpacing.1                      # ems of the font size
+style::parse::PropertyValue::Ms.0                                 # time
+style::parse::PropertyValue::Number.0                             # a unitless style number (a flex factor, an opacity, a z-index)
+style::parse::PropertyValue::OptNumber.0                          # an aspect ratio
+style::parse::PropertyValue::Transform.0                          # transform operands (any of their kinds' units)
+style::parse::Style::set_transform(steps)                         # transform operands (any of their kinds' units)
+style::parse::StyleDecl::SetTransform.1                           # transform operands (any of their kinds' units)
+style::parse::StyleDecl::Transform.1                              # a transform operand (any of its kinds' units)
+style::parse::StyleKey::number_value(n)                           # a style number as TSX writes it (points or a factor, by property)
+style::parse::StyleValue::Number.0                                # a generic number (a JS value, a recorded slot)
+style::TextStyle.letter_spacing_em                                # a multiple of the font size (em)
+style::TextStyle.line_height_em                                   # a line-height length in multiples of the element font size
+style::TextStyle.line_height_multiple                             # a multiple of the font's line height
+style::ViewStyle.opacity                                          # an opacity, 0..1
+transform::Decomposed.scale                                       # a scale factor
+transform::Matrix.0                                               # a transform operand (any of its kinds' units)
+transform::Matrix::of(v)                                          # a transform operand (any of its kinds' units)
+transform::Transform::matrix(value)                               # a transform operand (any of its kinds' units)
+transform::Transform::push(value)                                 # a transform operand (any of its kinds' units)
+transform::TransformKind::identity ->                             # a transform operand (any of its kinds' units)
+transform::TransformOp.value                                      # a transform operand (any of its kinds' units)
+text::ResolvedTextStyle.line_height_multiple                      # a multiple of the font's line height
+ops::IMAGE_SCALES                                                 # pixel densities (device pixels per point)
+ops::ImageScales::iter ->                                         # pixel densities (device pixels per point)
+ops::AccessibilityValue.min                                       # a screen-reader range value (unitless)
+ops::AccessibilityValue.max                                       # a screen-reader range value (unitless)
+ops::AccessibilityValue.now                                       # a screen-reader range value (unitless)
+ops::Prop::LoadMoreThreshold.0                                    # a distance to the end in viewports
+animation::graph::Graph::tick(now)                                # seconds since the graph's epoch
+animation::graph::Graph::value ->                                 # an animated value (a number the graph interpolates)
 animation::ops::AnimationOp::CreateInterpolate.input_range        # interpolation breakpoints (value units)
 animation::ops::AnimationOp::CreateValue.value                    # an animated value (a number the graph interpolates)
 animation::ops::AnimationOp::Set.value                            # an animated value (a number the graph interpolates)
@@ -78,22 +78,22 @@ animation::ops::Easing::Bezier.2                                  # easing curve
 animation::ops::Easing::Bezier.3                                  # easing curve coordinates (unit square)
 animation::ops::Finished.value                                    # an animated value (a number the graph interpolates)
 animation::ops::Output::Numbers.0                                 # interpolation outputs (value units)
-animation::graph::Graph::set(value)                                 # an animated value (a number the graph interpolates)
-transform::Transform::set(value)                                # a transform operand (any of its kinds' units)
-ops::Prop::LongPressDelay.0                                    # time in milliseconds
-mount::MountItem::LongPressDelay.delay                         # time in milliseconds
-ops::DecelerationRate::Custom.0                                  # scroll deceleration rate (0=instant stop, 1=no deceleration)
-ops::DecelerationRate::value ->                                  # scroll deceleration rate (0=instant stop, 1=no deceleration)
-ops::MaintainPosition.autoscroll_to_bottom_threshold            # threshold ratio for autoscroll (0..1)
-ops::Prop::SnapToInterval.0                                     # snap interval in points (scrollable distance)
-ops::Prop::SnapToOffsets.0                                      # snap offsets in points (scrollable distance)
-ops::Viewability.item_visible_threshold                         # viewability threshold ratio (0..1)
-ops::Viewability.view_area_coverage_threshold                   # viewability coverage ratio (0..1)
-mount::MountItem::ScrollContent.deceleration                    # scroll deceleration rate (0=instant stop, 1=no deceleration)
-mount::MountItem::ScrollContent.snap_interval                   # snap interval in points (scrollable distance)
-mount::MountItem::ScrollContent.snap_offsets                    # snap offsets in points (scrollable distance)
-snap::SnapBehavior.deceleration                                  # velocity decay rate per ms (0-1 ratio)
+animation::graph::Graph::set(value)                               # an animated value (a number the graph interpolates)
+transform::Transform::set(value)                                  # a transform operand (any of its kinds' units)
+ops::Prop::LongPressDelay.0                                       # time in milliseconds
+mount::MountItem::LongPressDelay.delay                            # time in milliseconds
+ops::DecelerationRate::Custom.0                                   # scroll deceleration rate (0=instant stop, 1=no deceleration)
+ops::DecelerationRate::value ->                                   # scroll deceleration rate (0=instant stop, 1=no deceleration)
+ops::MaintainPosition.autoscroll_to_bottom_threshold              # threshold ratio for autoscroll (0..1)
+ops::Prop::SnapToInterval.0                                       # snap interval in points (scrollable distance)
+ops::Prop::SnapToOffsets.0                                        # snap offsets in points (scrollable distance)
+ops::Viewability.item_visible_threshold                           # viewability threshold ratio (0..1)
+ops::Viewability.view_area_coverage_threshold                     # viewability coverage ratio (0..1)
+mount::MountItem::ScrollContent.deceleration                      # scroll deceleration rate (0=instant stop, 1=no deceleration)
+mount::MountItem::ScrollContent.snap_interval                     # snap interval in points (scrollable distance)
+mount::MountItem::ScrollContent.snap_offsets                      # snap offsets in points (scrollable distance)
+snap::SnapBehavior.deceleration                                   # velocity decay rate per ms (0-1 ratio)
 snap::rate ->                                                     # velocity decay rate per ms (0-1 ratio)
-snap::projected(rate)                                            # velocity decay rate per ms (0-1 ratio)
-snap::projected(velocity)                                        # points per millisecond
-snap::snap_target(velocity)                                      # points per millisecond
+snap::projected(rate)                                             # velocity decay rate per ms (0-1 ratio)
+snap::projected(velocity)                                         # points per millisecond
+snap::snap_target(velocity)                                       # points per millisecond

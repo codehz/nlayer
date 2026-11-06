@@ -610,6 +610,7 @@ impl<M: TextEngine> Core<M> {
                 };
                 let c = &root.screen;
                 let measured = root.header.filter(|h| *h > 0.0 && !c.header_transparent);
+                let bar = c.content_bar(self.has_title_view(key)).0;
                 let header = if !native_header {
                     drawn_header
                 } else if !c.header_visible {
@@ -617,7 +618,7 @@ impl<M: TextEngine> Core<M> {
                 } else if let Some(measured) = measured {
                     measured
                 } else {
-                    self.header_heights.0.0 + self.top_overlap(parent)
+                    bar + self.top_overlap(parent)
                 };
                 (
                     size,

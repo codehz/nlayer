@@ -104,10 +104,11 @@ test("column, row, and grid place their children", () => {
   expect(a.frame.x).toBe(c.frame.x);
   expect(b.frame.x).toBe(d.frame.x);
 
-  // The insets pad the view's own edges; the header covers the top one.
+  // The bar floats over the content (no appearance, so no bar bottom), so
+  // `env(safe-area-inset-top)` is the safe area plus the bar's 44pt.
   const inset = holder(nodes, "Inset").children[0];
   expect(inset.frame.x).toBe(10);
-  expect(inset.frame.y).toBe(0);
+  expect(inset.frame.y).toBe(22 + 44);
 });
 
 test("a press updates the label", () => {
@@ -158,9 +159,10 @@ test("safe-area env insets pad the view", () => {
   });
   const nodes = flat(app.tree(), []);
   const safe = must(nodes.find((node) => node.testID === "safe"));
-  // The header covers the top inset on every host (web draws it too), so
-  // content under it does not add that inset again. Left is the window's.
-  const top = 0;
+  // The bar floats over the content (no appearance, so no bar bottom), so
+  // the top inset is the safe area plus the bar's 44pt. Left is the
+  // window's.
+  const top = 22 + 44;
   const title = must(safe.children[0]);
   expect(title.frame.x).toBe(26);
   expect(title.frame.y).toBe(16 + top);

@@ -281,13 +281,10 @@ impl<M: TextEngine> Core<M> {
         }
     }
 
-    /// Where an opaque native header puts the content. A positive
-    /// measurement wins; `Some(0)` is a transparent or hidden bar saying it
-    /// does not know, not a bar of height zero.
     fn covering_header(&self, parent: Key, root: &RootState) -> f32 {
         root.header
             .filter(|h| *h > 0.0)
-            .unwrap_or_else(|| self.header_heights.0.0 + self.top_overlap(parent))
+            .unwrap_or_else(|| root.screen.content_bar(false).0 + self.top_overlap(parent))
     }
 
     /// The platform draws a header of its own above screens (iOS, Android);
@@ -322,6 +319,18 @@ impl<M: TextEngine> Core<M> {
             })
     }
 
+    /// A created `titleView` item of screen `key`.
+    pub(super) fn has_title_view(&self, key: Key) -> bool {
+        self.nodes[key as usize].children.iter().any(|&c| {
+            let n = &self.nodes[c as usize];
+            n.kind == Kind::HeaderItem
+                && n.created
+                && n.root
+                    .as_ref()
+                    .is_some_and(|r| r.slot == crate::ops::HeaderSlot::Title)
+        })
+    }
+
     /// Without a native header: the height of screen `key`'s `header` slot,
     /// laid out first (as wide as the screen), 0 without one.
     pub(super) fn drawn_header(&mut self, key: Key) -> f32 {
@@ -340,23 +349,43 @@ impl<M: TextEngine> Core<M> {
         let root = node.root.as_ref().filter(|_| node.kind == Kind::Screen)?;
         let mut config = root.screen.clone();
         config.header_height = Points(root.laid_out.map_or(0.0, |(_, h)| h));
+        let mut leading = Vec::new();
+        let mut trailing = Vec::new();
         for &c in &node.children {
             let child = &self.nodes[c as usize];
             if child.kind != Kind::HeaderItem || !child.created {
                 continue;
             }
-            let slot = child
-                .root
-                .as_ref()
-                .map_or(crate::ops::HeaderSlot::Left, |r| r.slot);
-            let target = match slot {
-                crate::ops::HeaderSlot::Left => &mut config.left,
-                crate::ops::HeaderSlot::Right => &mut config.right,
-                crate::ops::HeaderSlot::Title => &mut config.title_view,
-                crate::ops::HeaderSlot::Header => &mut config.header_view,
-            };
-            *target = Some(child.id);
+            let item_root = child.root.as_ref();
+            let slot = item_root.map_or(crate::ops::HeaderSlot::Leading, |r| r.slot);
+            match slot {
+                crate::ops::HeaderSlot::Title => config.title_view = Some(child.id),
+                crate::ops::HeaderSlot::Header => config.header_view = Some(child.id),
+                crate::ops::HeaderSlot::Leading | crate::ops::HeaderSlot::Trailing => {
+                    let group = item_root.map_or(0, |r| r.group) as usize;
+                    let index = item_root.map_or(0, |r| r.index) as usize;
+                    let groups = if slot == crate::ops::HeaderSlot::Leading {
+                        &mut leading
+                    } else {
+                        &mut trailing
+                    };
+                    if groups.len() <= group {
+                        groups.resize_with(group + 1, Vec::new);
+                    }
+                    let row = &mut groups[group];
+                    if row.len() <= index {
+                        row.resize_with(index + 1, || crate::BarItem::Custom(0));
+                    }
+                    row[index] = bar_item(child.id, item_root.map(|root| root.as_ref()));
+                }
+            }
         }
+        config.leading = compact_groups(leading);
+        config.trailing = compact_groups(trailing);
+        config.left = first_custom(&config.leading);
+        config.right = first_custom(&config.trailing);
+        config.bar_height = config.content_bar(config.title_view.is_some());
+        config.sync_cover();
         Some(config)
     }
 
@@ -408,7 +437,7 @@ impl<M: TextEngine> Core<M> {
                         // reports for a screen under the status bar. Not
                         // the stack's frame; that is not known yet, and
                         // reading it would move this inset on a later layout.
-                        Points(self.header_heights.0.0 + safe.top.0)
+                        Points(root.screen.content_bar(false).0 + safe.top.0)
                     } else {
                         Points::ZERO
                     };
@@ -534,4 +563,43 @@ impl<M: TextEngine> Core<M> {
             self.sync_env_key(k);
         }
     }
+}
+
+fn bar_item(id: crate::NodeId, root: Option<&RootState>) -> crate::BarItem {
+    let Some(root) = root else {
+        return crate::BarItem::Custom(id);
+    };
+    if !root.button {
+        return crate::BarItem::Custom(id);
+    }
+    if root.bar_title.is_none() && root.bar_image.is_none() {
+        return crate::BarItem::Custom(0);
+    }
+    crate::BarItem::Button {
+        id,
+        title: root.bar_title.clone(),
+        image: root.bar_image.clone(),
+        enabled: root.bar_enabled,
+        tint_color: root.bar_tint,
+    }
+}
+
+fn compact_groups(groups: Vec<Vec<crate::BarItem>>) -> Vec<Vec<crate::BarItem>> {
+    groups
+        .into_iter()
+        .map(|group| {
+            group
+                .into_iter()
+                .filter(|item| !matches!(item, crate::BarItem::Custom(0)))
+                .collect::<Vec<_>>()
+        })
+        .filter(|group| !group.is_empty())
+        .collect()
+}
+
+fn first_custom(groups: &[Vec<crate::BarItem>]) -> Option<crate::NodeId> {
+    groups.iter().flatten().find_map(|item| match item {
+        crate::BarItem::Custom(id) if *id != 0 => Some(*id),
+        _ => None,
+    })
 }

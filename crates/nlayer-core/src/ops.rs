@@ -1001,55 +1001,96 @@ pub enum ModalPresentation {
 /// Where a header item goes in the screen's header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HeaderSlot {
-    /// `headerLeft`.
-    Left,
-    /// `headerRight`.
-    Right,
-    /// `headerTitle` (a custom title view).
+    /// Leading item groups (`leadingItemGroups`).
+    Leading,
+    /// Trailing item groups (`trailingItemGroups`).
+    Trailing,
+    /// `titleView`.
     Title,
-    /// `header`: without a native header ([`crate::mount::NO_NATIVE_HEADER`]),
-    /// a view at the top of the screen, above the content.
+    /// Without a native header ([`crate::mount::NO_NATIVE_HEADER`]), a view
+    /// at the top of the screen, above the content. The web host still
+    /// mounts its bar here until that bar is drawn by the host.
     #[default]
     Header,
+}
+
+/// `largeTitleDisplayMode`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LargeTitleDisplayMode {
+    /// iOS collapses with the system. Android and web draw the regular bar.
+    Automatic,
+    /// A large title. Android and web draw it statically.
+    Always,
+    /// Regular bar (default).
+    #[default]
+    Never,
+}
+
+/// `backButtonDisplayMode`, read from the page underneath.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BackButtonDisplayMode {
+    /// Chevron plus that page's `backButtonTitle`, or its `title`.
+    #[default]
+    Default,
+    /// Chevron plus the literal `"Back"`.
+    Generic,
+    /// Chevron only.
+    Minimal,
+}
+
+/// `shadowColor` on a bar appearance. Absent means the field was not set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BarShadow {
+    /// `"none"`: no divider and no system shadow.
+    None,
+    /// A hairline in this color.
+    Color(crate::style::Color),
+}
+
+/// `standardAppearance` / `scrollEdgeAppearance`. Unset fields stay `None`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BarAppearance {
+    /// Unset, or a color. Transparent and alpha 0 leave the bar uncovered.
+    pub background_color: Option<crate::style::Color>,
+    /// Title color.
+    pub title_color: Option<crate::style::Color>,
+    /// Large-title color.
+    pub large_title_color: Option<crate::style::Color>,
+    /// Button tint.
+    pub tint_color: Option<crate::style::Color>,
+    /// Divider. `None` does not override the platform.
+    pub shadow: Option<BarShadow>,
 }
 
 /// A screen option (`<NavPage ...>`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScreenProp {
-    /// `title`: the header's title (iOS and Android: the system header;
-    /// ignored on platforms without one, which show the app's `header`).
+    /// `title`.
     Title(Option<Arc<str>>),
-    /// `headerVisible`: the system header shows (default true; iOS and
-    /// Android).
+    /// `subtitle`. Hidden when `titleView` is set.
+    Subtitle(Option<Arc<str>>),
+    /// `headerVisible` (default true).
     HeaderVisible(bool),
-    /// `headerTransparent`: content starts at the top of the page and
-    /// shows through the header (the system bar on iOS and Android, the
-    /// app's `header` slot on the web).
-    HeaderTransparent(bool),
-    /// `headerBackVisible`: the system header's back button shows (default
-    /// true; iOS and Android).
-    HeaderBackVisible(bool),
-    /// `popOnSwipe`: the interactive back gesture pops (iOS swipe back,
-    /// Android predictive back following the finger); the back buttons pop
-    /// either way (default true).
+    /// `largeTitleDisplayMode` (default `never`).
+    LargeTitle(LargeTitleDisplayMode),
+    /// `backButtonTitle`, read by the page that covers this one.
+    BackButtonTitle(Option<Arc<str>>),
+    /// `backButtonDisplayMode` (default `default`).
+    BackButtonDisplayMode(BackButtonDisplayMode),
+    /// `hidesBackButton` (default false).
+    HidesBackButton(bool),
+    /// `leftItemsSupplementBackButton` (default false).
+    LeftItemsSupplementBackButton(bool),
+    /// `popOnSwipe`.
     PopOnSwipe(bool),
-    /// `popOnBack`: the user leaves the page with the back buttons (header,
-    /// Android back, the browser's back) and the swipe back (default true).
-    /// False keeps it, e.g. to confirm discarding changes in `onBackPress`
-    /// (called on every back press) and then `pop()`. Decided natively when
-    /// the system asks, so set it before the user acts.
+    /// `popOnBack`.
     PopOnBack(bool),
-    /// `animation`: how the page enters and leaves.
+    /// `animation`.
     Animation(ScreenAnimation),
-    /// `headerStyle`: `{ backgroundColor, color, tintColor }`.
-    HeaderStyle {
-        /// Header background.
-        background_color: Option<crate::Color>,
-        /// Title color.
-        title_color: Option<crate::Color>,
-        /// Color of the back button and bar buttons.
-        tint_color: Option<crate::Color>,
-    },
+    /// `standardAppearance`.
+    StandardAppearance(BarAppearance),
+    /// `scrollEdgeAppearance`. Android and web ignore it.
+    ScrollEdgeAppearance(BarAppearance),
 }
 
 /// A modal option (`<Dialog ...>`).
@@ -1191,8 +1232,22 @@ pub enum Prop {
     Screen(ScreenProp),
     /// A modal option (`Dialog`).
     Modal(ModalProp),
-    /// Where a header item goes (`headerLeft`, `headerRight`, `headerTitle`, `header`).
+    /// Where a header item goes.
     HeaderSlot(HeaderSlot),
+    /// Group index. 0 is the outer edge.
+    HeaderGroup(u32),
+    /// Index inside the group. 0 is the outer edge.
+    HeaderIndex(u32),
+    /// This item is a bar button. A custom view leaves it false.
+    BarButton(bool),
+    /// Button title.
+    BarTitle(Option<Arc<str>>),
+    /// Button image. Same source as `Image`.
+    BarImage(Option<ImageSource>),
+    /// Button `enabled` (default true).
+    BarEnabled(bool),
+    /// Button `tintColor`.
+    BarTint(Option<crate::style::Color>),
     /// `selectable` on a `View`: one selection across its texts, in reading
     /// order. Not a style. A text inside it is not selectable on its own.
     Selectable(bool),

@@ -5,14 +5,19 @@ export function HeaderDemoPage() {
   return (
     <NavPage
       title="Header"
-      headerStyle={{ backgroundColor: "#10b981", color: "#fff", tintColor: "#fff" }}
-      headerTransparent={headerTransparent()}
-      headerLeft={
-        <Text onPress={() => nav.pop()} class="font-semibold text-white">
-          Back
-        </Text>
-      }
-      headerRight={<Text class="text-white">Right</Text>}
+      standardAppearance={{
+        backgroundColor: headerTransparent() ? "transparent" : "#10b981",
+        titleColor: "#fff",
+        tintColor: "#fff",
+      }}
+      leadingItemGroups={[
+        [
+          <Text onPress={() => nav.pop()} class="font-semibold text-white">
+            Back
+          </Text>,
+        ],
+      ]}
+      trailingItemGroups={[[<Text class="text-white">Right</Text>]]}
       onDismiss={dismiss}
     >
       <Scroll

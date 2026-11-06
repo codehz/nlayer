@@ -4,9 +4,10 @@
 use std::sync::Arc;
 
 use nlayer_core::{
-    AccessibilityProp, AccessibilityRole, AccessibilityState, AccessibilityValue, CellSlot,
-    Checked, DecelerationRate, HeaderSlot, ImageScales, ImageSource, Interaction, KeyboardDismiss,
-    KeyboardTaps, KeyboardType, ModalAnimation, ModalPresentation, ModalProp, NodeId, Op, Prop,
+    AccessibilityProp, AccessibilityRole, AccessibilityState, AccessibilityValue,
+    BackButtonDisplayMode, BarAppearance, BarShadow, CellSlot, Checked, DecelerationRate,
+    HeaderSlot, ImageScales, ImageSource, Interaction, KeyboardDismiss, KeyboardTaps, KeyboardType,
+    LargeTitleDisplayMode, ModalAnimation, ModalPresentation, ModalProp, NodeId, Op, Prop,
     ScreenAnimation, ScreenProp, SnapAlignment, Tag,
     animation::{AnimationOp, AnimationProp, Driver, Easing, Extrapolate, StepPosition},
     geometry::{Points, Size},
@@ -393,15 +394,27 @@ fn navigation_prop(
     };
     let prop = match (tag, name) {
         (Tag::Screen, "title") => Some(Prop::Screen(ScreenProp::Title(optional_string(value)?))),
+        (Tag::Screen, "subtitle") => {
+            Some(Prop::Screen(ScreenProp::Subtitle(optional_string(value)?)))
+        }
         (Tag::Screen, "headerVisible") => Some(Prop::Screen(ScreenProp::HeaderVisible(
             value.as_bool().unwrap_or(true),
         ))),
-        (Tag::Screen, "headerTransparent") => Some(Prop::Screen(ScreenProp::HeaderTransparent(
+        (Tag::Screen, "largeTitleDisplayMode") => Some(Prop::Screen(ScreenProp::LargeTitle(
+            large_title(value, warnings)?,
+        ))),
+        (Tag::Screen, "backButtonTitle") => Some(Prop::Screen(ScreenProp::BackButtonTitle(
+            optional_string(value)?,
+        ))),
+        (Tag::Screen, "backButtonDisplayMode") => Some(Prop::Screen(
+            ScreenProp::BackButtonDisplayMode(back_display(value, warnings)?),
+        )),
+        (Tag::Screen, "hidesBackButton") => Some(Prop::Screen(ScreenProp::HidesBackButton(
             value.as_bool().unwrap_or(false),
         ))),
-        (Tag::Screen, "headerBackVisible") => Some(Prop::Screen(ScreenProp::HeaderBackVisible(
-            value.as_bool().unwrap_or(true),
-        ))),
+        (Tag::Screen, "leftItemsSupplementBackButton") => Some(Prop::Screen(
+            ScreenProp::LeftItemsSupplementBackButton(value.as_bool().unwrap_or(false)),
+        )),
         (Tag::Screen, "popOnSwipe") => Some(Prop::Screen(ScreenProp::PopOnSwipe(
             value.as_bool().unwrap_or(true),
         ))),
@@ -420,21 +433,12 @@ fn navigation_prop(
             };
             Some(Prop::Screen(ScreenProp::Animation(animation)))
         }
-        (Tag::Screen, "headerStyle") => {
-            let object = value.as_object();
-            let color = |key: &str| -> rquickjs::Result<Option<Color>> {
-                let Some(object) = object else {
-                    return Ok(None);
-                };
-                let value = object.get::<_, Option<String>>(key)?;
-                Ok(value.and_then(|text| Color::parse(&text)))
-            };
-            Some(Prop::Screen(ScreenProp::HeaderStyle {
-                background_color: color("backgroundColor")?,
-                title_color: color("color")?,
-                tint_color: color("tintColor")?,
-            }))
-        }
+        (Tag::Screen, "standardAppearance") => Some(Prop::Screen(ScreenProp::StandardAppearance(
+            bar_appearance(value, warnings)?,
+        ))),
+        (Tag::Screen, "scrollEdgeAppearance") => Some(Prop::Screen(
+            ScreenProp::ScrollEdgeAppearance(bar_appearance(value, warnings)?),
+        )),
         (Tag::Modal, "animation") => {
             let animation = match string(value)?.as_str() {
                 "slide" => ModalAnimation::Slide,
@@ -470,8 +474,8 @@ fn navigation_prop(
         ))),
         (Tag::HeaderItem, "headerSlot") => {
             let slot = match string(value)?.as_str() {
-                "left" => HeaderSlot::Left,
-                "right" => HeaderSlot::Right,
+                "leading" | "left" => HeaderSlot::Leading,
+                "trailing" | "right" => HeaderSlot::Trailing,
                 "title" => HeaderSlot::Title,
                 "header" => HeaderSlot::Header,
                 other => {
@@ -481,9 +485,85 @@ fn navigation_prop(
             };
             Some(Prop::HeaderSlot(slot))
         }
+        (Tag::HeaderItem, "headerGroup") => {
+            Some(Prop::HeaderGroup(value.as_number().unwrap_or(0.0) as u32))
+        }
+        (Tag::HeaderItem, "headerIndex") => {
+            Some(Prop::HeaderIndex(value.as_number().unwrap_or(0.0) as u32))
+        }
+        (Tag::HeaderItem, "barButton") => Some(Prop::BarButton(value.as_bool().unwrap_or(false))),
+        (Tag::HeaderItem, "barTitle") => Some(Prop::BarTitle(optional_string(value)?)),
+        (Tag::HeaderItem, "barImage") => Some(Prop::BarImage(image_source(value.clone())?)),
+        (Tag::HeaderItem, "barEnabled") => Some(Prop::BarEnabled(value.as_bool().unwrap_or(true))),
+        (Tag::HeaderItem, "barTint") => Some(Prop::BarTint(optional_color(value)?)),
         _ => None,
     };
     Ok(prop)
+}
+
+fn optional_color(value: &Value<'_>) -> rquickjs::Result<Option<Color>> {
+    if value.is_null() || value.is_undefined() {
+        return Ok(None);
+    }
+    Ok(Color::parse(&string(value)?))
+}
+
+fn large_title(
+    value: &Value<'_>,
+    warnings: &mut Warnings,
+) -> rquickjs::Result<LargeTitleDisplayMode> {
+    Ok(match string(value)?.as_str() {
+        "automatic" => LargeTitleDisplayMode::Automatic,
+        "always" => LargeTitleDisplayMode::Always,
+        "never" => LargeTitleDisplayMode::Never,
+        other => {
+            warnings.warn(format!("unknown largeTitleDisplayMode `{other}`"));
+            LargeTitleDisplayMode::Never
+        }
+    })
+}
+
+fn back_display(
+    value: &Value<'_>,
+    warnings: &mut Warnings,
+) -> rquickjs::Result<BackButtonDisplayMode> {
+    Ok(match string(value)?.as_str() {
+        "default" => BackButtonDisplayMode::Default,
+        "generic" => BackButtonDisplayMode::Generic,
+        "minimal" => BackButtonDisplayMode::Minimal,
+        other => {
+            warnings.warn(format!("unknown backButtonDisplayMode `{other}`"));
+            BackButtonDisplayMode::Default
+        }
+    })
+}
+
+fn bar_appearance(value: &Value<'_>, warnings: &mut Warnings) -> rquickjs::Result<BarAppearance> {
+    let Some(object) = value.as_object() else {
+        return Ok(BarAppearance::default());
+    };
+    let color = |key: &str| -> rquickjs::Result<Option<Color>> {
+        let value: Option<String> = object.get(key)?;
+        Ok(value.and_then(|text| Color::parse(&text)))
+    };
+    let shadow = match object.get::<_, Option<String>>("shadowColor")? {
+        None => None,
+        Some(text) if text == "none" => Some(BarShadow::None),
+        Some(text) => match Color::parse(&text) {
+            Some(color) => Some(BarShadow::Color(color)),
+            None => {
+                warnings.warn(format!("invalid shadowColor `{text}`"));
+                None
+            }
+        },
+    };
+    Ok(BarAppearance {
+        background_color: color("backgroundColor")?,
+        title_color: color("titleColor")?,
+        large_title_color: color("largeTitleColor")?,
+        tint_color: color("tintColor")?,
+        shadow,
+    })
 }
 
 /// An accessibility prop, when `name` is one. `Role` warns and sets

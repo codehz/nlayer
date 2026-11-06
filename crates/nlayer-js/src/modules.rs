@@ -171,16 +171,6 @@ fn nav_page(cx: *mut JsContext) -> JsValue {
     crate::navigation::export_named(cx, "NavPage")
 }
 
-/// `NavHeader`: the default header bar. Native `NavPage` does not mount it.
-fn nav_header(cx: *mut JsContext) -> JsValue {
-    crate::navigation::export_named(cx, "NavHeader")
-}
-
-/// `setNavHeader`: no-op on iOS and Android. The system bar stays.
-fn set_nav_header(cx: *mut JsContext) -> JsValue {
-    crate::navigation::export_named(cx, "setNavHeader")
-}
-
 /// `Dialog`: the modal dialog component.
 fn dialog(cx: *mut JsContext) -> JsValue {
     crate::navigation::export_named(cx, "Dialog")
@@ -217,8 +207,6 @@ const UI: &[Item] = &[
     ("createNavStack", Export::Value(create_nav_stack)),
     ("NavStack", Export::Value(nav_stack)),
     ("NavPage", Export::Value(nav_page)),
-    ("NavHeader", Export::Value(nav_header)),
-    ("setNavHeader", Export::Value(set_nav_header)),
     ("Dialog", Export::Value(dialog)),
 ];
 
